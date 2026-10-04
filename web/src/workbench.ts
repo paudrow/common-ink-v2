@@ -245,10 +245,7 @@ export class Workbench {
     this.settings = settings;
     for (const view of this.views.values()) reconfigure(view, settings);
     // Empty windows list shortcuts, which settings may have rebound.
-    if (this.groupEls.size) {
-      this.shape = "";
-      this.render();
-    }
+    for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyHint());
   }
 
   focus(): void {
