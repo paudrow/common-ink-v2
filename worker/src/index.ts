@@ -1,7 +1,9 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
-import { identify, type Identity } from "./auth.ts";
-import { parseDocPath, type Seed } from "./docs.ts";
+import { authorFor, identify, type Identity } from "./auth.ts";
+import type { Seed } from "./docs.ts";
+import { mcp } from "./mcp.ts";
+import { runOperation, type OperationName, type Store } from "./operations.ts";
 import type { Workspace } from "./workspace.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -37,37 +39,35 @@ export default {
     const who = await identify(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD, devUser: env.DEV_USER });
     if (!who) return secure(new Response("Sign in through Cloudflare Access to use Common Ink.\n", { status: 401 }));
     const url = new URL(req.url);
-    if (!url.pathname.startsWith("/api/")) return secure(await env.ASSETS.fetch(req));
+    if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
+    const store = workspace as unknown as Store;
+    if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
     await seedOnce(env, workspace);
-    return secure(await api(req, url, who, workspace));
+    return secure(await api(req, url, who, store));
   },
 } satisfies ExportedHandler<Env>;
 
-/** Docs are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
-const MAX_DOC_BYTES = 1_000_000;
+/** The API routes, each running one workspace operation with its arguments from the query and the body. */
+const ROUTES: Record<string, OperationName> = {
+  "GET /api/docs": "list_docs",
+  "GET /api/doc": "read_doc",
+  "PUT /api/doc": "write_doc",
+  "GET /api/history": "history",
+  "POST /api/undo": "undo",
+};
 
-async function api(req: Request, url: URL, who: Identity, workspace: DurableObjectStub<Workspace>): Promise<Response> {
+async function api(req: Request, url: URL, who: Identity, store: Store): Promise<Response> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/me") return json(who);
-  if (route === "GET /api/docs") return json(await workspace.list());
-  if (route === "GET /api/doc") {
-    const path = parseDocPath(url.searchParams.get("path"));
-    if (!path) return json({ error: "?path= must be a path ending in .md or .json" }, 400);
-    const doc = await workspace.read(path);
-    return doc ? json(doc) : json({ error: `Nothing at ${path}` }, 404);
-  }
-  if (route === "PUT /api/doc") {
-    const body = (await req.json().catch(() => null)) as { path?: unknown; text?: unknown; base?: unknown } | null;
-    const path = parseDocPath(body?.path);
-    const { text, base } = body ?? {};
-    if (!path) return json({ error: '"path" must be a path ending in .md or .json' }, 400);
-    if (typeof text !== "string" || new TextEncoder().encode(text).length > MAX_DOC_BYTES) return json({ error: '"text" must be a string under 1 MB' }, 400);
-    if (!Number.isSafeInteger(base) || (base as number) < 0) return json({ error: '"base" must be the revision you started from, or 0 for a new doc' }, 400);
-    const result = await workspace.write({ path, text, base: base as number, author: { kind: "user", email: who.email } });
-    return json(result, result.status === "conflict" ? 409 : 200);
-  }
-  return json({ error: `No route for ${route}` }, 404);
+  const name = ROUTES[route];
+  if (!name) return json({ error: `No route for ${route}` }, 404);
+  const body = req.method === "GET" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
+  const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
+  const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+  if (!result.ok) return json({ error: result.error }, 400);
+  if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
+  return json(result.value, (result.value as { status?: string }).status === "conflict" ? 409 : 200);
 }
 
 let seeded = false;

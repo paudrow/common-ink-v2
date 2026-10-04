@@ -1,0 +1,123 @@
+// What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
+// the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
+import { parseDocPath, type Author, type Change, type Doc, type DocSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./docs.ts";
+
+/** The workspace, as the Durable Object's stub offers it. */
+export interface Store {
+  list(): Promise<DocSummary[]> | DocSummary[];
+  read(path: Doc["path"]): Promise<Doc | null> | Doc | null;
+  write(w: Write): Promise<WriteResult> | WriteResult;
+  recent(q: HistoryQuery): Promise<Change[]> | Change[];
+  undo(revisions: Revision[], author: Author): Promise<UndoResult[]> | UndoResult[];
+}
+
+/** Docs are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
+const MAX_DOC_BYTES = 1_000_000;
+
+type Args = Record<string, unknown>;
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+
+export interface Operation<T = unknown> {
+  description: string;
+  /** JSON Schema for the arguments, as MCP lists it. */
+  input: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  parse(args: Args): Parsed<T>;
+  run(store: Store, args: T, author: Author): Promise<unknown>;
+}
+
+const ok = <T>(value: T): Parsed<T> => ({ ok: true, value });
+const fail = (error: string): Parsed<never> => ({ ok: false, error });
+
+/** A whole number from JSON or a query string. */
+function count(v: unknown): number | undefined {
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return Number.isSafeInteger(n) && (n as number) >= 0 ? (n as number) : undefined;
+}
+
+const PATH = { type: "string", description: 'A doc\'s path, like "Projects/Plan.md" or ".common-ink/layout.json"' };
+
+function op<T>(o: Operation<T>): Operation<T> {
+  return o;
+}
+
+export const OPERATIONS = {
+  list_docs: op<Record<string, never>>({
+    description: "List every doc in the workspace (notes and workspace JSON) with its revision.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store) => store.list(),
+  }),
+  read_doc: op<{ path: Doc["path"] }>({
+    description: "Read a doc's text and revision. Pass the revision back as `base` when you write it.",
+    input: { type: "object", properties: { path: PATH }, required: ["path"] },
+    parse: (a) => {
+      const path = parseDocPath(a.path);
+      return path ? ok({ path }) : fail('"path" must be a path ending in .md or .json');
+    },
+    run: async (store, { path }) => store.read(path),
+  }),
+  write_doc: op<Omit<Write, "author">>({
+    description:
+      "Write a doc's whole text, given the revision you read (`base`, or 0 for a new doc). If it changed since, your edit is merged in; if it can't be, nothing is saved and you get the current doc back.",
+    input: {
+      type: "object",
+      properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 } },
+      required: ["path", "text", "base"],
+    },
+    parse: (a) => {
+      const path = parseDocPath(a.path);
+      const base = count(a.base);
+      if (!path) return fail('"path" must be a path ending in .md or .json');
+      if (typeof a.text !== "string" || new TextEncoder().encode(a.text).length > MAX_DOC_BYTES) return fail('"text" must be a string under 1 MB');
+      if (base === undefined) return fail('"base" must be the revision you started from, or 0 for a new doc');
+      return ok({ path, text: a.text, base });
+    },
+    run: async (store, w, author) => store.write({ ...w, author }),
+  }),
+  history: op<HistoryQuery>({
+    description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by doc or by author.",
+    input: {
+      type: "object",
+      properties: {
+        path: PATH,
+        author: { type: "string", description: 'An author key from a change\'s "author", like "agent:Claude:ada@example.com" or "user:ada@example.com"' },
+        before: { type: "integer", description: "Only changes older than this revision, for paging" },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+      },
+    },
+    parse: (a) => {
+      const q: HistoryQuery = {};
+      if (a.path !== undefined && a.path !== "") {
+        const path = parseDocPath(a.path);
+        if (!path) return fail('"path" must be a path ending in .md or .json');
+        q.path = path;
+      }
+      if (typeof a.author === "string" && a.author) q.author = a.author;
+      q.before = count(a.before);
+      q.limit = count(a.limit);
+      return ok(q);
+    },
+    run: async (store, q) => store.recent(q),
+  }),
+  undo: op<{ revisions: Revision[] }>({
+    description:
+      "Undo changes by revision, newest first, each recorded as a new change by you. Later edits elsewhere in the doc are kept; an undo that clashes with them does nothing. Undoing an undo redoes it.",
+    input: { type: "object", properties: { revisions: { type: "array", items: { type: "integer" }, minItems: 1 } }, required: ["revisions"] },
+    parse: (a) => {
+      const revisions = Array.isArray(a.revisions) ? a.revisions.map(count) : [];
+      return revisions.length && revisions.every((r) => r !== undefined && r > 0) ? ok({ revisions: revisions as number[] }) : fail('"revisions" must be a list of change revisions');
+    },
+    run: async (store, { revisions }, author) => store.undo(revisions, author),
+  }),
+};
+
+export type OperationName = keyof typeof OPERATIONS;
+
+export const isOperation = (name: string): name is OperationName => Object.hasOwn(OPERATIONS, name);
+
+/** Parse and run an operation. */
+export async function runOperation(name: OperationName, args: Args, store: Store, author: Author): Promise<Parsed<unknown>> {
+  const operation = OPERATIONS[name] as Operation;
+  const parsed = operation.parse(args);
+  return parsed.ok ? ok(await operation.run(store, parsed.value, author)) : parsed;
+}
