@@ -17,6 +17,11 @@ export const api = {
     const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
     return res.status === 404 ? { path, text: "", revision: 0 } : (await ok(res)).json();
   },
+  /** Delete a file as of the revision you read. A change like any other: undo brings it back. */
+  async delete(path: FilePath, base: Revision): Promise<WriteResult> {
+    const res = await fetch("/api/file", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, base }) });
+    return (res.status === 409 ? res : await ok(res)).json();
+  },
   async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
     const body = JSON.stringify({ path, text, base });
     const res = await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });

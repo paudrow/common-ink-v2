@@ -3,12 +3,10 @@
 import { RangeSetBuilder } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { isNote, type FilePath, type Revision } from "../../../../worker/src/files.ts";
-import type { Plugin, PluginContext } from "../../plugins.ts";
+import type { PluginContext, PluginModule } from "../../plugins.ts";
 import { localToday, parseTodo, todosIn, toggleLine, when, type Todo, type When } from "./model.ts";
 
-export const todosPlugin: Plugin = {
-  id: "todos",
-  description: "Todos: checkbox lines with due:YYYY-MM-DD and every:week. ⌘Enter checks one off; Show todos lists them all.",
+export const todosPlugin: PluginModule = {
   activate(ctx) {
     const panel = new TodosPanel(ctx);
     ctx.commands.register(

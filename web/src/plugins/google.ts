@@ -1,7 +1,7 @@
 // Calendar and contacts, built-in plugins on the data source API: each is a panel (and so also opens
 // in a window), with a command to show it and one to connect Google.
 import type { Event } from "../../../worker/src/sources.ts";
-import type { Plugin, PluginContext } from "../plugins.ts";
+import type { PluginContext, PluginModule } from "../plugins.ts";
 
 const DAYS = 14;
 
@@ -32,9 +32,7 @@ function dayName(day: string, today: string, tomorrow: string): string {
 
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-export const calendarPlugin: Plugin = {
-  id: "calendar",
-  description: "The calendar data source: your Google Calendar's next two weeks, recurring events included.",
+export const calendarPlugin: PluginModule = {
   activate(ctx) {
     ctx.panels.register({
       id: "calendar",
@@ -92,9 +90,7 @@ export const calendarPlugin: Plugin = {
   },
 };
 
-export const contactsPlugin: Plugin = {
-  id: "contacts",
-  description: "The contacts data source: your Google Contacts, searchable.",
+export const contactsPlugin: PluginModule = {
   activate(ctx) {
     let query = "";
     ctx.panels.register({

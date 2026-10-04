@@ -6,7 +6,7 @@
 import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type FilePath } from "../../worker/src/files.ts";
+import { isNote, isPluginScript, type FilePath } from "../../worker/src/files.ts";
 import type { Offline } from "./offline.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
@@ -397,7 +397,8 @@ export class Workbench {
     const text = this.primary(file)?.state.doc.toString() ?? file.startText;
     const view: EditorView = new EditorView({
       state: createState(text, {
-        json: !isNote(file.path),
+        json: file.path.endsWith(".json"),
+        code: isPluginScript(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
         extensions: [...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
@@ -680,6 +681,15 @@ export class Workbench {
       closing.push(i);
     }
     this.setLayout(L.closeTabs(this.layout, group.id, (_, i) => closing.includes(i)));
+  }
+
+  /** Close every tab of these files, wherever they are, dropping anything unsaved: they're being deleted. */
+  forget(paths: FilePath[]): void {
+    for (const path of paths) clearTimeout(this.files.get(path)?.timer);
+    let layout = this.layout;
+    for (const g of L.groups(layout)) layout = L.closeTabs(layout, g.id, (t) => "file" in t && paths.includes(t.file));
+    this.setLayout(layout);
+    for (const path of paths) this.files.delete(path);
   }
 
   /** Whether a tab's file has nothing waiting to be saved (views always count as saved). */

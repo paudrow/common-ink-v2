@@ -331,3 +331,29 @@ test("a seed edit can carry a label, which lands in the labels file at that edit
   });
   assert.deepEqual(JSON.parse(files.read(".common-ink/labels.json" as FilePath)!.text), { labels: [{ name: "Spring", path: "Garden.md", revision: 2 }] });
 });
+
+test("deleting a file is a change that undo takes back", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "# Plan\n\nShip it.\n", base: 0, author: ada });
+  const stale = files.write({ path: PLAN, text: "# Plan\n\nShip it.\nToday.\n", base: 1, author: bot });
+  assert.equal(files.write({ path: PLAN, text: "", base: 1, author: ada, delete: true }).status, "conflict", "a delete of an old revision does nothing");
+  const deleted = files.write({ path: PLAN, text: "", base: stale.file!.revision, author: ada, delete: true });
+  assert.equal(deleted.status, "saved");
+  assert.equal(files.read(PLAN), null);
+  assert.deepEqual(files.list(), []);
+  const [change] = files.recent({ path: PLAN, limit: 1 });
+  assert.equal(change.deleted, true);
+  assert.equal(files.recent({ path: PLAN }).filter((c) => c.deleted).length, 1, "only the delete says so");
+  assert.equal(files.versionAt(PLAN, stale.file!.revision), "# Plan\n\nShip it.\nToday.\n");
+  const [undone] = files.undo([change.revision], ada);
+  assert.equal(undone.status, "undone");
+  assert.equal(files.read(PLAN)!.text, "# Plan\n\nShip it.\nToday.\n");
+  assert.equal(files.write({ path: "Gone.md" as FilePath, text: "", base: 1, author: ada, delete: true }).status, "conflict", "nothing to delete");
+});
+
+test("JavaScript is a file only as a workspace plugin's code", () => {
+  assert.ok(parseFilePath(".common-ink/plugins/word-count/index.js"));
+  assert.equal(parseFilePath("notes/script.js"), null);
+  assert.equal(parseFilePath(".common-ink/plugins/word-count/other.js"), null);
+  assert.equal(parseFilePath(".common-ink/plugins/../index.js"), null);
+});

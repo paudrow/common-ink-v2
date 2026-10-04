@@ -3,6 +3,7 @@
 //   common-ink ls                      every file and its revision
 //   common-ink cat <path>              a file's text
 //   common-ink write <path> [--base N] save stdin as a file's text (based on the revision read now, by default)
+//   common-ink rm <path> [--base N]    delete a file (undo brings it back)
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
@@ -47,7 +48,7 @@ function print(data: unknown, text: () => string) {
 }
 
 function changeLine(c: Change) {
-  return `${String(c.revision).padStart(5)}  ${ago(c.time).padEnd(11)} ${c.path}  ${diffStat(c)}  ${describeAuthor(c.author)}${c.undoes ? `  (undoes ${c.undoes})` : ""}`;
+  return `${String(c.revision).padStart(5)}  ${ago(c.time).padEnd(11)} ${c.path}  ${c.deleted ? "deleted" : diffStat(c)}  ${describeAuthor(c.author)}${c.undoes ? `  (undoes ${c.undoes})` : ""}`;
 }
 
 async function readStdin(): Promise<string> {
@@ -74,6 +75,14 @@ const commands: Record<string, () => Promise<void>> = {
     print(data, () => (data.status === "conflict" ? `Not saved: ${path} changed in the same lines since revision ${revision}.` : `${data.status} ${path} at revision ${data.file?.revision}`));
     if (status === 409) process.exitCode = 1;
   },
+  async rm() {
+    const baseFlag = take("--base", true);
+    const path = positional()[0];
+    const revision = typeof baseFlag === "string" ? Number(baseFlag) : (await api<WorkspaceFile>("GET", `/api/file${q({ path })}`)).data.revision;
+    const { status, data } = await api<WriteResult>("DELETE", "/api/file", { path, base: revision });
+    print(data, () => (data.status === "conflict" ? `Not deleted: ${path} changed since revision ${revision}.` : `deleted ${path} at revision ${data.file?.revision}`));
+    if (status === 409) process.exitCode = 1;
+  },
   async history() {
     const author = take("--author", true);
     const limit = take("--limit", true);
@@ -95,7 +104,7 @@ const commands: Record<string, () => Promise<void>> = {
 
 const run = commands[command ?? ""];
 if (!run) {
-  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...>  [--json]");
+  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...>  [--json]");
   process.exit(2);
 }
 await run().catch((err: Error) => {
