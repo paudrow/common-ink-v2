@@ -167,7 +167,7 @@ export class Notes {
 }
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
-function merge(mine: string, base: string, theirs: string): string | null {
+export function merge(mine: string, base: string, theirs: string): string | null {
   const regions = diff3Merge(lines(mine), lines(base), lines(theirs), { excludeFalseConflicts: true });
   if (regions.some((r) => r.conflict)) return null;
   return regions.flatMap((r) => r.ok ?? []).join("\n");
