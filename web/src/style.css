@@ -396,6 +396,8 @@ body {
 
 #history .message {
   color: #c2410c;
+}
+
 .drop {
   position: absolute;
   inset: 0;
