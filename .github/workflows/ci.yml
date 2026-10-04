@@ -83,7 +83,7 @@ jobs:
       - run: npm run deploy -- --var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN" --var "ACCESS_AUD:$ACCESS_AUD"
 
   # Every pull request gets a Preview at https://pr-<number>-common-ink-v2.<subdomain>.workers.dev, with
-  # its own Durable Objects (so its own notes), behind Cloudflare Access like production. It's filled
+  # its own Durable Objects (so its own notes), signed in as a dev user, like v1's Previews. It's filled
   # with sample notes and a "Try this PR" note (scripts/seed.ts), linked from one comment on the PR that
   # each push updates, and shown as a deployment on the PR. Dependabot's pull requests get none: they
   # can't read the deploy credentials.
@@ -101,8 +101,6 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
-      PREVIEW_ACCESS_AUD: ${{ vars.PREVIEW_ACCESS_AUD }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
@@ -115,9 +113,6 @@ jobs:
         run: |
           echo "::error::Add the CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable to this repository to enable Previews."
           exit 1
-      - name: Check Access settings
-        if: env.ACCESS_TEAM_DOMAIN == '' || env.PREVIEW_ACCESS_AUD == ''
-        run: echo "::warning::ACCESS_TEAM_DOMAIN or PREVIEW_ACCESS_AUD isn't set as a repository variable, so the Preview will answer every request with 401."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -127,7 +122,7 @@ jobs:
       - name: Deploy Preview
         id: deploy
         run: |
-          npm run preview -- --name "pr-$PR_NUMBER" --message "$PR_SHA" --var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN" --var "ACCESS_AUD:$PREVIEW_ACCESS_AUD" | tee preview.log
+          npm run preview -- --name "pr-$PR_NUMBER" --message "$PR_SHA" | tee preview.log
           url=$(grep -oE "https://pr-$PR_NUMBER-common-ink-v2\.[a-z0-9-]+\.workers\.dev" preview.log | head -1)
           [ -n "$url" ] || { echo "::error::No Preview URL in the wrangler output"; exit 1; }
           echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -142,7 +137,7 @@ jobs:
           scripts/preview-comment.sh "$PR_NUMBER" "### Preview
           **$URL**
 
-          Behind Cloudflare Access. It has its own notes: a few samples and a **Try this PR** note that says what to test.
+          Opens signed in, with its own notes: a few samples and a **Try this PR** note that says what to test. Change anything.
 
           <sub>Updated for ${PR_SHA:0:7} · [deploy log]($RUN_URL)</sub>"
       - name: Say so if it failed
