@@ -54,6 +54,13 @@ const keybindings: Declared<Keybinding[]> = {
     Array.isArray(v) && v.every((b) => b && typeof b === "object" && typeof b.key === "string" && b.key !== "" && (typeof b.command === "string" || b.command === null)),
 };
 
+const strings = (description: string): Declared<string[]> => ({
+  description,
+  default: [],
+  schema: { type: "array", items: { type: "string" } },
+  check: (v): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string"),
+});
+
 export const SETTINGS = {
   "editor.vim": bool("Vim keys in the editor.", true),
   "editor.lineNumbers": bool("Line numbers beside the text.", false),
@@ -61,6 +68,7 @@ export const SETTINGS = {
   "editor.fontSize": int("The editor's text size, in pixels.", 16, 10, 32),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
+  "plugins.disabled": strings('Plugins to turn off, by id, such as "history" or "commandBar.notes". Takes effect when the app reloads.'),
 };
 
 export type SettingName = keyof typeof SETTINGS;

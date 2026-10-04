@@ -15,10 +15,10 @@ export interface Provider {
   items(query: string): Item[];
 }
 
-/** The provider for a query, and the query without its prefix. */
-export function providerFor(text: string, providers: readonly Provider[]): { provider: Provider; query: string } {
-  const provider = [...providers].sort((a, b) => b.prefix.length - a.prefix.length).find((p) => text.startsWith(p.prefix))!;
-  return { provider, query: text.slice(provider.prefix.length).trim() };
+/** The provider for a query, and the query without its prefix. Null if no provider takes it. */
+export function providerFor(text: string, providers: readonly Provider[]): { provider: Provider; query: string } | null {
+  const provider = [...providers].sort((a, b) => b.prefix.length - a.prefix.length).find((p) => text.startsWith(p.prefix));
+  return provider ? { provider, query: text.slice(provider.prefix.length).trim() } : null;
 }
 
 const MAX_ITEMS = 50;
@@ -31,7 +31,9 @@ export class CommandBar {
   private selected = 0;
   private returnFocus: HTMLElement | null = null;
 
-  constructor(private providers: readonly Provider[]) {
+  private providers: Provider[] = [];
+
+  constructor() {
     this.root.id = "command-bar";
     this.root.hidden = true;
     this.input.type = "text";
@@ -47,6 +49,10 @@ export class CommandBar {
     this.input.addEventListener("input", () => this.render());
     this.input.addEventListener("keydown", (e) => this.key(e));
     this.input.addEventListener("blur", () => this.close(false));
+  }
+
+  provide(provider: Provider): void {
+    this.providers.push(provider);
   }
 
   get isOpen(): boolean {
@@ -68,9 +74,9 @@ export class CommandBar {
   }
 
   private render() {
-    const { provider, query } = providerFor(this.input.value, this.providers);
-    this.input.placeholder = provider.placeholder;
-    this.items = provider.items(query).slice(0, MAX_ITEMS);
+    const found = providerFor(this.input.value, this.providers);
+    this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's plugins are turned off";
+    this.items = found ? found.provider.items(found.query).slice(0, MAX_ITEMS) : [];
     this.selected = 0;
     this.list.replaceChildren(
       ...this.items.map((item, i) => {

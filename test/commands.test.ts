@@ -79,4 +79,5 @@ test("the command bar picks a provider by prefix", () => {
   const commands: Provider = { prefix: ">", placeholder: "", items: () => [] };
   assert.deepEqual(providerFor("> save", [notes, commands]), { provider: commands, query: "save" });
   assert.deepEqual(providerFor("plan", [notes, commands]), { provider: notes, query: "plan" });
+  assert.equal(providerFor("plan", [commands]), null);
 });

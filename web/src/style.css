@@ -30,7 +30,7 @@ body {
 
 body {
   display: grid;
-  grid-template: "notes editor history" 1fr "notes status status" auto / 14rem 1fr auto;
+  grid-template: "notes editor panel" 1fr "notes status status" auto / 14rem 1fr auto;
   background: var(--bg);
   color: var(--ink);
 }
@@ -198,7 +198,7 @@ body {
 
 @media (max-width: 40rem) {
   body {
-    grid-template: "editor" 1fr "history" auto "status" auto / 1fr;
+    grid-template: "editor" 1fr "panel" auto "status" auto / 1fr;
   }
   #notes {
     display: none;
@@ -262,8 +262,8 @@ body {
   align-self: center;
 }
 
-#history {
-  grid-area: history;
+#panel {
+  grid-area: panel;
   width: 22rem;
   max-width: 100vw;
   overflow: auto;
@@ -273,22 +273,22 @@ body {
   box-sizing: border-box;
 }
 
-#history[hidden] {
+#panel[hidden] {
   display: none;
 }
 
-#history header {
+#panel header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-#history h2 {
+#panel h2 {
   font-size: 0.875rem;
   margin: 0;
 }
 
-#history button {
+#panel button {
   font: inherit;
   color: inherit;
   background: none;
@@ -296,13 +296,13 @@ body {
   cursor: pointer;
 }
 
-#history .filters {
+#panel .filters {
   display: flex;
   gap: 0.5rem;
   margin: 0.75rem 0;
 }
 
-#history select {
+#panel select {
   font: inherit;
   color: var(--ink);
   background: var(--bg);
@@ -311,7 +311,7 @@ body {
   padding: 0.125rem 0.25rem;
 }
 
-#history .undo-all {
+#panel .undo-all {
   width: 100%;
   border: 1px solid var(--line) !important;
   border-radius: 4px;
@@ -319,18 +319,18 @@ body {
   margin-bottom: 0.75rem;
 }
 
-#history ol {
+#panel ol {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-#history li {
+#panel li {
   border-top: 1px solid var(--line);
   padding: 0.5rem 0;
 }
 
-#history .summary {
+#panel .summary {
   display: flex;
   gap: 0.5rem;
   width: 100%;
@@ -338,52 +338,52 @@ body {
   padding: 0;
 }
 
-#history .who {
+#panel .who {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#history .when,
-#history .stat,
-#history .meta {
+#panel .when,
+#panel .stat,
+#panel .meta {
   color: var(--muted);
 }
 
-#history .stat {
+#panel .stat {
   font-family: var(--mono);
 }
 
-#history .meta {
+#panel .meta {
   display: flex;
   justify-content: space-between;
   margin-top: 0.125rem;
 }
 
-#history .undo {
+#panel .undo {
   color: var(--accent) !important;
   padding: 0;
 }
 
-#history .diff {
+#panel .diff {
   font: 0.75rem/1.5 var(--mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0.5rem 0 0;
 }
 
-#history .diff .add {
+#panel .diff .add {
   color: #15803d;
 }
 
-#history .diff .del {
+#panel .diff .del {
   color: #b91c1c;
   text-decoration: line-through;
   text-decoration-color: rgb(185 28 28 / 0.4);
 }
 
-#history .message {
+#panel .message {
   color: #c2410c;
 }
 

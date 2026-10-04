@@ -3,17 +3,22 @@
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type DocPath, type DocSummary } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
-import { CommandBar, type Provider } from "./commandbar.ts";
+import { CommandBar } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
-import { commandForKey, Commands, keyFor } from "./commands.ts";
-import { fuzzyFilter } from "./fuzzy.ts";
+import { commandForKey, Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
-import { HistoryPanel } from "./history.ts";
-import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
+import { IS_MAC, learnLayout } from "./keys.ts";
 import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
+import { Panels } from "./panels.ts";
+import { activate, type PluginContext } from "./plugins.ts";
+import { commandsProviderPlugin, notesProviderPlugin } from "./plugins/command-bar.ts";
+import { historyPlugin } from "./plugins/history.ts";
 import { Workbench } from "./workbench.ts";
+
+/** The built-in plugins, in the order they start. */
+const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin];
 
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -32,6 +37,8 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let docs: DocSummary[] = [];
 let settings: Settings = DEFAULTS;
+const savedListeners: Array<(path: DocPath) => void> = [];
+const focusListeners: Array<(path: DocPath | null) => void> = [];
 
 const me = await fetch("/api/me")
   .then((r) => r.json())
@@ -48,13 +55,13 @@ const workbench = new Workbench($("#workbench"), {
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
     if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
-    void history.refresh();
+    for (const fn of focusListeners) fn(path);
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
   },
   created: () => void refreshList(),
   saved(path) {
-    void history.refresh();
+    for (const fn of savedListeners) fn(path);
     if (path === WORKSPACE_SETTINGS || path === USER_SETTINGS) void loadSettings();
   },
 });
@@ -175,35 +182,37 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
-  { id: "history.note", title: "Show history of this note", run: () => history.toggle("doc") },
-  { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
   { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
 );
 
-const notesProvider: Provider = {
-  prefix: "",
-  placeholder: "Open a note by name, or type > for commands",
-  items(query) {
-    const matches = fuzzyFilter(query, docs, (d) => name(d.path)).map((d) => ({ label: name(d.path), run: () => openFromBar(d.path) }));
-    const path = notePathFor(query);
-    if (path && !docs.some((d) => d.path === path)) matches.push({ label: `New note: ${name(path)}`, run: () => openFromBar(path) });
-    return matches;
+const bar = new CommandBar();
+const panels = new Panels($("#panel"));
+
+const plugins: PluginContext = {
+  me,
+  settings: () => settings,
+  commands: { register: (...c) => commands.register(...c), run: (id) => commands.run(id), all: () => commands.all() },
+  commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
+  panels: {
+    register: (p) => panels.register(p),
+    toggle: (id) => panels.toggle(id),
+    show: (id) => panels.show(id),
+    shown: () => panels.shown(),
+    refresh: (id) => panels.refresh(id),
   },
+  docs: { list: () => docs, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  workbench: {
+    open: (path, how) => workbench.open(path, how),
+    openPicked: openFromBar,
+    focusedPath: () => workbench.focusedPath,
+    focusedView: () => workbench.focusedView,
+    refreshFromServer: (paths) => workbench.refreshFromServer(paths),
+    label: docLabel,
+  },
+  events: { onSaved: (fn) => void savedListeners.push(fn), onFocus: (fn) => void focusListeners.push(fn) },
 };
-
-const commandsProvider: Provider = {
-  prefix: ">",
-  placeholder: "Run a command",
-  items: (query) =>
-    fuzzyFilter(query, commands.all(), (c) => c.title).map((c) => {
-      const key = keyFor(c.id, settings.keybindings);
-      return { label: c.title, detail: key && formatKeys(key), run: () => commands.run(c.id) };
-    }),
-};
-
-const bar = new CommandBar([notesProvider, commandsProvider]);
 
 window.addEventListener(
   "keydown",
@@ -285,17 +294,12 @@ window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
-const history = new HistoryPanel($("#history"), {
-  me,
-  focusedPath: () => workbench.focusedPath,
-  undone: (paths) => void workbench.refreshFromServer(paths),
-});
-
 try {
   docs = await api.list();
   const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
   const fallback = docs.find((d) => d.path === "Try this PR.md")?.path ?? docs.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
+  activate(BUILT_IN, plugins, settings["plugins.disabled"]);
   await workbench.start(asked);
   if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();
