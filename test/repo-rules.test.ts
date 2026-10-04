@@ -25,3 +25,14 @@ test("the product is called Common Ink everywhere", () => {
   const named = files.filter((f) => f !== "package-lock.json" && (oldName.test(f) || oldName.test(fs.readFileSync(path.join(root, f), "utf8"))));
   assert.deepEqual(named, []);
 });
+
+test("every stylesheet's braces balance, so no rule swallows the ones after it", () => {
+  for (const f of files.filter((f) => f.endsWith(".css"))) {
+    let depth = 0;
+    for (const ch of fs.readFileSync(path.join(root, f), "utf8")) {
+      depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+      assert.ok(depth >= 0, `${f} closes a brace it never opened`);
+    }
+    assert.equal(depth, 0, `${f} leaves a brace open`);
+  }
+});
