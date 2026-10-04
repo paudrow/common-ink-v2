@@ -525,3 +525,17 @@ body {
   padding: 0.375rem 0.75rem;
   color: var(--accent);
 }
+
+#unsent {
+  color: var(--muted);
+  cursor: default;
+}
+
+#unsent[data-state="waiting"] {
+  color: #b45309;
+}
+
+#unsent[data-state="conflict"] {
+  color: #c2410c;
+  cursor: pointer;
+}

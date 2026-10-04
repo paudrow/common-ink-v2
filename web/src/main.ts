@@ -18,6 +18,7 @@ import { commandsProviderPlugin, notesProviderPlugin } from "./plugins/command-b
 import { calendarPlugin, contactsPlugin } from "./plugins/google.ts";
 import { historyPlugin } from "./plugins/history.ts";
 import { todosPlugin } from "./plugins/todos/index.ts";
+import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 
 /** The built-in plugins, in the order they start. */
@@ -29,6 +30,7 @@ const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
+const unsentLine = $("#unsent");
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -45,36 +47,54 @@ let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
+const offline = new Offline(idbKV(), api);
+
+/** Who's signed in, remembered so the app knows offline too. */
 const me = await fetch("/api/me")
   .then((r) => r.json())
-  .then((who: { kind: string; email?: string }) => who.email)
-  .catch(() => undefined);
+  .then((who: { kind: string; email?: string }) => {
+    try {
+      if (who.email) localStorage.setItem("common-ink:me", who.email);
+    } catch {}
+    return who.email;
+  })
+  .catch(() => {
+    try {
+      return localStorage.getItem("common-ink:me") ?? undefined;
+    } catch {
+      return undefined;
+    }
+  });
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = docLabel;
 
-const workbench = new Workbench($("#workbench"), {
-  status(status, message) {
-    saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
-    saveLine.dataset.status = status ?? "";
+const workbench = new Workbench(
+  $("#workbench"),
+  {
+    status(status, message) {
+      saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
+      saveLine.dataset.status = status ?? "";
+    },
+    mode: (mode) => (modeLine.textContent = mode),
+    focus(path) {
+      if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
+      if (path) lastFile = path;
+      for (const fn of focusListeners) fn(path);
+      document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
+      renderList();
+    },
+    created: () => void refreshList(),
+    saved(path) {
+      for (const fn of savedListeners) fn(path);
+      if (path === WORKSPACE_SETTINGS || path === USER_SETTINGS) void loadSettings();
+    },
   },
-  mode: (mode) => (modeLine.textContent = mode),
-  focus(path) {
-    if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
-    if (path) lastFile = path;
-    for (const fn of focusListeners) fn(path);
-    document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
-    renderList();
-  },
-  created: () => void refreshList(),
-  saved(path) {
-    for (const fn of savedListeners) fn(path);
-    if (path === WORKSPACE_SETTINGS || path === USER_SETTINGS) void loadSettings();
-  },
-});
+  offline,
+);
 
 /** Read user and workspace settings, apply them, and say what in them was ignored. */
 async function loadSettings() {
-  const [user, workspace] = await Promise.all([USER_SETTINGS ? api.read(USER_SETTINGS) : null, api.read(WORKSPACE_SETTINGS)]);
+  const [user, workspace] = await Promise.all([USER_SETTINGS ? offline.read(USER_SETTINGS) : null, offline.read(WORKSPACE_SETTINGS)]);
   const u = parseSettings(user?.text ?? "");
   const w = parseSettings(workspace.text);
   settings = combine(u.settings, w.settings, pluginKeybindings);
@@ -87,14 +107,41 @@ async function loadSettings() {
 /** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
 async function openSettings(path: FilePath | null) {
   if (!path) return;
-  if (path !== DEFAULT_SETTINGS && (await api.read(path)).revision === 0) await api.write(path, SETTINGS_TEMPLATE, 0);
+  if (path !== DEFAULT_SETTINGS && (await offline.read(path)).revision === 0) await offline.write(path, SETTINGS_TEMPLATE, 0).catch(() => {});
   await workbench.open(path, { newTab: true });
 }
 
 async function refreshList() {
-  files = await api.list();
+  files = await offline.list();
   renderList();
+  if (offline.online) void offline.warm(files);
 }
+
+/** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
+async function renderUnsent() {
+  const unsent = await offline.unsent();
+  const clashing = unsent.filter((u) => u.conflict);
+  const parts = [offline.online ? "" : "Offline", unsent.length ? `${unsent.length} unsent ${unsent.length === 1 ? "change" : "changes"}` : ""].filter(Boolean);
+  unsentLine.textContent = parts.join(" · ") + (clashing.length ? ` (${clashing.length} can't be merged: open ${docLabel(clashing[0].path)})` : "");
+  unsentLine.title = unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`).join("\n");
+  unsentLine.dataset.state = clashing.length ? "conflict" : unsent.length || !offline.online ? "waiting" : "";
+}
+offline.onChange(() => void renderUnsent());
+unsentLine.addEventListener("click", async () => {
+  const clashing = (await offline.unsent()).find((u) => u.conflict);
+  if (clashing) await workbench.open(clashing.path, { newTab: true });
+});
+
+/** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
+async function sendUnsent() {
+  const { sent } = await offline.flush((path) => workbench.isOpen(path));
+  if (sent.length) {
+    await refreshList();
+    await workbench.refreshFromServer(sent);
+  }
+}
+window.setInterval(() => void sendUnsent(), 5000);
+window.addEventListener("online", () => void sendUnsent());
 
 function renderList() {
   const current = workbench.focusedPath;
@@ -241,7 +288,7 @@ const plugins: PluginContext = {
     contacts: api.contacts,
     connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
   },
-  files: { list: () => files, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  files: { list: () => files, fetchList: () => offline.list(), read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,
@@ -350,8 +397,13 @@ window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
+// The app's own files, kept by a service worker so it opens offline.
+if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
+
 try {
-  files = await api.list();
+  files = await offline.list();
+  void renderUnsent();
+  if (offline.online) void offline.warm(files);
   const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();

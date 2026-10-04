@@ -7,7 +7,7 @@ import { EditorSelection, Transaction, type Extension } from "@codemirror/state"
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath } from "../../worker/src/files.ts";
-import { api } from "./api.ts";
+import type { Offline } from "./offline.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
@@ -26,6 +26,8 @@ interface OpenFile {
   timer: number;
   /** Whether the server has it yet. A file opened by name starts out unsaved. */
   exists: boolean;
+  /** What the editor starts with: the file, or this browser's unsent edit to it. */
+  startText: string;
 }
 
 /** Something a plugin draws in a window's tab, such as History. */
@@ -70,11 +72,13 @@ export class Workbench {
   constructor(
     private host: HTMLElement,
     private on: WorkbenchEvents,
+    /** Files from the server, or as last seen while it can't be reached. */
+    private net: Offline,
   ) {}
 
   /** Load the saved layout and its files, then show `first` if asked. */
   async start(first?: FilePath | null): Promise<void> {
-    const saved = await api.read(L.LAYOUT_PATH);
+    const saved = await this.net.read(L.LAYOUT_PATH);
     this.layoutRevision = saved.revision;
     let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
@@ -187,7 +191,8 @@ export class Workbench {
     const path = this.focusedPath;
     const file = path && this.files.get(path);
     if (!file) return;
-    file.session.reload(await api.read(file.path));
+    file.session.reload(await this.net.read(file.path));
+    await this.net.release(file.path);
   }
 
   /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
@@ -195,7 +200,7 @@ export class Workbench {
     await Promise.all(
       paths.map(async (path) => {
         const file = this.files.get(path);
-        if (file && !file.session.dirty) file.session.reload(await api.read(path));
+        if (file && !file.session.dirty) file.session.reload(await this.net.read(path));
       }),
     );
   }
@@ -240,28 +245,34 @@ export class Workbench {
   async load(path: FilePath): Promise<OpenFile> {
     const open = this.files.get(path);
     if (open) return open;
-    const fetched = await api.read(path);
+    const fetched = await this.net.read(path);
+    // An edit this browser couldn't send before: it picks up where it left off, on its old base.
+    const held = await this.net.unsentFor(path);
     const again = this.files.get(path);
     if (again) return again;
+    const startText = held?.text ?? fetched.text;
     const file: OpenFile = {
       path,
       views: new Set(),
       timer: 0,
       exists: fetched.revision > 0,
+      startText,
       session: new Session(
-        fetched,
+        held ? { ...fetched, revision: held.base } : fetched,
         {
-          text: () => this.primary(file)?.state.doc.toString() ?? fetched.text,
+          text: () => this.primary(file)?.state.doc.toString() ?? startText,
           replace: (text) => {
             const view = this.primary(file);
             if (view) replaceText(view, text);
           },
         },
-        api.write,
+        (path, text, base) => this.net.write(path, text, base),
         (status) => this.statusChanged(file, status),
       ),
     };
     this.files.set(path, file);
+    if (held && !held.conflict) file.timer = window.setTimeout(() => void file.session.save(), 0);
+    if (held?.conflict) this.on.status("conflict", `${label(path)} has an unsent edit that clashes with the server's. :w tries again; :e! loads the server's version.`);
     return file;
   }
 
@@ -273,7 +284,11 @@ export class Workbench {
     if (status === "offline") {
       clearTimeout(file.timer);
       file.timer = window.setTimeout(() => void file.session.save(), RETRY_MS);
+      // Held until it reaches the server, so closing the page doesn't lose it.
+      const unsent = file.session.unsaved;
+      if (unsent) void this.net.hold(unsent);
     }
+    if (status === "saved" && !file.session.dirty) void this.net.release(file.path);
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
@@ -297,7 +312,7 @@ export class Workbench {
   }
 
   private makeEditor(group: L.GroupId, file: OpenFile): EditorView {
-    const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
+    const text = this.primary(file)?.state.doc.toString() ?? file.startText;
     const view: EditorView = new EditorView({
       state: createState(text, {
         json: !isNote(file.path),
@@ -340,8 +355,8 @@ export class Workbench {
   private async saveLayout() {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     try {
-      let result = await api.write(L.LAYOUT_PATH, text, this.layoutRevision);
-      if (result.status === "conflict" && result.file) result = await api.write(L.LAYOUT_PATH, text, result.file.revision);
+      let result = await this.net.write(L.LAYOUT_PATH, text, this.layoutRevision);
+      if (result.status === "conflict" && result.file) result = await this.net.write(L.LAYOUT_PATH, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
