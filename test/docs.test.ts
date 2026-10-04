@@ -150,3 +150,17 @@ test("doc paths are relative markdown or JSON paths", () => {
     assert.equal(parseDocPath(bad), null, String(bad));
   }
 });
+
+test("a database from the first deploy, with a notes table, keeps its notes and history", () => {
+  const db = memoryDb();
+  db.run("CREATE TABLE notes(path TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL)");
+  db.run("CREATE TABLE changes(revision INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL, author TEXT NOT NULL, base INTEGER NOT NULL, diff TEXT NOT NULL, time INTEGER NOT NULL)");
+  db.run("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  db.run("INSERT INTO notes VALUES ('Plan.md', '# Plan', 1)");
+  db.run(`INSERT INTO changes(path, author, base, diff, time) VALUES ('Plan.md', '{"kind":"user","email":"a@b.c"}', 0, '[]', 1)`);
+  const docs = new Docs(db);
+  assert.deepEqual(docs.read(PLAN), { path: PLAN, text: "# Plan", revision: 1 });
+  assert.equal(docs.write({ path: PLAN, text: "# Plan\n", base: 1, author: ada }).doc?.revision, 2);
+  new Docs(db);
+  assert.equal(docs.history(PLAN).length, 2);
+});

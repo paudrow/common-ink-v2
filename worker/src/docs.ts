@@ -75,18 +75,39 @@ export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
 
 const lines = (text: string) => text.split("\n");
 
-export class Docs {
-  constructor(
-    private db: Db,
-    private now: () => number = Date.now,
-  ) {
+const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
+
+/**
+ * The database's shape, one step at a time. Each runs once, in order, and the number done is kept in
+ * meta's "schema" row. Add steps at the end; never change one that has shipped.
+ */
+const MIGRATIONS: Array<(db: Db) => void> = [
+  // 1. Docs and their changes. The first deploy called the docs table "notes".
+  (db) => {
+    if (hasTable(db, "notes")) db.run("ALTER TABLE notes RENAME TO docs");
     db.run("CREATE TABLE IF NOT EXISTS docs(path TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL)");
     db.run(
       `CREATE TABLE IF NOT EXISTS changes(revision INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL,
         author TEXT NOT NULL, base INTEGER NOT NULL, diff TEXT NOT NULL, time INTEGER NOT NULL)`,
     );
     db.run("CREATE INDEX IF NOT EXISTS changes_by_path ON changes(path, revision)");
+  },
+];
+
+export class Docs {
+  constructor(
+    private db: Db,
+    private now: () => number = Date.now,
+  ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    db.tx(() => {
+      const [row] = db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'");
+      const from = Number(row?.value ?? 0);
+      MIGRATIONS.slice(from).forEach((migrate) => migrate(db));
+      if (from < MIGRATIONS.length) {
+        db.run("INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(MIGRATIONS.length));
+      }
+    });
   }
 
   list(): DocSummary[] {
