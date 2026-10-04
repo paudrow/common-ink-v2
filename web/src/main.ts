@@ -39,8 +39,8 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
 const pluginKeybindings: Keybinding[] = [];
-const savedListeners: Array<(path: DocPath) => void> = [];
-const focusListeners: Array<(path: DocPath | null) => void> = [];
+const savedListeners: Array<(path: FilePath) => void> = [];
+const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const me = await fetch("/api/me")
   .then((r) => r.json())
@@ -206,7 +206,7 @@ const plugins: PluginContext = {
     shown: () => panels.shown(),
     refresh: (id) => panels.refresh(id),
   },
-  docs: { list: () => docs, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  files: { list: () => files, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,

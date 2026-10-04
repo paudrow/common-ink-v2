@@ -102,7 +102,7 @@ export class Workbench {
    * Show a file in the focused group: in place of the tab on show, as Vim's `:e` does, or in a new tab.
    * The file on show is saved first; if it can't be, it stays.
    */
-  async open(path: DocPath, how: { newTab?: boolean; pos?: number; line?: number; jump?: boolean } = {}): Promise<void> {
+  async open(path: FilePath, how: { newTab?: boolean; pos?: number; line?: number; jump?: boolean } = {}): Promise<void> {
     const from = this.here();
     const leaving = this.focusedPath;
     if (!how.newTab && leaving && leaving !== path && !(await this.saveToLeave(leaving))) return;
@@ -268,9 +268,9 @@ export class Workbench {
     const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
     const view: EditorView = new EditorView({
       state: createState(text, {
-        json: !isNote(doc.path),
-        extensions: isNote(doc.path) ? this.noteExtensions : [],
-        readOnly: isReadOnly(doc.path),
+        json: !isNote(file.path),
+        extensions: isNote(file.path) ? this.noteExtensions : [],
+        readOnly: isReadOnly(file.path),
         settings: this.settings,
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),

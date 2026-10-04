@@ -2,7 +2,7 @@
 // date), see due dates at a glance in the editor, and every open todo in the Todos panel.
 import { RangeSetBuilder } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import { isNote, type DocPath, type Revision } from "../../../../worker/src/docs.ts";
+import { isNote, type FilePath, type Revision } from "../../../../worker/src/files.ts";
 import type { Plugin, PluginContext } from "../../plugins.ts";
 import { localToday, parseTodo, todosIn, toggleLine, when, type Todo, type When } from "./model.ts";
 
@@ -88,17 +88,17 @@ const GROUPS: Array<[When, string]> = [
 
 /** Every open todo in every note, by when it's due. Notes are read again only when their revision changes. */
 class TodosPanel {
-  private cache = new Map<DocPath, { revision: Revision; todos: Todo[] }>();
+  private cache = new Map<FilePath, { revision: Revision; todos: Todo[] }>();
 
   constructor(private ctx: PluginContext) {}
 
   async render(root: HTMLElement) {
-    const notes = (await this.ctx.docs.fetchList()).filter((d) => isNote(d.path));
+    const notes = (await this.ctx.files.fetchList()).filter((d) => isNote(d.path));
     await Promise.all(
       notes.map(async (n) => {
         if (this.cache.get(n.path)?.revision === n.revision) return;
-        const doc = await this.ctx.docs.read(n.path);
-        this.cache.set(n.path, { revision: doc.revision, todos: todosIn(doc.text) });
+        const file = await this.ctx.files.read(n.path);
+        this.cache.set(n.path, { revision: file.revision, todos: todosIn(file.text) });
       }),
     );
     const today = localToday();
