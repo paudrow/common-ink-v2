@@ -13,12 +13,12 @@ const you: Author = { kind: "user", email: "you@example.com" };
 test("a settings file's good settings are used and the rest are reported", () => {
   assert.deepEqual(parseSettings('{"$schema": "/schema/settings.json", "editor.fontSize": 18, "editor.vim": "yes", "colour": 1}'), {
     settings: { "editor.fontSize": 18 },
-    problems: ['"editor.vim" must be {"type":"boolean"}', 'Unknown setting "colour"'],
+    problems: ['"editor.vim" must be true or false', 'Unknown setting "colour"'],
   });
   assert.deepEqual(parseSettings(""), { settings: {}, problems: [] });
   assert.match(parseSettings("{oops").problems[0], /^Not valid JSON/);
   assert.deepEqual(parseSettings("[]").problems, ["Settings must be a JSON object"]);
-  assert.deepEqual(parseSettings('{"editor.fontSize": 99}').problems, ['"editor.fontSize" must be {"type":"integer","minimum":10,"maximum":32}']);
+  assert.deepEqual(parseSettings('{"editor.fontSize": 99}').problems, ['"editor.fontSize" must be a whole number from 10 to 32']);
 });
 
 test("workspace settings override user settings, which override the defaults; keybindings add up", () => {
