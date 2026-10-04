@@ -1,0 +1,18 @@
+# Weekly dependency updates. Minor and patch bumps come as one grouped PR per ecosystem; majors come
+# one at a time. GitHub reads this file only as YAML.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
