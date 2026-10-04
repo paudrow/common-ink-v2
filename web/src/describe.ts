@@ -1,5 +1,5 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
-import type { Author, Change } from "../../worker/src/docs.ts";
+import type { Author, Change } from "../../worker/src/files.ts";
 
 /** "you", a person's email, or an agent's name with who it worked for. */
 export function describeAuthor(author: Author, me?: string): string {

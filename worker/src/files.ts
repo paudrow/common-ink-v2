@@ -59,15 +59,15 @@ export interface Change {
   undoneBy?: Revision | null;
 }
 
-/** What undoing one change did. "conflict": the doc has changed since in the same lines, so nothing was done. */
+/** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
 export interface UndoResult {
   revision: Revision;
   status: "undone" | "unchanged" | "conflict" | "missing";
-  doc?: Doc;
+  file?: WorkspaceFile;
 }
 
 export interface HistoryQuery {
-  path?: DocPath;
+  path?: FilePath;
   /** An authorKey. */
   author?: string;
   /** Only changes older than this revision, for paging. */
@@ -125,11 +125,11 @@ const MIGRATIONS: Array<(db: Db) => void> = [
   (db) => db.run("ALTER TABLE changes ADD COLUMN undoes INTEGER"),
 ];
 
-type ChangeRow = { revision: number; path: DocPath; author: string; base: number; diff: string; time: number; undoes: number | null };
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null };
 const toChange = (row: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) });
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
-export class Docs {
+export class Files {
   constructor(
     private db: Db,
     private now: () => number = Date.now,
@@ -153,12 +153,12 @@ export class Docs {
     return this.db.all<WorkspaceFile>("SELECT path, text, revision FROM files WHERE path = ?", path)[0] ?? null;
   }
 
-  /** The doc's changes, oldest first. */
-  history(path: DocPath): Change[] {
+  /** The file's changes, oldest first. */
+  history(path: FilePath): Change[] {
     return this.db.all<ChangeRow>("SELECT * FROM changes WHERE path = ? ORDER BY revision", path).map(toChange);
   }
 
-  /** Changes across the workspace, newest first, optionally for one doc or one author. */
+  /** Changes across the workspace, newest first, optionally for one file or one author. */
   recent(q: HistoryQuery = {}): Change[] {
     const limit = Math.min(Math.max(1, q.limit ?? 50), 500);
     const rows = this.db.all<ChangeRow>(
@@ -193,7 +193,7 @@ export class Docs {
 
   /**
    * Undo changes, newest first, each as a new change by `author`. A change is undone by merging its
-   * reverse into the doc as it is now, so later edits elsewhere in the doc stay.
+   * reverse into the file as it is now, so later edits elsewhere in the file stay.
    */
   undo(revisions: Revision[], author: Author): UndoResult[] {
     return this.db.tx(() =>
@@ -207,10 +207,10 @@ export class Docs {
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
           const undone = merge(current?.text ?? "", after, before);
-          if (undone === null) return { revision, status: "conflict" as const, doc: current ?? undefined };
-          if (current && undone === current.text) return { revision, status: "unchanged" as const, doc: current };
+          if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
+          if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
           const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
-          return { revision, status: "undone" as const, doc: result.doc ?? undefined };
+          return { revision, status: "undone" as const, file: result.file ?? undefined };
         }),
     );
   }
@@ -237,7 +237,7 @@ export class Docs {
         if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
       }
       for (const { path, text, agent } of seed.edits ?? []) {
-        const current = added.has(path) ? this.read(path as DocPath) : null;
+        const current = added.has(path) ? this.read(path as FilePath) : null;
         if (current) this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
       }
       this.db.run("INSERT INTO meta(key, value) VALUES ('seed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", seed.id);

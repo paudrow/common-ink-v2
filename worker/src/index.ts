@@ -1,7 +1,7 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
 import { authorFor, identify, type Identity } from "./auth.ts";
-import type { Seed } from "./docs.ts";
+import type { Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
 import type { Workspace } from "./workspace.ts";
@@ -50,9 +50,9 @@ export default {
 
 /** The API routes, each running one workspace operation with its arguments from the query and the body. */
 const ROUTES: Record<string, OperationName> = {
-  "GET /api/docs": "list_docs",
-  "GET /api/doc": "read_doc",
-  "PUT /api/doc": "write_doc",
+  "GET /api/files": "list_files",
+  "GET /api/file": "read_file",
+  "PUT /api/file": "write_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
 };

@@ -33,9 +33,9 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   offline: "Not saved: can't reach the server. Trying again.",
 };
 
-let docs: DocSummary[] = [];
+let files: FileSummary[] = [];
 let historyTimer = 0;
-const name = (path: DocPath) => path.replace(/\.md$/, "");
+const name = (path: FilePath) => path.replace(/\.md$/, "");
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {
@@ -153,7 +153,7 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
-  { id: "history.note", title: "Show history of this note", run: () => history.toggle("doc") },
+  { id: "history.note", title: "Show history of this note", run: () => history.toggle("file") },
   { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
 );
 

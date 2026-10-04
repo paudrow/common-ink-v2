@@ -1,14 +1,14 @@
 // The history panel: the changes to the note on show (or to everything), who made each and what it
 // changed, with undo and redo. Filtering to one author and undoing everything shown is "undo what
 // the agent did".
-import { authorKey, type Change, type DocPath, type UndoResult } from "../../worker/src/docs.ts";
+import { authorKey, type Change, type FilePath, type UndoResult } from "../../worker/src/files.ts";
 import { ago, describeAuthor, diffLines, diffStat } from "./describe.ts";
 
 export interface HistoryDeps {
   me: string | undefined;
-  focusedPath(): DocPath | null;
-  /** Undo changed these docs on the server. */
-  undone(paths: DocPath[]): void;
+  focusedPath(): FilePath | null;
+  /** Undo changed these files on the server. */
+  undone(paths: FilePath[]): void;
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
@@ -18,7 +18,7 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<stri
 }
 
 export class HistoryPanel {
-  private scope: "doc" | "all" = "doc";
+  private scope: "file" | "all" = "file";
   private author = "";
   private changes: Change[] = [];
   private open = new Set<number>();
@@ -33,7 +33,7 @@ export class HistoryPanel {
     return !this.root.hidden;
   }
 
-  toggle(scope?: "doc" | "all"): void {
+  toggle(scope?: "file" | "all"): void {
     if (this.shown && (!scope || scope === this.scope)) {
       this.root.hidden = true;
       return;
@@ -45,7 +45,7 @@ export class HistoryPanel {
 
   async refresh(): Promise<void> {
     if (!this.shown) return;
-    const path = this.scope === "doc" ? this.deps.focusedPath() : null;
+    const path = this.scope === "file" ? this.deps.focusedPath() : null;
     const params = new URLSearchParams({ limit: "200" });
     if (path) params.set("path", path);
     if (this.author) params.set("author", this.author);
@@ -59,16 +59,16 @@ export class HistoryPanel {
     const results: UndoResult[] = res.ok ? await res.json() : [];
     const clashed = results.filter((r) => r.status === "conflict").length;
     this.message = clashed ? `${clashed} couldn't be undone: the same lines have changed since.` : "";
-    this.deps.undone([...new Set(results.flatMap((r) => (r.doc ? [r.doc.path] : [])))]);
+    this.deps.undone([...new Set(results.flatMap((r) => (r.file ? [r.file.path] : [])))]);
     await this.refresh();
   }
 
   private render() {
     const path = this.deps.focusedPath();
-    const scope = el<HTMLSelectElement>("select", { title: "Which changes" }, el("option", { value: "doc", textContent: path ? `This note` : "This note (none open)" }), el("option", { value: "all", textContent: "Everything" }));
+    const scope = el<HTMLSelectElement>("select", { title: "Which changes" }, el("option", { value: "file", textContent: path ? `This note` : "This note (none open)" }), el("option", { value: "all", textContent: "Everything" }));
     scope.value = this.scope;
     scope.addEventListener("change", () => {
-      this.scope = scope.value as "doc" | "all";
+      this.scope = scope.value as "file" | "all";
       void this.refresh();
     });
     const authors = new Map(this.changes.map((c) => [authorKey(c.author), describeAuthor(c.author, this.deps.me)]));

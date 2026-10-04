@@ -70,7 +70,7 @@ export class Workbench {
   }
 
   get focusedPath(): FilePath | null {
-    return L.activeDoc(this.focusedGroup);
+    return L.activeFile(this.focusedGroup);
   }
 
   get focusedView(): EditorView | null {
@@ -151,12 +151,12 @@ export class Workbench {
     file.session.reload(await api.read(file.path));
   }
 
-  /** Take in what changed on the server for these docs, where nothing is waiting to be saved. */
-  async refreshFromServer(paths: DocPath[]): Promise<void> {
+  /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
+  async refreshFromServer(paths: FilePath[]): Promise<void> {
     await Promise.all(
       paths.map(async (path) => {
-        const doc = this.docs.get(path);
-        if (doc && !doc.session.dirty) doc.session.reload(await api.read(path));
+        const file = this.files.get(path);
+        if (file && !file.session.dirty) file.session.reload(await api.read(path));
       }),
     );
   }
