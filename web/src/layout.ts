@@ -75,6 +75,17 @@ export function openTab(layout: Layout, path: DocPath, id: GroupId = layout.focu
   return { ...next, focus: id };
 }
 
+/** Show a doc in a group the way Vim's `:e` does: its tab if it has one, or in place of the tab on show. */
+export function showInTab(layout: Layout, path: DocPath, id: GroupId = layout.focus): Layout {
+  const next = withGroup(layout, id, (g) => {
+    const at = g.tabs.indexOf(path);
+    if (at >= 0) return { ...g, active: at };
+    if (!g.tabs.length) return { ...g, tabs: [path], active: 0 };
+    return { ...g, tabs: g.tabs.map((t, i) => (i === g.active ? path : t)) };
+  });
+  return { ...next, focus: id };
+}
+
 /** Close a tab. A group left with no tabs closes too, unless it's the only one. */
 export function closeTab(layout: Layout, id: GroupId, index: number): Layout {
   const only = groups(layout).length === 1;
@@ -99,6 +110,12 @@ export function split(layout: Layout, where: "right" | "down", path?: DocPath): 
   const added: Group = { kind: "group", id, tabs: show ? [show] : [], active: 0 };
   const dir = where === "right" ? "row" : "column";
   return { root: mapGroup(layout.root, g.id, (old) => ({ kind: "split", dir, children: [old, added] }))!, focus: id };
+}
+
+/** Show a group's tab by index and focus the group. */
+export function selectTab(layout: Layout, id: GroupId, index: number): Layout {
+  const next = withGroup(layout, id, (g) => (index >= 0 && index < g.tabs.length ? { ...g, active: index } : g));
+  return { ...next, focus: id };
 }
 
 /** Close every group but the focused one. */

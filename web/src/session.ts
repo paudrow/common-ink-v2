@@ -32,6 +32,16 @@ export class Session {
     this.baseText = doc.text;
   }
 
+  /** The revision the editor's text is based on: 0 until the doc is first saved. */
+  get revision(): Revision {
+    return this.base;
+  }
+
+  /** The text at that revision. */
+  get savedText(): string {
+    return this.baseText;
+  }
+
   get dirty(): boolean {
     return this.editor.text() !== this.baseText;
   }

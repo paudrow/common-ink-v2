@@ -3,7 +3,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
 import { Annotation, EditorState, Transaction } from "@codemirror/state";
-import { drawSelection, EditorView, keymap } from "@codemirror/view";
+import { drawSelection, EditorView, keymap, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
 import { diffPatch } from "node-diff3";
@@ -38,7 +38,10 @@ const highlight = HighlightStyle.define([
   { tag: [t.processingInstruction, t.contentSeparator, t.quote], color: "var(--muted)" },
 ]);
 
-export function createState(doc: string, onEdit: () => void, onBlur: () => void): EditorState {
+/** Marks a change copied over from another view of the same doc. */
+export const synced = Annotation.define<boolean>();
+
+export function createState(doc: string, onUpdate: (u: ViewUpdate) => void, onBlur: () => void): EditorState {
   return EditorState.create({
     doc,
     extensions: [
@@ -52,9 +55,7 @@ export function createState(doc: string, onEdit: () => void, onBlur: () => void)
       syntaxHighlighting(highlight),
       theme,
       EditorView.contentAttributes.of({ spellcheck: "true", autocapitalize: "sentences" }),
-      EditorView.updateListener.of((u) => {
-        if (u.docChanged && !u.transactions.some((tr) => tr.annotation(fromServer))) onEdit();
-      }),
+      EditorView.updateListener.of(onUpdate),
       EditorView.domEventHandlers({ blur: () => void onBlur() }),
     ],
   });

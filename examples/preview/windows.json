@@ -1,0 +1,12 @@
+{
+  "pr": 8,
+  "title": "Windows, tabs and splits",
+  "steps": [
+    "`:vs Reading list` opens Reading list in a split to the right. `:sp Shopping` splits that one below.",
+    "Ctrl-W h, j, k and l move between windows; Ctrl-W w goes to the next. The focused window's tab is underlined.",
+    "`:tabe Welcome` opens a tab; `gt` and `gT` (or `:tabn`, `:tabp`) move between tabs. `:e` and `gd` replace the tab on show, as in Vim.",
+    "Open one note in two windows and type in one: the other follows. Pause, and both say Saved.",
+    "`:q` closes the tab on show, Ctrl-W c the window, `:only` (Ctrl-W o) every other window. ⌘\\ splits right.",
+    "Reload the page: the windows and tabs come back as you left them. They're saved in `.common-ink/layout.json`, which ⌘P can open."
+  ]
+}

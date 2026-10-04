@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DocPath } from "../worker/src/docs.ts";
-import { activeDoc, closeTab, cycleGroup, cycleTab, emptyLayout, focusDirection, focused, groups, only, openTab, parseLayout, split, type Layout } from "../web/src/layout.ts";
+import { activeDoc, closeTab, showInTab, cycleGroup, cycleTab, emptyLayout, focusDirection, focused, groups, only, openTab, parseLayout, split, type Layout } from "../web/src/layout.ts";
 
 const [a, b, c] = ["A.md", "B.md", "C.md"] as DocPath[];
 const shown = (l: Layout) => groups(l).map((g) => `${g.id}:${g.tabs.join(",")}@${g.active}`);
@@ -67,4 +67,11 @@ test("a saved layout is read back, and anything malformed is refused or cleaned"
     root: { kind: "group", id: "g7", tabs: ["A.md"], active: 0 },
     focus: "g7",
   });
+});
+
+test(":e shows a doc in place of the tab on show, or switches to its tab", () => {
+  const l = openTab(openTab(emptyLayout(), a), b);
+  assert.deepEqual(shown(showInTab(l, c)), ["g1:A.md,C.md@1"]);
+  assert.deepEqual(shown(showInTab(l, a)), ["g1:A.md,B.md@0"]);
+  assert.deepEqual(shown(showInTab(emptyLayout(), a)), ["g1:A.md@0"]);
 });
