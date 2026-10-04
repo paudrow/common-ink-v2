@@ -70,7 +70,7 @@ export class Workbench {
   }
 
   get focusedPath(): FilePath | null {
-    return L.activeDoc(this.focusedGroup);
+    return L.activeFile(this.focusedGroup);
   }
 
   get focusedView(): EditorView | null {

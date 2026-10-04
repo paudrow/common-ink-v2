@@ -46,7 +46,7 @@ export function focused(layout: Layout): Group {
   return groups(layout).find((g) => g.id === layout.focus)!;
 }
 
-export function activeDoc(group: Group): FilePath | null {
+export function activeFile(group: Group): FilePath | null {
   return group.tabs[group.active] ?? null;
 }
 
@@ -105,7 +105,7 @@ export function closeTab(layout: Layout, id: GroupId, index: number): Layout {
 /** Split the focused group: a new group to its right or below it, showing `path` (by default, what the focused group shows). */
 export function split(layout: Layout, where: "right" | "down", path?: FilePath): Layout {
   const g = focused(layout);
-  const show = path ?? activeDoc(g);
+  const show = path ?? activeFile(g);
   const id = `g${Math.max(0, ...groups(layout).map((x) => Number(x.id.slice(1)) || 0)) + 1}`;
   const added: Group = { kind: "group", id, tabs: show ? [show] : [], active: 0 };
   const dir = where === "right" ? "row" : "column";

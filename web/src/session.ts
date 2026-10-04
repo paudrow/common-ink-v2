@@ -11,7 +11,7 @@ export interface Editor {
   replace(text: string): void;
 }
 
-export type WriteDoc = (path: FilePath, text: string, base: Revision) => Promise<WriteResult>;
+export type WriteFile = (path: FilePath, text: string, base: Revision) => Promise<WriteResult>;
 
 export class Session {
   readonly path: FilePath;
@@ -24,7 +24,7 @@ export class Session {
   constructor(
     file: WorkspaceFile,
     private editor: Editor,
-    private write: WriteDoc,
+    private write: WriteFile,
     private onStatus: (status: SaveStatus) => void = () => {},
   ) {
     this.path = file.path;
