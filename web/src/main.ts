@@ -9,6 +9,7 @@ import { fuzzyFilter } from "./fuzzy.ts";
 import { HistoryPanel } from "./history.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { endDrag, startDrag } from "./dnd.ts";
+import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
@@ -55,7 +56,36 @@ const workbench = new Workbench($("#workbench"), {
     renderList();
   },
   created: () => void refreshList(),
+  shortcut: (command) => {
+    const key = keyFor(command, KEYBINDINGS);
+    return key && formatKeys(key);
+  },
+  tabMenu: (x, y) => showMenu(x, y, tabMenuItems()),
 });
+
+/** The tab menu, for the focused window's tab on show: VSCode's items, each also a command. */
+function tabMenuItems(): Array<MenuItem | null> {
+  const g = L.focused(workbench.layout);
+  const tab = g.tabs[g.active];
+  const item = (command: string, label: string, disabled = false): MenuItem => {
+    const key = keyFor(command, KEYBINDINGS);
+    return { label, detail: key && formatKeys(key), disabled, run: () => commands.run(command) };
+  };
+  return [
+    item("tab.close", "Close"),
+    item("tab.closeOthers", "Close Others", g.tabs.length < 2),
+    item("tab.closeRight", "Close to the Right", g.active >= g.tabs.length - 1),
+    item("tab.closeLeft", "Close to the Left", g.active === 0),
+    item("tab.closeSaved", "Close Saved", !g.tabs.some((t) => workbench.isSaved(t))),
+    item("tab.closeAll", "Close All"),
+    SEPARATOR,
+    item("tab.keepOpen", "Keep Open", !tab?.preview),
+    item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
+    SEPARATOR,
+    item("window.splitRight", "Split Right"),
+    item("window.splitDown", "Split Down"),
+  ];
+}
 
 async function refreshList() {
   files = await api.list();
@@ -75,6 +105,11 @@ function renderList() {
       a.draggable = true;
       a.addEventListener("dragstart", (e) => startDrag(e, { item: L.fileTab(n.path) }, name(n.path)));
       a.addEventListener("dragend", endDrag);
+      // Double-click opens it kept, not as the preview tab.
+      a.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        void workbench.open(n.path, { newTab: true });
+      });
       a.addEventListener("click", (e) => {
         e.preventDefault();
         void workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
@@ -144,6 +179,20 @@ commands.register(
   { id: "go.forward", title: "Go forward", run: () => jumpOrStep("forward") },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
+  { id: "tab.closeOthers", title: "Close other tabs", run: () => workbench.closeTabs((_, i) => i !== L.focused(workbench.layout).active) },
+  { id: "tab.closeRight", title: "Close tabs to the right", run: () => workbench.closeTabs((_, i) => i > L.focused(workbench.layout).active) },
+  { id: "tab.closeLeft", title: "Close tabs to the left", run: () => workbench.closeTabs((_, i) => i < L.focused(workbench.layout).active) },
+  { id: "tab.closeSaved", title: "Close saved tabs", run: () => workbench.closeTabs((_, __, saved) => saved) },
+  { id: "tab.closeAll", title: "Close all tabs", run: () => workbench.closeTabs(() => true) },
+  { id: "tab.keepOpen", title: "Keep tab open", run: () => workbench.change((l) => L.keepTab(l, l.focus, L.focused(l).active)) },
+  {
+    id: "tab.copyPath",
+    title: "Copy path of tab",
+    run: () => {
+      const path = workbench.focusedPath;
+      if (path) void navigator.clipboard.writeText(path);
+    },
+  },
   { id: "tab.next", title: "Next tab", run: () => workbench.change((l) => L.cycleTab(l, 1)) },
   { id: "tab.previous", title: "Previous tab", run: () => workbench.change((l) => L.cycleTab(l, -1)) },
   { id: "window.splitRight", title: "Split right", run: () => workbench.split("right") },
