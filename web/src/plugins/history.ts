@@ -269,6 +269,8 @@ class HistoryPanel {
         el("span", { className: "when", textContent: ago(c.time), title: new Date(c.time).toLocaleString() }),
         el("span", { className: "stat", textContent: c.deleted ? "Deleted" : diffStat(c) }),
       ),
+      // What the change means, from the plugins that know (todos: "Completed 'Pay rent' (due Oct 1)").
+      ...[this.ctx.changes.summary(c)].filter((s) => s).map((s) => el("div", { className: "described", textContent: s })),
       el(
         "div",
         { className: "meta" },

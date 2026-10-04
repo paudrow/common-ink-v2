@@ -118,6 +118,7 @@ function contributions(e: PluginEntry): HTMLElement {
     ["Command bar", c.commandBar],
     ["Keybindings", c.keybindings],
     ["Editor", c.editor],
+    ["History", c.history],
   ];
   const shown = parts.filter(([, items]) => items.length);
   if (!shown.length) return el("p", { className: "plugin-adds muted", textContent: e.state === "failed" ? "It didn't start, so it adds nothing." : "Adds nothing yet." });

@@ -4,7 +4,7 @@
 // See docs/plugins.md for writing one.
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
+import type { Change, WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
 import type { Keybinding, Settings } from "../../worker/src/settings.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
@@ -33,6 +33,15 @@ export interface PluginContext {
   /** Default keybindings for a plugin's commands. Settings can rebind or unbind them. */
   keybindings: {
     add(...bindings: Keybinding[]): void;
+    /** A Vim normal-mode key sequence for a command, such as "gx". */
+    vim(keys: string, command: string): void;
+  };
+  /** What changes mean, in words, for history: each plugin describes the changes it knows about. */
+  changes: {
+    /** Add a describer: a few words for a change ("Completed 'Pay rent'"), or null if it isn't one this plugin knows. */
+    describe(describer: (change: Change) => string | null): void;
+    /** What the describers say about a change, or null if none of them knows it. */
+    summary(change: Change): string | null;
   };
   editor: {
     /** A CodeMirror extension for every note's editor. Add it while activating. */
