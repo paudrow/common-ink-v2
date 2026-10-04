@@ -88,6 +88,28 @@ test("a number out of range isn't written", async () => {
   assert.equal(input.getAttribute("aria-invalid"), "true");
 });
 
+test("a change that can't reach the server says so", async () => {
+  const root = window.document.createElement("div");
+  window.document.body.replaceChildren(root);
+  const ui = settingsEditor({
+    pathFor: () => ".common-ink/settings.json" as FilePath,
+    read: async () => ({ text: "", revision: 0 as Revision }),
+    write: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+    effective: () => DEFAULTS,
+    openJson: () => {},
+    changed: () => void ui.render(root),
+  });
+  await ui.render(root);
+  const box = root.querySelector<HTMLInputElement>('input[aria-label="editor.vim"]')!;
+  box.checked = false;
+  box.dispatchEvent(new window.Event("change"));
+  await settle();
+  await settle();
+  assert.match(root.querySelector('[role="alert"]')!.textContent!, /^Not saved: Failed to fetch/);
+});
+
 test("search narrows the settings, and the switch shows the other level", async () => {
   const { ui, root } = setup("");
   await ui.render(root);
