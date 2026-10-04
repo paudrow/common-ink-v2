@@ -32,6 +32,8 @@ export class CommandBar {
   private returnFocus: HTMLElement | null = null;
 
   private providers: Provider[] = [];
+  /** A one-off list to pick from (pick), in place of the providers until the bar closes. */
+  private choices: Provider | null = null;
 
   constructor() {
     this.root.id = "command-bar";
@@ -59,6 +61,12 @@ export class CommandBar {
     return !this.root.hidden;
   }
 
+  /** Pick one of `items`, filtered by what's typed, as the command bar does for notes. */
+  pick(placeholder: string, items: Item[]): void {
+    this.choices = { prefix: "", placeholder, items: (q) => items.filter((i) => `${i.label} ${i.detail ?? ""}`.toLowerCase().includes(q.toLowerCase())) };
+    this.open();
+  }
+
   open(text = ""): void {
     if (!this.isOpen) this.returnFocus = document.activeElement as HTMLElement | null;
     this.root.hidden = false;
@@ -70,11 +78,12 @@ export class CommandBar {
   close(restoreFocus = true): void {
     if (!this.isOpen) return;
     this.root.hidden = true;
+    this.choices = null;
     if (restoreFocus) this.returnFocus?.focus();
   }
 
   private render() {
-    const found = providerFor(this.input.value, this.providers);
+    const found = this.choices ? { provider: this.choices, query: this.input.value.trim() } : providerFor(this.input.value, this.providers);
     this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's plugins are turned off";
     this.items = found ? found.provider.items(found.query).slice(0, MAX_ITEMS) : [];
     this.selected = 0;

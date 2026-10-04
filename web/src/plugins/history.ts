@@ -6,12 +6,10 @@ import { authorKey, type Change, type FileDiff, type FilePath, type Revision, ty
 import type { Label } from "../../../worker/src/labels.ts";
 import { ago, describeAuthor, diffStat, runLines } from "../describe.ts";
 import { matchKeys } from "../keys.ts";
-import type { Plugin, PluginContext } from "../plugins.ts";
+import type { PluginContext, PluginModule } from "../plugins.ts";
 import { VERSION_PREFIX, versionView, versionViewId } from "../version.ts";
 
-export const historyPlugin: Plugin = {
-  id: "history",
-  description: "The history panel: changes with authors and diffs, revert, restore, labels, undo and redo.",
+export const historyPlugin: PluginModule = {
   activate(ctx) {
     const panel = new HistoryPanel(ctx);
     ctx.panels.register({ id: "history", title: "History", render: (root) => panel.render(root) });
@@ -269,7 +267,7 @@ class HistoryPanel {
         box,
         el("span", { className: "who", textContent: describeAuthor(c.author, this.ctx.me) }),
         el("span", { className: "when", textContent: ago(c.time), title: new Date(c.time).toLocaleString() }),
-        el("span", { className: "stat", textContent: diffStat(c) }),
+        el("span", { className: "stat", textContent: c.deleted ? "Deleted" : diffStat(c) }),
       ),
       el(
         "div",

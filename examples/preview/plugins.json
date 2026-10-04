@@ -1,11 +1,17 @@
 {
   "pr": 11,
-  "title": "Plugin API",
+  "title": "Plugins",
   "steps": [
-    "Everything works as before: ⌘P, ⌘⇧P and Show history now come from plugins on the public plugin API.",
-    "Show history of this note, then drag the History panel's title into a window: it opens there as a tab, and drops on an edge split the window, as for notes. Or run ⌘⇧P, Open History in a window.",
-    "Open user settings and add `\"plugins.disabled\": [\"history\"]`, then reload. The history commands are gone from ⌘⇧P. Remove it and reload to bring them back.",
-    "Try `\"plugins.disabled\": [\"commandBar.notes\"]`: ⌘P opens an empty bar that says its plugins are off, and `>` still lists commands.",
-    "Open default settings: `plugins.disabled` is listed with the rest."
+    "⌘⇧P, Show plugins. Every plugin is listed: the three built-ins (Open by name, Command list, History) and Word count, a workspace plugin this Preview starts with. Each says where it's from, whether it's on, and what it adds.",
+    "⌘⇧P, Show word count: the workspace plugin's panel. Its code is `.common-ink/plugins/word-count/index.js`, a file: find it with ⌘P, or Source in the Plugins view.",
+    "Customize a built-in: on Command list, press Customize. Its code opens as `.common-ink/plugins/commandBar.commands/index.js`. Change `placeholder: \"Run a command\"` to `placeholder: \"What next?\"`.",
+    "The status bar says `Plugin changes apply after reload · Reload`, and Command list is marked Reload needed. Press Reload, then ⌘⇧P: the bar says \"What next?\". The Plugins view lists Command list as Customized.",
+    "History shows your change to the copy like any other.",
+    "Revert to built-in deletes the copy (history shows it as Deleted, and Undo brings it back). Reload: ⌘⇧P says \"Run a command\" again.",
+    "Turn History off with its checkbox: it writes `plugins.disabled` to workspace settings, as a change by you. Reload, and the history commands are gone; the Plugins view still lists what History would add. Turn it back on.",
+    "Break a plugin: in word-count's index.js, add `throw new Error(\"oops\")` as the first line of `activate`, and reload. A notice says Word count didn't start, with Open in safe mode. The Plugins view shows it as Failed with the error, and everything else works.",
+    "Open in safe mode (`?safe=1`): only built-ins run, and Word count says Not loaded: safe mode. Leave safe mode from the banner, fix the file, reload.",
+    "Source on a built-in shows its code read-only. History's Customize is off: it uses the app's own modules, so a copy can't run on its own yet.",
+    "Open settings (⌘,): Plugins disabled says Applies after reload."
   ]
 }

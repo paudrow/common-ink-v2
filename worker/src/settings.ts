@@ -15,6 +15,8 @@ interface Declared<T> {
   schema: Record<string, unknown>;
   /** What a good value is, in words, for problems: "true or false". */
   expects: string;
+  /** A change only takes effect when the app reloads. */
+  reload?: true;
   check(value: unknown): value is T;
 }
 
@@ -75,7 +77,7 @@ export const SETTINGS = {
   "editor.fontSize": int("The editor's text size, in pixels.", 16, 10, 32),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
-  "plugins.disabled": strings('Plugins to turn off, by id, such as "history" or "commandBar.notes". Takes effect when the app reloads.'),
+  "plugins.disabled": { ...strings('Plugins to turn off, by id, such as "history" or "commandBar.notes".'), reload: true as const },
 };
 
 export type SettingName = keyof typeof SETTINGS;
@@ -99,7 +101,7 @@ export const schema = {
   type: "object",
   properties: {
     $schema: { type: "string" },
-    ...Object.fromEntries(Object.entries(SETTINGS).map(([k, d]) => [k, { ...d.schema, description: d.description, default: d.default }])),
+    ...Object.fromEntries(Object.entries(SETTINGS).map(([k, d]) => [k, { ...d.schema, description: d.description, default: d.default, ...((d as Declared<unknown>).reload ? { appliesAfterReload: true } : {}) }])),
   },
   additionalProperties: false,
 };

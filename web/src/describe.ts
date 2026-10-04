@@ -48,7 +48,8 @@ const NAMES: Array<[RegExp, string]> = [
 /** What to call a file: a note's path without ".md", or the name of a workspace JSON file. */
 export function docLabel(path: FilePath): string {
   if (isNote(path)) return path.replace(/\.md$/, "");
-  return NAMES.find(([re]) => re.test(path))?.[1] ?? path;
+  const plugin = /^\.common-ink\/plugins\/(.+)$/.exec(path);
+  return NAMES.find(([re]) => re.test(path))?.[1] ?? (plugin ? `Plugin ${plugin[1]}` : path);
 }
 
 /** A before and after, as the lines that changed. */

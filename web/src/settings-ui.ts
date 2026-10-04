@@ -28,6 +28,7 @@ interface Property {
   enum?: unknown[];
   minimum?: number;
   maximum?: number;
+  appliesAfterReload?: boolean;
 }
 
 /** "editor.fontSize" → section "Editor", title "Font size". */
@@ -43,6 +44,20 @@ const EMPTY = `{\n  "$schema": "/schema/settings.json"\n}\n`;
 
 /** One key set (or removed, with undefined) in a settings file's text. Null if the file isn't a JSON object. */
 export const withSetting = (text: string, key: string, value: unknown) => setTopLevelKey(text.trim() ? text : EMPTY, key, value);
+
+/**
+ * Write one key of a settings file (or remove it, with undefined), on top of whatever the file says
+ * now, as one change. If the file changes in between, it's read again and the key applied again.
+ */
+export async function writeSetting(io: Pick<SettingsUiDeps, "read" | "write">, path: FilePath, key: string, value: unknown): Promise<void> {
+  for (let tries = 0; tries < 3; tries++) {
+    const latest = await io.read(path);
+    const text = withSetting(latest.text, key, value);
+    if (text === null || text === latest.text) return;
+    const result = await io.write(path, text, latest.revision);
+    if (result.status !== "conflict") return;
+  }
+}
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -85,17 +100,10 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
       }
       const effective = deps.effective() as unknown as Record<string, unknown>;
 
-      /** Write one key on top of whatever the file says now, as one change. */
       const set = async (key: string, value: unknown) => {
         if (!path) return;
         try {
-          for (let tries = 0; tries < 3; tries++) {
-            const latest = await deps.read(path);
-            const text = withSetting(latest.text, key, value);
-            if (text === null || text === latest.text) break;
-            const result = await deps.write(path, text, latest.revision);
-            if (result.status !== "conflict") break;
-          }
+          await writeSetting(deps, path, key, value);
         } catch (err) {
           failed = `Not saved: ${(err as Error).message}. Try again when you're back online.`;
         }
@@ -142,6 +150,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
             { className: "setting-head" },
             el("span", { className: "setting-title", textContent: title }),
             el("code", { className: "setting-key", textContent: key }),
+            prop.appliesAfterReload ? el("span", { className: "badge reload", textContent: "Applies after reload" }) : "",
             here ? el("span", { className: "badge", textContent: "Modified", title: `Set in ${level} settings` }) : "",
             here ? focusable(el("button", { className: "reset", textContent: "Reset", title: `Remove "${key}" from ${level} settings`, onclick: () => void set(key, undefined) }), `reset:${key}`) : "",
           ),

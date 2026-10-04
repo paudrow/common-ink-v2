@@ -1,7 +1,7 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
 import { authorFor, identify, type Identity } from "./auth.ts";
-import type { Seed } from "./files.ts";
+import type { FilePath, Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
@@ -21,7 +21,7 @@ interface Env {
 }
 
 const HEADERS: Record<string, string> = {
-  "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -42,6 +42,14 @@ export default {
     const who = await identify(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD, devUser: env.DEV_USER });
     if (!who) return secure(new Response("Sign in through Cloudflare Access to use Common Ink.\n", { status: 401 }));
     const url = new URL(req.url);
+    // A workspace plugin's code, from its file, so the page can import it under `script-src 'self'`.
+    const plugin = /^\/plugins\/([a-zA-Z0-9][\w.-]*)\/index\.js$/.exec(url.pathname);
+    if (plugin && req.method === "GET") {
+      const store = env.WORKSPACE.get(env.WORKSPACE.idFromName("main")) as unknown as Store;
+      const file = await store.read(`.common-ink/plugins/${plugin[1]}/index.js` as FilePath);
+      if (!file) return secure(new Response("No such plugin\n", { status: 404 }));
+      return secure(new Response(file.text, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
+    }
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
     const store = workspace as unknown as Store;
@@ -58,6 +66,7 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
+  "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
   "POST /api/diff": "diff",
