@@ -11,7 +11,7 @@ export interface Section {
   title: string;
   steps: string[];
   /** Later versions of the section's notes, by named agents, so history has something to show. */
-  edits: Array<{ path: string; text: string; agent: string }>;
+  edits: Array<{ path: string; text: string; agent: string; label?: string }>;
   notes: Array<{ path: string; text: string }>;
 }
 
