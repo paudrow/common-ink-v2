@@ -1,41 +1,32 @@
-// The app: a list of notes and one vim editor. Edits save on a pause, on blur and on `:w`; `:e <note>`,
-// `gd` and the note list open notes; Ctrl-O and Ctrl-I step back and forward, within a note first.
+// The app: a list of notes, one vim editor and the command bar. Everything it does is a command
+// (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import type { Note, NotePath, NoteSummary, Revision, WriteResult } from "../../worker/src/notes.ts";
+import type { NotePath, NoteSummary } from "../../worker/src/notes.ts";
+import { api } from "./api.ts";
+import { CommandBar, type Provider } from "./commandbar.ts";
+import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
 import { createState, replaceText } from "./editor.ts";
+import { fuzzyFilter } from "./fuzzy.ts";
 import { Jumps, type Spot } from "./jumps.ts";
+import { formatKeys, learnLayout } from "./keys.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const PAUSE_MS = 1000;
 const RETRY_MS = 5000;
 
+const KEYBINDINGS: Keybinding[] = [
+  { key: "Mod-p", command: "quickOpen" },
+  { key: "Mod-Shift-p", command: "commandBar" },
+  { key: "Mod-s", command: "note.save" },
+];
+
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
-
-const api = {
-  async list(): Promise<NoteSummary[]> {
-    return (await ok(await fetch("/api/notes"))).json();
-  },
-  async read(path: NotePath): Promise<Note> {
-    const res = await fetch(`/api/note?path=${encodeURIComponent(path)}`);
-    return res.status === 404 ? { path, text: "", revision: 0 } : (await ok(res)).json();
-  },
-  async write(path: NotePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
-    const body = JSON.stringify({ path, text, base });
-    const res = await fetch("/api/note", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
-    return (res.status === 409 ? res : await ok(res)).json();
-  },
-};
-
-async function ok(res: Response): Promise<Response> {
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  return res;
-}
 
 const view = new EditorView({ parent: $("#editor") });
 let session: Session | null = null;
@@ -108,6 +99,13 @@ async function step(by: "back" | "forward") {
   if (to) await open(to.path, { pos: to.pos, jump: false });
 }
 
+async function reload() {
+  const current = session;
+  if (!current) return;
+  const note = await api.read(current.path);
+  if (current === session) current.reload(note);
+}
+
 async function renderList(refresh = false) {
   if (refresh) notes = await api.list();
   const current = session?.path;
@@ -160,7 +158,67 @@ function jumpOrStep(by: "back" | "forward") {
   } else void step(by);
 }
 
-Vim.defineEx("write", "w", () => void session?.save(true));
+function followLink() {
+  if (!session) return;
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  const path = noteLinkAt(line.text, head - line.from, session.path);
+  if (path) void open(path);
+}
+
+const commands = new Commands();
+commands.register(
+  { id: "quickOpen", title: "Open note…", run: () => bar.open() },
+  { id: "commandBar", title: "Show all commands", run: () => bar.open(">") },
+  { id: "note.new", title: "New note…", run: () => bar.open() },
+  { id: "note.save", title: "Save note", run: () => session?.save(true) },
+  { id: "note.reload", title: "Reload note from the server, discarding unsaved changes", run: reload },
+  { id: "note.followLink", title: "Follow link under cursor", run: followLink },
+  { id: "go.back", title: "Go back", run: () => jumpOrStep("back") },
+  { id: "go.forward", title: "Go forward", run: () => jumpOrStep("forward") },
+);
+
+const notesProvider: Provider = {
+  prefix: "",
+  placeholder: "Open a note by name, or type > for commands",
+  items(query) {
+    const matches = fuzzyFilter(query, notes, (n) => n.path.replace(/\.md$/, "")).map((n) => ({
+      label: n.path.replace(/\.md$/, ""),
+      run: () => open(n.path),
+    }));
+    const path = notePathFor(query);
+    if (path && !notes.some((n) => n.path === path)) matches.push({ label: `New note: ${path.replace(/\.md$/, "")}`, run: () => open(path) });
+    return matches;
+  },
+};
+
+const commandsProvider: Provider = {
+  prefix: ">",
+  placeholder: "Run a command",
+  items: (query) =>
+    fuzzyFilter(query, commands.all(), (c) => c.title).map((c) => {
+      const key = keyFor(c.id, KEYBINDINGS);
+      return { label: c.title, detail: key && formatKeys(key), run: () => commands.run(c.id) };
+    }),
+};
+
+const bar = new CommandBar([notesProvider, commandsProvider]);
+
+window.addEventListener(
+  "keydown",
+  (e) => {
+    const id = commandForKey(e, KEYBINDINGS);
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commands.run(id);
+  },
+  { capture: true },
+);
+window.addEventListener("focus", () => void learnLayout());
+void learnLayout();
+
+Vim.defineEx("write", "w", () => commands.run("note.save"));
 Vim.defineEx("edit", "e", (_cm: unknown, params: { argString?: string; input?: string }) => {
   const arg = (params.argString ?? "").trim();
   const force = /^e(dit)?!/.test(params.input ?? "") || arg.startsWith("!");
@@ -168,22 +226,12 @@ Vim.defineEx("edit", "e", (_cm: unknown, params: { argString?: string; input?: s
   if (name) {
     const path = notePathFor(name);
     if (path) void open(path);
-    return;
-  }
-  if (!session || (session.dirty && !force)) return;
-  const current = session;
-  void api.read(current.path).then((note) => current === session && current.reload(note));
+  } else if (session && (!session.dirty || force)) commands.run("note.reload");
 });
-Vim.defineAction("followLink", () => {
-  if (!session) return;
-  const head = view.state.selection.main.head;
-  const line = view.state.doc.lineAt(head);
-  const path = noteLinkAt(line.text, head - line.from, session.path);
-  if (path) void open(path);
-});
+Vim.defineAction("followLink", () => commands.run("note.followLink"));
 Vim.mapCommand("gd", "action", "followLink", {}, { context: "normal" });
-Vim.defineAction("jumpBack", () => jumpOrStep("back"));
-Vim.defineAction("jumpForward", () => jumpOrStep("forward"));
+Vim.defineAction("jumpBack", () => commands.run("go.back"));
+Vim.defineAction("jumpForward", () => commands.run("go.forward"));
 Vim.mapCommand("<C-o>", "action", "jumpBack", {}, { context: "normal" });
 Vim.mapCommand("<C-i>", "action", "jumpForward", {}, { context: "normal" });
 
