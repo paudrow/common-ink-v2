@@ -115,7 +115,9 @@ export class Workbench {
     const leaving = this.focusedPath;
     if (!how.newTab && leaving && leaving !== path && !(await this.saveToLeave(leaving))) return;
     await this.load(path);
-    const layout = how.newTab ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
+    // A view on show (History in a window, say) stays: the file opens in a tab beside it.
+    const onView = L.activeTab(this.focusedGroup) !== null && !leaving;
+    const layout = how.newTab || onView ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
     if (from && from.path !== path && how.jump !== false) this.jumpsFor(this.layout.focus).visit(from, path);
     this.setLayout(layout);
     if (how.pos !== undefined) {
