@@ -79,8 +79,8 @@ test("built-ins start in order, settings turn one off, and one that throws doesn
       ["c", "on", null],
     ],
   );
-  assert.deepEqual(entries[0].contributions, { commands: ["A"], views: [], commandBar: [], keybindings: [], editor: [], dataSources: [] });
-  assert.deepEqual(entries[1].contributions, { commands: ["B"], views: [], commandBar: [], keybindings: [], editor: [], dataSources: [] }, "a built-in that's off still says what it would add");
+  assert.deepEqual(entries[0].contributions, { commands: ["A"], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] });
+  assert.deepEqual(entries[1].contributions, { commands: ["B"], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] }, "a built-in that's off still says what it would add");
 });
 
 test("a command that throws is caught and shown on its plugin, not thrown at the app", async () => {
@@ -226,5 +226,5 @@ test("a dry run finds what a plugin adds without anything taking effect", () => 
       ctx.commands.register({ id: "x", title: "X", run: () => {} });
     },
   };
-  assert.deepEqual(dryRun(simple), { commands: ["X"], views: ["Panel"], commandBar: ["#"], keybindings: [], editor: [], dataSources: [] });
+  assert.deepEqual(dryRun(simple), { commands: ["X"], views: ["Panel"], commandBar: ["#"], keybindings: [], editor: [], history: [], dataSources: [] });
 });

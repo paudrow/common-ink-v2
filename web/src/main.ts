@@ -1,7 +1,7 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
@@ -52,6 +52,7 @@ let settings: Settings = DEFAULTS;
 const pluginKeybindings: Keybinding[] = [];
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
+const describers: Array<(change: Change) => string | null> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const me = await fetch("/api/me")
@@ -319,7 +320,11 @@ const plugins: PluginContext = {
     },
   },
   util: { fuzzyFilter, notePathFor: (name) => notePathFor(name) },
-  keybindings: { add: (...b) => void pluginKeybindings.push(...b) },
+  keybindings: { add: (...b) => void pluginKeybindings.push(...b), vim: (keys, command) => vimKey(keys, command) },
+  changes: {
+    describe: (d) => void describers.push(d),
+    summary: (change) => describers.map((d) => d(change)).find((s) => s) ?? null,
+  },
   editor: { extend: (e) => void workbench.noteExtensions.push(e) },
   commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
   panels: {
