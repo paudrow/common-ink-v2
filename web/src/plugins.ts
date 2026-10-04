@@ -8,6 +8,7 @@ import type { Change, WorkspaceFile, FilePath, FileSummary, Revision, WriteResul
 import type { SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Keybinding, Settings } from "../../worker/src/settings.ts";
 import type { Contact, Event } from "../../worker/src/sources.ts";
+import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
 
@@ -71,6 +72,8 @@ export interface PluginContext {
     fetchList(): Promise<FileSummary[]>;
     read(path: FilePath): Promise<WorkspaceFile>;
     write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
+    /** Upload a file (an image, a PDF…); its address goes in notes as /uploads/<name>. Throws if it can't be uploaded. */
+    upload(name: string, data: Blob): Promise<UploadDone>;
   };
   /** Data sources: outside data shown but not stored as files. They answer for the signed-in person. */
   sources: {
@@ -95,6 +98,8 @@ export interface PluginContext {
     /** Take in server changes to these files, where nothing's waiting to be saved. */
     refreshFromServer(paths: FilePath[]): Promise<void>;
     label(path: FilePath): string;
+    /** A short message over the focused window, with buttons. */
+    notice(message: string, actions?: Array<{ label: string; run(): unknown }>): void;
   };
   /** Helpers the built-ins use, so a copy of one runs as a workspace plugin with nothing to import. */
   util: {

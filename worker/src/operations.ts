@@ -4,6 +4,7 @@ import type { SourceStatus } from "./data-sources.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact, Event } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
+import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
 import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
@@ -19,6 +20,7 @@ export interface Store {
   combined(revisions: Revision[]): Promise<FileDiff[]> | FileDiff[];
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
+  upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
 }
 
 /** The person whose data sources an author reads: themselves, or whoever an agent works for. */
@@ -242,6 +244,32 @@ export const OPERATIONS = {
         if (result.status !== "conflict") return { name, path, revision: at };
       }
       throw new OperationError("The labels file kept changing; try again");
+    },
+  }),
+  list_uploads: op<Record<string, never>>({
+    description: "Uploaded files (images, PDFs and others), each with its name, size, type and the address notes link it by, like ![photo](/uploads/photo.png).",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store) => parseUploads((await store.read(UPLOADS_PATH))?.text ?? "").map((u) => ({ ...u, url: uploadUrl(u.name) })),
+  }),
+  upload_file: op<{ name: string; data: ArrayBuffer }>({
+    description:
+      "Upload a file, given its name and its bytes in base64. It's recorded as a change by you; link to it from a note with the url you get back, like ![photo](/uploads/photo.png). A name that's taken by another file gets a number added.",
+    input: { type: "object", properties: { name: { type: "string" }, data: { type: "string", description: "The file's bytes, base64" } }, required: ["name", "data"] },
+    parse: (a) => {
+      if (typeof a.name !== "string" || !a.name.trim()) return fail('"name" must be the file\'s name, like "photo.png"');
+      if (typeof a.data !== "string") return fail('"data" must be the file\'s bytes in base64');
+      try {
+        const bytes = Uint8Array.from(atob(a.data), (c) => c.charCodeAt(0));
+        return ok({ name: a.name, data: bytes.buffer });
+      } catch {
+        return fail('"data" isn\'t valid base64');
+      }
+    },
+    run: async (store, { name, data }, author) => {
+      const result = await store.upload(name, data, author);
+      if (result.status === "refused") throw new OperationError(result.error);
+      return { status: result.status, ...result.upload, url: result.url };
     },
   }),
 };

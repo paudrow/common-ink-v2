@@ -1,16 +1,25 @@
 import { DataSources, type SourceSettings } from "../worker/src/data-sources.ts";
 import { Files } from "../worker/src/files.ts";
 import type { Store } from "../worker/src/operations.ts";
+import { addUpload, type Blobs } from "../worker/src/uploads.ts";
 import { memoryDb } from "./sqlite.ts";
+
+/** R2, as a Map from key to bytes. */
+export function memoryBlobs(): Blobs & { data: Map<string, ArrayBuffer> } {
+  const data = new Map<string, ArrayBuffer>();
+  return { data, has: async (k) => data.has(k), put: async (k, d) => void data.set(k, d) };
+}
 
 /** A workspace the way the Durable Object offers it, on in-memory SQLite, with recorded data sources unless told otherwise. */
 export function memoryStore(settings: SourceSettings = { fixtures: true, google: null }, fetcher?: typeof fetch) {
   const db = memoryDb();
   const files = new Files(db);
   const sources = new DataSources(db, settings, fetcher);
-  const store: Store & { files: Files; sources: DataSources } = {
+  const blobs = memoryBlobs();
+  const store: Store & { files: Files; sources: DataSources; blobs: typeof blobs } = {
     files,
     sources,
+    blobs,
     list: () => files.list(),
     read: (p) => files.read(p),
     write: (w) => files.write(w),
@@ -22,6 +31,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     sourceStatus: (e) => sources.status(e),
     events: (e, f, t) => sources.events(e, f, t),
     contacts: (e, q) => sources.contacts(e, q),
+    upload: (n, d, a) => addUpload(files, blobs, n, d, a),
   };
   return store;
 }

@@ -6,12 +6,15 @@ import { DurableObject } from "cloudflare:workers";
 import { DataSources } from "./data-sources.ts";
 import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
 import type { Granted } from "./google.ts";
+import { addUpload, type Blobs } from "./uploads.ts";
 
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   /** "1" in Previews and local development: data sources answer with recorded fixtures. */
   DATA_FIXTURES?: string;
+  /** Uploads' bytes, by hash. */
+  UPLOADS: R2Bucket;
 }
 
 export class Workspace extends DurableObject<WorkspaceEnv> {
@@ -85,6 +88,16 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
     return this.files.restore(path, at, author);
+  }
+
+  /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */
+  upload(name: string, data: ArrayBuffer, author: Author) {
+    const bucket = this.env.UPLOADS;
+    const blobs: Blobs = {
+      has: async (key) => (await bucket.head(key)) !== null,
+      put: async (key, bytes, type) => void (await bucket.put(key, bytes, { httpMetadata: { contentType: type } })),
+    };
+    return addUpload(this.files, blobs, name, data, author);
   }
 
   seed(seed: Seed) {

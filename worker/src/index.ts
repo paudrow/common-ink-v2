@@ -8,6 +8,7 @@ import { runOperation, type OperationName, type Store } from "./operations.ts";
 import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type SignInConfig } from "./sign-in.ts";
 import { cookie } from "./session.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
+import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -77,7 +78,16 @@ export default {
       if (!file) return secure(new Response("No such plugin\n", { status: 404 }));
       return secure(new Response(file.text, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
+    // An uploaded file, by name, from R2.
+    if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
+    // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
+    if (url.pathname === "/api/upload" && req.method === "PUT") {
+      const size = Number(req.headers.get("Content-Length") ?? "0");
+      if (size > MAX_UPLOAD_BYTES) return secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
+      const result = await workspace.upload(url.searchParams.get("name") ?? "", await req.arrayBuffer(), authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+      return secure(result.status === "refused" ? json({ error: result.error }, 400) : json(result));
+    }
     if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
       await workspace.disconnectGoogle(who.email);
       return secure(json({ ok: true }));
@@ -126,6 +136,39 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   if (!result.ok) return json({ error: result.error }, 400);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
   return json(result.value, (result.value as { status?: string }).status === "conflict" ? 409 : 200);
+}
+
+/**
+ * An upload's bytes, under the type its name gives. Every one is served sandboxed, so an SVG or a PDF
+ * opened by itself can't run script as this site; anything that isn't an image, audio, video, PDF or
+ * plain text downloads instead of opening.
+ */
+async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  let name: string;
+  try {
+    name = decodeURIComponent(url.pathname.slice("/uploads/".length));
+  } catch {
+    return secure(new Response("Not found\n", { status: 404 }));
+  }
+  const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
+  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
+  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return secure(new Response(null, { status: 304 }));
+  const blob = await env.UPLOADS.get(blobKey(upload.hash));
+  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  const out = secure(
+    new Response(blob.body, {
+      headers: {
+        "Content-Type": upload.type,
+        "Content-Length": String(upload.size),
+        "Content-Disposition": `${showsInline(upload.type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
+        ETag: `"${upload.hash}"`,
+        // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
+        "Cache-Control": "private, no-cache",
+      },
+    }),
+  );
+  out.headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
+  return out;
 }
 
 let seeded = false;

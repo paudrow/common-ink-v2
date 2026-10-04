@@ -18,11 +18,16 @@
   // One Durable Object per workspace, each with its own SQLite database.
   "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace"] }],
+  // Uploads' bytes, by hash (worker/src/uploads.ts). Locally, wrangler dev keeps them on disk.
+  "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "common-ink-v2-uploads" }],
   "observability": { "enabled": true },
   // Each Preview has its own Durable Objects, so its own notes, filled from the build's seed.json. It
   // signs you in as a dev user, so there's nothing real in it to reach.
   "previews": {
     "vars": { "SEED": "1", "DEV_USER": "preview@common-ink", "DATA_FIXTURES": "1" },
-    "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] }
+    "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] },
+    // One bucket for every Preview, apart from production's. Bytes are kept by hash and each Preview's
+    // uploads file names its own, so Previews only see what they uploaded.
+    "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "common-ink-v2-uploads-preview" }]
   }
 }

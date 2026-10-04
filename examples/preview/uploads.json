@@ -1,0 +1,12 @@
+{
+  "pr": 15,
+  "title": "Uploads",
+  "steps": [
+    "Open Trip photos. Drag an image from your desktop into it, or copy one and paste it: \"Uploading …\" shows where it goes, then becomes `![name](/uploads/name.png)`. Drop a PDF and it's a link, `[lease.pdf](/uploads/lease.pdf)`.",
+    "⌘⇧P, Upload a file…: pick one or more files, and their links go at the cursor.",
+    "⌘⇧P, Show uploads: every upload, newest first, with thumbnails for images. Click a name to open it in a new browser tab; Link here puts a link at the cursor in the note you're in.",
+    "Upload the same file again: it's kept once, under the same name. Upload a different file with a name that's taken: it gets a number, like photo-2.png.",
+    "Show history of everything: each upload is a change by you to `.common-ink/uploads.json`. Undo one, and its address stops working; redo brings it back.",
+    "Agents can upload too: the MCP tool `upload_file` (base64) and `common-ink upload <file>`."
+  ]
+}

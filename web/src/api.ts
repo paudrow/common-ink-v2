@@ -2,6 +2,10 @@
 import type { SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
+import type { Upload } from "../../worker/src/uploads.ts";
+
+/** An upload as the page knows it: what it is, and its address. */
+export type UploadDone = Upload & { url: string };
 
 async function ok(res: Response): Promise<Response> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -16,6 +20,13 @@ export const api = {
   async read(path: FilePath): Promise<WorkspaceFile> {
     const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
     return res.status === 404 ? { path, text: "", revision: 0 } : (await ok(res)).json();
+  },
+  /** Upload a file's bytes. Refusals (empty, too big) come back as errors that say why. */
+  async upload(name: string, data: Blob): Promise<UploadDone> {
+    const res = await fetch(`/api/upload?name=${encodeURIComponent(name)}`, { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: data });
+    if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+    const result = (await res.json()) as { upload: Upload; url: string };
+    return { ...result.upload, url: result.url };
   },
   /** Delete a file as of the revision you read. A change like any other: undo brings it back. */
   async delete(path: FilePath, base: Revision): Promise<WriteResult> {
