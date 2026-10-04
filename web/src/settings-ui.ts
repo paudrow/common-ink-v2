@@ -61,6 +61,8 @@ const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
 /** The settings editor, one view with a User | Workspace switch, as in VSCode. Set `level` before showing it. */
 export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
   let query = "";
+  /** Why the last change didn't save, shown once. */
+  let failed = "";
   const view = {
     id: SETTINGS_VIEW,
     title: "Settings",
@@ -86,12 +88,16 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
       /** Write one key on top of whatever the file says now, as one change. */
       const set = async (key: string, value: unknown) => {
         if (!path) return;
-        for (let tries = 0; tries < 3; tries++) {
-          const latest = await deps.read(path);
-          const text = withSetting(latest.text, key, value);
-          if (text === null || text === latest.text) break;
-          const result = await deps.write(path, text, latest.revision);
-          if (result.status !== "conflict") break;
+        try {
+          for (let tries = 0; tries < 3; tries++) {
+            const latest = await deps.read(path);
+            const text = withSetting(latest.text, key, value);
+            if (text === null || text === latest.text) break;
+            const result = await deps.write(path, text, latest.revision);
+            if (result.status !== "conflict") break;
+          }
+        } catch (err) {
+          failed = `Not saved: ${(err as Error).message}. Try again when you're back online.`;
         }
         deps.changed();
       };
@@ -168,11 +174,13 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
       root.replaceChildren(
         el("div", { className: "settings-top" }, levelSwitch, search, toJson),
         path ? "" : el("p", { className: "message", textContent: "User settings need you signed in." }),
+        failed ? el("p", { className: "setting-problem", role: "alert", textContent: failed }) : "",
         broken ? el("p", { className: "message", textContent: "This settings file isn't a JSON object, so changes here can't be saved. Fix it in the JSON." }) : "",
         ...groups,
         none,
       );
       filter();
+      failed = "";
       // A Reset button goes once it's used: the keyboard goes to its setting's control.
       const find = (id: string) => root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(id)}"]`);
       const back = focusId && (find(focusId) ?? find(focusId.replace(/^reset:/, "control:")));
