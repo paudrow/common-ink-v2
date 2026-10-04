@@ -1,0 +1,10 @@
+{
+  "pr": 12,
+  "title": "Todos",
+  "steps": [
+    "Open Chores. Due dates are coloured: overdue in orange, today in blue, later in grey.",
+    "Put the cursor on a todo and press ⌘Enter (Ctrl+Enter off a Mac) to check it off. Do it on Water the plants: it repeats every 3 days, so a new one appears above, due 3 days after the old date.",
+    "⌘⇧P, Show todos: every open todo in every note, under Overdue, Today, Upcoming and No date. Click one to jump to its line.",
+    "Write your own: `- [ ] Call the bank due:2026-12-01 every:month`. `every:` takes day, weekday, week, month or year, with an optional count, like `every:2weeks`."
+  ]
+}

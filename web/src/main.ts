@@ -4,7 +4,7 @@ import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type DocPath, type DocSummary } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
 import { commandForKey, Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { IS_MAC, learnLayout } from "./keys.ts";
@@ -15,10 +15,11 @@ import { Panels } from "./panels.ts";
 import { activate, type PluginContext } from "./plugins.ts";
 import { commandsProviderPlugin, notesProviderPlugin } from "./plugins/command-bar.ts";
 import { historyPlugin } from "./plugins/history.ts";
+import { todosPlugin } from "./plugins/todos/index.ts";
 import { Workbench } from "./workbench.ts";
 
 /** The built-in plugins, in the order they start. */
-const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin];
+const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin, todosPlugin];
 
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -37,6 +38,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let docs: DocSummary[] = [];
 let settings: Settings = DEFAULTS;
+const pluginKeybindings: Keybinding[] = [];
 const savedListeners: Array<(path: DocPath) => void> = [];
 const focusListeners: Array<(path: DocPath | null) => void> = [];
 
@@ -71,7 +73,7 @@ async function loadSettings() {
   const [user, workspace] = await Promise.all([USER_SETTINGS ? api.read(USER_SETTINGS) : null, api.read(WORKSPACE_SETTINGS)]);
   const u = parseSettings(user?.text ?? "");
   const w = parseSettings(workspace.text);
-  settings = combine(u.settings, w.settings);
+  settings = combine(u.settings, w.settings, pluginKeybindings);
   workbench.applySettings(settings);
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
@@ -194,6 +196,8 @@ const plugins: PluginContext = {
   me,
   settings: () => settings,
   commands: { register: (...c) => commands.register(...c), run: (id) => commands.run(id), all: () => commands.all() },
+  keybindings: { add: (...b) => void pluginKeybindings.push(...b) },
+  editor: { extend: (e) => void workbench.noteExtensions.push(e) },
   commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
   panels: {
     register: (p) => panels.register(p),
@@ -202,7 +206,7 @@ const plugins: PluginContext = {
     shown: () => panels.shown(),
     refresh: (id) => panels.refresh(id),
   },
-  docs: { list: () => docs, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  docs: { list: () => docs, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,
@@ -300,6 +304,8 @@ try {
   const fallback = docs.find((d) => d.path === "Try this PR.md")?.path ?? docs.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
   activate(BUILT_IN, plugins, settings["plugins.disabled"]);
+  // Plugins have added their keybindings; settings come after them.
+  await loadSettings();
   await workbench.start(asked);
   if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();

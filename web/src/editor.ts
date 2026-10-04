@@ -3,7 +3,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Transaction, type Extension } from "@codemirror/state";
 import { drawSelection, EditorView, keymap, lineNumbers, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
@@ -64,7 +64,7 @@ export function reconfigure(view: EditorView, settings: EditorSettings) {
 
 export function createState(
   doc: string,
-  opts: { json: boolean; readOnly: boolean; settings: EditorSettings; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
+  opts: { json: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
 ): EditorState {
   const s = extensionsFor(opts.settings);
   return EditorState.create({
@@ -82,6 +82,7 @@ export function createState(
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),
+      opts.extensions,
       EditorView.contentAttributes.of(opts.json ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
       EditorView.updateListener.of(opts.onUpdate),
       EditorView.domEventHandlers({ blur: () => void opts.onBlur() }),

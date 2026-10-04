@@ -1,9 +1,10 @@
 // The plugin API. Built-in features use exactly this (ADR 0004): the command bar's providers and the
 // history panel are plugins, and settings can turn any plugin off ("plugins.disabled"). See
 // docs/plugins.md for writing one.
+import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Doc, DocPath, DocSummary, Revision, WriteResult } from "../../worker/src/docs.ts";
-import type { Settings } from "../../worker/src/settings.ts";
+import type { Keybinding, Settings } from "../../worker/src/settings.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
 
@@ -26,6 +27,14 @@ export interface PluginContext {
     run(id: string): boolean;
     all(): Command[];
   };
+  /** Default keybindings for a plugin's commands. Settings can rebind or unbind them. */
+  keybindings: {
+    add(...bindings: Keybinding[]): void;
+  };
+  editor: {
+    /** A CodeMirror extension for every note's editor. Add it while activating. */
+    extend(extension: Extension): void;
+  };
   commandBar: {
     provide(provider: Provider): void;
     open(text?: string): void;
@@ -44,12 +53,14 @@ export interface PluginContext {
   docs: {
     /** Every doc, as last listed. */
     list(): DocSummary[];
+    /** Every doc, asked of the server now. */
+    fetchList(): Promise<DocSummary[]>;
     read(path: DocPath): Promise<Doc>;
     write(path: DocPath, text: string, base: Revision): Promise<WriteResult>;
   };
   workbench: {
-    /** Open a doc in place of the tab on show, or in a new tab. */
-    open(path: DocPath, how?: { newTab?: boolean }): Promise<void>;
+    /** Open a doc in place of the tab on show, or in a new tab, optionally at a line (0-based). */
+    open(path: DocPath, how?: { newTab?: boolean; line?: number }): Promise<void>;
     /** Open a doc picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
     openPicked(path: DocPath): void;
     focusedPath(): DocPath | null;
