@@ -8,6 +8,7 @@ import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, 
 import { commandForKey, Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { IS_MAC, learnLayout } from "./keys.ts";
+import { endDrag, startDrag } from "./dnd.ts";
 import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
@@ -37,6 +38,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
+let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
@@ -55,6 +57,7 @@ const workbench = new Workbench($("#workbench"), {
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
     if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
+    if (path) lastFile = path;
     for (const fn of focusListeners) fn(path);
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
@@ -100,6 +103,9 @@ function renderList() {
       a.href = `?note=${encodeURIComponent(n.path)}`;
       a.textContent = name(n.path);
       if (n.path === current) a.setAttribute("aria-current", "page");
+      a.draggable = true;
+      a.addEventListener("dragstart", (e) => startDrag(e, { item: L.fileTab(n.path) }, name(n.path)));
+      a.addEventListener("dragend", endDrag);
       a.addEventListener("click", (e) => {
         e.preventDefault();
         void workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
@@ -173,6 +179,8 @@ commands.register(
   { id: "tab.previous", title: "Previous tab", run: () => workbench.change((l) => L.cycleTab(l, -1)) },
   { id: "window.splitRight", title: "Split right", run: () => workbench.split("right") },
   { id: "window.splitDown", title: "Split down", run: () => workbench.split("down") },
+  { id: "window.splitLeft", title: "Split left", run: () => workbench.split("left") },
+  { id: "window.splitUp", title: "Split up", run: () => workbench.split("up") },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
@@ -185,6 +193,17 @@ commands.register(
   { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
+  { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
+  { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
+  { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
+  { id: "tab.moveDown", title: "Move tab to the window below", run: () => workbench.change((l) => L.moveTabDirection(l, "down")) },
+  { id: "tab.moveEarlier", title: "Move tab earlier in its window", run: () => workbench.change((l) => L.shiftTab(l, -1)) },
+  { id: "tab.moveLater", title: "Move tab later in its window", run: () => workbench.change((l) => L.shiftTab(l, 1)) },
+  { id: "window.wider", title: "Make window wider", run: () => workbench.change((l) => L.resizeFocused(l, "row", 0.05)) },
+  { id: "window.narrower", title: "Make window narrower", run: () => workbench.change((l) => L.resizeFocused(l, "row", -0.05)) },
+  { id: "window.taller", title: "Make window taller", run: () => workbench.change((l) => L.resizeFocused(l, "column", 0.05)) },
+  { id: "window.shorter", title: "Make window shorter", run: () => workbench.change((l) => L.resizeFocused(l, "column", -0.05)) },
+  { id: "window.equalize", title: "Make windows the same size", run: () => workbench.change(L.equalize) },
 );
 
 const bar = new CommandBar();
@@ -196,17 +215,26 @@ const plugins: PluginContext = {
   commands: { register: (...c) => commands.register(...c), run: (id) => commands.run(id), all: () => commands.all() },
   commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
   panels: {
-    register: (p) => panels.register(p),
+    // A panel is also a view that opens in a window: drag its title there, or use its command.
+    register: (p) => {
+      panels.register(p);
+      workbench.registerView(p);
+      commands.register({ id: `${p.id}.openInWindow`, title: `Open ${p.title} in a window`, run: () => workbench.openView(p.id, { newTab: true }) });
+    },
     toggle: (id) => panels.toggle(id),
     show: (id) => panels.show(id),
     shown: () => panels.shown(),
-    refresh: (id) => panels.refresh(id),
+    refresh: (id) => {
+      panels.refresh(id);
+      workbench.refreshView(id);
+    },
   },
   files: { list: () => files, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,
-    focusedPath: () => workbench.focusedPath,
+    // With a view focused (History in a window, say), the file is the one focused last.
+    focusedPath: () => workbench.focusedPath ?? lastFile,
     focusedView: () => workbench.focusedView,
     refreshFromServer: (paths) => workbench.refreshFromServer(paths),
     label: docLabel,
@@ -259,6 +287,13 @@ exOpen("tabnew", "tabnew", (p) => workbench.open(p, { newTab: true }), () => com
 Vim.defineEx("tabnext", "tabn", () => commands.run("tab.next"));
 Vim.defineEx("tabprevious", "tabp", () => commands.run("tab.previous"));
 Vim.defineEx("tabclose", "tabc", () => commands.run("tab.close"));
+// :tabmove +1, :tabmove -1, or :tabmove N to put the tab at position N (0 is first).
+Vim.defineEx("tabmove", "tabm", (_cm: unknown, params: ExParams) => {
+  const arg = exArg(params);
+  const g = L.focused(workbench.layout);
+  const by = /^[+-]\d+$/.test(arg) ? Number(arg) : /^\d+$/.test(arg) ? Number(arg) - g.active : arg === "" ? g.tabs.length - 1 - g.active : 0;
+  workbench.change((l) => L.shiftTab(l, by));
+});
 
 /** A Vim normal-mode key sequence that runs a command. */
 function vimKey(keys: string, command: string) {
@@ -285,6 +320,15 @@ for (const [keys, command] of [
   ["q", "tab.close"],
   ["c", "window.close"],
   ["o", "window.only"],
+  ["H", "tab.moveLeft"],
+  ["J", "tab.moveDown"],
+  ["K", "tab.moveUp"],
+  ["L", "tab.moveRight"],
+  [">", "window.wider"],
+  ["<", "window.narrower"],
+  ["+", "window.taller"],
+  ["-", "window.shorter"],
+  ["=", "window.equalize"],
 ]) {
   vimKey(`<C-w>${keys}`, command);
 }

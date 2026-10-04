@@ -1,4 +1,6 @@
-// The side panel: one plugin view at a time (History, and later others), with a title and a close button.
+// The side panel: one plugin view at a time (History, and later others), with a title and a close
+// button. Any panel also opens in a window as a tab (workbench.ts).
+import { endDrag, startDrag } from "./dnd.ts";
 import type { Panel } from "./plugins.ts";
 
 export class Panels {
@@ -15,6 +17,13 @@ export class Panels {
     close.addEventListener("click", () => this.hide());
     const header = document.createElement("header");
     header.append(this.title, close);
+    // Drag the title into a window to open the panel there.
+    this.title.draggable = true;
+    this.title.title = "Drag into a window to open it there";
+    this.title.addEventListener("dragstart", (e) => {
+      if (this.showing) startDrag(e, { item: { view: this.showing } }, this.title.textContent ?? "");
+    });
+    this.title.addEventListener("dragend", endDrag);
     this.body.className = "panel-body";
     root.append(header, this.body);
     root.hidden = true;

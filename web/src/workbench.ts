@@ -1,6 +1,8 @@
-// The windows on screen: the layout (layout.ts) drawn as split groups of tabs, with an editor per tab.
-// A file open in several tabs has one Session, and an edit in one tab is copied to the others. The
-// layout is saved as workspace JSON a moment after it changes.
+// The windows on screen: the layout (layout.ts) drawn as split groups of tabs. A file's tab holds an
+// editor; a view's tab holds whatever its plugin draws. A file open in several tabs has one Session,
+// and an edit in one tab is copied to the others. Tabs and notes drag into windows (dnd.ts), the
+// borders between windows drag to resize them, and the layout is saved as a JSON file a moment after
+// it changes.
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
@@ -10,6 +12,7 @@ import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
+import { dragged, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import * as L from "./layout.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
@@ -25,6 +28,13 @@ interface OpenFile {
   exists: boolean;
 }
 
+/** Something a plugin draws in a window's tab, such as History. */
+export interface View {
+  id: string;
+  title: string;
+  render(el: HTMLElement): void | Promise<void>;
+}
+
 export interface WorkbenchEvents {
   /** The focused tab's save status, or a message about it. */
   status(status: SaveStatus | null, message?: string): void;
@@ -37,13 +47,17 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
 }
 
-const key = (group: L.GroupId, path: FilePath) => `${group}\n${path}`;
+const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
 const label = docLabel;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
   private files = new Map<FilePath, OpenFile>();
+  /** Each tab's editor, by group and file. */
   private views = new Map<string, EditorView>();
+  /** Each view tab's box, by group and view. */
+  private viewBoxes = new Map<string, HTMLElement>();
+  private registered = new Map<string, View>();
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
@@ -61,7 +75,7 @@ export class Workbench {
     const saved = await api.read(L.LAYOUT_PATH);
     this.layoutRevision = saved.revision;
     let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
-    await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs))].map((p) => this.load(p)));
+    await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
     if (first) {
       await this.load(first);
       layout = L.showInTab(layout, first);
@@ -79,7 +93,7 @@ export class Workbench {
 
   get focusedView(): EditorView | null {
     const path = this.focusedPath;
-    return path ? (this.views.get(key(this.layout.focus, path)) ?? null) : null;
+    return path ? (this.views.get(key(this.layout.focus, L.fileTab(path))) ?? null) : null;
   }
 
   get focusedSession(): Session | null {
@@ -114,25 +128,41 @@ export class Workbench {
     }
   }
 
-  /** Close the focused group's tab on show (`:q`). A file that can't be saved stays open. */
+  /** Show a plugin's view in the focused group, in place of the tab on show or in a new tab. */
+  openView(id: string, how: { newTab?: boolean } = {}): void {
+    const item = { view: id };
+    this.setLayout(how.newTab ? L.insertTab(this.layout, item) : L.showInTab(this.layout, item));
+  }
+
+  /** Views that can open in windows. Plugins register them. */
+  registerView(view: View): void {
+    this.registered.set(view.id, view);
+  }
+
+  /** Draw a view again, wherever it's showing. */
+  refreshView(id: string): void {
+    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) void this.registered.get(id)?.render(box);
+  }
+
+  /** Close a tab (`:q` closes the focused one). A file that can't be saved stays open. */
   async closeTab(id = this.layout.focus, index?: number): Promise<void> {
     const group = L.groups(this.layout).find((g) => g.id === id);
     if (!group) return;
     const at = index ?? group.active;
-    const path = group.tabs[at];
-    if (path && !(await this.saveToLeave(path))) return;
+    const tab = group.tabs[at];
+    if (tab && "file" in tab && !(await this.saveToLeave(tab.file))) return;
     this.setLayout(L.closeTab(this.layout, id, at));
   }
 
   /** Close the focused group and its tabs (Vim's Ctrl-W c), saving each first. */
   async closeGroup(): Promise<void> {
     const group = this.focusedGroup;
-    for (const path of group.tabs) if (!(await this.saveToLeave(path))) return;
+    for (const tab of group.tabs) if ("file" in tab && !(await this.saveToLeave(tab.file))) return;
     if (L.groups(this.layout).length === 1) this.setLayout({ ...this.layout, root: { ...group, tabs: [], active: 0 } });
     else this.setLayout(group.tabs.reduce((l) => L.closeTab(l, group.id, 0), this.layout));
   }
 
-  split(where: "right" | "down", path?: FilePath): void {
+  split(where: L.Direction, path?: FilePath): void {
     this.setLayout(L.split(this.layout, where, path));
   }
 
@@ -261,7 +291,7 @@ export class Workbench {
     file.timer = window.setTimeout(() => void file.session.save(), this.settings["editor.saveDelay"]);
   }
 
-  private makeView(group: L.GroupId, file: OpenFile): EditorView {
+  private makeEditor(group: L.GroupId, file: OpenFile): EditorView {
     const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
     const view: EditorView = new EditorView({
       state: createState(text, {
@@ -278,7 +308,7 @@ export class Workbench {
     box.dataset.group = group;
     box.append(view.dom);
     file.views.add(view);
-    this.views.set(key(group, file.path), view);
+    this.views.set(key(group, L.fileTab(file.path)), view);
     getCM(view)?.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
       if (view === this.focusedView) this.on.mode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
     });
@@ -314,55 +344,179 @@ export class Workbench {
 
   private render() {
     const wanted = new Set<string>();
-    for (const g of L.groups(this.layout)) for (const p of g.tabs) wanted.add(key(g.id, p));
+    for (const g of L.groups(this.layout)) for (const t of g.tabs) wanted.add(key(g.id, t));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
-    for (const [path, file] of this.files) if (!file.views.size && !L.groups(this.layout).some((g) => g.tabs.includes(path))) this.files.delete(path);
+    for (const k of this.viewBoxes.keys()) if (!wanted.has(k)) this.viewBoxes.delete(k);
+    const shown = new Set(L.groups(this.layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))));
+    for (const [path, file] of this.files) if (!file.views.size && !shown.has(path)) this.files.delete(path);
     for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
     this.host.replaceChildren(this.renderNode(this.layout.root));
     this.renderTabs();
     this.afterFocus();
   }
 
-  private renderNode(node: L.Node): HTMLElement {
+  private renderNode(node: L.Node, path: number[] = []): HTMLElement {
     if (node.kind === "split") {
       const el = document.createElement("div");
       el.className = `split ${node.dir}`;
-      el.append(...node.children.map((c) => this.renderNode(c)));
+      node.children.forEach((c, i) => {
+        if (i > 0) el.append(this.resizer(el, node, path, i));
+        const child = this.renderNode(c, [...path, i]);
+        child.style.flex = `${node.sizes[i]} 1 0`;
+        el.append(child);
+      });
       return el;
     }
     let el = this.groupEls.get(node.id);
-    if (!el) {
-      el = document.createElement("section");
-      el.className = "group";
-      const tabs = document.createElement("div");
-      tabs.className = "tabs";
-      tabs.setAttribute("role", "tablist");
-      const editors = document.createElement("div");
-      editors.className = "editors";
-      el.append(tabs, editors);
-      const id = node.id;
-      el.addEventListener("focusin", () => {
-        if (this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
-      });
-      this.groupEls.set(id, el);
-    }
+    if (!el) el = this.makeGroup(node.id);
     const editors = el.querySelector<HTMLElement>(".editors")!;
     editors.replaceChildren(
-      ...node.tabs.map((path, i) => {
-        const file = this.files.get(path)!;
-        const view = this.views.get(key(node.id, path)) ?? this.makeView(node.id, file);
-        const box = view.dom.parentElement!;
+      ...node.tabs.map((tab, i) => {
+        const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
         box.hidden = i !== node.active;
+        if (!box.hidden && "view" in tab) void this.registered.get(tab.view)?.render(box);
         return box;
       }),
+      el.querySelector(".drop")!,
     );
     if (!node.tabs.length) {
       const empty = document.createElement("p");
       empty.className = "empty";
-      empty.textContent = "No note open. ⌘P opens one.";
-      editors.append(empty);
+      empty.textContent = "No note open. ⌘P opens one, or drag one here.";
+      editors.prepend(empty);
     }
     return el;
+  }
+
+  private editorBox(group: L.GroupId, path: FilePath): HTMLElement {
+    const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, this.files.get(path)!);
+    return view.dom.parentElement!;
+  }
+
+  private viewBox(group: L.GroupId, id: string): HTMLElement {
+    const k = key(group, { view: id });
+    let box = this.viewBoxes.get(k);
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "tab-editor tab-view";
+      box.tabIndex = -1;
+      if (!this.registered.has(id)) box.textContent = `Nothing to show: no plugin draws "${id}". Is it turned off in settings?`;
+      this.viewBoxes.set(k, box);
+    }
+    return box;
+  }
+
+  /** A window: its tab bar, its tabs' contents, and the overlay that shows where a drop will land. */
+  private makeGroup(id: L.GroupId): HTMLElement {
+    const el = document.createElement("section");
+    el.className = "group";
+    const tabs = document.createElement("div");
+    tabs.className = "tabs";
+    tabs.setAttribute("role", "tablist");
+    const marker = document.createElement("div");
+    marker.className = "insert";
+    marker.hidden = true;
+    const editors = document.createElement("div");
+    editors.className = "editors";
+    const drop = document.createElement("div");
+    drop.className = "drop";
+    drop.hidden = true;
+    editors.append(drop);
+    el.append(tabs, marker, editors);
+    el.addEventListener("focusin", () => {
+      if (this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
+    });
+    const hide = () => {
+      drop.hidden = true;
+      marker.hidden = true;
+    };
+    const target = (e: DragEvent): { zone: Zone | null; index: number } => {
+      const tabEls = [...tabs.querySelectorAll<HTMLElement>(".tab")];
+      if (tabs.contains(e.target as Node) || e.target === tabs) {
+        return { zone: null, index: tabIndexAt(tabEls.map((t) => t.getBoundingClientRect()), e.clientX) };
+      }
+      return { zone: dropZone(editors.getBoundingClientRect(), e.clientX, e.clientY), index: -1 };
+    };
+    el.addEventListener("dragover", (e) => {
+      const what = dragged(e);
+      if (!what) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = what.from ? "move" : "copy";
+      const { zone, index } = target(e);
+      if (zone) {
+        drop.hidden = false;
+        drop.dataset.zone = zone;
+        marker.hidden = true;
+      } else {
+        drop.hidden = true;
+        const tabEls = [...tabs.querySelectorAll<HTMLElement>(".tab")];
+        const bar = tabs.getBoundingClientRect();
+        const at = tabEls[index]?.getBoundingClientRect().left ?? (tabEls.at(-1)?.getBoundingClientRect().right ?? bar.left);
+        marker.hidden = false;
+        marker.style.left = `${at - el.getBoundingClientRect().left - 1}px`;
+      }
+    });
+    el.addEventListener("dragleave", (e) => {
+      if (!el.contains(e.relatedTarget as Node)) hide();
+    });
+    el.addEventListener("drop", (e) => {
+      const what = dragged(e);
+      hide();
+      if (!what) return;
+      e.preventDefault();
+      const { zone, index } = target(e);
+      void this.dropped(what, id, zone, index);
+    });
+    this.groupEls.set(id, el);
+    return el;
+  }
+
+  /** Something dropped on a window: a tab moves; anything else opens there. */
+  private async dropped(what: Dragged, group: L.GroupId, zone: Zone | null, index: number) {
+    endDrag();
+    if ("file" in what.item) await this.load(what.item.file);
+    if (what.from) {
+      const to = zone === null ? { group, index } : zone === "center" ? { group } : { group, side: zone };
+      this.setLayout(L.moveTab(this.layout, what.from, to));
+    } else if (zone === null) this.setLayout(L.insertTab(this.layout, what.item, group, index));
+    else if (zone === "center") this.setLayout(L.insertTab(this.layout, what.item, group));
+    else this.setLayout(L.splitAt(this.layout, group, zone, what.item));
+  }
+
+  /** The border between two windows: drag it to share their space differently. */
+  private resizer(container: HTMLElement, split: L.Split, path: number[], index: number): HTMLElement {
+    const el = document.createElement("div");
+    el.className = `resizer ${split.dir}`;
+    el.setAttribute("role", "separator");
+    el.setAttribute("aria-orientation", split.dir === "row" ? "vertical" : "horizontal");
+    el.addEventListener("pointerdown", (down) => {
+      down.preventDefault();
+      el.setPointerCapture(down.pointerId);
+      const box = container.getBoundingClientRect();
+      const total = split.dir === "row" ? box.width : box.height;
+      const children = [...container.children].filter((c) => !c.classList.contains("resizer")) as HTMLElement[];
+      const start = split.dir === "row" ? down.clientX : down.clientY;
+      const pair = split.sizes[index - 1] + split.sizes[index];
+      let sizes = split.sizes;
+      const move = (e: PointerEvent) => {
+        const moved = ((split.dir === "row" ? e.clientX : e.clientY) - start) / total;
+        const before = Math.min(Math.max(0.1, split.sizes[index - 1] + moved), pair - 0.1);
+        sizes = split.sizes.map((s, i) => (i === index - 1 ? before : i === index ? pair - before : s));
+        sizes.forEach((s, i) => (children[i].style.flex = `${s} 1 0`));
+      };
+      const up = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", up);
+        this.setLayout(L.resizeSplit(this.layout, path, sizes));
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", up);
+    });
+    return el;
+  }
+
+  private tabLabel(tab: L.Openable): string {
+    return "file" in tab ? label(tab.file) : (this.registered.get(tab.view)?.title ?? tab.view);
   }
 
   private renderTabs() {
@@ -371,25 +525,29 @@ export class Workbench {
       if (!el) continue;
       el.classList.toggle("focused", g.id === this.layout.focus);
       el.querySelector(".tabs")!.replaceChildren(
-        ...g.tabs.map((path, i) => {
+        ...g.tabs.map((item, i) => {
+          const name = this.tabLabel(item);
           const tab = document.createElement("div");
           tab.className = "tab";
           tab.setAttribute("role", "tab");
           tab.setAttribute("aria-selected", String(i === g.active));
-          tab.title = path;
-          const name = document.createElement("button");
-          name.className = "name";
-          name.textContent = label(path);
-          const status = this.files.get(path)?.session.status;
-          if (status && status !== "saved") name.dataset.status = status;
-          name.addEventListener("click", () => this.setLayout(L.selectTab(this.layout, g.id, i)));
-          name.addEventListener("auxclick", (e) => e.button === 1 && void this.closeTab(g.id, i));
+          tab.title = "file" in item ? item.file : name;
+          tab.draggable = true;
+          tab.addEventListener("dragstart", (e) => startDrag(e, { item, from: { group: g.id, index: i } }, name));
+          tab.addEventListener("dragend", endDrag);
+          const button = document.createElement("button");
+          button.className = "name";
+          button.textContent = name;
+          const status = "file" in item ? this.files.get(item.file)?.session.status : undefined;
+          if (status && status !== "saved") button.dataset.status = status;
+          button.addEventListener("click", () => this.setLayout(L.selectTab(this.layout, g.id, i)));
+          button.addEventListener("auxclick", (e) => e.button === 1 && void this.closeTab(g.id, i));
           const close = document.createElement("button");
           close.className = "close";
           close.textContent = "×";
-          close.setAttribute("aria-label", `Close ${label(path)}`);
+          close.setAttribute("aria-label", `Close ${name}`);
           close.addEventListener("click", () => void this.closeTab(g.id, i));
-          tab.append(name, close);
+          tab.append(button, close);
           return tab;
         }),
       );
@@ -406,7 +564,9 @@ export class Workbench {
     }
     this.on.focus(this.focusedPath);
     this.on.status(this.focusedSession?.status ?? null);
-    if (view && !view.hasFocus && !document.querySelector("#command-bar:not([hidden])")) view.focus();
+    if (document.querySelector("#command-bar:not([hidden])")) return;
+    if (view && !view.hasFocus) view.focus();
+    else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
 }
 

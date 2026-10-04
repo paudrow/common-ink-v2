@@ -6,7 +6,12 @@
     "Ctrl-W h, j, k and l move between windows; Ctrl-W w goes to the next. The focused window's tab is underlined.",
     "`:tabe Welcome` opens a tab; `gt` and `gT` (or `:tabn`, `:tabp`) move between tabs. `:e` and `gd` replace the tab on show, as in Vim.",
     "Open one note in two windows and type in one: the other follows. Pause, and both say Saved.",
-    "`:q` closes the tab on show, Ctrl-W c the window, `:only` (Ctrl-W o) every other window. ⌘\\ splits right.",
-    "Reload the page: the windows and tabs come back as you left them. They're saved in `.common-ink/layout.json`, which ⌘P can open."
+    "Drag a tab within its tab bar: a blue line shows where it will go. Drop it there to reorder.",
+    "Drag a tab onto another window. Over its middle, the whole window shades: drop to move the tab there. Over its left, right, top or bottom quarter, that half shades: drop to split the window that way, with the tab in the new half.",
+    "Drag a note from the list on the left the same way: onto a tab bar, a window's middle or an edge. It opens there and stays in the list.",
+    "Drag the border between two windows to resize them. Ctrl-W > and < make the window wider or narrower, Ctrl-W + and - taller or shorter, Ctrl-W = evens them out.",
+    "Everything a drag does has a command too (⌘⇧P): Split left, right, up and down; Move tab to the window to the left (Ctrl-W H, J, K, L); Move tab earlier or later (`:tabm -1`, `:tabm +1`).",
+    "`:q` closes the tab on show, Ctrl-W c the window, `:only` (Ctrl-W o) every other window. ⌘\\\\ splits right.",
+    "Reload the page: the windows, tabs and sizes come back as you left them. They're saved in `.common-ink/layout.json`, which ⌘P can open."
   ]
 }
