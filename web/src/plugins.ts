@@ -2,7 +2,7 @@
 // history panel are plugins, and settings can turn any plugin off ("plugins.disabled"). See
 // docs/plugins.md for writing one.
 import type { EditorView } from "@codemirror/view";
-import type { Doc, DocPath, DocSummary, Revision, WriteResult } from "../../worker/src/docs.ts";
+import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
 import type { Settings } from "../../worker/src/settings.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
@@ -41,28 +41,28 @@ export interface PluginContext {
     /** Draw a panel again if it's showing. */
     refresh(id: string): void;
   };
-  docs: {
-    /** Every doc, as last listed. */
-    list(): DocSummary[];
-    read(path: DocPath): Promise<Doc>;
-    write(path: DocPath, text: string, base: Revision): Promise<WriteResult>;
+  files: {
+    /** Every file, as last listed. */
+    list(): FileSummary[];
+    read(path: FilePath): Promise<WorkspaceFile>;
+    write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
   };
   workbench: {
-    /** Open a doc in place of the tab on show, or in a new tab. */
-    open(path: DocPath, how?: { newTab?: boolean }): Promise<void>;
-    /** Open a doc picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
-    openPicked(path: DocPath): void;
-    focusedPath(): DocPath | null;
+    /** Open a file in place of the tab on show, or in a new tab. */
+    open(path: FilePath, how?: { newTab?: boolean }): Promise<void>;
+    /** Open a file picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
+    openPicked(path: FilePath): void;
+    focusedPath(): FilePath | null;
     focusedView(): EditorView | null;
-    /** Take in server changes to these docs, where nothing's waiting to be saved. */
-    refreshFromServer(paths: DocPath[]): Promise<void>;
-    label(path: DocPath): string;
+    /** Take in server changes to these files, where nothing's waiting to be saved. */
+    refreshFromServer(paths: FilePath[]): Promise<void>;
+    label(path: FilePath): string;
   };
   events: {
-    /** After a doc's text on the server changes from this app. */
-    onSaved(fn: (path: DocPath) => void): void;
+    /** After a file's text on the server changes from this app. */
+    onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
-    onFocus(fn: (path: DocPath | null) => void): void;
+    onFocus(fn: (path: FilePath | null) => void): void;
   };
 }
 

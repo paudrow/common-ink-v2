@@ -7,19 +7,19 @@ import type { Plugin } from "../plugins.ts";
 
 export const notesProviderPlugin: Plugin = {
   id: "commandBar.notes",
-  description: "⌘P: open a note or other doc by name, or make a new note.",
+  description: "⌘P: open a note or other file by name, or make a new note.",
   activate(ctx) {
     ctx.commandBar.provide({
       prefix: "",
       placeholder: "Open a note by name, or type > for commands",
       items(query) {
-        const docs = ctx.docs.list();
-        const matches = fuzzyFilter(query, docs, (d) => ctx.workbench.label(d.path)).map((d) => ({
+        const files = ctx.files.list();
+        const matches = fuzzyFilter(query, files, (d) => ctx.workbench.label(d.path)).map((d) => ({
           label: ctx.workbench.label(d.path),
           run: () => ctx.workbench.openPicked(d.path),
         }));
         const path = notePathFor(query);
-        if (path && !docs.some((d) => d.path === path)) matches.push({ label: `New note: ${ctx.workbench.label(path)}`, run: () => ctx.workbench.openPicked(path) });
+        if (path && !files.some((d) => d.path === path)) matches.push({ label: `New note: ${ctx.workbench.label(path)}`, run: () => ctx.workbench.openPicked(path) });
         return matches;
       },
     });
