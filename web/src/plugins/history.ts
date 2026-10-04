@@ -1,7 +1,7 @@
 // The history panel, a built-in plugin: the changes to the note on show (or to everything), who made
 // each and what it changed, with undo and redo. Filtering to one author and undoing everything shown
 // is "undo what the agent did".
-import { authorKey, type Change, type UndoResult } from "../../../worker/src/docs.ts";
+import { authorKey, type Change, type UndoResult } from "../../../worker/src/files.ts";
 import { ago, describeAuthor, diffLines, diffStat } from "../describe.ts";
 import type { Plugin, PluginContext } from "../plugins.ts";
 
@@ -17,13 +17,13 @@ export const historyPlugin: Plugin = {
   activate(ctx) {
     const panel = new HistoryPanel(ctx);
     ctx.panels.register({ id: "history", title: "History", render: (root) => panel.render(root) });
-    const show = (scope: "doc" | "all") => {
+    const show = (scope: "file" | "all") => {
       if (ctx.panels.shown() === "history" && panel.scope === scope) return ctx.panels.toggle("history");
       panel.scope = scope;
       ctx.panels.show("history");
     };
     ctx.commands.register(
-      { id: "history.note", title: "Show history of this note", run: () => show("doc") },
+      { id: "history.note", title: "Show history of this note", run: () => show("file") },
       { id: "history.all", title: "Show history of everything", run: () => show("all") },
     );
     ctx.events.onSaved(() => ctx.panels.refresh("history"));
@@ -32,7 +32,7 @@ export const historyPlugin: Plugin = {
 };
 
 class HistoryPanel {
-  scope: "doc" | "all" = "doc";
+  scope: "file" | "all" = "file";
   private author = "";
   private changes: Change[] = [];
   private open = new Set<number>();
@@ -43,7 +43,7 @@ class HistoryPanel {
 
   async render(root: HTMLElement): Promise<void> {
     this.root = root;
-    const path = this.scope === "doc" ? this.ctx.workbench.focusedPath() : null;
+    const path = this.scope === "file" ? this.ctx.workbench.focusedPath() : null;
     const params = new URLSearchParams({ limit: "200" });
     if (path) params.set("path", path);
     if (this.author) params.set("author", this.author);
@@ -61,16 +61,16 @@ class HistoryPanel {
     const results: UndoResult[] = res.ok ? await res.json() : [];
     const clashed = results.filter((r) => r.status === "conflict").length;
     this.message = clashed ? `${clashed} couldn't be undone: the same lines have changed since.` : "";
-    await this.ctx.workbench.refreshFromServer([...new Set(results.flatMap((r) => (r.doc ? [r.doc.path] : [])))]);
+    await this.ctx.workbench.refreshFromServer([...new Set(results.flatMap((r) => (r.file ? [r.file.path] : [])))]);
     this.refresh();
   }
 
   private draw() {
     const path = this.ctx.workbench.focusedPath();
-    const scope = el<HTMLSelectElement>("select", { title: "Which changes" }, el("option", { value: "doc", textContent: path ? `This note` : "This note (none open)" }), el("option", { value: "all", textContent: "Everything" }));
+    const scope = el<HTMLSelectElement>("select", { title: "Which changes" }, el("option", { value: "file", textContent: path ? `This note` : "This note (none open)" }), el("option", { value: "all", textContent: "Everything" }));
     scope.value = this.scope;
     scope.addEventListener("change", () => {
-      this.scope = scope.value as "doc" | "all";
+      this.scope = scope.value as "file" | "all";
       this.refresh();
     });
     const authors = new Map(this.changes.map((c) => [authorKey(c.author), describeAuthor(c.author, this.ctx.me)]));

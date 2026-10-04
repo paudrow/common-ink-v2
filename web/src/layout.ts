@@ -1,14 +1,14 @@
 // Windows, tabs and splits as data: a tree of splits whose leaves are groups of tabs, and the group
 // that has focus. Every change is a pure function from one layout to the next. The layout is saved as
 // workspace JSON (.common-ink/layout.json), so it's read back through parseLayout.
-import { parseDocPath, type DocPath } from "../../worker/src/docs.ts";
+import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
 export type GroupId = string;
 
 export interface Group {
   kind: "group";
   id: GroupId;
-  tabs: DocPath[];
+  tabs: FilePath[];
   /** The index of the tab on show. 0 when there are no tabs. */
   active: number;
 }
@@ -28,7 +28,7 @@ export interface Layout {
 
 export type Direction = "left" | "right" | "up" | "down";
 
-export const LAYOUT_PATH = parseDocPath(".common-ink/layout.json")!;
+export const LAYOUT_PATH = parseFilePath(".common-ink/layout.json")!;
 
 export function emptyLayout(): Layout {
   return { root: { kind: "group", id: "g1", tabs: [], active: 0 }, focus: "g1" };
@@ -46,7 +46,7 @@ export function focused(layout: Layout): Group {
   return groups(layout).find((g) => g.id === layout.focus)!;
 }
 
-export function activeDoc(group: Group): DocPath | null {
+export function activeFile(group: Group): FilePath | null {
   return group.tabs[group.active] ?? null;
 }
 
@@ -64,8 +64,8 @@ function withGroup(layout: Layout, id: GroupId, fn: (g: Group) => Node | null): 
   return { ...layout, root: mapGroup(layout.root, id, fn) ?? emptyLayout().root };
 }
 
-/** Show a doc in a group: its tab if it has one, or a new tab after the current one. */
-export function openTab(layout: Layout, path: DocPath, id: GroupId = layout.focus): Layout {
+/** Show a file in a group: its tab if it has one, or a new tab after the current one. */
+export function openTab(layout: Layout, path: FilePath, id: GroupId = layout.focus): Layout {
   const next = withGroup(layout, id, (g) => {
     const at = g.tabs.indexOf(path);
     if (at >= 0) return { ...g, active: at };
@@ -75,8 +75,8 @@ export function openTab(layout: Layout, path: DocPath, id: GroupId = layout.focu
   return { ...next, focus: id };
 }
 
-/** Show a doc in a group the way Vim's `:e` does: its tab if it has one, or in place of the tab on show. */
-export function showInTab(layout: Layout, path: DocPath, id: GroupId = layout.focus): Layout {
+/** Show a file in a group the way Vim's `:e` does: its tab if it has one, or in place of the tab on show. */
+export function showInTab(layout: Layout, path: FilePath, id: GroupId = layout.focus): Layout {
   const next = withGroup(layout, id, (g) => {
     const at = g.tabs.indexOf(path);
     if (at >= 0) return { ...g, active: at };
@@ -103,9 +103,9 @@ export function closeTab(layout: Layout, id: GroupId, index: number): Layout {
 }
 
 /** Split the focused group: a new group to its right or below it, showing `path` (by default, what the focused group shows). */
-export function split(layout: Layout, where: "right" | "down", path?: DocPath): Layout {
+export function split(layout: Layout, where: "right" | "down", path?: FilePath): Layout {
   const g = focused(layout);
-  const show = path ?? activeDoc(g);
+  const show = path ?? activeFile(g);
   const id = `g${Math.max(0, ...groups(layout).map((x) => Number(x.id.slice(1)) || 0)) + 1}`;
   const added: Group = { kind: "group", id, tabs: show ? [show] : [], active: 0 };
   const dir = where === "right" ? "row" : "column";
@@ -176,7 +176,7 @@ export function focusDirection(layout: Layout, direction: Direction): Layout {
   return best ? { ...layout, focus: best.id } : layout;
 }
 
-/** A layout read from workspace JSON, or null if it isn't one. Tabs that aren't doc paths are dropped. */
+/** A layout read from workspace JSON, or null if it isn't one. Tabs that aren't file paths are dropped. */
 export function parseLayout(value: unknown): Layout | null {
   const ids = new Set<string>();
   const node = (v: unknown): Node | null => {
@@ -184,7 +184,7 @@ export function parseLayout(value: unknown): Layout | null {
     const o = v as Record<string, unknown>;
     if (o.kind === "group" && typeof o.id === "string" && /^g\d+$/.test(o.id) && !ids.has(o.id) && Array.isArray(o.tabs)) {
       ids.add(o.id);
-      const tabs = [...new Set(o.tabs.map(parseDocPath).filter((p): p is DocPath => p !== null))];
+      const tabs = [...new Set(o.tabs.map(parseFilePath).filter((p): p is FilePath => p !== null))];
       const active = Number.isInteger(o.active) ? Math.min(Math.max(0, o.active as number), Math.max(0, tabs.length - 1)) : 0;
       return { kind: "group", id: o.id, tabs, active };
     }

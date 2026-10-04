@@ -25,7 +25,7 @@ To get the Access values, open the Worker in the Cloudflare dashboard, go to **S
 
 ## Agents: CLI and MCP
 
-Agents use the same operations as the app: list, read and write docs, read history, undo.
+Agents use the same operations as the app: list, read and write files, read history, undo.
 
 - **CLI.** `bin/common-ink ls | cat <path> | write <path> | history [path] | show <revision> | undo <revision...>` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token.
-- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are `list_docs`, `read_doc`, `write_doc`, `history` and `undo`.
+- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are `list_files`, `read_file`, `write_file`, `history` and `undo`.

@@ -1,7 +1,7 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type DocPath, type DocSummary } from "../../worker/src/docs.ts";
+import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
@@ -36,7 +36,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   offline: "Not saved: can't reach the server. Trying again.",
 };
 
-let docs: DocSummary[] = [];
+let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
 const pluginKeybindings: Keybinding[] = [];
 const savedListeners: Array<(path: DocPath) => void> = [];
@@ -81,20 +81,20 @@ async function loadSettings() {
 }
 
 /** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
-async function openSettings(path: DocPath | null) {
+async function openSettings(path: FilePath | null) {
   if (!path) return;
   if (path !== DEFAULT_SETTINGS && (await api.read(path)).revision === 0) await api.write(path, SETTINGS_TEMPLATE, 0);
   await workbench.open(path, { newTab: true });
 }
 
 async function refreshList() {
-  docs = await api.list();
+  files = await api.list();
   renderList();
 }
 
 function renderList() {
   const current = workbench.focusedPath;
-  const notes = docs.filter((d) => isNote(d.path));
+  const notes = files.filter((d) => isNote(d.path));
   if (current && isNote(current) && !notes.some((n) => n.path === current)) notes.push({ path: current, revision: 0 });
   list.replaceChildren(
     ...notes.map((n) => {
@@ -140,7 +140,7 @@ function followLink() {
 /** How the next pick in the command bar opens a note: in place of the tab on show, in a new tab, or in a new split. */
 let openHow: "here" | "tab" | "right" | "down" = "here";
 
-function openFromBar(path: DocPath) {
+function openFromBar(path: FilePath) {
   const how = openHow;
   openHow = "here";
   if (how === "right" || how === "down") return void workbench.load(path).then(() => workbench.split(how, path));
@@ -236,7 +236,7 @@ type ExParams = { argString?: string; input?: string };
 const exArg = (params: ExParams) => (params.argString ?? "").trim();
 
 /** An ex command that opens the note named in its argument, or does something else without one. */
-function exOpen(name: string, prefix: string, withArg: (path: DocPath) => unknown, without: () => unknown) {
+function exOpen(name: string, prefix: string, withArg: (path: FilePath) => unknown, without: () => unknown) {
   Vim.defineEx(name, prefix, (_cm: unknown, params: ExParams) => {
     const arg = exArg(params).replace(/^!\s*/, "");
     const path = arg ? notePathFor(arg) : null;
@@ -299,9 +299,9 @@ window.addEventListener("pagehide", () => {
 });
 
 try {
-  docs = await api.list();
+  files = await api.list();
   const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
-  const fallback = docs.find((d) => d.path === "Try this PR.md")?.path ?? docs.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
+  const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
   activate(BUILT_IN, plugins, settings["plugins.disabled"]);
   // Plugins have added their keybindings; settings come after them.

@@ -2,7 +2,7 @@
 // adds to every request. Under `wrangler dev` on this machine, and in a pull request's Preview, it's the
 // dev user. Anything else is nobody, so a deploy without its Access settings refuses every request.
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
-import type { Author } from "./docs.ts";
+import type { Author } from "./files.ts";
 
 /** A person, or an Access service token (how an agent signs in on its own). */
 export type Identity = { kind: "user"; email: string } | { kind: "service"; id: string };

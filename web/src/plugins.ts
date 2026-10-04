@@ -65,15 +65,15 @@ export interface PluginContext {
     openPicked(path: DocPath): void;
     focusedPath(): DocPath | null;
     focusedView(): EditorView | null;
-    /** Take in server changes to these docs, where nothing's waiting to be saved. */
-    refreshFromServer(paths: DocPath[]): Promise<void>;
-    label(path: DocPath): string;
+    /** Take in server changes to these files, where nothing's waiting to be saved. */
+    refreshFromServer(paths: FilePath[]): Promise<void>;
+    label(path: FilePath): string;
   };
   events: {
-    /** After a doc's text on the server changes from this app. */
-    onSaved(fn: (path: DocPath) => void): void;
+    /** After a file's text on the server changes from this app. */
+    onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
-    onFocus(fn: (path: DocPath | null) => void): void;
+    onFocus(fn: (path: FilePath | null) => void): void;
   };
 }
 
