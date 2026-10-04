@@ -1,0 +1,51 @@
+# Common Ink
+
+A hosted workspace where a person and their agents read and edit markdown notes, todos and data from outside sources, with every change visible and attributed.
+
+## Content
+
+**Workspace**:
+The top-level container a user signs in to. It holds notes, uploads, settings and connected data sources.
+_Avoid_: Vault, project
+
+**Note**:
+A markdown file in a workspace. Its title is its first `#` heading.
+_Avoid_: Document, page
+
+**Todo**:
+A markdown checkbox line in a note, with optional inline due date and recurrence.
+_Avoid_: Task, item
+
+**Data source**:
+External structured data connected to a workspace, such as calendar events or contacts. Its contents are visible but aren't stored as notes.
+_Avoid_: Integration, connector
+
+**Event**:
+A calendar entry that comes from a data source and may recur.
+
+**Upload**:
+A binary file (image, PDF, …) attached to a workspace and referenced from notes.
+_Avoid_: Asset, attachment
+
+## History
+
+**Change**:
+One recorded edit to the workspace, with its author, a diff and the revision it was based on.
+_Avoid_: Commit, event, op
+
+**Author**:
+Who made a change: the user, a named agent, a plugin or sync.
+
+**History**:
+The ordered record of every change in a workspace. Undo and redo move through it.
+_Avoid_: Log, timeline, versions
+
+## Configuration
+
+**Settings**:
+JSON that configures behavior, at either user or workspace level. Workspace settings override user settings.
+_Avoid_: Preferences, config
+
+**Plugin**:
+A unit of functionality that adds commands, views, data sources or settings through the public plugin API. Built-in features are plugins.
+_Avoid_: Extension, add-on
