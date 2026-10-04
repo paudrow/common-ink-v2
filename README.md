@@ -19,9 +19,6 @@ The Worker is in `worker/`, the web app in `web/`. Each pull request adds `examp
 
 ## Deploy
 
-Pushes to `main` deploy to `common-ink-v2.<subdomain>.workers.dev`, and each pull request gets a Preview at `pr-<n>-common-ink-v2.<subdomain>.workers.dev`. Both need, in the repository's settings:
+Pushes to `main` deploy to `common-ink-v2.<subdomain>.workers.dev`, behind Cloudflare Access. Each pull request gets a Preview at `pr-<n>-common-ink-v2.<subdomain>.workers.dev` that opens signed in as a dev user, with its own sample notes. Both need, in the repository's settings, the secret `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and the variable `CLOUDFLARE_ACCOUNT_ID`. Production also needs the variables `ACCESS_TEAM_DOMAIN` (like `example.cloudflareaccess.com`) and `ACCESS_AUD`.
 
-- the secret `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and the variable `CLOUDFLARE_ACCOUNT_ID`;
-- the variables `ACCESS_TEAM_DOMAIN` (like `example.cloudflareaccess.com`), `ACCESS_AUD` and `PREVIEW_ACCESS_AUD`, from Cloudflare Access.
-
-To get the Access values, open the Worker in the Cloudflare dashboard, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for both `workers.dev` and Preview URLs. Each one's **Manage Cloudflare Access** page shows its application's audience (AUD) tag. Until the variables are set, the Worker answers every request with 401.
+To get the Access values, open the Worker in the Cloudflare dashboard, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for `workers.dev` only. Its **Manage Cloudflare Access** page shows the application's audience (AUD) tag. Until the variables are set, production answers every request with 401.

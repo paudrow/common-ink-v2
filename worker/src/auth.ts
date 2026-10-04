@@ -1,6 +1,6 @@
 // Who is making a request. Deployed, that's whoever Cloudflare Access signed in, proven by the JWT it
-// adds to every request. Under `wrangler dev` on this machine, it's the dev user. Anything else is
-// nobody, so a deploy without its Access settings refuses every request.
+// adds to every request. Under `wrangler dev` on this machine, and in a pull request's Preview, it's the
+// dev user. Anything else is nobody, so a deploy without its Access settings refuses every request.
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 
 export interface Identity {
@@ -12,11 +12,18 @@ export interface AuthConfig {
   teamDomain?: string;
   /** The Access application's audience tag. */
   aud?: string;
-  /** Set by `npm run dev` only. Honoured only for requests to this machine. */
+  /** Set by `npm run dev` and in Previews. Honoured only on this machine or a Preview's address. */
   devUser?: string;
 }
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// A pull request's Preview: pr-<n>-common-ink-v2.<subdomain>.workers.dev. Its notes are its own samples,
+// so it opens signed in. Production's address never matches, even if DEV_USER leaked into it.
+const PREVIEW_HOST = /^pr-\d+-common-ink-v2\.[a-z0-9-]+\.workers\.dev$/;
+
+function devHost(hostname: string): boolean {
+  return LOCAL_HOSTS.has(hostname) || PREVIEW_HOST.test(hostname);
+}
 
 const keySets = new Map<string, JWTVerifyGetKey>();
 function accessKeys(issuer: string): JWTVerifyGetKey {
@@ -26,7 +33,7 @@ function accessKeys(issuer: string): JWTVerifyGetKey {
 }
 
 export async function identify(req: Request, config: AuthConfig, keys = accessKeys): Promise<Identity | null> {
-  if (config.devUser && LOCAL_HOSTS.has(new URL(req.url).hostname)) return { email: config.devUser };
+  if (config.devUser && devHost(new URL(req.url).hostname)) return { email: config.devUser };
   const token = req.headers.get("Cf-Access-Jwt-Assertion");
   if (!token || !config.teamDomain || !config.aud) return null;
   const issuer = `https://${config.teamDomain.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
