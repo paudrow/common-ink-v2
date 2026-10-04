@@ -9,10 +9,16 @@ export type GroupId = string;
 /** Anything that opens in a window: a file, or a view that a plugin draws (such as History). */
 export type Openable = { file: FilePath } | { view: string };
 
+/**
+ * A tab: what it shows, and whether it's a preview. A preview tab (in italics) is the one the next
+ * note you open replaces, as in VSCode; editing it, double-clicking it or Keep Open keeps it.
+ */
+export type Tab = Openable & { preview?: true };
+
 export interface Group {
   kind: "group";
   id: GroupId;
-  tabs: Openable[];
+  tabs: Tab[];
   /** The index of the tab on show. 0 when there are no tabs. */
   active: number;
 }
@@ -43,6 +49,9 @@ export const fileTab = (file: FilePath): Openable => ({ file });
 
 /** One string per openable thing, for comparing and for keys. */
 export const openableKey = (o: Openable) => ("file" in o ? `file:${o.file}` : `view:${o.view}`);
+
+/** What a tab shows, without its preview mark. */
+export const openableOf = (t: Tab): Openable => ("file" in t ? { file: t.file } : { view: t.view });
 const same = (a: Openable, b: Openable) => openableKey(a) === openableKey(b);
 
 export function emptyLayout(): Layout {
@@ -61,7 +70,7 @@ export function focused(layout: Layout): Group {
   return groups(layout).find((g) => g.id === layout.focus)!;
 }
 
-export function activeTab(group: Group): Openable | null {
+export function activeTab(group: Group): Tab | null {
   return group.tabs[group.active] ?? null;
 }
 
@@ -102,13 +111,14 @@ function withGroup(layout: Layout, id: GroupId, fn: (g: Group) => Node | null): 
   return { ...layout, root: mapGroup(layout.root, id, fn) ?? emptyLayout().root };
 }
 
-/** Put a tab in a group at an index (by default after the one on show) and show it. If the group has it already, just show it. */
+/** Put a kept tab in a group at an index (by default after the one on show) and show it. If the group has it already, keep and show it. */
 export function insertTab(layout: Layout, item: Openable, id: GroupId = layout.focus, index?: number): Layout {
+  const kept = openableOf(item);
   const next = withGroup(layout, id, (g) => {
-    const at = g.tabs.findIndex((t) => same(t, item));
-    if (at >= 0) return { ...g, active: at };
+    const at = g.tabs.findIndex((t) => same(t, kept));
+    if (at >= 0) return { ...g, tabs: g.tabs.map((t, i) => (i === at ? kept : t)), active: at };
     const insert = Math.min(Math.max(0, index ?? (g.tabs.length ? g.active + 1 : 0)), g.tabs.length);
-    return { ...g, tabs: [...g.tabs.slice(0, insert), item, ...g.tabs.slice(insert)], active: insert };
+    return { ...g, tabs: [...g.tabs.slice(0, insert), kept, ...g.tabs.slice(insert)], active: insert };
   });
   return { ...next, focus: id };
 }
@@ -118,16 +128,41 @@ export function openTab(layout: Layout, path: FilePath, id: GroupId = layout.foc
   return insertTab(layout, fileTab(path), id);
 }
 
-/** Show something the way Vim's `:e` does: its tab if the group has one, or in place of the tab on show. */
+/**
+ * Show something in a preview tab, as VSCode does (and Vim's `:e`): its tab if the group has one;
+ * otherwise in place of the group's preview tab; otherwise in a new preview tab after the one on show.
+ */
 export function showInTab(layout: Layout, item: Openable | FilePath, id: GroupId = layout.focus): Layout {
-  const it = typeof item === "string" ? fileTab(item) : item;
+  const it: Tab = { ...(typeof item === "string" ? fileTab(item) : openableOf(item)), preview: true };
   const next = withGroup(layout, id, (g) => {
     const at = g.tabs.findIndex((t) => same(t, it));
     if (at >= 0) return { ...g, active: at };
-    if (!g.tabs.length) return { ...g, tabs: [it], active: 0 };
-    return { ...g, tabs: g.tabs.map((t, i) => (i === g.active ? it : t)) };
+    const preview = g.tabs.findIndex((t) => t.preview);
+    if (preview >= 0) return { ...g, tabs: g.tabs.map((t, i) => (i === preview ? it : t)), active: preview };
+    const insert = g.tabs.length ? g.active + 1 : 0;
+    return { ...g, tabs: [...g.tabs.slice(0, insert), it, ...g.tabs.slice(insert)], active: insert };
   });
   return { ...next, focus: id };
+}
+
+/** Keep a preview tab open: it's no longer the one the next opened note replaces. */
+export function keepTab(layout: Layout, id: GroupId, index: number): Layout {
+  return withGroup(layout, id, (g) => (g.tabs[index]?.preview ? { ...g, tabs: g.tabs.map((t, i) => (i === index ? openableOf(t) : t)) } : g));
+}
+
+/** Keep every preview tab showing a file (editing a file keeps it open, wherever it shows). */
+export function keepFile(layout: Layout, path: FilePath): Layout {
+  let next = layout;
+  for (const g of groups(layout)) g.tabs.forEach((t, i) => t.preview && "file" in t && t.file === path && (next = keepTab(next, g.id, i)));
+  return next;
+}
+
+/** Close the tabs of a group that `which` picks, by position. */
+export function closeTabs(layout: Layout, id: GroupId, which: (tab: Tab, index: number) => boolean): Layout {
+  const g = groups(layout).find((x) => x.id === id);
+  if (!g) return layout;
+  const indexes = g.tabs.flatMap((t, i) => (which(t, i) ? [i] : [])).reverse();
+  return indexes.reduce((l, i) => closeTab(l, id, i), layout);
 }
 
 /** Close a tab. A group left with no tabs closes too, unless it's the only one. */
@@ -343,6 +378,11 @@ export function equalize(layout: Layout): Layout {
   return { ...layout, root: level(layout.root) };
 }
 
+function parseTab(v: unknown): Tab | null {
+  const o = parseOpenable(v);
+  return o && v && typeof v === "object" && (v as { preview?: unknown }).preview === true ? { ...o, preview: true } : o;
+}
+
 function parseOpenable(v: unknown): Openable | null {
   // Layouts saved before views could open in windows list tabs as paths.
   if (typeof v === "string") {
@@ -366,8 +406,8 @@ export function parseLayout(value: unknown): Layout | null {
     const o = v as Record<string, unknown>;
     if (o.kind === "group" && typeof o.id === "string" && /^g\d+$/.test(o.id) && !ids.has(o.id) && Array.isArray(o.tabs)) {
       ids.add(o.id);
-      const tabs: Openable[] = [];
-      for (const t of o.tabs.map(parseOpenable)) if (t && !tabs.some((x) => same(x, t))) tabs.push(t);
+      const tabs: Tab[] = [];
+      for (const t of o.tabs.map(parseTab)) if (t && !tabs.some((x) => same(x, t))) tabs.push(t.preview && tabs.some((x) => x.preview) ? openableOf(t) : t);
       const active = Number.isInteger(o.active) ? Math.min(Math.max(0, o.active as number), Math.max(0, tabs.length - 1)) : 0;
       return { kind: "group", id: o.id, tabs, active };
     }
