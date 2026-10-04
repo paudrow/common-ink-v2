@@ -30,7 +30,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   offline: "Not saved: can't reach the server. Trying again.",
 };
 
-let docs: DocSummary[] = [];
+let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
 
 const me = await fetch("/api/me")
@@ -72,7 +72,7 @@ async function loadSettings() {
 }
 
 /** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
-async function openSettings(path: DocPath | null) {
+async function openSettings(path: FilePath | null) {
   if (!path) return;
   if (path !== DEFAULT_SETTINGS && (await api.read(path)).revision === 0) await api.write(path, SETTINGS_TEMPLATE, 0);
   await workbench.open(path, { newTab: true });
@@ -294,7 +294,7 @@ const history = new HistoryPanel($("#history"), {
 try {
   files = await api.list();
   const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
-  const fallback = docs.find((d) => d.path === "Try this PR.md")?.path ?? docs.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
+  const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
   await workbench.start(asked);
   if (!workbench.focusedPath) await workbench.open(fallback);

@@ -30,14 +30,14 @@ export interface WorkbenchEvents {
   status(status: SaveStatus | null, message?: string): void;
   mode(mode: string): void;
   /** What the focused tab shows changed. */
-  focus(path: DocPath | null): void;
-  /** A doc was saved for the first time, so lists of docs are out of date. */
-  created(path: DocPath): void;
-  /** A doc's text on the server changed. */
-  saved(path: DocPath): void;
+  focus(path: FilePath | null): void;
+  /** A file was saved for the first time, so lists of files are out of date. */
+  created(path: FilePath): void;
+  /** A file's text on the server changed. */
+  saved(path: FilePath): void;
 }
 
-const key = (group: L.GroupId, path: DocPath) => `${group}\n${path}`;
+const key = (group: L.GroupId, path: FilePath) => `${group}\n${path}`;
 const label = docLabel;
 
 export class Workbench {
@@ -243,7 +243,7 @@ export class Workbench {
       file.exists = true;
       this.on.created(file.path);
     }
-    if (status === "saved") this.on.saved(doc.path);
+    if (status === "saved") this.on.saved(file.path);
     this.renderTabs();
     if (file.path === this.focusedPath) this.on.status(status);
   }
@@ -256,20 +256,20 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
-    doc.session.edited();
-    clearTimeout(doc.timer);
-    doc.timer = window.setTimeout(() => void doc.session.save(), this.settings["editor.saveDelay"]);
+    file.session.edited();
+    clearTimeout(file.timer);
+    file.timer = window.setTimeout(() => void file.session.save(), this.settings["editor.saveDelay"]);
   }
 
   private makeView(group: L.GroupId, file: OpenFile): EditorView {
     const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
     const view: EditorView = new EditorView({
       state: createState(text, {
-        json: !isNote(doc.path),
-        readOnly: isReadOnly(doc.path),
+        json: !isNote(file.path),
+        readOnly: isReadOnly(file.path),
         settings: this.settings,
-        onUpdate: (u) => this.viewUpdate(doc, view, u),
-        onBlur: () => void doc.session.save(),
+        onUpdate: (u) => this.viewUpdate(file, view, u),
+        onBlur: () => void file.session.save(),
       }),
     });
     // CodeMirror's own styles fix the editor's display and position, so each sits in a box of ours.

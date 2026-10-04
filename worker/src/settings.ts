@@ -1,7 +1,7 @@
 // Settings: JSON at two levels, user and workspace, over built-in defaults. Workspace settings override
 // user settings. Every setting is declared once here, which gives the defaults, the published JSON
 // Schema (/schema/settings.json) and the checks that tell you what in a settings file was ignored.
-import { parseDocPath, type DocPath } from "./docs.ts";
+import { parseFilePath, type FilePath } from "./files.ts";
 
 export interface Keybinding {
   key: string;
@@ -68,12 +68,12 @@ export type Settings = { [K in SettingName]: (typeof SETTINGS)[K]["default"] };
 
 export const DEFAULTS = Object.fromEntries(Object.entries(SETTINGS).map(([k, d]) => [k, d.default])) as Settings;
 
-export const WORKSPACE_SETTINGS = parseDocPath(".common-ink/settings.json")!;
-export const DEFAULT_SETTINGS = parseDocPath(".common-ink/defaults/settings.json")!;
-export const userSettingsPath = (email: string) => parseDocPath(`.common-ink/users/${email}/settings.json`);
+export const WORKSPACE_SETTINGS = parseFilePath(".common-ink/settings.json")!;
+export const DEFAULT_SETTINGS = parseFilePath(".common-ink/defaults/settings.json")!;
+export const userSettingsPath = (email: string) => parseFilePath(`.common-ink/users/${email}/settings.json`);
 
-/** Docs the app writes itself and nobody may edit: the defaults. */
-export const isReadOnly = (path: DocPath) => path.startsWith(".common-ink/defaults/");
+/** Files the app writes itself and nobody may edit: the defaults. */
+export const isReadOnly = (path: FilePath) => path.startsWith(".common-ink/defaults/");
 
 export const SCHEMA_URL = "/schema/settings.json";
 
