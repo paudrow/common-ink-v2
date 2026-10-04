@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { NotePath } from "../worker/src/notes.ts";
+import type { DocPath } from "../worker/src/docs.ts";
 import { noteLinkAt, notePathFor } from "../web/src/links.ts";
 
-const from = "Projects/Plan.md" as NotePath;
+const from = "Projects/Plan.md" as DocPath;
 
 test(":e takes a note's name with or without .md", () => {
   assert.equal(notePathFor("Ideas"), "Ideas.md");

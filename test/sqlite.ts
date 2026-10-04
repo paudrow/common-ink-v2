@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { Db } from "../worker/src/notes.ts";
+import type { Db } from "../worker/src/docs.ts";
 
 /** The Durable Object's SQLite interface on node:sqlite, in memory. */
 export function memoryDb(): Db & { raw: DatabaseSync } {

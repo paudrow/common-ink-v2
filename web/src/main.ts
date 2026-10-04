@@ -3,7 +3,7 @@
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import type { NotePath, NoteSummary } from "../../worker/src/notes.ts";
+import type { DocPath, DocSummary } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
 import { CommandBar, type Provider } from "./commandbar.ts";
 import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
@@ -31,7 +31,7 @@ const saveLine = $("#save");
 const view = new EditorView({ parent: $("#editor") });
 let session: Session | null = null;
 let jumps: Jumps | null = null;
-let notes: NoteSummary[] = [];
+let notes: DocSummary[] = [];
 let pauseTimer = 0;
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
@@ -70,7 +70,7 @@ async function saveToLeave(): Promise<boolean> {
 }
 
 /** Show a note in the editor, saving the one that's open first. */
-async function open(path: NotePath, how: { pos?: number; jump?: boolean } = {}) {
+async function open(path: DocPath, how: { pos?: number; jump?: boolean } = {}) {
   const from = here();
   if (!(await saveToLeave())) return;
   const note = await api.read(path);
