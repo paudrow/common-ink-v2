@@ -1,4 +1,5 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
+import { diffPatch } from "node-diff3";
 import { isNote, type Author, type Change, type FilePath } from "../../worker/src/files.ts";
 
 /** "you", a person's email, or an agent's name with who it worked for. */
@@ -49,3 +50,12 @@ export function docLabel(path: FilePath): string {
   if (isNote(path)) return path.replace(/\.md$/, "");
   return NAMES.find(([re]) => re.test(path))?.[1] ?? path;
 }
+
+/** A before and after, as the lines that changed. */
+export function runLines(before: string, after: string): Array<{ kind: "-" | "+"; text: string }> {
+  return diffPatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
+    ...buffer1.chunk.map((text) => ({ kind: "-" as const, text })),
+    ...buffer2.chunk.map((text) => ({ kind: "+" as const, text })),
+  ]);
+}
+

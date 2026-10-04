@@ -567,3 +567,138 @@ body {
   padding: 0.125rem 0.5rem;
   cursor: pointer;
 }
+
+:is(#panel, .tab-view):focus {
+  outline: none;
+}
+
+:is(#panel, .tab-view) .changes li {
+  cursor: default;
+  user-select: none;
+  border-radius: 4px;
+  padding: 0.375rem 0.25rem;
+}
+
+:is(#panel, .tab-view) .changes li.picked {
+  background: var(--accent-soft);
+}
+
+:is(#panel, .tab-view) .changes li.focused {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+:is(#panel, .tab-view) .summary .pick {
+  margin: 0 0.25rem 0 0;
+  accent-color: var(--accent);
+}
+
+:is(#panel, .tab-view) .label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.label-tag {
+  font-size: 0.75rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+}
+
+:is(#panel, .tab-view) .label button,
+:is(#panel, .tab-view) .run-head button,
+:is(#panel, .tab-view) .actions button,
+:is(#panel, .tab-view) .add-label,
+:is(#panel, .tab-view) .label-form button {
+  color: var(--accent) !important;
+  padding: 0;
+}
+
+:is(#panel, .tab-view) .label-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+:is(#panel, .tab-view) .label-form input {
+  flex: 1;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.125rem 0.375rem;
+}
+
+:is(#panel, .tab-view) .add-label {
+  margin-bottom: 0.75rem;
+}
+
+:is(#panel, .tab-view) .selected {
+  border-top: 1px solid var(--line);
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+:is(#panel, .tab-view) .actions,
+:is(#panel, .tab-view) .run-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  margin: 0.25rem 0;
+}
+
+:is(#panel, .tab-view) .hint {
+  color: var(--muted);
+}
+
+:is(#panel, .tab-view) h3 {
+  font-size: 0.75rem;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.tab-view .version-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.tab-view .version-bar button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.125rem 0.5rem;
+  cursor: pointer;
+}
+
+.tab-view .version-text {
+  font: 1rem/1.65 var(--prose);
+  white-space: pre-wrap;
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+.tab-view .diff {
+  font: 0.8125rem/1.5 var(--mono);
+  white-space: pre-wrap;
+}
+
+.tab-view .diff .add {
+  color: #15803d;
+}
+
+.tab-view .diff .del {
+  color: #b91c1c;
+  text-decoration: line-through;
+}
