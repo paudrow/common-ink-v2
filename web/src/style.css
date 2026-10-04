@@ -167,12 +167,12 @@ body {
   position: relative;
 }
 
-.editors > .cm-editor {
+.tab-editor {
   position: absolute;
   inset: 0;
 }
 
-.editors > .cm-editor[hidden] {
+.tab-editor[hidden] {
   display: none;
 }
 

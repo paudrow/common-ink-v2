@@ -271,7 +271,11 @@ export class Workbench {
         onBlur: () => void doc.session.save(),
       }),
     });
-    view.dom.dataset.group = group;
+    // CodeMirror's own styles fix the editor's display and position, so each sits in a box of ours.
+    const box = document.createElement("div");
+    box.className = "tab-editor";
+    box.dataset.group = group;
+    box.append(view.dom);
     doc.views.add(view);
     this.views.set(key(group, doc.path), view);
     getCM(view)?.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
@@ -346,8 +350,9 @@ export class Workbench {
       ...node.tabs.map((path, i) => {
         const doc = this.docs.get(path)!;
         const view = this.views.get(key(node.id, path)) ?? this.makeView(node.id, doc);
-        view.dom.hidden = i !== node.active;
-        return view.dom;
+        const box = view.dom.parentElement!;
+        box.hidden = i !== node.active;
+        return box;
       }),
     );
     if (!node.tabs.length) {
