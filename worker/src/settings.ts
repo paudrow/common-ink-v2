@@ -13,6 +13,8 @@ interface Declared<T> {
   description: string;
   default: T;
   schema: Record<string, unknown>;
+  /** What a good value is, in words, for problems: "true or false". */
+  expects: string;
   check(value: unknown): value is T;
 }
 
@@ -20,6 +22,7 @@ const bool = (description: string, value: boolean): Declared<boolean> => ({
   description,
   default: value,
   schema: { type: "boolean" },
+  expects: "true or false",
   check: (v): v is boolean => typeof v === "boolean",
 });
 
@@ -27,6 +30,7 @@ const int = (description: string, value: number, minimum: number, maximum: numbe
   description,
   default: value,
   schema: { type: "integer", minimum, maximum },
+  expects: `a whole number from ${minimum} to ${maximum}`,
   check: (v): v is number => Number.isInteger(v) && (v as number) >= minimum && (v as number) <= maximum,
 });
 
@@ -35,12 +39,14 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
   { key: "Mod-Shift-p", command: "commandBar" },
   { key: "Mod-s", command: "note.save" },
   { key: "Mod-\\", command: "window.splitRight" },
+  { key: "Mod-,", command: "settings.user" },
 ];
 
 const keybindings: Declared<Keybinding[]> = {
   description:
     'Keyboard shortcuts, added after the defaults; a later binding for the same key wins, and "command": null unbinds a key. Keys are matched by the character typed, like "Mod-Shift-p" (Mod is ⌘ on a Mac, Ctrl elsewhere).',
   default: DEFAULT_KEYBINDINGS,
+  expects: 'a list of bindings like {"key": "Mod-k", "command": "quickOpen"}',
   schema: {
     type: "array",
     items: {
@@ -96,23 +102,30 @@ export function defaultsText(): string {
 
 export const SETTINGS_TEMPLATE = `{\n  "$schema": "${SCHEMA_URL}"\n}\n`;
 
-/** One settings file's settings, and what in it was ignored and why. */
-export function parseSettings(text: string): { settings: Partial<Settings>; problems: string[] } {
+/** What's wrong with one setting in a settings file, or null if it's fine. */
+export function settingProblem(key: string, value: unknown): string | null {
+  if (key === "$schema") return null;
+  const declared = (SETTINGS as Record<string, Declared<unknown>>)[key];
+  if (!declared) return `Unknown setting "${key}"`;
+  return declared.check(value) ? null : `"${key}" must be ${declared.expects}`;
+}
+
+/** One settings file's settings, and what in it was ignored and why. `broken` if none of it could be read. */
+export function parseSettings(text: string): { settings: Partial<Settings>; problems: string[]; broken?: true } {
   if (!text.trim()) return { settings: {}, problems: [] };
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch (err) {
-    return { settings: {}, problems: [`Not valid JSON: ${(err as Error).message}`] };
+    return { settings: {}, problems: [`Not valid JSON: ${(err as Error).message}`], broken: true };
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) return { settings: {}, problems: ["Settings must be a JSON object"] };
+  if (!data || typeof data !== "object" || Array.isArray(data)) return { settings: {}, problems: ["Settings must be a JSON object"], broken: true };
   const settings: Record<string, unknown> = {};
   const problems: string[] = [];
   for (const [key, value] of Object.entries(data)) {
     if (key === "$schema") continue;
-    const declared = (SETTINGS as Record<string, Declared<unknown>>)[key];
-    if (!declared) problems.push(`Unknown setting "${key}"`);
-    else if (!declared.check(value)) problems.push(`"${key}" must be ${JSON.stringify(declared.schema)}`);
+    const problem = settingProblem(key, value);
+    if (problem) problems.push(problem);
     else settings[key] = value;
   }
   return { settings: settings as Partial<Settings>, problems };

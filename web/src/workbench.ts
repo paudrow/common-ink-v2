@@ -3,7 +3,7 @@
 // and an edit in one tab is copied to the others. Tabs and notes drag into windows (dnd.ts), the
 // borders between windows drag to resize them, and the layout is saved as a JSON file a moment after
 // it changes.
-import { EditorSelection, Transaction } from "@codemirror/state";
+import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath } from "../../worker/src/files.ts";
@@ -68,6 +68,8 @@ export class Workbench {
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
+  /** Editor extensions for one file's editors, such as help in a settings file. */
+  extensionsFor: (path: FilePath) => Extension[] = () => [];
   private layoutTimer = 0;
   /** A layout save is on its way, so news of it coming back isn't someone else's change. */
   private layoutSaving = false;
@@ -380,6 +382,7 @@ export class Workbench {
         json: !isNote(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
+        extensions: this.extensionsFor(file.path),
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),
       }),
