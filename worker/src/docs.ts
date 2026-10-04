@@ -25,7 +25,11 @@ export function parseDocPath(value: unknown): DocPath | null {
 
 export const isNote = (path: DocPath) => path.endsWith(".md");
 
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string };
+/** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };
+
+/** One string per author, for filtering history by who made a change. */
+export const authorKey = (a: Author) => (a.kind === "user" ? `user:${a.email}` : `agent:${a.name}${a.by ? `:${a.by}` : ""}`);
 
 /** Revisions are change numbers, counted across the workspace. 0 is "before the doc existed". */
 export type Revision = number;
@@ -49,6 +53,26 @@ export interface Change {
   base: Revision;
   diff: Diff;
   time: number;
+  /** The change this one undid, if it's an undo. Undoing an undo is a redo. */
+  undoes: Revision | null;
+  /** The undo in effect for this change, if it's undone (and that undo hasn't itself been undone). Set by `recent`. */
+  undoneBy?: Revision | null;
+}
+
+/** What undoing one change did. "conflict": the doc has changed since in the same lines, so nothing was done. */
+export interface UndoResult {
+  revision: Revision;
+  status: "undone" | "unchanged" | "conflict" | "missing";
+  doc?: Doc;
+}
+
+export interface HistoryQuery {
+  path?: DocPath;
+  /** An authorKey. */
+  author?: string;
+  /** Only changes older than this revision, for paging. */
+  before?: Revision;
+  limit?: number;
 }
 
 /**
@@ -63,12 +87,17 @@ export interface Write {
   text: string;
   base: Revision;
   author: Author;
+  undoes?: Revision;
 }
 
-/** Notes a Preview starts with. `replace` rewrites a note that exists; otherwise only missing notes are added. */
+/**
+ * Notes a Preview starts with. `replace` rewrites a note that exists; otherwise only missing notes are
+ * added. `edits` are later versions of notes the seed just added, by named agents, for history to show.
+ */
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
+  edits?: Array<{ path: string; text: string; agent: string }>;
 }
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
@@ -92,7 +121,13 @@ const MIGRATIONS: Array<(db: Db) => void> = [
     );
     db.run("CREATE INDEX IF NOT EXISTS changes_by_path ON changes(path, revision)");
   },
+  // 2. Undo and redo are changes that record which change they undid.
+  (db) => db.run("ALTER TABLE changes ADD COLUMN undoes INTEGER"),
 ];
+
+type ChangeRow = { revision: number; path: DocPath; author: string; base: number; diff: string; time: number; undoes: number | null };
+const toChange = (row: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) });
+const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
 export class Docs {
   constructor(
@@ -120,12 +155,64 @@ export class Docs {
 
   /** The doc's changes, oldest first. */
   history(path: DocPath): Change[] {
-    return this.db
-      .all<{ revision: number; path: DocPath; author: string; base: number; diff: string; time: number }>(
-        "SELECT * FROM changes WHERE path = ? ORDER BY revision",
-        path,
-      )
-      .map((row) => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) }));
+    return this.db.all<ChangeRow>("SELECT * FROM changes WHERE path = ? ORDER BY revision", path).map(toChange);
+  }
+
+  /** Changes across the workspace, newest first, optionally for one doc or one author. */
+  recent(q: HistoryQuery = {}): Change[] {
+    const limit = Math.min(Math.max(1, q.limit ?? 50), 500);
+    const rows = this.db.all<ChangeRow>(
+      `SELECT * FROM changes WHERE (?1 IS NULL OR path = ?1) AND (?2 IS NULL OR revision < ?2) ORDER BY revision DESC`,
+      q.path ?? null,
+      q.before ?? null,
+    );
+    const undoneBy = this.undoneBy();
+    const out: Change[] = [];
+    for (const row of rows) {
+      const change = toChange(row);
+      if (q.author && authorKey(change.author) !== q.author) continue;
+      out.push({ ...change, undoneBy: undoneBy(change.revision) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /** Which undo, if any, is in effect for a change: the latest undo of it that hasn't been undone itself. */
+  private undoneBy(): (revision: Revision) => Revision | null {
+    const undos = new Map<Revision, Revision[]>();
+    for (const { revision, undoes } of this.db.all<{ revision: number; undoes: number }>("SELECT revision, undoes FROM changes WHERE undoes IS NOT NULL ORDER BY revision")) {
+      undos.set(undoes, [...(undos.get(undoes) ?? []), revision]);
+    }
+    const memo = new Map<Revision, Revision | null>();
+    const find = (revision: Revision): Revision | null => {
+      if (!memo.has(revision)) memo.set(revision, [...(undos.get(revision) ?? [])].reverse().find((u) => find(u) === null) ?? null);
+      return memo.get(revision)!;
+    };
+    return find;
+  }
+
+  /**
+   * Undo changes, newest first, each as a new change by `author`. A change is undone by merging its
+   * reverse into the doc as it is now, so later edits elsewhere in the doc stay.
+   */
+  undo(revisions: Revision[], author: Author): UndoResult[] {
+    return this.db.tx(() =>
+      [...new Set(revisions)]
+        .sort((a, b) => b - a)
+        .map((revision) => {
+          const [row] = this.db.all<ChangeRow>("SELECT * FROM changes WHERE revision = ?", revision);
+          if (!row) return { revision, status: "missing" as const };
+          const change = toChange(row);
+          const after = this.textAt(change.path, revision) ?? "";
+          const before = patch(lines(after), invert(change.diff)).join("\n");
+          const current = this.read(change.path);
+          const undone = merge(current?.text ?? "", after, before);
+          if (undone === null) return { revision, status: "conflict" as const, doc: current ?? undefined };
+          if (current && undone === current.text) return { revision, status: "unchanged" as const, doc: current };
+          const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
+          return { revision, status: "undone" as const, doc: result.doc ?? undefined };
+        }),
+    );
   }
 
   /**
@@ -141,17 +228,23 @@ export class Docs {
     this.db.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
       if (applied?.value === seed.id) return;
+      const added = new Set<string>();
       for (const { path: raw, text, replace } of seed.notes) {
         const path = parseDocPath(raw);
         if (!path) throw new Error(`Not a doc path: ${raw}`);
         const current = this.read(path);
+        if (!current) added.add(path);
         if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+      }
+      for (const { path, text, agent } of seed.edits ?? []) {
+        const current = added.has(path) ? this.read(path as DocPath) : null;
+        if (current) this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
       }
       this.db.run("INSERT INTO meta(key, value) VALUES ('seed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", seed.id);
     });
   }
 
-  private apply({ path, text, base, author }: Write): WriteResult {
+  private apply({ path, text, base, author, undoes }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
     let next = text;
@@ -165,8 +258,8 @@ export class Docs {
     if (current && next === currentText) return { status, doc: current };
     const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
     this.db.run(
-      "INSERT INTO changes(path, author, base, diff, time) VALUES (?, ?, ?, ?, ?)",
-      path, JSON.stringify(author), base, diff, this.now(),
+      "INSERT INTO changes(path, author, base, diff, time, undoes) VALUES (?, ?, ?, ?, ?, ?)",
+      path, JSON.stringify(author), base, diff, this.now(), undoes ?? null,
     );
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     this.db.run(
@@ -184,7 +277,7 @@ export class Docs {
     let text = lines(this.read(path)?.text ?? "");
     for (const c of changes.reverse()) {
       if (c.revision === revision) break;
-      text = patch(text, c.diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 })));
+      text = patch(text, invert(c.diff));
     }
     return text.join("\n");
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { patch } from "node-diff3";
-import { Docs, parseDocPath, SEED_AUTHOR, type Author, type DocPath, type Seed } from "../worker/src/docs.ts";
+import { authorKey, Docs, parseDocPath, SEED_AUTHOR, type Author, type DocPath, type Seed } from "../worker/src/docs.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const ada: Author = { kind: "user", email: "ada@example.com" };
@@ -163,4 +163,91 @@ test("a database from the first deploy, with a notes table, keeps its notes and 
   assert.equal(docs.write({ path: PLAN, text: "# Plan\n", base: 1, author: ada }).doc?.revision, 2);
   new Docs(db);
   assert.equal(docs.history(PLAN).length, 2);
+});
+
+test("undoing a change merges its reverse into the doc as it is now, keeping later edits", () => {
+  const docs = workspace();
+  docs.write({ path: PLAN, text: "one\ntwo\nthree\n", base: 0, author: ada });
+  docs.write({ path: PLAN, text: "one\nTWO\nthree\n", base: 1, author: bot });
+  docs.write({ path: PLAN, text: "one\nTWO\nthree\nfour\n", base: 2, author: ada });
+  const [result] = docs.undo([2], ada);
+  assert.equal(result.status, "undone");
+  assert.equal(docs.read(PLAN)?.text, "one\ntwo\nthree\nfour\n");
+  const last = docs.history(PLAN).at(-1)!;
+  assert.deepEqual([last.revision, last.author, last.undoes], [4, ada, 2]);
+});
+
+test("undoing an undo is a redo, and undoing twice changes nothing more", () => {
+  const docs = workspace();
+  docs.write({ path: PLAN, text: "a\n", base: 0, author: ada });
+  docs.write({ path: PLAN, text: "a\nb\n", base: 1, author: bot });
+  docs.undo([2], ada);
+  assert.equal(docs.recent().find((c) => c.revision === 2)?.undoneBy, 3);
+  assert.equal(docs.undo([2], ada)[0].status, "unchanged");
+  docs.undo([3], ada);
+  assert.equal(docs.read(PLAN)?.text, "a\nb\n");
+  assert.equal(docs.recent().find((c) => c.revision === 2)?.undoneBy, null);
+  assert.equal(docs.recent().find((c) => c.revision === 3)?.undoneBy, 4);
+});
+
+test("an undo that would clash with a later edit to the same lines does nothing", () => {
+  const docs = workspace();
+  docs.write({ path: PLAN, text: "one\n", base: 0, author: ada });
+  docs.write({ path: PLAN, text: "uno\n", base: 1, author: bot });
+  docs.write({ path: PLAN, text: "ein\n", base: 2, author: ada });
+  assert.equal(docs.undo([2], ada)[0].status, "conflict");
+  assert.equal(docs.undo([99], ada)[0].status, "missing");
+  assert.equal(docs.read(PLAN)?.text, "ein\n");
+});
+
+test("undoing everything an agent did, newest first, across docs", () => {
+  const docs = workspace();
+  const other = "Other.md" as DocPath;
+  docs.write({ path: PLAN, text: "mine\n", base: 0, author: ada });
+  docs.write({ path: PLAN, text: "mine\nagent 1\n", base: 1, author: bot });
+  docs.write({ path: other, text: "agent 2\n", base: 0, author: bot });
+  docs.write({ path: PLAN, text: "mine\nagent 1\nagent 3\n", base: 2, author: bot });
+  const byBot = docs.recent({ author: authorKey(bot) }).map((c) => c.revision);
+  assert.deepEqual(byBot, [4, 3, 2]);
+  const results = docs.undo(byBot, ada);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["undone", "undone", "undone"],
+  );
+  assert.equal(docs.read(PLAN)?.text, "mine\n");
+  assert.equal(docs.read(other)?.text, "");
+});
+
+test("recent lists changes newest first, by doc, and pages with before", () => {
+  const docs = workspace();
+  docs.write({ path: PLAN, text: "1", base: 0, author: ada });
+  docs.write({ path: "Other.md" as DocPath, text: "2", base: 0, author: ada });
+  docs.write({ path: PLAN, text: "3", base: 1, author: ada });
+  assert.deepEqual(
+    docs.recent().map((c) => c.revision),
+    [3, 2, 1],
+  );
+  assert.deepEqual(
+    docs.recent({ path: PLAN }).map((c) => c.revision),
+    [3, 1],
+  );
+  assert.deepEqual(
+    docs.recent({ before: 3, limit: 1 }).map((c) => c.revision),
+    [2],
+  );
+});
+
+test("a seed's agent edits apply to notes it just added, as changes by those agents", () => {
+  const docs = workspace();
+  const seed: Seed = {
+    id: "e",
+    notes: [{ path: "Garden.md", text: "a\n", replace: false }],
+    edits: [{ path: "Garden.md", text: "a\nb\n", agent: "Gardener" }],
+  };
+  docs.seed(seed);
+  const path = "Garden.md" as DocPath;
+  assert.equal(docs.read(path)?.text, "a\nb\n");
+  assert.deepEqual(docs.history(path).map((c) => c.author), [SEED_AUTHOR, { kind: "agent", name: "Gardener" }]);
+  docs.seed({ ...seed, id: "f" });
+  assert.equal(docs.history(path).length, 2);
 });
