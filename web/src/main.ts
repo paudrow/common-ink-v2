@@ -4,8 +4,8 @@ import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, type Level } from "./settings-ui.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
+import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { describeAuthor, docLabel } from "./describe.ts";
@@ -18,21 +18,26 @@ import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
-import { activate, type PluginContext } from "./plugins.ts";
-import { commandsProviderPlugin, notesProviderPlugin } from "./plugins/command-bar.ts";
-import { historyPlugin } from "./plugins/history.ts";
-import { todosPlugin } from "./plugins/todos/index.ts";
+import type { PluginContext } from "./plugins.ts";
+import { changedPlugins, manifestText, pluginPaths, pluginStates, startPlugins, type BuiltIn, type PluginEntry } from "./plugin-host.ts";
+import { builtInSourceView, pluginsView } from "./plugins-view.ts";
+import { BUILT_IN } from "./plugins/index.ts";
+import { fuzzyFilter } from "./fuzzy.ts";
+import { createState } from "./editor.ts";
+import { EditorView } from "@codemirror/view";
 import { Workbench } from "./workbench.ts";
 
-/** The built-in plugins, in the order they start. */
-const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin, todosPlugin];
-
+/** Safe mode (?safe=1): only built-in plugins start, for when a workspace plugin breaks the app. */
+const SAFE = new URLSearchParams(location.search).get("safe") === "1";
+/** This page's address in or out of safe mode. */
+const addressFor = (path: FilePath | null, safe = SAFE) => `${path ? urlForFile(path) : "?"}${safe ? `${path ? "&" : ""}safe=1` : ""}`;
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
+const reloadLine = $("#reload");
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -63,7 +68,7 @@ const workbench = new Workbench($("#workbench"), {
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
-    if (path) window.history.replaceState(null, "", urlForFile(path));
+    if (path) window.history.replaceState(null, "", addressFor(path));
     if (path) lastFile = path;
     for (const fn of focusListeners) fn(path);
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
@@ -122,6 +127,7 @@ async function loadSettings() {
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
   problemsLine.title = problems.join("\n");
+  pluginsChanged();
   workbench.refreshView(SETTINGS_VIEW);
 }
 
@@ -159,6 +165,7 @@ async function openSettings(path: FilePath | null) {
 async function refreshList() {
   files = await api.list();
   renderList();
+  pluginsChanged();
 }
 
 function renderList() {
@@ -301,7 +308,16 @@ const panels = new Panels($("#panel"));
 const plugins: PluginContext = {
   me,
   settings: () => settings,
-  commands: { register: (...c) => commands.register(...c), run: (id) => commands.run(id), all: () => commands.all() },
+  commands: {
+    register: (...c) => commands.register(...c),
+    run: (id) => commands.run(id),
+    all: () => commands.all(),
+    shortcut: (id) => {
+      const key = keyFor(id, settings.keybindings);
+      return key && formatKeys(key);
+    },
+  },
+  util: { fuzzyFilter, notePathFor: (name) => notePathFor(name) },
   keybindings: { add: (...b) => void pluginKeybindings.push(...b) },
   editor: { extend: (e) => void workbench.noteExtensions.push(e) },
   commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
@@ -334,6 +350,101 @@ const plugins: PluginContext = {
   },
   events: { onSaved: (fn) => void savedListeners.push(fn), onFocus: (fn) => void focusListeners.push(fn) },
 };
+
+// Plugins start once, as the app loads. Turning one on or off, or changing its files, applies after a
+// reload (ADR 0005 says why), and until then the status bar and the Plugins view say so.
+let pluginEntries: PluginEntry[] = [];
+let statesAtStart = new Map<string, string>();
+/** The settings that apply after a reload, as they were at start. */
+let reloadSettingsAtStart: string | null = null;
+const RELOAD_SETTINGS = Object.entries(schema.properties as Record<string, { appliesAfterReload?: boolean }>).filter(([, p]) => p.appliesAfterReload).map(([k]) => k);
+const reloadSettingsNow = () => JSON.stringify(RELOAD_SETTINGS.map((k) => (settings as unknown as Record<string, unknown>)[k]));
+const pluginsNeedReload = () => changedPlugins(statesAtStart, pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE));
+
+function updateReloadLine() {
+  if (reloadSettingsAtStart === null) return;
+  const plugins = pluginsNeedReload().size > 0;
+  const settingsChanged = reloadSettingsNow() !== reloadSettingsAtStart;
+  reloadLine.hidden = !plugins && !settingsChanged;
+  const button = document.createElement("button");
+  button.textContent = "Reload";
+  button.addEventListener("click", () => reloadWindow());
+  reloadLine.replaceChildren(`${plugins ? "Plugin" : "Settings"} changes apply after reload · `, button);
+}
+
+function pluginsChanged() {
+  plugins.panels.refresh("plugins");
+  updateReloadLine();
+}
+
+/** Load the page again, where it is, in or out of safe mode. */
+function reloadWindow(safe = SAFE) {
+  location.assign(addressFor(workbench.focusedPath ?? lastFile, safe));
+}
+
+function openPluginSource(e: PluginEntry) {
+  if (e.workspace) void workbench.open(e.workspace.scriptPath, { newTab: true });
+  else workbench.openView(`plugin-source:${e.manifest.id}`, { newTab: true });
+}
+
+/** Copy a built-in into the workspace, where it runs in its place after a reload, and open the copy. */
+async function customize(b: BuiltIn) {
+  const { manifestPath, scriptPath } = pluginPaths(b.id);
+  await api.write(manifestPath, manifestText(b), 0);
+  await api.write(scriptPath, b.source, 0);
+  await refreshList();
+  await workbench.open(scriptPath, { newTab: true });
+}
+
+/** Delete a workspace plugin's files, as changes that undo can take back. */
+async function revertPlugin(e: PluginEntry) {
+  if (!e.workspace) return;
+  const paths = [e.workspace.scriptPath, e.workspace.manifestPath];
+  workbench.forget(paths);
+  for (const path of paths) {
+    const file = await api.read(path);
+    if (file.revision) await api.delete(path, file.revision);
+  }
+  await refreshList();
+}
+
+plugins.panels.register(
+  pluginsView({
+    entries: () => pluginEntries,
+    needsReload: pluginsNeedReload,
+    isOn: (id) => !settings["plugins.disabled"].includes(id),
+    async setOn(id, on) {
+      const others = settings["plugins.disabled"].filter((x) => x !== id);
+      await writeSetting(api, WORKSPACE_SETTINGS, "plugins.disabled", on ? others : [...others, id]);
+      await loadSettings();
+    },
+    safe: SAFE,
+    openSource: openPluginSource,
+    customize,
+    revert: revertPlugin,
+    reload: reloadWindow,
+  }),
+);
+workbench.provideViews("plugin-source:", (id) => {
+  const b = BUILT_IN.find((x) => `plugin-source:${x.id}` === id);
+  if (!b) return null;
+  const editor = (text: string) =>
+    new EditorView({ state: createState(text, { json: false, code: true, readOnly: true, settings, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
+  return builtInSourceView(b, { editor, customize: (x) => void customize(x) });
+});
+commands.register(
+  { id: "plugins.show", title: "Show plugins", run: () => plugins.panels.toggle("plugins") },
+  {
+    id: "plugins.openSource",
+    title: "Open plugin source…",
+    run: () =>
+      bar.pick(
+        "Open a plugin's source",
+        pluginEntries.map((e) => ({ label: e.manifest.name, detail: e.manifest.id, run: () => openPluginSource(e) })),
+      ),
+  },
+  { id: "window.reload", title: "Reload window", run: () => reloadWindow() },
+);
 
 window.addEventListener(
   "keydown",
@@ -441,7 +552,8 @@ connectLive({
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
     }
-    if (!files.some((f) => f.path === notice.path)) void refreshList();
+    // A new file, or a plugin's (which may have been deleted): list them again.
+    if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/plugins/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
     // Plugins hear of it as of any change to a file (the history panel redraws, say).
     clearTimeout(historyTimer2);
@@ -463,10 +575,29 @@ try {
   const asked = fileFromUrl(location.search);
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
-  activate(BUILT_IN, plugins, settings["plugins.disabled"]);
+  pluginEntries = await startPlugins({
+    builtIns: BUILT_IN,
+    files,
+    read: api.read,
+    // From the Worker, so `script-src 'self'` allows it; the version makes each change a new address.
+    load: (w) => import(/* @vite-ignore */ `/plugins/${w.id}/index.js?v=${encodeURIComponent(w.version)}`),
+    ctx: plugins,
+    disabled: settings["plugins.disabled"],
+    safe: SAFE,
+    changed: pluginsChanged,
+  });
+  statesAtStart = pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE);
+  reloadSettingsAtStart = reloadSettingsNow();
   // Plugins have added their keybindings; settings come after them.
   await loadSettings();
   const { missing } = await workbench.start(asked);
+  const failed = pluginEntries.find((e) => e.state === "failed");
+  if (failed) {
+    workbench.notice(`Plugin ${failed.manifest.name} didn't start: ${failed.error}`, [
+      { label: "Show plugins", run: () => plugins.panels.show("plugins") },
+      ...(failed.workspace ? [{ label: "Open in safe mode", run: () => reloadWindow(true) }] : []),
+    ]);
+  }
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);

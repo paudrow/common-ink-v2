@@ -11,7 +11,9 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowJs": true,
+    "checkJs": true
   },
   "include": ["web/src", "scripts", "test"]
 }

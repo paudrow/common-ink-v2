@@ -80,6 +80,20 @@ export const OPERATIONS = {
     },
     run: async (store, w, author) => store.write({ ...w, author }),
   }),
+  delete_file: op<{ path: FilePath; base: Revision }>({
+    description:
+      "Delete a file, given the revision you read (`base`). It's a change like any other: it shows in history, and undoing it brings the file back. If the file changed since you read it, nothing is deleted.",
+    input: { type: "object", properties: { path: PATH, base: { type: "integer", minimum: 1 } }, required: ["path", "base"] },
+    parse: (a) => {
+      const path = parseFilePath(a.path);
+      const base = count(a.base);
+      if (!path) return fail('"path" must be a path ending in .md or .json');
+      if (isReadOnly(path)) return fail(`${path} is written by Common Ink and can't be changed`);
+      if (!base) return fail('"base" must be the revision you read');
+      return ok({ path, base });
+    },
+    run: async (store, { path, base }, author) => store.write({ path, text: "", base, author, delete: true }),
+  }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
     input: {

@@ -14,6 +14,7 @@ interface Property {
   description?: string;
   default?: unknown;
   enum?: unknown[];
+  appliesAfterReload?: boolean;
 }
 
 const properties = () => Object.entries(schema.properties as Record<string, Property>).filter(([k]) => k !== "$schema");
@@ -139,7 +140,7 @@ const hover = hoverTooltip((view, pos) => {
       desc.textContent = p.description ?? "";
       const def = document.createElement("p");
       def.className = "muted";
-      def.textContent = `Default: ${JSON.stringify(p.default)}`;
+      def.textContent = `Default: ${JSON.stringify(p.default)}${p.appliesAfterReload ? ". Applies after reload." : ""}`;
       dom.append(title, desc, def);
       return { dom };
     },

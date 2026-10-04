@@ -576,6 +576,8 @@ body {
   top: 1rem;
   left: 50%;
   translate: -50% 0;
+  width: max-content;
+  max-width: calc(100% - 2rem);
   z-index: 6;
   display: flex;
   align-items: center;
@@ -886,4 +888,145 @@ body {
   margin: 0.25rem 0 0;
   font-size: 0.8125rem;
   color: #c2410c;
+}
+
+/* The status bar's reload notice. */
+#reload button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* The Plugins view (plugins-view.ts), in the side panel or a window. */
+.plugins-view {
+  font-family: var(--prose);
+  font-size: 0.875rem;
+}
+
+.plugins-view .banner {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.plugins-view button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.125rem 0.5rem;
+  cursor: pointer;
+}
+
+.plugins-view button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.plugins-view :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.plugin {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.plugin-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.plugin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.plugin-toggle input {
+  accent-color: var(--accent);
+}
+
+.plugin-name {
+  font-weight: 600;
+}
+
+.plugin-id {
+  font: 0.75rem var(--mono);
+  color: var(--muted);
+}
+
+.plugins-view .badge,
+.settings-editor .badge.reload {
+  font-size: 0.75rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.plugins-view .badge.reload {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.plugin-state {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.plugin.state-off .plugin-name,
+.plugin.state-safe .plugin-name {
+  color: var(--muted);
+}
+
+.plugin.state-failed .plugin-state,
+.plugin-error {
+  color: #c2410c;
+}
+
+.plugin-desc,
+.plugin-error {
+  margin: 0.25rem 0;
+}
+
+.plugin-adds {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.125rem 0.75rem;
+  margin: 0.375rem 0;
+  font-size: 0.8125rem;
+}
+
+.plugin-adds dt {
+  color: var(--muted);
+}
+
+.plugin-adds dd {
+  margin: 0;
+}
+
+p.plugin-adds.muted {
+  display: block;
+  color: var(--muted);
+}
+
+.plugin-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.375rem;
+}
+
+.plugin-source {
+  display: flex;
+  flex-direction: column;
 }

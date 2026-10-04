@@ -16,7 +16,9 @@ export interface Db {
 export type FilePath = string & { readonly __brand: "FilePath" };
 
 export function parseFilePath(value: unknown): FilePath | null {
-  if (typeof value !== "string" || value.length > 300 || !/\.(md|json)$/.test(value)) return null;
+  if (typeof value !== "string" || value.length > 300) return null;
+  // Notes and JSON anywhere; JavaScript only as a workspace plugin's code.
+  if (!/\.(md|json)$/.test(value) && !PLUGIN_SCRIPT.test(value)) return null;
   if (/[\u0000-\u001f\u007f\\]/.test(value)) return null;
   const parts = value.split("/");
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.trim() !== p)) return null;
@@ -24,6 +26,10 @@ export function parseFilePath(value: unknown): FilePath | null {
 }
 
 export const isNote = (path: FilePath) => path.endsWith(".md");
+
+/** A workspace plugin's code: `.common-ink/plugins/<id>/index.js`. */
+const PLUGIN_SCRIPT = /^\.common-ink\/plugins\/[a-zA-Z0-9][\w.-]*\/index\.js$/;
+export const isPluginScript = (path: FilePath) => PLUGIN_SCRIPT.test(path);
 
 /** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
 export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };
@@ -57,6 +63,8 @@ export interface Change {
   undoes: Revision | null;
   /** The undo in effect for this change, if it's undone (and that undo hasn't itself been undone). Set by `recent`. */
   undoneBy?: Revision | null;
+  /** The change deleted the file. Undoing it brings the file back. */
+  deleted?: true;
 }
 
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
@@ -101,6 +109,8 @@ export interface Write {
   base: Revision;
   author: Author;
   undoes?: Revision;
+  /** Delete the file instead: `text` is ignored, and `base` must be its revision. */
+  delete?: true;
 }
 
 /**
@@ -144,10 +154,14 @@ const SCHEMA: Array<(db: Db) => void> = [
   (db) => {
     if (!hasColumn(db, "changes", "undoes")) db.run("ALTER TABLE changes ADD COLUMN undoes INTEGER");
   },
+  // 3. A change can delete its file.
+  (db) => {
+    if (!hasColumn(db, "changes", "deletes")) db.run("ALTER TABLE changes ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0");
+  },
 ];
 
-type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null };
-const toChange = (row: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) });
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
+const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
 /** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
@@ -334,24 +348,31 @@ export class Files {
     });
   }
 
-  private apply({ path, text, base, author, undoes }: Write): WriteResult {
+  private apply({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
-    let next = text;
+    // A delete is never merged: it has to be of the file as it is.
+    if (deleting && (!current || base !== current.revision)) return { status: "conflict", file: current };
+    let next = deleting ? "" : text;
     let status: "saved" | "merged" = "saved";
-    if (base !== (current?.revision ?? 0)) {
+    if (!deleting && base !== (current?.revision ?? 0)) {
       const baseText = this.textAt(path, base);
       const merged = baseText === null ? null : merge(text, baseText, currentText);
       if (merged === null) return { status: "conflict", file: current };
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
-    if (current && next === currentText) return { status, file: current };
+    if (current && next === currentText && !deleting) return { status, file: current };
     const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
     this.db.run(
-      "INSERT INTO changes(path, author, base, diff, time, undoes) VALUES (?, ?, ?, ?, ?, ?)",
-      path, JSON.stringify(author), base, diff, this.now(), undoes ?? null,
+      "INSERT INTO changes(path, author, base, diff, time, undoes, deletes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      path, JSON.stringify(author), base, diff, this.now(), undoes ?? null, deleting ? 1 : 0,
     );
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
+    if (deleting) {
+      this.db.run("DELETE FROM files WHERE path = ?", path);
+      this.announce({ path, revision, author });
+      return { status, file: { path, text: "", revision } };
+    }
     this.db.run(
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
