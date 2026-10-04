@@ -4,7 +4,9 @@ import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
+import { settingsEditor, SETTINGS_VIEW, type Level } from "./settings-ui.ts";
+import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { describeAuthor, docLabel } from "./describe.ts";
 import { connectLive } from "./live.ts";
@@ -70,7 +72,7 @@ const workbench = new Workbench($("#workbench"), {
   created: () => void refreshList(),
   saved(path) {
     for (const fn of savedListeners) fn(path);
-    if (path === WORKSPACE_SETTINGS || path === USER_SETTINGS) void loadSettings();
+    if (isSettingsFile(path)) void loadSettings();
   },
   shortcut: (command) => {
     const key = keyFor(command, settings.keybindings);
@@ -104,17 +106,48 @@ function tabMenuItems(): Array<MenuItem | null> {
   ];
 }
 
+/** Each settings file's settings the last time it could be read. */
+const lastGood: { user: Partial<Settings>; workspace: Partial<Settings> } = { user: {}, workspace: {} };
+
 /** Read user and workspace settings, apply them, and say what in them was ignored. */
 async function loadSettings() {
   const [user, workspace] = await Promise.all([USER_SETTINGS ? api.read(USER_SETTINGS) : null, api.read(WORKSPACE_SETTINGS)]);
   const u = parseSettings(user?.text ?? "");
   const w = parseSettings(workspace.text);
-  settings = combine(u.settings, w.settings, pluginKeybindings);
+  // Half-typed JSON that saved keeps the settings the file had, rather than dropping them all.
+  if (!u.broken) lastGood.user = u.settings;
+  if (!w.broken) lastGood.workspace = w.settings;
+  settings = combine(lastGood.user, lastGood.workspace, pluginKeybindings);
   workbench.applySettings(settings);
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
   problemsLine.title = problems.join("\n");
+  workbench.refreshView(SETTINGS_VIEW);
 }
+
+const settingsPath = (level: Level) => (level === "user" ? USER_SETTINGS : WORKSPACE_SETTINGS);
+const isSettingsFile = (path: FilePath) => path === USER_SETTINGS || path === WORKSPACE_SETTINGS;
+
+const settingsUi = settingsEditor({
+  pathFor: settingsPath,
+  read: (path) => api.read(path),
+  write: (path, text, base) => api.write(path, text, base),
+  effective: () => settings,
+  openJson: (level) => void openSettings(settingsPath(level)),
+  changed: () => void loadSettings(),
+});
+workbench.registerView(settingsUi);
+
+/** Open the settings editor at user or workspace settings. */
+function openSettingsUi(level: Level) {
+  settingsUi.level = level;
+  workbench.openView(SETTINGS_VIEW, { newTab: true });
+  workbench.refreshView(SETTINGS_VIEW);
+}
+
+// A settings file's editor helps with its keys and values, and leads back to the settings editor.
+workbench.extensionsFor = (path) =>
+  isSettingsFile(path) || path === DEFAULT_SETTINGS ? [settingsJson({ readOnly: isReadOnly(path), openUi: () => openSettingsUi(path === WORKSPACE_SETTINGS ? "workspace" : "user") })] : [];
 
 /** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
 async function openSettings(path: FilePath | null) {
@@ -244,9 +277,11 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
-  { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
-  { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
-  { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
+  { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
+  { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
+  { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
+  { id: "settings.workspaceJson", title: "Open workspace settings (JSON)", run: () => openSettings(WORKSPACE_SETTINGS) },
+  { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
   { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
   { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
   { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
@@ -407,6 +442,7 @@ connectLive({
       saveLine.dataset.status = "remote";
     }
     if (!files.some((f) => f.path === notice.path)) void refreshList();
+    if (isSettingsFile(notice.path)) void loadSettings();
     // Plugins hear of it as of any change to a file (the history panel redraws, say).
     clearTimeout(historyTimer2);
     historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);

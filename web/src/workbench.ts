@@ -68,6 +68,8 @@ export class Workbench {
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
+  /** Editor extensions for one file's editors, such as help in a settings file. */
+  extensionsFor: (path: FilePath) => Extension[] = () => [];
   private layoutTimer = 0;
   /** A layout save is on its way, so news of it coming back isn't someone else's change. */
   private layoutSaving = false;
@@ -381,9 +383,9 @@ export class Workbench {
     const view: EditorView = new EditorView({
       state: createState(text, {
         json: !isNote(file.path),
-        extensions: isNote(file.path) ? this.noteExtensions : [],
         readOnly: isReadOnly(file.path),
         settings: this.settings,
+        extensions: [...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),
       }),
