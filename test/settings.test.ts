@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Docs, type Author } from "../worker/src/docs.ts";
+import { Files, type Author } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, defaultsText, parseSettings, schema, SETTINGS } from "../worker/src/settings.ts";
 import { commandForKey, keyFor } from "../web/src/commands.ts";
 import { docLabel } from "../web/src/describe.ts";
-import type { DocPath } from "../worker/src/docs.ts";
+import type { FilePath } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -41,17 +41,17 @@ test("the schema and the defaults view list every setting", () => {
   assert.deepEqual(JSON.parse(defaultsText()), { $schema: "/schema/settings.json", ...DEFAULTS });
 });
 
-test("the defaults read like a doc but can't be written", async () => {
-  const docs = new Docs(memoryDb());
-  const read = await runOperation("read_doc", { path: DEFAULT_SETTINGS }, docs, you);
+test("the defaults read like a file but can't be written", async () => {
+  const files = new Files(memoryDb());
+  const read = await runOperation("read_file", { path: DEFAULT_SETTINGS }, files, you);
   assert.ok(read.ok && (read.value as { text: string }).text === defaultsText());
-  const write = await runOperation("write_doc", { path: DEFAULT_SETTINGS, text: "{}", base: 0 }, docs, you);
+  const write = await runOperation("write_file", { path: DEFAULT_SETTINGS, text: "{}", base: 0 }, files, you);
   assert.equal(write.ok, false);
 });
 
 test("settings files have names in tabs and quick open", () => {
-  assert.equal(docLabel(".common-ink/settings.json" as DocPath), "Workspace settings");
-  assert.equal(docLabel(".common-ink/users/ada@example.com/settings.json" as DocPath), "User settings");
-  assert.equal(docLabel(".common-ink/defaults/settings.json" as DocPath), "Default settings");
-  assert.equal(docLabel("Projects/Plan.md" as DocPath), "Projects/Plan");
+  assert.equal(docLabel(".common-ink/settings.json" as FilePath), "Workspace settings");
+  assert.equal(docLabel(".common-ink/users/ada@example.com/settings.json" as FilePath), "User settings");
+  assert.equal(docLabel(".common-ink/defaults/settings.json" as FilePath), "Default settings");
+  assert.equal(docLabel("Projects/Plan.md" as FilePath), "Projects/Plan");
 });

@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DocPath } from "../worker/src/docs.ts";
-import { activeDoc, closeTab, showInTab, cycleGroup, cycleTab, emptyLayout, focusDirection, focused, groups, only, openTab, parseLayout, split, type Layout } from "../web/src/layout.ts";
+import type { FilePath } from "../worker/src/files.ts";
+import { activeFile, closeTab, showInTab, cycleGroup, cycleTab, emptyLayout, focusDirection, focused, groups, only, openTab, parseLayout, split, type Layout } from "../web/src/layout.ts";
 
-const [a, b, c] = ["A.md", "B.md", "C.md"] as DocPath[];
+const [a, b, c] = ["A.md", "B.md", "C.md"] as FilePath[];
 const shown = (l: Layout) => groups(l).map((g) => `${g.id}:${g.tabs.join(",")}@${g.active}`);
 
-test("opening a doc adds a tab after the current one, or shows its tab if it has one", () => {
+test("opening a file adds a tab after the current one, or shows its tab if it has one", () => {
   let l = openTab(emptyLayout(), a);
   l = openTab(l, b);
   l = openTab(openTab(l, a), c);
   assert.deepEqual(shown(l), ["g1:A.md,C.md,B.md@1"]);
-  assert.equal(activeDoc(focused(openTab(l, b))), b);
+  assert.equal(activeFile(focused(openTab(l, b))), b);
 });
 
 test("closing a tab shows its neighbour, and an empty group closes unless it's the last", () => {
@@ -54,8 +54,8 @@ test("Ctrl-W h, j, k and l move focus to the group that way", () => {
 
 test("gt and gT cycle tabs, wrapping around", () => {
   const l = openTab(openTab(openTab(emptyLayout(), a), b), c);
-  assert.equal(activeDoc(focused(cycleTab(l, 1))), a);
-  assert.equal(activeDoc(focused(cycleTab(l, -1))), b);
+  assert.equal(activeFile(focused(cycleTab(l, 1))), a);
+  assert.equal(activeFile(focused(cycleTab(l, -1))), b);
 });
 
 test("a saved layout is read back, and anything malformed is refused or cleaned", () => {
@@ -69,7 +69,7 @@ test("a saved layout is read back, and anything malformed is refused or cleaned"
   });
 });
 
-test(":e shows a doc in place of the tab on show, or switches to its tab", () => {
+test(":e shows a file in place of the tab on show, or switches to its tab", () => {
   const l = openTab(openTab(emptyLayout(), a), b);
   assert.deepEqual(shown(showInTab(l, c)), ["g1:A.md,C.md@1"]);
   assert.deepEqual(shown(showInTab(l, a)), ["g1:A.md,B.md@0"]);
