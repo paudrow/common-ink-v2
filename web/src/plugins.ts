@@ -4,7 +4,9 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
+import type { SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Keybinding, Settings } from "../../worker/src/settings.ts";
+import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
 
@@ -57,6 +59,15 @@ export interface PluginContext {
     fetchList(): Promise<FileSummary[]>;
     read(path: FilePath): Promise<WorkspaceFile>;
     write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
+  };
+  /** Data sources: outside data shown but not stored as files. They answer for the signed-in person. */
+  sources: {
+    /** "google" when connected, "fixtures" for sample data (Previews), "none" when not connected yet. */
+    status(): Promise<SourceStatus>;
+    events(from: Date, to: Date): Promise<Event[]>;
+    contacts(query?: string): Promise<Contact[]>;
+    /** Go to Google to connect calendar and contacts, then come back. */
+    connect(): void;
   };
   workbench: {
     /** Open a file in place of the tab on show, or in a new tab, optionally at a line (0-based). */

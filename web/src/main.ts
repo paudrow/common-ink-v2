@@ -15,12 +15,13 @@ import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import { activate, type PluginContext } from "./plugins.ts";
 import { commandsProviderPlugin, notesProviderPlugin } from "./plugins/command-bar.ts";
+import { calendarPlugin, contactsPlugin } from "./plugins/google.ts";
 import { historyPlugin } from "./plugins/history.ts";
 import { todosPlugin } from "./plugins/todos/index.ts";
 import { Workbench } from "./workbench.ts";
 
 /** The built-in plugins, in the order they start. */
-const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin, todosPlugin];
+const BUILT_IN = [notesProviderPlugin, commandsProviderPlugin, historyPlugin, todosPlugin, calendarPlugin, contactsPlugin];
 
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -192,6 +193,7 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
+  { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
   { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
@@ -232,6 +234,12 @@ const plugins: PluginContext = {
       panels.refresh(id);
       workbench.refreshView(id);
     },
+  },
+  sources: {
+    status: api.sources,
+    events: api.events,
+    contacts: api.contacts,
+    connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
   },
   files: { list: () => files, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {
