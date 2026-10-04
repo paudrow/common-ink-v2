@@ -7,8 +7,8 @@ export type SaveStatus = "saved" | "unsaved" | "saving" | "conflict" | "offline"
 
 export interface Editor {
   text(): string;
-  /** Swap in text from the server, without counting it as an edit. */
-  replace(text: string): void;
+  /** Swap in text from the server, without counting it as an edit. `remote` when someone else changed it. */
+  replace(text: string, remote?: boolean): void;
 }
 
 export type WriteFile = (path: FilePath, text: string, base: Revision) => Promise<WriteResult>;
@@ -58,6 +58,24 @@ export class Session {
   /** Save if there's anything to save. After a conflict, only an explicit save (`:w`) tries again. */
   save(explicit = false): Promise<void> {
     this.queue = this.queue.then(() => this.send(explicit));
+    return this.queue;
+  }
+
+  /**
+   * Take in a newer version from the server (someone else's change), merged with anything typed here
+   * and not yet saved. Waits for a save that's under way. If the two touch the same lines, the typing
+   * stays and the session says so; nothing is overwritten.
+   */
+  absorb(latest: WorkspaceFile): Promise<void> {
+    this.queue = this.queue.then(() => {
+      if (latest.revision <= this.base) return;
+      const now = this.editor.text();
+      const merged = now === this.baseText ? latest.text : merge(now, this.baseText, latest.text);
+      if (merged === null) return this.set("conflict");
+      if (merged !== now) this.editor.replace(merged, true);
+      [this.base, this.baseText] = [latest.revision, latest.text];
+      this.set(this.dirty ? "unsaved" : "saved");
+    });
     return this.queue;
   }
 
