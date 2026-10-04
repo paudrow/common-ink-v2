@@ -396,6 +396,8 @@ body {
 
 :is(#panel, .tab-view) .message {
   color: #c2410c;
+}
+
 .drop {
   position: absolute;
   inset: 0;
