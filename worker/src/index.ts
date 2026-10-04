@@ -76,6 +76,8 @@ export default {
       return secure(json({ ok: true }));
     }
     const store = workspace as unknown as Store;
+    // The live connection goes straight to the workspace: a WebSocket's response can't be rewrapped.
+    if (url.pathname === "/api/live") return workspace.fetch(req);
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
     await seedOnce(env, workspace);
     return secure(await api(req, url, who, store));
@@ -98,6 +100,11 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/sources": "data_sources",
   "GET /api/events": "list_events",
   "GET /api/contacts": "list_contacts",
+  "POST /api/diff": "diff",
+  "GET /api/version": "read_version",
+  "POST /api/restore": "restore",
+  "GET /api/labels": "labels",
+  "POST /api/labels": "add_label",
 };
 
 async function api(req: Request, url: URL, who: Identity, store: Store): Promise<Response> {

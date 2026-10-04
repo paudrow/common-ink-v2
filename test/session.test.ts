@@ -110,3 +110,33 @@ test("a failed request leaves the edit unsaved for the next try", async () => {
   assert.equal(session.status, "saved");
   assert.equal(session.unsaved, null);
 });
+
+test("someone else's change reaches a note with unsaved typing, and the typing stays", async () => {
+  const { notes, editor, session } = setup("one\ntwo\nthree\n");
+  editor.text = "one\ntwo\nthree\nmine\n";
+  notes.write({ path: PATH, text: "ONE\ntwo\nthree\n", base: 1, author: them });
+  await session.absorb(notes.read(PATH)!);
+  assert.equal(editor.text, "ONE\ntwo\nthree\nmine\n");
+  assert.equal(session.status, "unsaved");
+  await session.save();
+  assert.equal(notes.read(PATH)?.text, "ONE\ntwo\nthree\nmine\n");
+});
+
+test("a remote change to the lines being typed on keeps the typing and says it clashes", async () => {
+  const { notes, editor, session } = setup("one\n");
+  editor.text = "mine\n";
+  notes.write({ path: PATH, text: "theirs\n", base: 1, author: them });
+  await session.absorb(notes.read(PATH)!);
+  assert.equal(editor.text, "mine\n");
+  assert.equal(session.status, "conflict");
+});
+
+test("news of a change this session already has, such as its own save, changes nothing", async () => {
+  const { notes, editor, session } = setup("one\n");
+  editor.text = "one\ntwo\n";
+  await session.save();
+  const before = editor.text;
+  await session.absorb(notes.read(PATH)!);
+  assert.equal(editor.text, before);
+  assert.equal(session.status, "saved");
+});

@@ -40,6 +40,10 @@ _Avoid_: Commit, event, op
 **Author**:
 Who made a change: the user, a named agent, a plugin or sync.
 
+**Label**:
+A name given to a note's state at one revision, so it can be found, opened and restored later.
+_Avoid_: Tag, snapshot, bookmark
+
 **History**:
 The ordered record of every change in a workspace. Undo and redo move through it.
 _Avoid_: Log, timeline, versions

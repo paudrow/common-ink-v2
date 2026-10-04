@@ -70,6 +70,10 @@ export interface PluginContext {
     connect(): void;
   };
   workbench: {
+    /** Open a view (a panel, say) in the focused window, in place of the tab on show or in a new tab. */
+    openView(id: string, how?: { newTab?: boolean }): void;
+    /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
+    provideViews(prefix: string, make: (id: string) => Panel | null): void;
     /** Open a file in place of the tab on show, or in a new tab, optionally at a line (0-based). */
     open(path: FilePath, how?: { newTab?: boolean; line?: number }): Promise<void>;
     /** Open a file picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
@@ -81,7 +85,7 @@ export interface PluginContext {
     label(path: FilePath): string;
   };
   events: {
-    /** After a file's text on the server changes from this app. */
+    /** After a file's text on the server changes, from here or anywhere else. */
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
