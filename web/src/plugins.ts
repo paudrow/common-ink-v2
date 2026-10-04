@@ -1,6 +1,7 @@
 // The plugin API. Built-in features use exactly this (ADR 0004): the command bar's providers and the
-// history panel are plugins, and settings can turn any plugin off ("plugins.disabled"). See
-// docs/plugins.md for writing one.
+// history panel are plugins, and settings can turn any plugin off ("plugins.disabled"). Workspace
+// plugins are files, `.common-ink/plugins/<id>/plugin.json` and `index.js`, on the same API (ADR 0005).
+// See docs/plugins.md for writing one.
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
@@ -28,6 +29,8 @@ export interface PluginContext {
     register(...commands: Command[]): void;
     run(id: string): boolean;
     all(): Command[];
+    /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
+    shortcut(id: string): string | undefined;
   };
   /** Default keybindings for a plugin's commands. Settings can rebind or unbind them. */
   keybindings: {
@@ -84,6 +87,13 @@ export interface PluginContext {
     refreshFromServer(paths: FilePath[]): Promise<void>;
     label(path: FilePath): string;
   };
+  /** Helpers the built-ins use, so a copy of one runs as a workspace plugin with nothing to import. */
+  util: {
+    /** The items that fuzzily match `query`, best first. */
+    fuzzyFilter<T>(query: string, items: readonly T[], text: (item: T) => string): T[];
+    /** The note a name like "Projects/Plan" means, or null if it can't be one. */
+    notePathFor(name: string): FilePath | null;
+  };
   events: {
     /** After a file's text on the server changes, from here or anywhere else. */
     onSaved(fn: (path: FilePath) => void): void;
@@ -92,24 +102,17 @@ export interface PluginContext {
   };
 }
 
-export interface Plugin {
+/** What a plugin is: its plugin.json for a workspace plugin. */
+export interface PluginManifest {
   /** Settings name plugins by id, as in "plugins.disabled": ["history"]. */
   id: string;
+  name: string;
   description: string;
+}
+
+/** A plugin's code: an index.js's default export. */
+export interface PluginModule {
   activate(ctx: PluginContext): void;
 }
 
-/** Activate every plugin that settings haven't turned off. Returns the ids that are active. */
-export function activate(plugins: readonly Plugin[], ctx: PluginContext, disabled: readonly string[]): string[] {
-  const active: string[] = [];
-  for (const plugin of plugins) {
-    if (disabled.includes(plugin.id)) continue;
-    try {
-      plugin.activate(ctx);
-      active.push(plugin.id);
-    } catch (err) {
-      console.error(`Plugin ${plugin.id} didn't start:`, err);
-    }
-  }
-  return active;
-}
+export type Plugin = PluginManifest & PluginModule;

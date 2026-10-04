@@ -1,0 +1,5 @@
+{
+  "id": "word-count",
+  "name": "Word count",
+  "description": "A sample workspace plugin: a Word count panel for the note on show."
+}
