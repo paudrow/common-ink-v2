@@ -1,12 +1,22 @@
 // One Durable Object per workspace. It owns the workspace's SQLite database and runs every read and
-// write in order, so two writes to a note can't interleave.
+// write in order, so two writes to a note can't interleave. It also keeps data source connections.
 import { DurableObject } from "cloudflare:workers";
+import { DataSources } from "./data-sources.ts";
 import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
+import type { Granted } from "./google.ts";
 
-export class Workspace extends DurableObject<object> {
+export interface WorkspaceEnv {
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** "1" in Previews and local development: data sources answer with recorded fixtures. */
+  DATA_FIXTURES?: string;
+}
+
+export class Workspace extends DurableObject<WorkspaceEnv> {
   private files: Files;
+  private sources: DataSources;
 
-  constructor(ctx: DurableObjectState, env: object) {
+  constructor(ctx: DurableObjectState, env: WorkspaceEnv) {
     super(ctx, env);
     const { sql } = ctx.storage;
     const db: Db = {
@@ -15,6 +25,8 @@ export class Workspace extends DurableObject<object> {
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
     this.files = new Files(db);
+    const google = env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET } : null;
+    this.sources = new DataSources(db, { fixtures: env.DATA_FIXTURES === "1", google });
   }
 
   list() {
@@ -39,5 +51,25 @@ export class Workspace extends DurableObject<object> {
 
   seed(seed: Seed) {
     this.files.seed(seed);
+  }
+
+  connectGoogle(granted: Granted) {
+    return this.sources.connect(granted);
+  }
+
+  disconnectGoogle(email: string) {
+    this.sources.disconnect(email);
+  }
+
+  sourceStatus(email: string) {
+    return this.sources.status(email);
+  }
+
+  events(email: string, from: string, to: string) {
+    return this.sources.events(email, from, to);
+  }
+
+  contacts(email: string, query: string) {
+    return this.sources.contacts(email, query);
   }
 }

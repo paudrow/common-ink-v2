@@ -50,8 +50,9 @@ jobs:
           tar xzf gitleaks.tar.gz gitleaks
           ./gitleaks git --config .gitleaks.toml --redact --no-banner .
 
-  # Every commit to main goes live at https://common-ink-v2.<subdomain>.workers.dev, behind Cloudflare
-  # Access. ACCESS_TEAM_DOMAIN and ACCESS_AUD are repository variables; without them the Worker
+  # Every commit to main goes live at https://common-ink-v2.<subdomain>.workers.dev. People sign in with
+  # Google (GOOGLE_CLIENT_ID and ALLOWED_EMAILS variables, GOOGLE_CLIENT_SECRET and SESSION_SECRET
+  # secrets) or through Cloudflare Access (ACCESS_TEAM_DOMAIN and ACCESS_AUD); with neither, the Worker
   # answers every request with 401.
   deploy:
     needs: [check, secrets]
@@ -65,22 +66,35 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
       ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+      GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+      ALLOWED_EMAILS: ${{ vars.ALLOWED_EMAILS }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
     steps:
       - name: Check Cloudflare credentials
         if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
         run: |
           echo "::error::Add the CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable to this repository to enable deploys."
           exit 1
-      - name: Check Access settings
-        if: env.ACCESS_TEAM_DOMAIN == '' || env.ACCESS_AUD == ''
-        run: echo "::warning::ACCESS_TEAM_DOMAIN or ACCESS_AUD isn't set as a repository variable, so the deployed Worker will answer every request with 401."
+      - name: Check sign-in settings
+        if: (env.ACCESS_TEAM_DOMAIN == '' || env.ACCESS_AUD == '') && (env.GOOGLE_CLIENT_ID == '' || env.GOOGLE_CLIENT_SECRET == '' || env.SESSION_SECRET == '' || env.ALLOWED_EMAILS == '')
+        run: echo "::warning::Neither Cloudflare Access (ACCESS_TEAM_DOMAIN, ACCESS_AUD) nor Google sign-in (GOOGLE_CLIENT_ID, ALLOWED_EMAILS, and the GOOGLE_CLIENT_SECRET and SESSION_SECRET secrets) is set up, so nobody can sign in."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run deploy -- --var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN" --var "ACCESS_AUD:$ACCESS_AUD"
+      # Secrets go up with the deploy, from the repository's secrets, and only when they're set; a
+      # secret left out keeps the value it had.
+      - name: Deploy
+        run: |
+          jq -n --arg g "$GOOGLE_CLIENT_SECRET" --arg s "$SESSION_SECRET" '{GOOGLE_CLIENT_SECRET: $g, SESSION_SECRET: $s} | with_entries(select(.value != ""))' > "$RUNNER_TEMP/secrets.json"
+          secrets=()
+          [ "$(jq length "$RUNNER_TEMP/secrets.json")" -gt 0 ] && secrets=(--secrets-file "$RUNNER_TEMP/secrets.json")
+          npm run deploy -- "${secrets[@]}" \
+            --var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN" --var "ACCESS_AUD:$ACCESS_AUD" \
+            --var "GOOGLE_CLIENT_ID:$GOOGLE_CLIENT_ID" --var "ALLOWED_EMAILS:$ALLOWED_EMAILS"
 
   # Every pull request gets a Preview at https://pr-<number>-common-ink-v2.<subdomain>.workers.dev, with
   # its own Durable Objects (so its own notes), signed in as a dev user, like v1's Previews. It's filled

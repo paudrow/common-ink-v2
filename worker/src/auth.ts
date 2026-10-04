@@ -1,5 +1,5 @@
-// Who is making a request. Deployed, that's whoever Cloudflare Access signed in, proven by the JWT it
-// adds to every request. Under `wrangler dev` on this machine, and in a pull request's Preview, it's the
+// Who is making a request. Deployed, that's whoever signed in with Google (a session cookie), or whoever
+// Cloudflare Access signed in, proven by the JWT it adds to every request. Under `wrangler dev` on this machine, and in a pull request's Preview, it's the
 // dev user. Anything else is nobody, so a deploy without its Access settings refuses every request.
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import type { Author } from "./files.ts";
@@ -14,6 +14,8 @@ export interface AuthConfig {
   aud?: string;
   /** Set by `npm run dev` and in Previews. Honoured only on this machine or a Preview's address. */
   devUser?: string;
+  /** Checks the session cookie from Google sign-in. */
+  sessionEmail?: (req: Request) => Promise<string | null>;
 }
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -34,6 +36,8 @@ function accessKeys(issuer: string): JWTVerifyGetKey {
 
 export async function identify(req: Request, config: AuthConfig, keys = accessKeys): Promise<Identity | null> {
   if (config.devUser && devHost(new URL(req.url).hostname)) return { kind: "user", email: config.devUser };
+  const signedIn = await config.sessionEmail?.(req);
+  if (signedIn) return { kind: "user", email: signedIn };
   const token = req.headers.get("Cf-Access-Jwt-Assertion");
   if (!token || !config.teamDomain || !config.aud) return null;
   const issuer = `https://${config.teamDomain.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
