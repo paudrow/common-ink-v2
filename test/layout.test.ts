@@ -4,6 +4,7 @@ import type { FilePath } from "../worker/src/files.ts";
 import {
   activeFile,
   closeTab,
+  closeTabs,
   cycleGroup,
   cycleTab,
   emptyLayout,
@@ -12,12 +13,15 @@ import {
   focused,
   groups,
   insertTab,
+  keepFile,
+  keepTab,
   moveTab,
   moveTabDirection,
   only,
   openTab,
   parseLayout,
   resizeFocused,
+  selectTab,
   shiftTab,
   showInTab,
   split,
@@ -26,7 +30,7 @@ import {
 } from "../web/src/layout.ts";
 
 const [a, b, c] = ["A.md", "B.md", "C.md"] as FilePath[];
-const shown = (l: Layout) => groups(l).map((g) => `${g.id}:${g.tabs.map((t) => ("file" in t ? t.file : `view:${t.view}`)).join(",")}@${g.active}`);
+const shown = (l: Layout) => groups(l).map((g) => `${g.id}:${g.tabs.map((t) => (t.preview ? "*" : "") + ("file" in t ? t.file : `view:${t.view}`)).join(",")}@${g.active}`);
 const sizes = (l: Layout) => (l.root.kind === "split" ? l.root.sizes.map((s) => Math.round(s * 100) / 100) : []);
 
 test("opening a file adds a tab after the current one, or shows its tab if it has one", () => {
@@ -37,11 +41,37 @@ test("opening a file adds a tab after the current one, or shows its tab if it ha
   assert.equal(activeFile(focused(openTab(l, b))), b);
 });
 
-test(":e shows a file in place of the tab on show, or switches to its tab", () => {
-  const l = openTab(openTab(emptyLayout(), a), b);
-  assert.deepEqual(shown(showInTab(l, c)), ["g1:A.md,C.md@1"]);
-  assert.deepEqual(shown(showInTab(l, a)), ["g1:A.md,B.md@0"]);
-  assert.deepEqual(shown(showInTab(emptyLayout(), { view: "history" })), ["g1:view:history@0"]);
+test(":e and quick open show a file in the preview tab, or a new one; opened tabs are kept", () => {
+  const kept = openTab(openTab(emptyLayout(), a), b);
+  const previewed = showInTab(kept, c);
+  assert.deepEqual(shown(previewed), ["g1:A.md,B.md,*C.md@2"], "no preview tab yet: a new one after the tab on show");
+  assert.deepEqual(shown(showInTab(previewed, a)), ["g1:A.md,B.md,*C.md@0"], "a tab it has already just shows");
+  const d = "D.md" as FilePath;
+  assert.deepEqual(shown(showInTab(selectTab(previewed, "g1", 0), d)), ["g1:A.md,B.md,*D.md@2"], "the preview tab is the one replaced");
+  assert.deepEqual(shown(showInTab(emptyLayout(), { view: "history" })), ["g1:*view:history@0"]);
+});
+
+test("a preview tab is kept by Keep Open, by editing its file, or by opening it in a tab", () => {
+  const l = showInTab(openTab(emptyLayout(), a), b);
+  assert.deepEqual(shown(keepTab(l, "g1", 1)), ["g1:A.md,B.md@1"]);
+  assert.deepEqual(shown(keepFile(split(l, "right"), b)), ["g1:A.md,B.md@1", "g2:B.md@0"]);
+  assert.deepEqual(shown(openTab(l, b)), ["g1:A.md,B.md@1"]);
+  assert.deepEqual(shown(showInTab(keepTab(l, "g1", 1), c)), ["g1:A.md,B.md,*C.md@2"], "a kept tab is never replaced");
+  const saved = JSON.parse(JSON.stringify(l));
+  assert.deepEqual(saved.root.tabs, [{ file: "A.md" }, { file: "B.md", preview: true }], "the preview mark is saved in the layout");
+  assert.deepEqual(parseLayout(saved), l);
+  const twoPreviews = parseLayout({ root: { kind: "group", id: "g1", tabs: [{ file: "A.md", preview: true }, { file: "B.md", preview: true }], active: 0 }, focus: "g1" });
+  assert.deepEqual(twoPreviews && shown(twoPreviews), ["g1:*A.md,B.md@0"], "a group has at most one preview tab");
+});
+
+test("closing others, to the right, to the left, saved ones or all", () => {
+  const l = openTab(openTab(openTab(openTab(emptyLayout(), a), b), c), "D.md" as FilePath);
+  const at = (i: number) => (_: unknown, j: number) => j === i;
+  assert.deepEqual(shown(closeTabs(l, "g1", (_, i) => i !== 1)), ["g1:B.md@0"]);
+  assert.deepEqual(shown(closeTabs(l, "g1", (_, i) => i > 1)), ["g1:A.md,B.md@1"]);
+  assert.deepEqual(shown(closeTabs(l, "g1", (_, i) => i < 1)), ["g1:B.md,C.md,D.md@2"]);
+  assert.deepEqual(shown(closeTabs(l, "g1", () => true)), ["g1:@0"]);
+  assert.deepEqual(shown(closeTabs(l, "g1", at(9))), shown(l));
 });
 
 test("closing a tab shows its neighbour, and an empty group closes unless it's the last", () => {
