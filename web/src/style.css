@@ -386,3 +386,8 @@ body {
 #history .message {
   color: #c2410c;
 }
+
+#problems {
+  margin-left: auto;
+  color: #c2410c;
+}

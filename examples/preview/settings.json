@@ -1,0 +1,12 @@
+{
+  "pr": 10,
+  "title": "Settings in JSON",
+  "steps": [
+    "⌘⇧P, Open default settings (read-only): every setting with its default. Its descriptions are in the schema at `/schema/settings.json`.",
+    "Open user settings and add `\"editor.fontSize\": 20`. A second after you stop typing, every editor's text grows.",
+    "Open workspace settings and add `\"editor.fontSize\": 14`: workspace settings win over user settings.",
+    "Try `\"editor.lineNumbers\": true`, `\"editor.lineWrapping\": false` or `\"editor.vim\": false`.",
+    "Keybindings: `\"keybindings\": [{\"key\": \"Mod-k\", \"command\": \"quickOpen\"}, {\"key\": \"Mod-s\", \"command\": null}]` makes ⌘K open notes and unbinds ⌘S. ⌘⇧P shows the new shortcuts.",
+    "Misspell a setting, such as `\"editor.fontsize\"`. The status bar says `Settings: 1 problem`; hover it to see which."
+  ]
+}

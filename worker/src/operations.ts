@@ -1,5 +1,6 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
+import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import { parseDocPath, type Author, type Change, type Doc, type DocSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./docs.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
@@ -54,7 +55,7 @@ export const OPERATIONS = {
       const path = parseDocPath(a.path);
       return path ? ok({ path }) : fail('"path" must be a path ending in .md or .json');
     },
-    run: async (store, { path }) => store.read(path),
+    run: async (store, { path }) => (path === DEFAULT_SETTINGS ? { path, text: defaultsText(), revision: 0 } : store.read(path)),
   }),
   write_doc: op<Omit<Write, "author">>({
     description:
@@ -68,6 +69,7 @@ export const OPERATIONS = {
       const path = parseDocPath(a.path);
       const base = count(a.base);
       if (!path) return fail('"path" must be a path ending in .md or .json');
+      if (isReadOnly(path)) return fail(`${path} is written by Common Ink and can't be changed`);
       if (typeof a.text !== "string" || new TextEncoder().encode(a.text).length > MAX_DOC_BYTES) return fail('"text" must be a string under 1 MB');
       if (base === undefined) return fail('"base" must be the revision you started from, or 0 for a new doc');
       return ok({ path, text: a.text, base });

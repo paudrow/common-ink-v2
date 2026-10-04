@@ -4,7 +4,8 @@ import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type DocPath, type DocSummary } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
 import { CommandBar, type Provider } from "./commandbar.ts";
-import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
+import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { HistoryPanel } from "./history.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
@@ -13,17 +14,12 @@ import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
 import { Workbench } from "./workbench.ts";
 
-const KEYBINDINGS: Keybinding[] = [
-  { key: "Mod-p", command: "quickOpen" },
-  { key: "Mod-Shift-p", command: "commandBar" },
-  { key: "Mod-s", command: "note.save" },
-  { key: "Mod-\\", command: "window.splitRight" },
-];
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
+const problemsLine = $("#problems");
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -34,17 +30,19 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 };
 
 let docs: DocSummary[] = [];
-let historyTimer = 0;
+let settings: Settings = DEFAULTS;
+
+const me = await fetch("/api/me")
+  .then((r) => r.json())
+  .then((who: { kind: string; email?: string }) => who.email)
+  .catch(() => undefined);
+const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = (path: DocPath) => path.replace(/\.md$/, "");
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {
     saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
     saveLine.dataset.status = status ?? "";
-    if (status === "saved") {
-      clearTimeout(historyTimer);
-      historyTimer = window.setTimeout(() => void history.refresh(), 300);
-    }
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
@@ -54,7 +52,30 @@ const workbench = new Workbench($("#workbench"), {
     renderList();
   },
   created: () => void refreshList(),
+  saved(path) {
+    void history.refresh();
+    if (path === WORKSPACE_SETTINGS || path === USER_SETTINGS) void loadSettings();
+  },
 });
+
+/** Read user and workspace settings, apply them, and say what in them was ignored. */
+async function loadSettings() {
+  const [user, workspace] = await Promise.all([USER_SETTINGS ? api.read(USER_SETTINGS) : null, api.read(WORKSPACE_SETTINGS)]);
+  const u = parseSettings(user?.text ?? "");
+  const w = parseSettings(workspace.text);
+  settings = combine(u.settings, w.settings);
+  workbench.applySettings(settings);
+  const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
+  problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
+  problemsLine.title = problems.join("\n");
+}
+
+/** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
+async function openSettings(path: DocPath | null) {
+  if (!path) return;
+  if (path !== DEFAULT_SETTINGS && (await api.read(path)).revision === 0) await api.write(path, SETTINGS_TEMPLATE, 0);
+  await workbench.open(path, { newTab: true });
+}
 
 async function refreshList() {
   docs = await api.list();
@@ -155,6 +176,9 @@ commands.register(
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
   { id: "history.note", title: "Show history of this note", run: () => history.toggle("doc") },
   { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
+  { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
+  { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
+  { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
 );
 
 const notesProvider: Provider = {
@@ -173,7 +197,7 @@ const commandsProvider: Provider = {
   placeholder: "Run a command",
   items: (query) =>
     fuzzyFilter(query, commands.all(), (c) => c.title).map((c) => {
-      const key = keyFor(c.id, KEYBINDINGS);
+      const key = keyFor(c.id, settings.keybindings);
       return { label: c.title, detail: key && formatKeys(key), run: () => commands.run(c.id) };
     }),
 };
@@ -183,7 +207,7 @@ const bar = new CommandBar([notesProvider, commandsProvider]);
 window.addEventListener(
   "keydown",
   (e) => {
-    const id = commandForKey(e, KEYBINDINGS);
+    const id = commandForKey(e, settings.keybindings);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
@@ -260,10 +284,6 @@ window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
-const me = await fetch("/api/me")
-  .then((r) => r.json())
-  .then((who: { kind: string; email?: string }) => who.email)
-  .catch(() => undefined);
 const history = new HistoryPanel($("#history"), {
   me,
   focusedPath: () => workbench.focusedPath,
@@ -274,6 +294,7 @@ try {
   docs = await api.list();
   const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
   const fallback = docs.find((d) => d.path === "Try this PR.md")?.path ?? docs.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
+  await loadSettings();
   await workbench.start(asked);
   if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();

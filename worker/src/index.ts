@@ -3,6 +3,7 @@
 import { authorFor, identify, type Identity } from "./auth.ts";
 import type { Seed } from "./docs.ts";
 import { mcp } from "./mcp.ts";
+import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -36,6 +37,8 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 
 export default {
   async fetch(req, env) {
+    // The settings schema is public, so editors outside the app can check settings files against it.
+    if (new URL(req.url).pathname === SCHEMA_URL) return secure(json(schema));
     const who = await identify(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD, devUser: env.DEV_USER });
     if (!who) return secure(new Response("Sign in through Cloudflare Access to use Common Ink.\n", { status: 401 }));
     const url = new URL(req.url);

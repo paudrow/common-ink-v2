@@ -6,12 +6,12 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type DocPath } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
-import { createState, fromServer, replaceText, synced } from "./editor.ts";
+import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
+import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
 import * as L from "./layout.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
-const PAUSE_MS = 1000;
 const RETRY_MS = 5000;
 const LAYOUT_SAVE_MS = 1500;
 
@@ -32,6 +32,8 @@ export interface WorkbenchEvents {
   focus(path: DocPath | null): void;
   /** A doc was saved for the first time, so lists of docs are out of date. */
   created(path: DocPath): void;
+  /** A doc's text on the server changed. */
+  saved(path: DocPath): void;
 }
 
 const key = (group: L.GroupId, path: DocPath) => `${group}\n${path}`;
@@ -46,6 +48,7 @@ export class Workbench {
   private layoutRevision = 0;
   private layoutTimer = 0;
   private shownView: EditorView | null = null;
+  private settings: Settings = DEFAULTS;
 
   constructor(
     private host: HTMLElement,
@@ -165,6 +168,12 @@ export class Workbench {
     return this.focusedSession?.save(explicit);
   }
 
+  /** Use new settings in every editor, open now or later. */
+  applySettings(settings: Settings): void {
+    this.settings = settings;
+    for (const view of this.views.values()) reconfigure(view, settings);
+  }
+
   focus(): void {
     this.focusedView?.focus();
   }
@@ -233,6 +242,7 @@ export class Workbench {
       doc.exists = true;
       this.on.created(doc.path);
     }
+    if (status === "saved") this.on.saved(doc.path);
     this.renderTabs();
     if (doc.path === this.focusedPath) this.on.status(status);
   }
@@ -247,17 +257,19 @@ export class Workbench {
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
     doc.session.edited();
     clearTimeout(doc.timer);
-    doc.timer = window.setTimeout(() => void doc.session.save(), PAUSE_MS);
+    doc.timer = window.setTimeout(() => void doc.session.save(), this.settings["editor.saveDelay"]);
   }
 
   private makeView(group: L.GroupId, doc: OpenDoc): EditorView {
     const text = this.primary(doc)?.state.doc.toString() ?? doc.session.savedText;
     const view: EditorView = new EditorView({
-      state: createState(
-        text,
-        (u) => this.viewUpdate(doc, view, u),
-        () => void doc.session.save(),
-      ),
+      state: createState(text, {
+        json: !isNote(doc.path),
+        readOnly: isReadOnly(doc.path),
+        settings: this.settings,
+        onUpdate: (u) => this.viewUpdate(doc, view, u),
+        onBlur: () => void doc.session.save(),
+      }),
     });
     view.dom.dataset.group = group;
     doc.views.add(view);
