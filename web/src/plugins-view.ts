@@ -118,6 +118,7 @@ function contributions(e: PluginEntry): HTMLElement {
     ["Command bar", c.commandBar],
     ["Keybindings", c.keybindings],
     ["Editor", c.editor],
+    ["History", c.history],
     ["Data sources", c.dataSources],
   ];
   const shown = parts.filter(([, items]) => items.length);

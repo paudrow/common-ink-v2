@@ -4,7 +4,7 @@
 //   - [x] Water the plants due:2026-10-04 every:3days
 //
 // `due:` takes a date (YYYY-MM-DD). `every:` takes day, weekday, week, month or year, optionally with a
-// count in front (2weeks, 3days). Checking off a recurring todo adds the next one above it.
+// count in front (2weeks, 3days). Checking off a recurring todo moves it to its next due date, in place.
 
 export type Unit = "day" | "weekday" | "week" | "month" | "year";
 
@@ -74,20 +74,88 @@ export function nextDue(due: string, every: Every): string {
 }
 
 /**
- * Check a todo off, or back on. Checking off a recurring todo leaves it done and adds the next one
- * above it, due on the next date (counted from its due date, or from today if it had none).
- * Returns the new lines in place of the one line, or null if the line isn't a todo.
+ * Check a todo off, or back on. A recurring todo stays open and moves to its next due date (counted
+ * from its due date, or from today if it had none): the same line, so nothing piles up. History keeps
+ * the completion, as the change from one due date to the next.
+ * Returns the line's new text, or null if the line isn't a todo.
  */
-export function toggleLine(text: string, today: string): string[] | null {
+export function toggleLine(text: string, today: string): string | null {
   const m = CHECKBOX.exec(text);
   if (!m) return null;
   const todo = parseTodo(text)!;
-  if (todo.done) return [`${m[1]}[ ] ${m[3]}`];
-  const done = `${m[1]}[x] ${m[3]}`;
-  if (!todo.every) return [done];
+  if (todo.done) return `${m[1]}[ ] ${m[3]}`;
+  if (!todo.every) return `${m[1]}[x] ${m[3]}`;
   const next = nextDue(todo.due ?? today, todo.every);
-  const rest = DUE.test(m[3]) ? m[3].replace(DUE, `$1due:${next}`) : `${m[3]} due:${next}`;
-  return [`${m[1]}[ ] ${rest}`, done];
+  return `${m[1]}[ ] ${DUE.test(m[3]) ? m[3].replace(DUE, `$1due:${next}`) : `${m[3]} due:${next}`}`;
+}
+
+/** Where a todo line's parts are, as offsets in the line: the list marker and box, and the due and every tokens. */
+export interface TodoParts {
+  /** From the list marker to the box's closing bracket: "- [ ]". */
+  box: { from: number; to: number };
+  /** The text after the box. */
+  body: { from: number; to: number };
+  due: { from: number; to: number; date: string } | null;
+  every: { from: number; to: number; every: Every } | null;
+}
+
+export function todoParts(text: string): TodoParts | null {
+  const m = CHECKBOX.exec(text);
+  if (!m) return null;
+  const indent = /^\s*/.exec(text)![0].length;
+  const boxEnd = m[1].length + 3;
+  const bodyFrom = text.length - m[3].length;
+  const token = (re: RegExp) => {
+    const t = re.exec(m[3]);
+    return t ? { from: bodyFrom + t.index + t[1].length, to: bodyFrom + t.index + t[0].length, match: t } : null;
+  };
+  const due = token(DUE);
+  const every = token(EVERY);
+  return {
+    box: { from: indent, to: boxEnd },
+    body: { from: bodyFrom, to: text.length },
+    due: due && isDate(due.match[2]) ? { from: due.from, to: due.to, date: due.match[2] } : null,
+    every: every ? { from: every.from, to: every.to, every: parseEvery(every.match[0])! } : null,
+  };
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const dayCount = (s: string) => Math.round(toDate(s).getTime() / 86_400_000);
+
+/** A date as a person says it, from today: "Today", "Tomorrow", "Fri" this week, "Oct 12", or "Overdue 2d". */
+export function dueLabel(due: string, today: string): { text: string; when: When } {
+  const days = dayCount(due) - dayCount(today);
+  if (days < 0) return { text: `Overdue ${-days}d`, when: "overdue" };
+  if (days === 0) return { text: "Today", when: "today" };
+  if (days === 1) return { text: "Tomorrow", when: "upcoming" };
+  const d = toDate(due);
+  if (days < 7) return { text: DAYS[d.getUTCDay()], when: "upcoming" };
+  const date = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  return { text: due.slice(0, 4) === today.slice(0, 4) ? date : `${date}, ${due.slice(0, 4)}`, when: "upcoming" };
+}
+
+/** A date in a few words, without reference to today: "Oct 6". */
+export const shortDate = (due: string) => `${MONTHS[toDate(due).getUTCMonth()]} ${toDate(due).getUTCDate()}`;
+
+/** A recurrence as a person says it: "↻ weekly", "↻ weekdays", "↻ every 3 days". */
+export function everyLabel(e: Every): string {
+  const once: Record<Unit, string> = { day: "daily", weekday: "weekdays", week: "weekly", month: "monthly", year: "yearly" };
+  return `↻ ${e.count === 1 ? once[e.unit] : `every ${e.count} ${e.unit}s`}`;
+}
+
+/** What a change did to todos, from its lines before and after: "Completed 'Water the plants' (due Oct 6)". Null if nothing. */
+export function describeTodoEdit(before: string, after: string): string | null {
+  const a = parseTodo(before);
+  const b = parseTodo(after);
+  if (!a || !b || a.title !== b.title) return null;
+  const name = `'${a.title}'`;
+  if (!a.done && b.done) return `Completed ${name}`;
+  if (a.done && !b.done) return `Reopened ${name}`;
+  // A recurring todo's due date moving on by exactly its recurrence is it being checked off. Moved by hand to another date, it isn't.
+  const advanced = a.every && b.due && (a.due ? b.due === nextDue(a.due, a.every) : true);
+  if (!a.done && !b.done && advanced) return `Completed ${name}${a.due ? ` (due ${shortDate(a.due)})` : ""}`;
+  return null;
 }
 
 export function todosIn(text: string): Todo[] {

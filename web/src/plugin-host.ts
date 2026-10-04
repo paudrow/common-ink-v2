@@ -21,6 +21,8 @@ export interface Contributions {
   keybindings: string[];
   /** What it adds to note editors. */
   editor: string[];
+  /** What it adds to history, such as words for the changes it knows. */
+  history: string[];
   /** The data sources it reads, noted as it reads them. */
   dataSources: string[];
 }
@@ -144,6 +146,17 @@ export function recording(ctx: PluginContext, adds: Contributions, failed: (err:
         adds.keybindings.push(...bindings.map((b) => `${b.key} → ${b.command ?? "nothing"}`));
         ctx.keybindings.add(...bindings);
       },
+      vim: (keys, command) => {
+        adds.keybindings.push(`${keys} (Vim) → ${command}`);
+        ctx.keybindings.vim(keys, command);
+      },
+    },
+    changes: {
+      ...ctx.changes,
+      describe: (describer) => {
+        adds.history.push("describes changes in history");
+        ctx.changes.describe(guard(describer, null));
+      },
     },
     editor: {
       extend: (extension) => {
@@ -187,7 +200,7 @@ const inert: PluginContext = new Proxy(function () {}, { get: () => inert, apply
 
 /** What a plugin would add, found by starting it where nothing it does takes effect. For built-ins that are off. */
 export function dryRun(module: PluginModule): Contributions | null {
-  const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], dataSources: [] };
+  const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] };
   try {
     module.activate(recording(inert, adds, () => {}));
     return adds;
@@ -216,7 +229,7 @@ export async function startPlugins(o: StartOptions): Promise<PluginEntry[]> {
   const entries: PluginEntry[] = [];
 
   const start = (entry: PluginEntry, module: PluginModule) => {
-    const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], dataSources: [] };
+    const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] };
     const failed = (err: unknown) => {
       console.error(`Plugin ${entry.manifest.id}:`, err);
       entry.error = message(err);
