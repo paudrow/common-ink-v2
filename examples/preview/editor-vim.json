@@ -1,0 +1,12 @@
+{
+  "pr": 6,
+  "title": "CodeMirror 6 editor with vim mode",
+  "steps": [
+    "The editor opens on this note in normal mode. `i` starts typing, `Esc` stops.",
+    "Type something and pause for a second: the status line says Saved. Reload the page and it's still there.",
+    "`:e Scratch` opens a new note. Type a line and `:w`: it's saved and appears in the list on the left.",
+    "Open Vim tour, put the cursor on a link and press `gd`. `Ctrl-O` goes back to where you were and `Ctrl-I` forward again. After `G`, `Ctrl-O` first jumps back within the note.",
+    "Registers carry across notes: `\"ayy` on a line, `:e Welcome`, then `\"ap`.",
+    "Open one note in two tabs and change different lines in each. After each saves, both tabs have both edits. Change the same line in both and the second says it couldn't save; `:e!` loads the saved version."
+  ]
+}

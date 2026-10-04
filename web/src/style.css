@@ -3,7 +3,12 @@
   --bg: #fbfaf8;
   --ink: #1f1e1c;
   --muted: #6f6b66;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --line: #e7e4df;
+  --accent: #2f5fd0;
+  --selection: #d6e0f7;
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--prose);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -11,28 +16,83 @@
     --bg: #171716;
     --ink: #e8e6e3;
     --muted: #9a958f;
+    --line: #2c2b29;
+    --accent: #8fb0ff;
+    --selection: #2c3a5c;
   }
 }
 
+html,
 body {
+  height: 100%;
   margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template: "notes editor" 1fr "notes status" auto / 14rem 1fr;
   background: var(--bg);
   color: var(--ink);
 }
 
-main {
-  max-width: 40rem;
-  margin: 0 auto;
-  padding: 4rem 1.5rem;
+#notes {
+  grid-area: notes;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  padding: 1rem 0.5rem;
+  font-size: 0.875rem;
 }
 
-h1 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin: 0 0 0.5rem;
+#notes ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#notes a {
+  display: block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  color: var(--muted);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#notes a:hover,
+#notes a[aria-current="page"] {
+  color: var(--ink);
+}
+
+#notes a[aria-current="page"] {
+  background: var(--line);
+}
+
+#editor {
+  grid-area: editor;
+  min-height: 0;
 }
 
 #status {
+  grid-area: status;
+  display: flex;
+  gap: 1rem;
+  padding: 0.25rem 1rem;
+  font: 0.75rem var(--mono);
   color: var(--muted);
-  margin: 0;
+}
+
+#save[data-status="conflict"],
+#save[data-status="offline"] {
+  color: #c2410c;
+}
+
+@media (max-width: 40rem) {
+  body {
+    grid-template: "editor" 1fr "status" auto / 1fr;
+  }
+  #notes {
+    display: none;
+  }
 }
