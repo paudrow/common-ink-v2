@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Docs, type DocPath } from "../worker/src/docs.ts";
+import { Files, type FilePath } from "../worker/src/files.ts";
 import { Session, type SaveStatus } from "../web/src/session.ts";
 import { memoryDb } from "./sqlite.ts";
 
-const PATH = "Plan.md" as DocPath;
+const PATH = "Plan.md" as FilePath;
 const you = { kind: "user" as const, email: "you@example.com" };
 const them = { kind: "agent" as const, name: "Helper" };
 
 /** An editor and a server: the session talks to real Notes, through a write that can be held open. */
 function setup(text: string) {
-  const notes = new Docs(memoryDb());
+  const notes = new Files(memoryDb());
   notes.write({ path: PATH, text, base: 0, author: them });
   const editor = { text: notes.read(PATH)!.text };
   const statuses: SaveStatus[] = [];
@@ -99,7 +99,7 @@ test("a failed request leaves the edit unsaved for the next try", async () => {
   let fail = true;
   const session = new Session({ path: PATH, text: "a", revision: 1 }, { text: () => editor.text, replace: () => {} }, async (path, text) => {
     if (fail) throw new Error("offline");
-    return { status: "saved", doc: { path, text, revision: 2 } };
+    return { status: "saved", file: { path, text, revision: 2 } };
   });
   editor.text = "ab";
   await session.save();

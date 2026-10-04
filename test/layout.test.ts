@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DocPath } from "../worker/src/docs.ts";
+import type { FilePath } from "../worker/src/files.ts";
 import { activeDoc, closeTab, showInTab, cycleGroup, cycleTab, emptyLayout, focusDirection, focused, groups, only, openTab, parseLayout, split, type Layout } from "../web/src/layout.ts";
 
-const [a, b, c] = ["A.md", "B.md", "C.md"] as DocPath[];
+const [a, b, c] = ["A.md", "B.md", "C.md"] as FilePath[];
 const shown = (l: Layout) => groups(l).map((g) => `${g.id}:${g.tabs.join(",")}@${g.active}`);
 
-test("opening a doc adds a tab after the current one, or shows its tab if it has one", () => {
+test("opening a file adds a tab after the current one, or shows its tab if it has one", () => {
   let l = openTab(emptyLayout(), a);
   l = openTab(l, b);
   l = openTab(openTab(l, a), c);
@@ -69,7 +69,7 @@ test("a saved layout is read back, and anything malformed is refused or cleaned"
   });
 });
 
-test(":e shows a doc in place of the tab on show, or switches to its tab", () => {
+test(":e shows a file in place of the tab on show, or switches to its tab", () => {
   const l = openTab(openTab(emptyLayout(), a), b);
   assert.deepEqual(shown(showInTab(l, c)), ["g1:A.md,C.md@1"]);
   assert.deepEqual(shown(showInTab(l, a)), ["g1:A.md,B.md@0"]);
