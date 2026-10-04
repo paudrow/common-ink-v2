@@ -3,8 +3,8 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, Compartment, EditorState, Transaction, type Extension } from "@codemirror/state";
-import { drawSelection, EditorView, keymap, lineNumbers, type ViewUpdate } from "@codemirror/view";
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
+import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
 import { diffPatch } from "node-diff3";
@@ -27,6 +27,7 @@ const theme = EditorView.theme({
   ".cm-vim-panel": { padding: "0.25rem 1rem", fontFamily: "var(--mono)" },
   ".cm-vim-panel input": { color: "var(--ink)", fontFamily: "var(--mono)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--muted)", border: "none", fontFamily: "var(--mono)", fontSize: "0.8em" },
+  ".cm-remote-change": { backgroundColor: "var(--accent-soft)", transition: "background-color 600ms" },
 });
 
 const highlight = HighlightStyle.define([
@@ -76,6 +77,7 @@ export function createState(
       slots.fontSize.of(s.fontSize),
       history(),
       drawSelection(),
+      remoteFlash,
       keymap.of([...(opts.json ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
       opts.json ? [json(), EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })] : new LanguageSupport(markdownLanguage),
@@ -91,17 +93,39 @@ export function createState(
 }
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
-export function replaceText(view: EditorView, text: string) {
+export function replaceText(view: EditorView, text: string, flash = false) {
   const old = linesOf(view.state.doc.toString());
   const starts = [0];
   for (const line of old) starts.push(starts.at(-1)! + line.length);
-  const changes = diffPatch(old, linesOf(text)).map(({ buffer1, buffer2 }) => ({
+  const patch = diffPatch(old, linesOf(text));
+  const changes = patch.map(({ buffer1, buffer2 }) => ({
     from: starts[buffer1.offset],
     to: starts[buffer1.offset + buffer1.length],
     insert: buffer2.chunk.join(""),
   }));
   view.dispatch({ changes, annotations: [fromServer.of(true), Transaction.addToHistory.of(false)] });
+  if (!flash) return;
+  // Someone else's lines, highlighted for a moment, so you see what changed under you.
+  const doc = view.state.doc;
+  const lines = patch.flatMap(({ buffer2 }) => Array.from({ length: buffer2.length }, (_, i) => buffer2.offset + i + 1)).filter((n) => n <= doc.lines);
+  if (!lines.length) return;
+  const marks = Decoration.set(lines.map((n) => flashLine.range(doc.line(n).from)));
+  view.dispatch({ effects: setFlash.of(marks) });
+  window.setTimeout(() => view.dispatch({ effects: setFlash.of(Decoration.none) }), 1600);
 }
+
+const flashLine = Decoration.line({ class: "cm-remote-change" });
+const setFlash = StateEffect.define<DecorationSet>();
+
+/** The lines someone else just changed, highlighted briefly (replaceText with `flash`). */
+export const remoteFlash = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (marks, tr) => {
+    for (const e of tr.effects) if (e.is(setFlash)) return e.value;
+    return marks.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 /** Lines with their newlines, so they join back into exactly the text. */
 const linesOf = (text: string) => text.match(/[^\n]*\n|[^\n]+$/g) ?? [];

@@ -1,5 +1,7 @@
 // One Durable Object per workspace. It owns the workspace's SQLite database and runs every read and
-// write in order, so two writes to a note can't interleave. It also keeps data source connections.
+// write in order, so two writes to a note can't interleave. Open pages listen on a WebSocket and hear
+// of every change as it's recorded; the sockets use the Hibernation API, so idle ones cost nothing. It also keeps data source
+// connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources } from "./data-sources.ts";
 import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
@@ -24,9 +26,33 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       run: (query, ...params) => void sql.exec(query, ...params),
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
-    this.files = new Files(db);
+    this.files = new Files(db, Date.now, (notice) => {
+      const message = JSON.stringify({ type: "change", ...notice });
+      for (const ws of ctx.getWebSockets()) {
+        try {
+          ws.send(message);
+        } catch {
+          // A socket that's closing: it reconnects and catches up.
+        }
+      }
+    });
     const google = env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET } : null;
     this.sources = new DataSources(db, { fixtures: env.DATA_FIXTURES === "1", google });
+  }
+
+  /** A page's live connection: a WebSocket that hears of every change. */
+  async fetch(req: Request): Promise<Response> {
+    if (req.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // Pages only listen; anything they send is ignored.
+  webSocketMessage() {}
+
+  webSocketClose(ws: WebSocket, code: number) {
+    ws.close(code === 1005 ? 1000 : code, "closing");
   }
 
   list() {
@@ -47,6 +73,18 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   undo(revisions: Revision[], author: Author) {
     return this.files.undo(revisions, author);
+  }
+
+  combined(revisions: Revision[]) {
+    return this.files.combined(revisions);
+  }
+
+  versionAt(path: FilePath, revision: Revision) {
+    return this.files.versionAt(path, revision);
+  }
+
+  restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
+    return this.files.restore(path, at, author);
   }
 
   seed(seed: Seed) {

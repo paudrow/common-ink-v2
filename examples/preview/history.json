@@ -2,22 +2,38 @@
   "pr": 9,
   "title": "Visible history, CLI and MCP",
   "steps": [
-    "Open Garden plan and run Show history of this note (⌘⇧P). An agent named Gardener made two changes after the seed. Click one to see its diff.",
-    "Set the author filter to Gardener and press Undo all: both edits go, as one change each by you. Redo on an undo puts it back.",
-    "Edit a note, pause, and your change shows up at the top as yours. Show history of everything lists changes to every note.",
+    "Open Garden plan, then ⌘⇧P → Show history of this note. Gardener and Planner made four changes after the seed; one is labelled “Spring plan”.",
+    "Click a change to see what it did. ⌘-click a second one (or Shift-click a range): the diff shows what they did together, and a change you skip in between is left out, as separate runs.",
+    "With the history panel focused: j and k move, Space or x toggles a change, Enter shows just that one.",
+    "Select one of Planner's changes and press Revert this change: only that change is undone, later edits stay. Revert two changes that touch the same line in the wrong order and it says which couldn't be reverted and why.",
+    "On a run, Restore to before puts the note back as it was before those changes, as a new change you can undo.",
+    "On “Spring plan”, Open shows the note as it was then, read-only in a tab; Changes since shows the diff with now, and Restore this version puts it back.",
+    "Add label… (in the panel, the tab menu, or ⌘⇧P) names the note as it is now. The label shows in the history list, and lives in `.common-ink/labels.json` (⌘P), so its own history says who added it.",
+    "Set the author filter to Gardener and press Undo all: both edits go, as one change each by you. Redo on an undone change puts it back.",
     "From a terminal in a checkout: `COMMON_INK_URL=<this Preview> bin/common-ink history`, `bin/common-ink cat 'Garden plan.md'`, `echo hi | bin/common-ink write Hello.md`. The CLI writes as the agent CLI, working for you.",
-    "Add `<this Preview>/mcp?agent=Claude` as an HTTP MCP server in an MCP client. Its tools are list_files, read_file, write_file, history and undo, and its changes show up in history as Claude's."
+    "Add `<this Preview>/mcp?agent=Claude` as an HTTP MCP server in an MCP client. Its tools include list_files, read_file, write_file, history, diff, undo, restore, labels and add_label, and its changes show up in history as Claude's."
   ],
   "edits": [
     {
       "agent": "Gardener",
       "path": "Garden plan.md",
-      "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade\n"
+      "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade\n",
+      "label": "Spring plan"
     },
     {
       "agent": "Gardener",
       "path": "Garden plan.md",
       "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade\n- Marigolds between the tomatoes, to keep pests off\n"
+    },
+    {
+      "agent": "Planner",
+      "path": "Garden plan.md",
+      "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade, sown every two weeks\n- Marigolds between the tomatoes, to keep pests off\n"
+    },
+    {
+      "agent": "Planner",
+      "path": "Garden plan.md",
+      "text": "# Garden plan 2026\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade, sown every two weeks\n- Marigolds between the tomatoes, to keep pests off\n- Beans up the trellis\n"
     }
   ]
 }

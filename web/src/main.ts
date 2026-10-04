@@ -6,7 +6,8 @@ import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
-import { docLabel } from "./describe.ts";
+import { describeAuthor, docLabel } from "./describe.ts";
+import { connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
@@ -117,6 +118,7 @@ function tabMenuItems(): Array<MenuItem | null> {
     SEPARATOR,
     item("tab.keepOpen", "Keep Open", !tab?.preview),
     item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
+    item("history.addLabel", "Add Label…", !tab || !("file" in tab)),
     SEPARATOR,
     item("window.splitRight", "Split Right"),
     item("window.splitDown", "Split Down"),
@@ -345,6 +347,8 @@ const plugins: PluginContext = {
     // With a view focused (History in a window, say), the file is the one focused last.
     focusedPath: () => workbench.focusedPath ?? lastFile,
     focusedView: () => workbench.focusedView,
+    openView: (id, how) => workbench.openView(id, how),
+    provideViews: (prefix, make) => workbench.provideViews(prefix, make),
     refreshFromServer: (paths) => workbench.refreshFromServer(paths),
     label: docLabel,
   },
@@ -449,6 +453,33 @@ window.addEventListener("pagehide", () => {
 
 // The app's own files, kept by a service worker so it opens offline.
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
+// Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
+let historyTimer2 = 0;
+connectLive({
+  async change(notice) {
+    const open = await workbench.remoteChange(notice.path, notice.revision);
+    const mine = notice.author.kind === "user" && notice.author.email === me;
+    if (open && !mine && notice.path === workbench.focusedPath) {
+      saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
+      saveLine.dataset.status = "remote";
+    }
+    if (!files.some((f) => f.path === notice.path)) void refreshList();
+    // Plugins hear of it as of any change to a file (the history panel redraws, say).
+    clearTimeout(historyTimer2);
+    historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
+  },
+  // Back after a gap: send what's waiting, then catch up on files that changed meanwhile. One path
+  // for both, whether the gap was a dropped socket or a whole offline spell.
+  async open() {
+    await sendUnsent();
+    const latest = await offline.list().catch(() => null);
+    if (!latest) return;
+    files = latest;
+    renderList();
+    for (const f of latest) await workbench.remoteChange(f.path, f.revision);
+  },
+});
+
 
 try {
   files = await offline.list();
