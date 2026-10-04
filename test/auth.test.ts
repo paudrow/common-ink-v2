@@ -49,9 +49,12 @@ test("no JWT, or no Access settings, is refused", async () => {
   assert.equal(await identify(request(await token()), { teamDomain: TEAM }, keys), null);
 });
 
-test("the dev user works only on this machine", async () => {
+test("the dev user works only on this machine and in a pull request's Preview", async () => {
   const dev = { devUser: "dev@localhost" };
   assert.deepEqual(await identify(request(undefined, "http://localhost:8787/api/me"), dev, keys), { email: "dev@localhost" });
   assert.deepEqual(await identify(request(undefined, "http://127.0.0.1:8787/"), dev, keys), { email: "dev@localhost" });
+  assert.deepEqual(await identify(request(undefined, "https://pr-12-common-ink-v2.example.workers.dev/"), dev, keys), { email: "dev@localhost" });
   assert.equal(await identify(request(undefined, "https://common-ink-v2.example.workers.dev/"), dev, keys), null);
+  assert.equal(await identify(request(undefined, "https://abc123-common-ink-v2.example.workers.dev/"), dev, keys), null);
+  assert.equal(await identify(request(undefined, "https://pr-12-common-ink-v2.example.workers.dev.evil.com/"), dev, keys), null);
 });

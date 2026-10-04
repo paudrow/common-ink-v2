@@ -11,7 +11,7 @@ interface Env {
   WORKSPACE: DurableObjectNamespace<Workspace>;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  /** Set by `npm run dev` only. */
+  /** Set by `npm run dev` and in Previews: who you are signed in as there. */
   DEV_USER?: string;
   /** "1" in Previews and local development: the workspace is filled from the build's seed.json. */
   SEED?: string;
