@@ -1,0 +1,28 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "common-ink-v2",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  // Served at common-ink-v2.<subdomain>.workers.dev, behind Cloudflare Access, and each pull request's
+  // Preview at pr-<n>-common-ink-v2.<subdomain>.workers.dev, which opens signed in as a dev user.
+  "workers_dev": true,
+  "preview_urls": true,
+  // The web app, built by Vite into ../dist. The Worker runs first for everything except Vite's hashed
+  // scripts and styles, so every page and API call is checked against Access.
+  "assets": {
+    "directory": "../dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/*", "!/assets/*"]
+  },
+  // One Durable Object per workspace, each with its own SQLite database.
+  "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace"] }],
+  "observability": { "enabled": true },
+  // Each Preview has its own Durable Objects, so its own notes, filled from the build's seed.json. It
+  // signs you in as a dev user, so there's nothing real in it to reach.
+  "previews": {
+    "vars": { "SEED": "1", "DEV_USER": "preview@common-ink" },
+    "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] }
+  }
+}

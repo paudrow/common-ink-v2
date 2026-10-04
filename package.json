@@ -1,0 +1,28 @@
+{
+  "name": "common-ink-v2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal, keyboard-first workspace for markdown notes, built for people and agents.",
+  "scripts": {
+    "dev": "npm run build && npm run seed && wrangler dev -c worker/wrangler.jsonc --port 8787 --var DEV_USER:dev@localhost --var SEED:1",
+    "build": "vite build web --outDir ../dist --emptyOutDir",
+    "seed": "node --import tsx scripts/write-seed.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
+    "test": "node --disable-warning=ExperimentalWarning --import tsx --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test && npm run build",
+    "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc",
+    "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc"
+  },
+  "dependencies": {
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261004.1",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "wrangler": "^4.147.0"
+  }
+}

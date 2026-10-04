@@ -1,0 +1,9 @@
+{
+  "pr": 4,
+  "title": "Scaffold: Worker, Durable Object, web app, CI and previews",
+  "steps": [
+    "Open the Preview. Cloudflare Access asks you to sign in before anything loads.",
+    "The page says it's running, the email you signed in with, and that the workspace has 3 notes: Welcome, Reading list and this one.",
+    "Open the Preview's address in a private window and skip sign-in, or run `curl -i` on `/api/me`: you get Access's sign-in page or a 401, never the app."
+  ]
+}

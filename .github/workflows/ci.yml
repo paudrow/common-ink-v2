@@ -1,0 +1,180 @@
+# GitHub reads workflows only as YAML.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+
+# Superseded PR runs are cancelled; runs on main never are, so a deploy is never cut off halfway.
+# PR runs are grouped by PR number, not ref: a merged PR's "closed" run has ref refs/heads/main, and
+# sharing main's group would let it cancel the production deploy.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+# The workflow token can only read the code; the jobs that post to the PR ask for more themselves.
+# Actions are pinned to commits (Dependabot keeps them current), so a moved tag can't change what runs.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fails on a high or critical advisory in any dependency, dev tools included: they run next to
+      # the deploy credentials.
+      - run: npm audit --audit-level=high
+      - run: npm run check
+
+  # Secrets committed anywhere in the history, by gitleaks' rules (.gitleaks.toml lists known non-secrets).
+  secrets:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets
+        run: |
+          curl -sSfL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git --config .gitleaks.toml --redact --no-banner .
+
+  # Every commit to main goes live at https://common-ink-v2.<subdomain>.workers.dev, behind Cloudflare
+  # Access. ACCESS_TEAM_DOMAIN and ACCESS_AUD are repository variables; without them the Worker
+  # answers every request with 401.
+  deploy:
+    needs: [check, secrets]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
+      ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+    steps:
+      - name: Check Cloudflare credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: |
+          echo "::error::Add the CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable to this repository to enable deploys."
+          exit 1
+      - name: Check Access settings
+        if: env.ACCESS_TEAM_DOMAIN == '' || env.ACCESS_AUD == ''
+        run: echo "::warning::ACCESS_TEAM_DOMAIN or ACCESS_AUD isn't set as a repository variable, so the deployed Worker will answer every request with 401."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run deploy -- --var "ACCESS_TEAM_DOMAIN:$ACCESS_TEAM_DOMAIN" --var "ACCESS_AUD:$ACCESS_AUD"
+
+  # Every pull request gets a Preview at https://pr-<number>-common-ink-v2.<subdomain>.workers.dev, with
+  # its own Durable Objects (so its own notes), signed in as a dev user, like v1's Previews. It's filled
+  # with sample notes and a "Try this PR" note (scripts/seed.ts), linked from one comment on the PR that
+  # each push updates, and shown as a deployment on the PR. Dependabot's pull requests get none: they
+  # can't read the deploy credentials.
+  preview:
+    needs: check
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_SHA: ${{ github.event.pull_request.head.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Check Cloudflare credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: |
+          echo "::error::Add the CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable to this repository to enable Previews."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy Preview
+        id: deploy
+        run: |
+          npm run preview -- --name "pr-$PR_NUMBER" --message "$PR_SHA" | tee preview.log
+          url=$(grep -oE "https://pr-$PR_NUMBER-common-ink-v2\.[a-z0-9-]+\.workers\.dev" preview.log | head -1)
+          [ -n "$url" ] || { echo "::error::No Preview URL in the wrangler output"; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Show it on the pull request
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          dep=$(jq -n --arg ref "$PR_SHA" --arg env "preview-pr-$PR_NUMBER" \
+            '{ref: $ref, environment: $env, auto_merge: false, required_contexts: [], transient_environment: true, production_environment: false}' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$dep/statuses" -f state=success -f environment_url="$URL" -f log_url="$RUN_URL" > /dev/null
+          scripts/preview-comment.sh "$PR_NUMBER" "### Preview
+          **$URL**
+
+          Opens signed in, with its own notes: a few samples and a **Try this PR** note that says what to test. Change anything.
+
+          <sub>Updated for ${PR_SHA:0:7} · [deploy log]($RUN_URL)</sub>"
+      - name: Say so if it failed
+        if: failure()
+        run: |
+          scripts/preview-comment.sh "$PR_NUMBER" "### Preview
+          The Preview for ${PR_SHA:0:7} didn't deploy. [See the log]($RUN_URL)."
+
+  preview-cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Check Cloudflare credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: |
+          echo "::error::Add the CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable to this repository to delete Previews."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx wrangler preview delete -c worker/wrangler.jsonc --name "pr-$PR_NUMBER" --skip-confirmation
+      - name: Retire the link
+        run: |
+          for dep in $(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=preview-pr-$PR_NUMBER" --jq '.[].id'); do
+            gh api "repos/$GITHUB_REPOSITORY/deployments/$dep/statuses" -f state=inactive > /dev/null
+          done
+          scripts/preview-comment.sh "$PR_NUMBER" "### Preview
+          Deleted now that this pull request is closed."
