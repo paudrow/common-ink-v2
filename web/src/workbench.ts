@@ -434,6 +434,8 @@ export class Workbench {
     if (!box) {
       box = document.createElement("div");
       box.className = "tab-editor tab-view";
+      // Hidden until shown, so the first showing draws it.
+      box.hidden = true;
       box.tabIndex = -1;
       if (!this.registered.has(id)) box.textContent = `Nothing to show: no plugin draws "${id}". Is it turned off in settings?`;
       this.viewBoxes.set(k, box);
