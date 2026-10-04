@@ -47,6 +47,10 @@ export interface WorkbenchEvents {
   created(path: FilePath): void;
   /** A file's text on the server changed. */
   saved(path: FilePath): void;
+  /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
+  shortcut(command: string): string | undefined;
+  /** A tab was right-clicked (or its menu key pressed): it's selected, and its menu goes at x, y. */
+  tabMenu(x: number, y: number): void;
 }
 
 const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
@@ -122,12 +126,12 @@ export class Workbench {
    */
   async open(path: FilePath, how: { newTab?: boolean; pos?: number; line?: number; jump?: boolean } = {}): Promise<void> {
     const from = this.here();
-    const leaving = this.focusedPath;
-    if (!how.newTab && leaving && leaving !== path && !(await this.saveToLeave(leaving))) return;
+    // The preview tab is the one a newly opened file replaces: save what it shows first.
+    const preview = this.focusedGroup.tabs.find((t) => t.preview);
+    const replaced = preview && "file" in preview ? preview.file : null;
+    if (!how.newTab && replaced && replaced !== path && !(await this.saveToLeave(replaced))) return;
     await this.load(path);
-    // A view on show (History in a window, say) stays: the file opens in a tab beside it.
-    const onView = L.activeTab(this.focusedGroup) !== null && !leaving;
-    const layout = how.newTab || onView ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
+    const layout = how.newTab ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
     if (from && from.path !== path && how.jump !== false) this.jumpsFor(this.layout.focus).visit(from, path);
     this.setLayout(layout);
     const view = this.focusedView;
@@ -213,6 +217,8 @@ export class Workbench {
   applySettings(settings: Settings): void {
     this.settings = settings;
     for (const view of this.views.values()) reconfigure(view, settings);
+    // Empty windows list shortcuts, which settings may have rebound.
+    if (this.groupEls.size) this.render();
   }
 
   focus(): void {
@@ -307,6 +313,8 @@ export class Workbench {
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
     file.session.edited();
+    // Editing a file keeps its preview tabs open.
+    if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
     file.timer = window.setTimeout(() => void file.session.save(), this.settings["editor.saveDelay"]);
   }
@@ -401,10 +409,7 @@ export class Workbench {
       el.querySelector(".drop")!,
     );
     if (!node.tabs.length) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = "No note open. ⌘P opens one, or drag one here.";
-      editors.prepend(empty);
+        editors.prepend(this.emptyHint());
     }
     return el;
   }
@@ -536,6 +541,51 @@ export class Workbench {
     return el;
   }
 
+  /** An empty window: what to do, centered, with the shortcuts as they're bound now. */
+  private emptyHint(): HTMLElement {
+    const hint = document.createElement("div");
+    hint.className = "window-empty";
+    const title = document.createElement("p");
+    title.textContent = "No note open";
+    const list = document.createElement("dl");
+    for (const [label, command] of [
+      ["Open note", "quickOpen"],
+      ["All commands", "commandBar"],
+      ["Split right", "window.splitRight"],
+    ]) {
+      const key = this.on.shortcut(command);
+      if (!key) continue;
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = key;
+      list.append(dt, dd);
+    }
+    const drag = document.createElement("p");
+    drag.className = "drag";
+    drag.textContent = "or drag a note here";
+    hint.append(title, list, drag);
+    return hint;
+  }
+
+  /** Close the focused group's tabs that `which` picks, saving each file first; one that can't be saved stays open. */
+  async closeTabs(which: (tab: L.Tab, index: number, saved: boolean) => boolean): Promise<void> {
+    const group = this.focusedGroup;
+    const closing: number[] = [];
+    for (const [i, tab] of group.tabs.entries()) {
+      const saved = !("file" in tab) || !this.files.get(tab.file)?.session.dirty;
+      if (!which(tab, i, saved)) continue;
+      if ("file" in tab && !(await this.saveToLeave(tab.file))) continue;
+      closing.push(i);
+    }
+    this.setLayout(L.closeTabs(this.layout, group.id, (_, i) => closing.includes(i)));
+  }
+
+  /** Whether a tab's file has nothing waiting to be saved (views always count as saved). */
+  isSaved(tab: L.Tab): boolean {
+    return !("file" in tab) || !this.files.get(tab.file)?.session.dirty;
+  }
+
   private tabLabel(tab: L.Openable): string {
     return "file" in tab ? label(tab.file) : (this.registered.get(tab.view)?.title ?? tab.view);
   }
@@ -552,9 +602,18 @@ export class Workbench {
           tab.className = "tab";
           tab.setAttribute("role", "tab");
           tab.setAttribute("aria-selected", String(i === g.active));
+          tab.classList.toggle("preview", !!item.preview);
           tab.title = "file" in item ? item.file : name;
           tab.draggable = true;
-          tab.addEventListener("dragstart", (e) => startDrag(e, { item, from: { group: g.id, index: i } }, name));
+          tab.addEventListener("dragstart", (e) => startDrag(e, { item: L.openableOf(item), from: { group: g.id, index: i } }, name));
+          tab.addEventListener("dblclick", () => this.setLayout(L.keepTab(this.layout, g.id, i)));
+          tab.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            this.setLayout(L.selectTab(this.layout, g.id, i));
+            // From the keyboard's menu key there's no pointer: the menu goes under the tab.
+            const box = tab.getBoundingClientRect();
+            this.on.tabMenu(e.clientX || box.left, e.clientY || box.bottom);
+          });
           tab.addEventListener("dragend", endDrag);
           const button = document.createElement("button");
           button.className = "name";
