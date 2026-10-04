@@ -66,6 +66,19 @@ export interface UndoResult {
   file?: WorkspaceFile;
 }
 
+/** What a stretch of changes next to each other in a file's history did: its text before and after them. */
+export interface DiffRun {
+  revisions: Revision[];
+  before: string;
+  after: string;
+}
+
+/** What chosen changes did to one file. Changes left out split it into runs, so their edits don't show. */
+export interface FileDiff {
+  path: FilePath;
+  runs: DiffRun[];
+}
+
 export interface HistoryQuery {
   path?: FilePath;
   /** An authorKey. */
@@ -97,7 +110,8 @@ export interface Write {
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
-  edits?: Array<{ path: string; text: string; agent: string }>;
+  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
+  edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
 }
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
@@ -136,10 +150,19 @@ type ChangeRow = { revision: number; path: FilePath; author: string; base: numbe
 const toChange = (row: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) });
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
+/** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
+export interface ChangeNotice {
+  path: FilePath;
+  revision: Revision;
+  author: Author;
+}
+
 export class Files {
   constructor(
     private db: Db,
     private now: () => number = Date.now,
+    /** Told of every change once it's recorded. */
+    private announce: (notice: ChangeNotice) => void = () => {},
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
@@ -216,6 +239,57 @@ export class Files {
   }
 
   /**
+   * What chosen changes did together, file by file. Within a file, chosen changes that sit next to each
+   * other in its history make one run, from the text before the first to the text after the last; a
+   * change that wasn't chosen ends a run, so its edits are left out.
+   */
+  combined(revisions: Revision[]): FileDiff[] {
+    const chosen = new Set(revisions);
+    const paths = [...new Set(this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${[...chosen].map(() => "?").join(",") || "NULL"})`, ...chosen).map((r) => r.path))];
+    return paths.sort().map((path) => {
+      const history = this.history(path);
+      const runs: DiffRun[] = [];
+      let run: Revision[] = [];
+      const close = () => {
+        if (!run.length) return;
+        const first = history.findIndex((c) => c.revision === run[0]);
+        const before = first > 0 ? this.textAt(path, history[first - 1].revision)! : "";
+        runs.push({ revisions: run, before, after: this.textAt(path, run.at(-1)!)! });
+        run = [];
+      };
+      for (const c of history) {
+        if (chosen.has(c.revision)) run.push(c.revision);
+        else close();
+      }
+      close();
+      return { path, runs };
+    });
+  }
+
+  /** A file's text at one of its revisions, or null if it never had that revision. */
+  versionAt(path: FilePath, revision: Revision): string | null {
+    return this.textAt(path, revision);
+  }
+
+  /**
+   * Put a file back the way it was at one of its revisions (or just before one of its changes), as a
+   * new change by `author`. Nothing is
+   * lost: the changes since stay in history, and this one can be undone like any other.
+   */
+  restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): WriteResult | null {
+    return this.db.tx(() => {
+      const revision =
+        "revision" in at
+          ? at.revision
+          : (this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, at.before)[0]?.r ?? 0);
+      const text = this.textAt(path, revision);
+      if (text === null) return null;
+      const current = this.read(path);
+      return this.apply({ path, text, base: current?.revision ?? 0, author });
+    });
+  }
+
+  /**
    * Save a file's text, given the revision it was based on. If the file has changed since, the two
    * edits are merged line by line; if they touch the same lines, nothing is saved.
    */
@@ -236,9 +310,25 @@ export class Files {
         if (!current) added.add(path);
         if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
       }
-      for (const { path, text, agent } of seed.edits ?? []) {
+      const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
+      for (const { path, text, agent, label } of seed.edits ?? []) {
         const current = added.has(path) ? this.read(path as FilePath) : null;
-        if (current) this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        if (!current) continue;
+        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        if (label && result.file) labels.push({ name: label, path: current.path, revision: result.file.revision });
+      }
+      if (labels.length) {
+        // The labels file's own format (labels.ts), written here so seeding doesn't depend on it.
+        const path = ".common-ink/labels.json" as FilePath;
+        const file = this.read(path);
+        const existing = (() => {
+          try {
+            return (JSON.parse(file?.text ?? "{}").labels as unknown[]) ?? [];
+          } catch {
+            return [];
+          }
+        })();
+        this.apply({ path, text: `${JSON.stringify({ labels: [...existing, ...labels] }, null, 2)}\n`, base: file?.revision ?? 0, author: SEED_AUTHOR });
       }
       this.db.run("INSERT INTO meta(key, value) VALUES ('seed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", seed.id);
     });
@@ -266,6 +356,7 @@ export class Files {
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
+    this.announce({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }
 

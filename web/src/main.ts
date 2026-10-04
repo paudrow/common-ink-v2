@@ -7,8 +7,10 @@ import { CommandBar, type Provider } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
-import { docLabel } from "./describe.ts";
+import { describeAuthor, docLabel } from "./describe.ts";
 import { HistoryPanel } from "./history.ts";
+import { connectLive } from "./live.ts";
+import { VERSION_PREFIX, versionView, versionViewId } from "./version.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
@@ -85,6 +87,7 @@ function tabMenuItems(): Array<MenuItem | null> {
     SEPARATOR,
     item("tab.keepOpen", "Keep Open", !tab?.preview),
     item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
+    item("history.addLabel", "Add Label…", !tab || !("file" in tab)),
     SEPARATOR,
     item("window.splitRight", "Split Right"),
     item("window.splitDown", "Split Down"),
@@ -236,6 +239,7 @@ commands.register(
   { id: "settings.user", title: "Open user settings", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (read-only)", run: () => openSettings(DEFAULT_SETTINGS) },
+  { id: "history.addLabel", title: "Add label to this note…", run: () => history.addLabel() },
   { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
   { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
   { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
@@ -372,7 +376,33 @@ const history = new HistoryPanel($("#history"), {
   me,
   focusedPath: () => workbench.focusedPath,
   undone: (paths) => void workbench.refreshFromServer(paths),
+  openVersion: (path, revision) => workbench.openView(versionViewId(path, revision), { newTab: true }),
 });
+// Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
+let historyTimer2 = 0;
+connectLive({
+  async change(notice) {
+    const open = await workbench.remoteChange(notice.path, notice.revision);
+    const mine = notice.author.kind === "user" && notice.author.email === me;
+    if (open && !mine && notice.path === workbench.focusedPath) {
+      saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
+      saveLine.dataset.status = "remote";
+    }
+    if (!files.some((f) => f.path === notice.path)) void refreshList();
+    clearTimeout(historyTimer2);
+    historyTimer2 = window.setTimeout(() => void history.refresh(), 400);
+  },
+  // Back after a gap: catch up on files that changed meanwhile.
+  async open() {
+    const latest = await api.list().catch(() => null);
+    if (!latest) return;
+    files = latest;
+    renderList();
+    for (const f of latest) await workbench.remoteChange(f.path, f.revision);
+  },
+});
+
+workbench.provideViews(VERSION_PREFIX, (id) => versionView(id, (path) => void workbench.refreshFromServer([path]).then(() => history.refresh())));
 
 try {
   files = await api.list();

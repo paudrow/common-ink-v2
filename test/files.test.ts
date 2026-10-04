@@ -282,3 +282,52 @@ test("a Preview database with an undo column already, and no record of it, start
   assert.deepEqual(files.write({ path: PLAN, text: "a", base: 0, author: ada }).file?.revision, 1);
   assert.equal(files.undo([1], ada)[0].status, "undone");
 });
+
+test("chosen changes show together, and a change left out splits them into runs without its edits", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "a\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "a\nb\n", base: 1, author: bot });
+  files.write({ path: PLAN, text: "a\nb\nc\n", base: 2, author: ada });
+  files.write({ path: PLAN, text: "a\nb\nc\nd\n", base: 3, author: bot });
+  files.write({ path: "Other.md" as FilePath, text: "x\n", base: 0, author: bot });
+  assert.deepEqual(files.combined([2, 3]), [{ path: PLAN, runs: [{ revisions: [2, 3], before: "a\n", after: "a\nb\nc\n" }] }]);
+  assert.deepEqual(files.combined([2, 4, 5]), [
+    { path: "Other.md", runs: [{ revisions: [5], before: "", after: "x\n" }] },
+    {
+      path: PLAN,
+      runs: [
+        { revisions: [2], before: "a\n", after: "a\nb\n" },
+        { revisions: [4], before: "a\nb\nc\n", after: "a\nb\nc\nd\n" },
+      ],
+    },
+  ]);
+});
+
+test("a file can be read at any of its revisions, and restored to one as a new change that can be undone", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "first\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "second\n", base: 1, author: bot });
+  assert.equal(files.versionAt(PLAN, 1), "first\n");
+  assert.equal(files.versionAt(PLAN, 99), null);
+  const restored = files.restore(PLAN, { revision: 1 }, ada);
+  assert.deepEqual(restored, { status: "saved", file: { path: PLAN, text: "first\n", revision: 3 } });
+  files.undo([3], ada);
+  assert.equal(files.read(PLAN)?.text, "second\n", "nothing is lost");
+  files.restore(PLAN, { before: 2 }, ada);
+  assert.equal(files.read(PLAN)?.text, "first\n", "before a change is the version just before it");
+  files.restore(PLAN, { before: 1 }, ada);
+  assert.equal(files.read(PLAN)?.text, "", "before the first change, the file was empty");
+});
+
+test("a seed edit can carry a label, which lands in the labels file at that edit's revision", () => {
+  const files = workspace();
+  files.seed({
+    id: "l",
+    notes: [{ path: "Garden.md", text: "a\n", replace: false }],
+    edits: [
+      { path: "Garden.md", text: "a\nb\n", agent: "Gardener", label: "Spring" },
+      { path: "Garden.md", text: "a\nb\nc\n", agent: "Gardener" },
+    ],
+  });
+  assert.deepEqual(JSON.parse(files.read(".common-ink/labels.json" as FilePath)!.text), { labels: [{ name: "Spring", path: "Garden.md", revision: 2 }] });
+});
