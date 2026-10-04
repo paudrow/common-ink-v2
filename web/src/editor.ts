@@ -78,7 +78,7 @@ export function createState(
       drawSelection(),
       keymap.of([...(opts.json ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
-      opts.json ? json() : new LanguageSupport(markdownLanguage),
+      opts.json ? [json(), EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })] : new LanguageSupport(markdownLanguage),
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),

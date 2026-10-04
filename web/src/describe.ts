@@ -1,5 +1,5 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
-import type { Author, Change } from "../../worker/src/docs.ts";
+import { isNote, type Author, type Change, type DocPath } from "../../worker/src/docs.ts";
 
 /** "you", a person's email, or an agent's name with who it worked for. */
 export function describeAuthor(author: Author, me?: string): string {
@@ -35,4 +35,17 @@ export function ago(time: number, now = Date.now()): string {
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return new Date(time).toISOString().slice(0, 10);
+}
+
+const NAMES: Array<[RegExp, string]> = [
+  [/^\.common-ink\/settings\.json$/, "Workspace settings"],
+  [/^\.common-ink\/defaults\/settings\.json$/, "Default settings"],
+  [/^\.common-ink\/users\/[^/]+\/settings\.json$/, "User settings"],
+  [/^\.common-ink\/layout\.json$/, "Layout"],
+];
+
+/** What to call a doc: a note's path without ".md", or the name of a workspace JSON file. */
+export function docLabel(path: DocPath): string {
+  if (isNote(path)) return path.replace(/\.md$/, "");
+  return NAMES.find(([re]) => re.test(path))?.[1] ?? path;
 }

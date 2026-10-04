@@ -7,6 +7,7 @@ import { CommandBar, type Provider } from "./commandbar.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { docLabel } from "./describe.ts";
 import { HistoryPanel } from "./history.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import * as L from "./layout.ts";
@@ -37,7 +38,7 @@ const me = await fetch("/api/me")
   .then((who: { kind: string; email?: string }) => who.email)
   .catch(() => undefined);
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
-const name = (path: DocPath) => path.replace(/\.md$/, "");
+const name = docLabel;
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {

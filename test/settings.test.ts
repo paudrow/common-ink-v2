@@ -4,6 +4,8 @@ import { Docs, type Author } from "../worker/src/docs.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, defaultsText, parseSettings, schema, SETTINGS } from "../worker/src/settings.ts";
 import { commandForKey, keyFor } from "../web/src/commands.ts";
+import { docLabel } from "../web/src/describe.ts";
+import type { DocPath } from "../worker/src/docs.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -45,4 +47,11 @@ test("the defaults read like a doc but can't be written", async () => {
   assert.ok(read.ok && (read.value as { text: string }).text === defaultsText());
   const write = await runOperation("write_doc", { path: DEFAULT_SETTINGS, text: "{}", base: 0 }, docs, you);
   assert.equal(write.ok, false);
+});
+
+test("settings files have names in tabs and quick open", () => {
+  assert.equal(docLabel(".common-ink/settings.json" as DocPath), "Workspace settings");
+  assert.equal(docLabel(".common-ink/users/ada@example.com/settings.json" as DocPath), "User settings");
+  assert.equal(docLabel(".common-ink/defaults/settings.json" as DocPath), "Default settings");
+  assert.equal(docLabel("Projects/Plan.md" as DocPath), "Projects/Plan");
 });

@@ -6,6 +6,7 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type DocPath } from "../../worker/src/docs.ts";
 import { api } from "./api.ts";
+import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
@@ -37,7 +38,7 @@ export interface WorkbenchEvents {
 }
 
 const key = (group: L.GroupId, path: DocPath) => `${group}\n${path}`;
-const label = (path: DocPath) => (isNote(path) ? path.replace(/\.md$/, "") : path);
+const label = docLabel;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
