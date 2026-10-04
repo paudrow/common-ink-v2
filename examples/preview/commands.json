@@ -1,0 +1,11 @@
+{
+  "pr": 7,
+  "title": "Commands and the command bar",
+  "steps": [
+    "Press ⌘P (Ctrl+P off a Mac) and type a few letters of a note's name, such as `rl` for Reading list. Enter opens it.",
+    "In the same box, type a name that doesn't exist, such as `Meeting notes`. The last item creates it.",
+    "Press ⌘⇧P (Ctrl+Shift+P) for every command, with its shortcut. Or type `>` in the ⌘P box.",
+    "Move through the list with the arrow keys, Ctrl-N and Ctrl-P, or Ctrl-J and Ctrl-K. Esc closes it and puts you back in the editor.",
+    "⌘S saves, like `:w`. Try Go back from the command bar after opening a few notes."
+  ]
+}
