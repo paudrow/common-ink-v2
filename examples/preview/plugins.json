@@ -3,6 +3,7 @@
   "title": "Plugin API",
   "steps": [
     "Everything works as before: ⌘P, ⌘⇧P and Show history now come from plugins on the public plugin API.",
+    "Show history of this note, then drag the History panel's title into a window: it opens there as a tab, and drops on an edge split the window, as for notes. Or run ⌘⇧P, Open History in a window.",
     "Open user settings and add `\"plugins.disabled\": [\"history\"]`, then reload. The history commands are gone from ⌘⇧P. Remove it and reload to bring them back.",
     "Try `\"plugins.disabled\": [\"commandBar.notes\"]`: ⌘P opens an empty bar that says its plugins are off, and `>` still lists commands.",
     "Open default settings: `plugins.disabled` is listed with the rest."
