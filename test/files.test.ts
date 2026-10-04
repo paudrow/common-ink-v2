@@ -164,3 +164,25 @@ test("a database from the first deploy, with a notes table, keeps its notes and 
   new Files(db);
   assert.equal(files.history(PLAN).length, 2);
 });
+
+test("a Preview database from before the File rename (a docs table, schema 1) keeps its files", () => {
+  const db = memoryDb();
+  db.run("CREATE TABLE docs(path TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL)");
+  db.run("CREATE TABLE changes(revision INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL, author TEXT NOT NULL, base INTEGER NOT NULL, diff TEXT NOT NULL, time INTEGER NOT NULL)");
+  db.run("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  db.run("INSERT INTO meta VALUES ('schema', '1')");
+  db.run("INSERT INTO docs VALUES ('Plan.md', '# Plan', 1)");
+  const files = new Files(db);
+  assert.deepEqual(files.read(PLAN), { path: PLAN, text: "# Plan", revision: 1 });
+  assert.deepEqual(files.list(), [{ path: PLAN, revision: 1 }]);
+});
+
+test("starting twice, or from an empty database, ends in the same shape", () => {
+  const db = memoryDb();
+  new Files(db);
+  const tables = () => db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").map((t) => t.name);
+  const first = tables();
+  new Files(db);
+  assert.deepEqual(tables(), first);
+  assert.deepEqual(first, ["changes", "files", "meta"]);
+});

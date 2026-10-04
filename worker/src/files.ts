@@ -78,13 +78,14 @@ const lines = (text: string) => text.split("\n");
 const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
 
 /**
- * The database's shape, one step at a time. Each runs once, in order, and the number done is kept in
- * meta's "schema" row. Add steps at the end; never change one that has shipped.
+ * The database's shape. Each step looks at what's there before it changes anything, so the whole list
+ * runs on every start and any database, however old or half-changed, ends in the same shape. Add steps
+ * at the end; a step must be safe to run on a database that already has it.
  */
-const MIGRATIONS: Array<(db: Db) => void> = [
-  // 1. Files and their changes. The first deploy called the files table "notes".
+const SCHEMA: Array<(db: Db) => void> = [
+  // Files and their changes. The first deploy called the files table "notes", and early Previews "docs".
   (db) => {
-    if (hasTable(db, "notes")) db.run("ALTER TABLE notes RENAME TO files");
+    for (const old of ["notes", "docs"]) if (hasTable(db, old) && !hasTable(db, "files")) db.run(`ALTER TABLE ${old} RENAME TO files`);
     db.run("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL)");
     db.run(
       `CREATE TABLE IF NOT EXISTS changes(revision INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL,
@@ -100,14 +101,7 @@ export class Files {
     private now: () => number = Date.now,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    db.tx(() => {
-      const [row] = db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'");
-      const from = Number(row?.value ?? 0);
-      MIGRATIONS.slice(from).forEach((migrate) => migrate(db));
-      if (from < MIGRATIONS.length) {
-        db.run("INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(MIGRATIONS.length));
-      }
-    });
+    db.tx(() => SCHEMA.forEach((step) => step(db)));
   }
 
   list(): FileSummary[] {
