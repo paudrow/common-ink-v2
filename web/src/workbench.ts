@@ -1,10 +1,10 @@
 // The windows on screen: the layout (layout.ts) drawn as split groups of tabs, with an editor per tab.
-// A doc open in several tabs has one Session, and an edit in one tab is copied to the others. The
+// A file open in several tabs has one Session, and an edit in one tab is copied to the others. The
 // layout is saved as workspace JSON a moment after it changes.
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type DocPath } from "../../worker/src/docs.ts";
+import { isNote, type FilePath } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { createState, fromServer, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
@@ -15,12 +15,12 @@ const PAUSE_MS = 1000;
 const RETRY_MS = 5000;
 const LAYOUT_SAVE_MS = 1500;
 
-interface OpenDoc {
-  path: DocPath;
+interface OpenFile {
+  path: FilePath;
   session: Session;
   views: Set<EditorView>;
   timer: number;
-  /** Whether the server has it yet. A doc opened by name starts out unsaved. */
+  /** Whether the server has it yet. A file opened by name starts out unsaved. */
   exists: boolean;
 }
 
@@ -29,17 +29,17 @@ export interface WorkbenchEvents {
   status(status: SaveStatus | null, message?: string): void;
   mode(mode: string): void;
   /** What the focused tab shows changed. */
-  focus(path: DocPath | null): void;
-  /** A doc was saved for the first time, so lists of docs are out of date. */
-  created(path: DocPath): void;
+  focus(path: FilePath | null): void;
+  /** A file was saved for the first time, so lists of files are out of date. */
+  created(path: FilePath): void;
 }
 
-const key = (group: L.GroupId, path: DocPath) => `${group}\n${path}`;
-const label = (path: DocPath) => (isNote(path) ? path.replace(/\.md$/, "") : path);
+const key = (group: L.GroupId, path: FilePath) => `${group}\n${path}`;
+const label = (path: FilePath) => (isNote(path) ? path.replace(/\.md$/, "") : path);
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
-  private docs = new Map<DocPath, OpenDoc>();
+  private files = new Map<FilePath, OpenFile>();
   private views = new Map<string, EditorView>();
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
@@ -52,8 +52,8 @@ export class Workbench {
     private on: WorkbenchEvents,
   ) {}
 
-  /** Load the saved layout and its docs, then show `first` if asked. */
-  async start(first?: DocPath | null): Promise<void> {
+  /** Load the saved layout and its files, then show `first` if asked. */
+  async start(first?: FilePath | null): Promise<void> {
     const saved = await api.read(L.LAYOUT_PATH);
     this.layoutRevision = saved.revision;
     let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
@@ -69,7 +69,7 @@ export class Workbench {
     return L.focused(this.layout);
   }
 
-  get focusedPath(): DocPath | null {
+  get focusedPath(): FilePath | null {
     return L.activeDoc(this.focusedGroup);
   }
 
@@ -80,23 +80,23 @@ export class Workbench {
 
   get focusedSession(): Session | null {
     const path = this.focusedPath;
-    return path ? (this.docs.get(path)?.session ?? null) : null;
+    return path ? (this.files.get(path)?.session ?? null) : null;
   }
 
-  isOpen(path: DocPath): boolean {
-    return this.docs.has(path);
+  isOpen(path: FilePath): boolean {
+    return this.files.has(path);
   }
 
-  /** Every doc that isn't saved, for the page closing. */
+  /** Every file that isn't saved, for the page closing. */
   unsaved() {
-    return [...this.docs.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
+    return [...this.files.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
   }
 
   /**
-   * Show a doc in the focused group: in place of the tab on show, as Vim's `:e` does, or in a new tab.
-   * The doc on show is saved first; if it can't be, it stays.
+   * Show a file in the focused group: in place of the tab on show, as Vim's `:e` does, or in a new tab.
+   * The file on show is saved first; if it can't be, it stays.
    */
-  async open(path: DocPath, how: { newTab?: boolean; pos?: number; jump?: boolean } = {}): Promise<void> {
+  async open(path: FilePath, how: { newTab?: boolean; pos?: number; jump?: boolean } = {}): Promise<void> {
     const from = this.here();
     const leaving = this.focusedPath;
     if (!how.newTab && leaving && leaving !== path && !(await this.saveToLeave(leaving))) return;
@@ -110,7 +110,7 @@ export class Workbench {
     }
   }
 
-  /** Close the focused group's tab on show (`:q`). A doc that can't be saved stays open. */
+  /** Close the focused group's tab on show (`:q`). A file that can't be saved stays open. */
   async closeTab(id = this.layout.focus, index?: number): Promise<void> {
     const group = L.groups(this.layout).find((g) => g.id === id);
     if (!group) return;
@@ -128,7 +128,7 @@ export class Workbench {
     else this.setLayout(group.tabs.reduce((l) => L.closeTab(l, group.id, 0), this.layout));
   }
 
-  split(where: "right" | "down", path?: DocPath): void {
+  split(where: "right" | "down", path?: FilePath): void {
     this.setLayout(L.split(this.layout, where, path));
   }
 
@@ -136,7 +136,7 @@ export class Workbench {
     this.setLayout(fn(this.layout));
   }
 
-  /** Back or forward through the docs this group has shown (Ctrl-O and Ctrl-I past Vim's own jumps). */
+  /** Back or forward through the files this group has shown (Ctrl-O and Ctrl-I past Vim's own jumps). */
   async step(by: "back" | "forward"): Promise<void> {
     const from = this.here();
     if (!from || !(await this.saveToLeave(from.path))) return;
@@ -146,9 +146,9 @@ export class Workbench {
 
   async reload(): Promise<void> {
     const path = this.focusedPath;
-    const doc = path && this.docs.get(path);
-    if (!doc) return;
-    doc.session.reload(await api.read(doc.path));
+    const file = path && this.files.get(path);
+    if (!file) return;
+    file.session.reload(await api.read(file.path));
   }
 
   save(explicit = false): Promise<void> | undefined {
@@ -171,24 +171,24 @@ export class Workbench {
     return jumps;
   }
 
-  private async saveToLeave(path: DocPath): Promise<boolean> {
-    const doc = this.docs.get(path);
-    if (!doc) return true;
-    clearTimeout(doc.timer);
-    await doc.session.save();
-    if (!doc.session.dirty) return true;
-    this.on.status(doc.session.status, `${label(path)} isn't saved, so it's still open. :w tries again; :e! loads the saved version.`);
+  private async saveToLeave(path: FilePath): Promise<boolean> {
+    const file = this.files.get(path);
+    if (!file) return true;
+    clearTimeout(file.timer);
+    await file.session.save();
+    if (!file.session.dirty) return true;
+    this.on.status(file.session.status, `${label(path)} isn't saved, so it's still open. :w tries again; :e! loads the saved version.`);
     return false;
   }
 
-  /** Fetch a doc and start its session, unless it's open already. */
-  async load(path: DocPath): Promise<OpenDoc> {
-    const open = this.docs.get(path);
+  /** Fetch a file and start its session, unless it's open already. */
+  async load(path: FilePath): Promise<OpenFile> {
+    const open = this.files.get(path);
     if (open) return open;
     const fetched = await api.read(path);
-    const again = this.docs.get(path);
+    const again = this.files.get(path);
     if (again) return again;
-    const doc: OpenDoc = {
+    const file: OpenFile = {
       path,
       views: new Set(),
       timer: 0,
@@ -196,57 +196,57 @@ export class Workbench {
       session: new Session(
         fetched,
         {
-          text: () => this.primary(doc)?.state.doc.toString() ?? fetched.text,
+          text: () => this.primary(file)?.state.doc.toString() ?? fetched.text,
           replace: (text) => {
-            const view = this.primary(doc);
+            const view = this.primary(file);
             if (view) replaceText(view, text);
           },
         },
         api.write,
-        (status) => this.statusChanged(doc, status),
+        (status) => this.statusChanged(file, status),
       ),
     };
-    this.docs.set(path, doc);
-    return doc;
+    this.files.set(path, file);
+    return file;
   }
 
-  private primary(doc: OpenDoc): EditorView | undefined {
-    return doc.views.values().next().value;
+  private primary(file: OpenFile): EditorView | undefined {
+    return file.views.values().next().value;
   }
 
-  private statusChanged(doc: OpenDoc, status: SaveStatus) {
+  private statusChanged(file: OpenFile, status: SaveStatus) {
     if (status === "offline") {
-      clearTimeout(doc.timer);
-      doc.timer = window.setTimeout(() => void doc.session.save(), RETRY_MS);
+      clearTimeout(file.timer);
+      file.timer = window.setTimeout(() => void file.session.save(), RETRY_MS);
     }
-    if (status === "saved" && !doc.exists && doc.session.revision > 0) {
-      doc.exists = true;
-      this.on.created(doc.path);
+    if (status === "saved" && !file.exists && file.session.revision > 0) {
+      file.exists = true;
+      this.on.created(file.path);
     }
     this.renderTabs();
-    if (doc.path === this.focusedPath) this.on.status(status);
+    if (file.path === this.focusedPath) this.on.status(status);
   }
 
-  private viewUpdate(doc: OpenDoc, view: EditorView, u: ViewUpdate) {
+  private viewUpdate(file: OpenFile, view: EditorView, u: ViewUpdate) {
     if (!u.docChanged) return;
     const copied = u.transactions.some((tr) => tr.annotation(synced));
     if (copied) return;
-    for (const other of doc.views) {
+    for (const other of file.views) {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
-    doc.session.edited();
-    clearTimeout(doc.timer);
-    doc.timer = window.setTimeout(() => void doc.session.save(), PAUSE_MS);
+    file.session.edited();
+    clearTimeout(file.timer);
+    file.timer = window.setTimeout(() => void file.session.save(), PAUSE_MS);
   }
 
-  private makeView(group: L.GroupId, doc: OpenDoc): EditorView {
-    const text = this.primary(doc)?.state.doc.toString() ?? doc.session.savedText;
+  private makeView(group: L.GroupId, file: OpenFile): EditorView {
+    const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
     const view: EditorView = new EditorView({
       state: createState(
         text,
-        (u) => this.viewUpdate(doc, view, u),
-        () => void doc.session.save(),
+        (u) => this.viewUpdate(file, view, u),
+        () => void file.session.save(),
       ),
     });
     // CodeMirror's own styles fix the editor's display and position, so each sits in a box of ours.
@@ -254,8 +254,8 @@ export class Workbench {
     box.className = "tab-editor";
     box.dataset.group = group;
     box.append(view.dom);
-    doc.views.add(view);
-    this.views.set(key(group, doc.path), view);
+    file.views.add(view);
+    this.views.set(key(group, file.path), view);
     getCM(view)?.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
       if (view === this.focusedView) this.on.mode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
     });
@@ -264,7 +264,7 @@ export class Workbench {
 
   private dropView(k: string, view: EditorView) {
     this.views.delete(k);
-    for (const doc of this.docs.values()) doc.views.delete(view);
+    for (const file of this.files.values()) file.views.delete(view);
     view.destroy();
   }
 
@@ -282,8 +282,8 @@ export class Workbench {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     try {
       let result = await api.write(L.LAYOUT_PATH, text, this.layoutRevision);
-      if (result.status === "conflict" && result.doc) result = await api.write(L.LAYOUT_PATH, text, result.doc.revision);
-      if (result.doc) this.layoutRevision = result.doc.revision;
+      if (result.status === "conflict" && result.file) result = await api.write(L.LAYOUT_PATH, text, result.file.revision);
+      if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
     }
@@ -293,7 +293,7 @@ export class Workbench {
     const wanted = new Set<string>();
     for (const g of L.groups(this.layout)) for (const p of g.tabs) wanted.add(key(g.id, p));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
-    for (const [path, doc] of this.docs) if (!doc.views.size && !L.groups(this.layout).some((g) => g.tabs.includes(path))) this.docs.delete(path);
+    for (const [path, file] of this.files) if (!file.views.size && !L.groups(this.layout).some((g) => g.tabs.includes(path))) this.files.delete(path);
     for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
     this.host.replaceChildren(this.renderNode(this.layout.root));
     this.renderTabs();
@@ -326,8 +326,8 @@ export class Workbench {
     const editors = el.querySelector<HTMLElement>(".editors")!;
     editors.replaceChildren(
       ...node.tabs.map((path, i) => {
-        const doc = this.docs.get(path)!;
-        const view = this.views.get(key(node.id, path)) ?? this.makeView(node.id, doc);
+        const file = this.files.get(path)!;
+        const view = this.views.get(key(node.id, path)) ?? this.makeView(node.id, file);
         const box = view.dom.parentElement!;
         box.hidden = i !== node.active;
         return box;
@@ -357,7 +357,7 @@ export class Workbench {
           const name = document.createElement("button");
           name.className = "name";
           name.textContent = label(path);
-          const status = this.docs.get(path)?.session.status;
+          const status = this.files.get(path)?.session.status;
           if (status && status !== "saved") name.dataset.status = status;
           name.addEventListener("click", () => this.setLayout(L.selectTab(this.layout, g.id, i)));
           name.addEventListener("auxclick", (e) => e.button === 1 && void this.closeTab(g.id, i));
@@ -396,7 +396,7 @@ function safeJson(text: string): unknown {
 }
 
 /**
- * Vim's jump list is global and holds positions in the editor that had focus before; in a shorter doc
+ * Vim's jump list is global and holds positions in the editor that had focus before; in a shorter file
  * the next G or gg throws on them. Each editor starts a fresh jump list, keeping registers and searches.
  */
 function freshVimJumps() {

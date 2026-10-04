@@ -38,7 +38,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.processingInstruction, t.contentSeparator, t.quote], color: "var(--muted)" },
 ]);
 
-/** Marks a change copied over from another view of the same doc. */
+/** Marks a change copied over from another view of the same file. */
 export const synced = Annotation.define<boolean>();
 
 export function createState(doc: string, onUpdate: (u: ViewUpdate) => void, onBlur: () => void): EditorState {
