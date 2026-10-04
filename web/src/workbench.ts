@@ -151,6 +151,16 @@ export class Workbench {
     doc.session.reload(await api.read(doc.path));
   }
 
+  /** Take in what changed on the server for these docs, where nothing is waiting to be saved. */
+  async refreshFromServer(paths: DocPath[]): Promise<void> {
+    await Promise.all(
+      paths.map(async (path) => {
+        const doc = this.docs.get(path);
+        if (doc && !doc.session.dirty) doc.session.reload(await api.read(path));
+      }),
+    );
+  }
+
   save(explicit = false): Promise<void> | undefined {
     return this.focusedSession?.save(explicit);
   }

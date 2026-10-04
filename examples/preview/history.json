@@ -1,0 +1,23 @@
+{
+  "pr": 9,
+  "title": "Visible history, CLI and MCP",
+  "steps": [
+    "Open Garden plan and run Show history of this note (⌘⇧P). An agent named Gardener made two changes after the seed. Click one to see its diff.",
+    "Set the author filter to Gardener and press Undo all: both edits go, as one change each by you. Redo on an undo puts it back.",
+    "Edit a note, pause, and your change shows up at the top as yours. Show history of everything lists changes to every note.",
+    "From a terminal in a checkout: `COMMON_INK_URL=<this Preview> bin/common-ink history`, `bin/common-ink cat 'Garden plan.md'`, `echo hi | bin/common-ink write Hello.md`. The CLI writes as the agent CLI, working for you.",
+    "Add `<this Preview>/mcp?agent=Claude` as an HTTP MCP server in an MCP client. Its tools are list_docs, read_doc, write_doc, history and undo, and its changes show up in history as Claude's."
+  ],
+  "edits": [
+    {
+      "agent": "Gardener",
+      "path": "Garden plan.md",
+      "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade\n"
+    },
+    {
+      "agent": "Gardener",
+      "path": "Garden plan.md",
+      "text": "# Garden plan\n\n- Tomatoes by the fence\n- Basil in pots, near the kitchen door\n- Lettuce in the shade\n- Marigolds between the tomatoes, to keep pests off\n"
+    }
+  ]
+}

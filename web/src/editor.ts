@@ -15,7 +15,7 @@ const theme = EditorView.theme({
   "&": { height: "100%", color: "var(--ink)", backgroundColor: "transparent" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--prose)", lineHeight: "1.65", overflow: "auto" },
-  ".cm-content": { maxWidth: "42rem", margin: "0 auto", padding: "3rem 2rem 40vh", caretColor: "var(--accent)" },
+  ".cm-content": { maxWidth: "42rem", margin: "0 auto", padding: "3rem clamp(0.75rem, 4%, 2rem) 40vh", caretColor: "var(--accent)" },
   ".cm-line": { padding: "0" },
   ".cm-cursor": { borderLeftColor: "var(--accent)" },
   ".cm-fat-cursor": { background: "var(--accent) !important", color: "var(--bg) !important" },

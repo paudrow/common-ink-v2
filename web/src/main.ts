@@ -6,6 +6,7 @@ import { api } from "./api.ts";
 import { CommandBar, type Provider } from "./commandbar.ts";
 import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { HistoryPanel } from "./history.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
@@ -33,16 +34,22 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 };
 
 let docs: DocSummary[] = [];
+let historyTimer = 0;
 const name = (path: DocPath) => path.replace(/\.md$/, "");
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {
     saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
     saveLine.dataset.status = status ?? "";
+    if (status === "saved") {
+      clearTimeout(historyTimer);
+      historyTimer = window.setTimeout(() => void history.refresh(), 300);
+    }
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
-    if (path) history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
+    if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
+    void history.refresh();
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
   },
@@ -146,6 +153,8 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
+  { id: "history.note", title: "Show history of this note", run: () => history.toggle("doc") },
+  { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
 );
 
 const notesProvider: Provider = {
@@ -249,6 +258,16 @@ for (const [keys, command] of [
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
+});
+
+const me = await fetch("/api/me")
+  .then((r) => r.json())
+  .then((who: { kind: string; email?: string }) => who.email)
+  .catch(() => undefined);
+const history = new HistoryPanel($("#history"), {
+  me,
+  focusedPath: () => workbench.focusedPath,
+  undone: (paths) => void workbench.refreshFromServer(paths),
 });
 
 try {
