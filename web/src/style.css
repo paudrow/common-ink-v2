@@ -788,3 +788,155 @@ body {
   color: #b91c1c;
   text-decoration: line-through;
 }
+
+/* The settings editor (settings-ui.ts). */
+.settings-editor {
+  font-family: var(--prose);
+}
+
+.settings-editor > * {
+  max-width: 44rem;
+  margin-inline: auto;
+}
+
+.settings-top {
+  position: sticky;
+  top: -1rem;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0 0.75rem;
+  margin-top: -1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-top .search {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.settings-editor button,
+.settings-editor input,
+.settings-editor select {
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+}
+
+.settings-editor button {
+  cursor: pointer;
+}
+
+.settings-editor :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-editor .levels {
+  display: flex;
+}
+
+.settings-editor .levels button {
+  border-radius: 0;
+}
+
+.settings-editor .levels button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.settings-editor .levels button:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+
+.settings-editor .levels [aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.setting-group h3 {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.setting {
+  padding: 0.75rem 0 0.75rem 0.75rem;
+  border-left: 2px solid transparent;
+}
+
+.setting.modified {
+  border-left-color: var(--accent);
+}
+
+.setting-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.setting-title {
+  font-weight: 600;
+}
+
+.setting-key {
+  font: 0.75rem var(--mono);
+  color: var(--muted);
+}
+
+.setting .badge {
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.settings-editor .setting .reset {
+  font-size: 0.75rem;
+  padding: 0 0.375rem;
+  color: var(--muted);
+}
+
+.setting-desc {
+  margin: 0.25rem 0 0.5rem;
+  color: var(--ink);
+}
+
+.setting-default {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.settings-editor input[type="number"] {
+  width: 6rem;
+}
+
+.settings-editor input[aria-invalid="true"] {
+  border-color: #c2410c;
+}
+
+.settings-editor input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+}
+
+.settings-editor .message {
+  color: var(--muted);
+}
+
+.setting-problem {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: #c2410c;
+}

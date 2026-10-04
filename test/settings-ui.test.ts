@@ -1,0 +1,140 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+import type { FilePath, Revision } from "../worker/src/files.ts";
+import { DEFAULTS } from "../worker/src/settings.ts";
+
+const { window } = new JSDOM("<!doctype html><body></body>");
+Object.assign(globalThis, { document: window.document, CSS: { escape: (s: string) => s.replace(/["\\]/g, "\\$&") } });
+
+const { describeKey, settingsEditor, withSetting } = await import("../web/src/settings-ui.ts");
+const { settingsCompletions, settingsProblems } = await import("../web/src/settings-json.ts");
+
+test("setting names read as titles under their section", () => {
+  assert.deepEqual(describeKey("editor.fontSize"), { section: "Editor", title: "Font size" });
+  assert.deepEqual(describeKey("editor.lineNumbers"), { section: "Editor", title: "Line numbers" });
+  assert.deepEqual(describeKey("keybindings"), { section: "Keybindings", title: "Keybindings" });
+});
+
+test("a missing settings file starts from the template", () => {
+  assert.equal(withSetting("", "editor.vim", false), '{\n  "$schema": "/schema/settings.json",\n  "editor.vim": false\n}\n');
+});
+
+/** A settings editor over one in-memory user settings file, recording each write. */
+function setup(text: string) {
+  const file = { text, revision: 1 as Revision };
+  const writes: string[] = [];
+  const path = ".common-ink/users/you@example.com/settings.json" as FilePath;
+  const ui = settingsEditor({
+    pathFor: (level) => (level === "user" ? path : (".common-ink/settings.json" as FilePath)),
+    read: async () => ({ ...file }),
+    write: async (_p, next, base) => {
+      assert.equal(base, file.revision);
+      writes.push(next);
+      file.text = next;
+      file.revision++;
+      return { status: "saved", revision: file.revision } as never;
+    },
+    effective: () => DEFAULTS,
+    openJson: () => writes.push("open json"),
+    changed: () => {},
+  });
+  const root = window.document.createElement("div");
+  window.document.body.replaceChildren(root);
+  return { ui, root, writes, file };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+test("every setting shows, with its control, description and default; set ones are marked", async () => {
+  const { ui, root } = setup('{\n  "editor.fontSize": 18\n}\n');
+  await ui.render(root);
+  const rows = [...root.querySelectorAll(".setting")];
+  assert.equal(rows.length, Object.keys(DEFAULTS).length);
+  const font = rows.find((r) => r.querySelector(".setting-key")!.textContent === "editor.fontSize")!;
+  assert.ok(font.classList.contains("modified"));
+  assert.equal(font.querySelector("input")!.value, "18");
+  assert.equal(font.querySelector(".setting-default")!.textContent, "Default: 16");
+  const vim = rows.find((r) => r.querySelector(".setting-key")!.textContent === "editor.vim")!;
+  assert.ok(!vim.classList.contains("modified"));
+  assert.equal(vim.querySelector<HTMLInputElement>("input[type=checkbox]")!.checked, true);
+  const keys = rows.find((r) => r.querySelector(".setting-key")!.textContent === "keybindings")!;
+  assert.equal(keys.querySelector("button.to-json")!.textContent, "Edit in settings.json");
+});
+
+test("a control writes just its key, and Reset removes it, leaving the rest of the file alone", async () => {
+  const text = '{\n    "$schema": "/schema/settings.json",\n    "editor.fontSize":   18 ,\n    "keybindings": [ {"key": "Mod-k", "command": "quickOpen"} ]\n}\n';
+  const { ui, root, writes } = setup(text);
+  await ui.render(root);
+  const box = root.querySelector<HTMLInputElement>('input[aria-label="editor.vim"]')!;
+  box.checked = false;
+  box.dispatchEvent(new window.Event("change"));
+  await settle();
+  assert.equal(writes.at(-1), '{\n    "$schema": "/schema/settings.json",\n    "editor.fontSize":   18 ,\n    "keybindings": [ {"key": "Mod-k", "command": "quickOpen"} ],\n    "editor.vim": false\n}\n');
+  await ui.render(root);
+  root.querySelector<HTMLButtonElement>('[data-focus="reset:editor.fontSize"]')!.click();
+  await settle();
+  assert.equal(writes.at(-1), '{\n    "$schema": "/schema/settings.json",\n    "keybindings": [ {"key": "Mod-k", "command": "quickOpen"} ],\n    "editor.vim": false\n}\n');
+});
+
+test("a number out of range isn't written", async () => {
+  const { ui, root, writes } = setup("");
+  await ui.render(root);
+  const input = root.querySelector<HTMLInputElement>('input[aria-label="editor.fontSize"]')!;
+  input.value = "99";
+  input.dispatchEvent(new window.Event("change"));
+  await settle();
+  assert.deepEqual(writes, []);
+  assert.equal(input.getAttribute("aria-invalid"), "true");
+});
+
+test("search narrows the settings, and the switch shows the other level", async () => {
+  const { ui, root } = setup("");
+  await ui.render(root);
+  const search = root.querySelector<HTMLInputElement>("input.search")!;
+  search.value = "wrap";
+  search.dispatchEvent(new window.Event("input"));
+  const shown = [...root.querySelectorAll<HTMLElement>(".setting")].filter((r) => !r.hidden);
+  assert.deepEqual(
+    shown.map((r) => r.querySelector(".setting-key")!.textContent),
+    ["editor.lineWrapping"],
+  );
+  root.querySelector<HTMLButtonElement>('[data-focus="level:workspace"]')!.click();
+  await settle();
+  assert.equal(ui.level, "workspace");
+  assert.equal(root.querySelector('[aria-selected="true"]')!.textContent, "Workspace");
+});
+
+test("completion offers the settings not yet in the file where a key goes, and values where a value goes", () => {
+  const text = '{\n  "editor.vim": true,\n  "edi\n}';
+  const at = text.indexOf("edi\n") + 3;
+  const keys = settingsCompletions(text, at)!;
+  assert.equal(keys.from, at - 3, "matched against what's typed after the quote");
+  const labels = keys.options.map((o) => o.label);
+  assert.ok(labels.includes("editor.fontSize") && !labels.includes("editor.vim"));
+  assert.equal(keys.options.find((o) => o.label === "editor.fontSize")!.apply, 'editor.fontSize": 16');
+  assert.equal(keys.options.find((o) => o.label === "keybindings")!.apply, 'keybindings": []');
+  const bare = '{\n  font';
+  assert.equal(settingsCompletions(bare, bare.length)!.options.find((o) => o.label === "editor.fontSize")!.apply, '"editor.fontSize": 16', "typed without a quote, the pick brings both");
+
+  const value = '{\n  "editor.lineNumbers": t';
+  const values = settingsCompletions(value, value.length)!;
+  assert.deepEqual(values.options.map((o) => o.label), ["true", "false"]);
+  assert.equal(values.from, value.length - 1);
+  assert.equal(settingsCompletions('{\n  "editor.fontSize": 1', 23), null, "numbers have nothing to pick from");
+  assert.equal(settingsCompletions('{\n  "keybindings": [{"k', 23), null, "only top-level keys");
+});
+
+test("problems point at an unknown key, a wrong value, or where the JSON breaks", () => {
+  const text = '{\n  "colour": 1,\n  "editor.vim": "yes"\n}';
+  const problems = settingsProblems(text);
+  assert.deepEqual(
+    problems.map((p) => [text.slice(p.from, p.to), p.message]),
+    [
+      ['"colour": ', 'Unknown setting "colour". It\'s ignored.'],
+      ['"yes"', '"editor.vim" must be true or false. It\'s ignored.'],
+    ],
+  );
+  assert.match(settingsProblems("{oops", [1])[0].message, /^Not valid JSON/);
+  assert.deepEqual(settingsProblems('{"editor.fontSize": 12}'), []);
+});
