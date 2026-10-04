@@ -1,10 +1,10 @@
 // One Durable Object per workspace. It owns the workspace's SQLite database and runs every read and
 // write in order, so two writes to a note can't interleave.
 import { DurableObject } from "cloudflare:workers";
-import { Docs, type Author, type Db, type DocPath, type HistoryQuery, type Revision, type Seed, type Write } from "./docs.ts";
+import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
 
 export class Workspace extends DurableObject<object> {
-  private docs: Docs;
+  private files: Files;
 
   constructor(ctx: DurableObjectState, env: object) {
     super(ctx, env);
@@ -14,30 +14,30 @@ export class Workspace extends DurableObject<object> {
       run: (query, ...params) => void sql.exec(query, ...params),
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
-    this.docs = new Docs(db);
+    this.files = new Files(db);
   }
 
   list() {
-    return this.docs.list();
+    return this.files.list();
   }
 
-  read(path: DocPath) {
-    return this.docs.read(path);
+  read(path: FilePath) {
+    return this.files.read(path);
   }
 
   write(w: Write) {
-    return this.docs.write(w);
+    return this.files.write(w);
   }
 
   recent(q: HistoryQuery) {
-    return this.docs.recent(q);
+    return this.files.recent(q);
   }
 
   undo(revisions: Revision[], author: Author) {
-    return this.docs.undo(revisions, author);
+    return this.files.undo(revisions, author);
   }
 
   seed(seed: Seed) {
-    this.docs.seed(seed);
+    this.files.seed(seed);
   }
 }

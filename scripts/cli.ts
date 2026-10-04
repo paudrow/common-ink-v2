@@ -1,8 +1,8 @@
 // The Common Ink CLI: the workspace operations from a terminal, as an agent.
 //
-//   common-ink ls                      every doc and its revision
-//   common-ink cat <path>              a doc's text
-//   common-ink write <path> [--base N] save stdin as a doc's text (based on the revision read now, by default)
+//   common-ink ls                      every file and its revision
+//   common-ink cat <path>              a file's text
+//   common-ink write <path> [--base N] save stdin as a file's text (based on the revision read now, by default)
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
@@ -10,7 +10,7 @@
 // COMMON_INK_URL is the workspace (default http://localhost:8787). Changes are by the agent named in
 // COMMON_INK_AGENT (default "CLI"), working for you. Behind Cloudflare Access, set CF_ACCESS_CLIENT_ID
 // and CF_ACCESS_CLIENT_SECRET to a service token's. --json prints what the API answered.
-import type { Change, Doc, DocSummary, UndoResult, WriteResult } from "../worker/src/docs.ts";
+import type { Change, WorkspaceFile, FileSummary, UndoResult, WriteResult } from "../worker/src/files.ts";
 import { ago, describeAuthor, diffLines, diffStat } from "../web/src/describe.ts";
 
 const base = (process.env.COMMON_INK_URL ?? "http://localhost:8787").replace(/\/+$/, "");
@@ -58,20 +58,20 @@ async function readStdin(): Promise<string> {
 
 const commands: Record<string, () => Promise<void>> = {
   async ls() {
-    const { data } = await api<DocSummary[]>("GET", "/api/docs");
+    const { data } = await api<FileSummary[]>("GET", "/api/files");
     print(data, () => data.map((d) => `${String(d.revision).padStart(5)}  ${d.path}`).join("\n"));
   },
   async cat() {
-    const { data } = await api<Doc>("GET", `/api/doc${q({ path: positional()[0] })}`);
+    const { data } = await api<WorkspaceFile>("GET", `/api/file${q({ path: positional()[0] })}`);
     print(data, () => data.text);
   },
   async write() {
     const baseFlag = take("--base", true);
     const path = positional()[0];
     const text = await readStdin();
-    const revision = typeof baseFlag === "string" ? Number(baseFlag) : await api<Doc>("GET", `/api/doc${q({ path })}`).then((r) => r.data.revision, () => 0);
-    const { status, data } = await api<WriteResult>("PUT", "/api/doc", { path, text, base: revision });
-    print(data, () => (data.status === "conflict" ? `Not saved: ${path} changed in the same lines since revision ${revision}.` : `${data.status} ${path} at revision ${data.doc?.revision}`));
+    const revision = typeof baseFlag === "string" ? Number(baseFlag) : await api<WorkspaceFile>("GET", `/api/file${q({ path })}`).then((r) => r.data.revision, () => 0);
+    const { status, data } = await api<WriteResult>("PUT", "/api/file", { path, text, base: revision });
+    print(data, () => (data.status === "conflict" ? `Not saved: ${path} changed in the same lines since revision ${revision}.` : `${data.status} ${path} at revision ${data.file?.revision}`));
     if (status === 409) process.exitCode = 1;
   },
   async history() {

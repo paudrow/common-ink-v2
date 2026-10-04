@@ -8,6 +8,10 @@ A hosted workspace where a person and their agents read and edit markdown notes,
 The top-level container a user signs in to. It holds notes, uploads, settings and connected data sources.
 _Avoid_: Vault, project
 
+**File**:
+Anything stored in a workspace, addressed by its path. Notes are markdown files; settings and layout are JSON files.
+_Avoid_: Doc, document, asset
+
 **Note**:
 A markdown file in a workspace. Its title is its first `#` heading.
 _Avoid_: Document, page

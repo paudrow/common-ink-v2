@@ -1,12 +1,12 @@
 // The MCP server at /mcp: JSON-RPC over HTTP POST (MCP's Streamable HTTP transport, answering with
 // plain JSON). Its tools are the workspace operations (operations.ts), so agents use what the UI uses.
-import type { Author } from "./docs.ts";
+import type { Author } from "./files.ts";
 import { isOperation, OPERATIONS, runOperation, type Store } from "./operations.ts";
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS =
-  "Common Ink is a workspace of markdown notes and workspace JSON. Read a doc before you write it, and pass its revision as `base`. Every change you make is recorded with you as its author; history shows them and undo reverses them.";
+  "Common Ink is a workspace of markdown notes and workspace JSON. Read a file before you write it, and pass its revision as `base`. Every change you make is recorded with you as its author; history shows them and undo reverses them.";
 
 interface Request {
   jsonrpc: "2.0";

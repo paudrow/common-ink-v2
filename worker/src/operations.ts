@@ -5,15 +5,15 @@ import { parseDocPath, type Author, type Change, type Doc, type DocSummary, type
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
-  list(): Promise<DocSummary[]> | DocSummary[];
-  read(path: Doc["path"]): Promise<Doc | null> | Doc | null;
+  list(): Promise<FileSummary[]> | FileSummary[];
+  read(path: WorkspaceFile["path"]): Promise<WorkspaceFile | null> | WorkspaceFile | null;
   write(w: Write): Promise<WriteResult> | WriteResult;
   recent(q: HistoryQuery): Promise<Change[]> | Change[];
   undo(revisions: Revision[], author: Author): Promise<UndoResult[]> | UndoResult[];
 }
 
-/** Docs are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
-const MAX_DOC_BYTES = 1_000_000;
+/** Files are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
+const MAX_FILE_BYTES = 1_000_000;
 
 type Args = Record<string, unknown>;
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -35,38 +35,38 @@ function count(v: unknown): number | undefined {
   return Number.isSafeInteger(n) && (n as number) >= 0 ? (n as number) : undefined;
 }
 
-const PATH = { type: "string", description: 'A doc\'s path, like "Projects/Plan.md" or ".common-ink/layout.json"' };
+const PATH = { type: "string", description: 'A file\'s path, like "Projects/Plan.md" or ".common-ink/layout.json"' };
 
 function op<T>(o: Operation<T>): Operation<T> {
   return o;
 }
 
 export const OPERATIONS = {
-  list_docs: op<Record<string, never>>({
-    description: "List every doc in the workspace (notes and workspace JSON) with its revision.",
+  list_files: op<Record<string, never>>({
+    description: "List every file in the workspace (notes and workspace JSON) with its revision.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store) => store.list(),
   }),
-  read_doc: op<{ path: Doc["path"] }>({
-    description: "Read a doc's text and revision. Pass the revision back as `base` when you write it.",
+  read_file: op<{ path: WorkspaceFile["path"] }>({
+    description: "Read a file's text and revision. Pass the revision back as `base` when you write it.",
     input: { type: "object", properties: { path: PATH }, required: ["path"] },
     parse: (a) => {
-      const path = parseDocPath(a.path);
+      const path = parseFilePath(a.path);
       return path ? ok({ path }) : fail('"path" must be a path ending in .md or .json');
     },
     run: async (store, { path }) => (path === DEFAULT_SETTINGS ? { path, text: defaultsText(), revision: 0 } : store.read(path)),
   }),
-  write_doc: op<Omit<Write, "author">>({
+  write_file: op<Omit<Write, "author">>({
     description:
-      "Write a doc's whole text, given the revision you read (`base`, or 0 for a new doc). If it changed since, your edit is merged in; if it can't be, nothing is saved and you get the current doc back.",
+      "Write a file's whole text, given the revision you read (`base`, or 0 for a new file). If it changed since, your edit is merged in; if it can't be, nothing is saved and you get the current file back.",
     input: {
       type: "object",
       properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 } },
       required: ["path", "text", "base"],
     },
     parse: (a) => {
-      const path = parseDocPath(a.path);
+      const path = parseFilePath(a.path);
       const base = count(a.base);
       if (!path) return fail('"path" must be a path ending in .md or .json');
       if (isReadOnly(path)) return fail(`${path} is written by Common Ink and can't be changed`);
@@ -77,7 +77,7 @@ export const OPERATIONS = {
     run: async (store, w, author) => store.write({ ...w, author }),
   }),
   history: op<HistoryQuery>({
-    description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by doc or by author.",
+    description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
     input: {
       type: "object",
       properties: {
@@ -90,7 +90,7 @@ export const OPERATIONS = {
     parse: (a) => {
       const q: HistoryQuery = {};
       if (a.path !== undefined && a.path !== "") {
-        const path = parseDocPath(a.path);
+        const path = parseFilePath(a.path);
         if (!path) return fail('"path" must be a path ending in .md or .json');
         q.path = path;
       }
@@ -103,7 +103,7 @@ export const OPERATIONS = {
   }),
   undo: op<{ revisions: Revision[] }>({
     description:
-      "Undo changes by revision, newest first, each recorded as a new change by you. Later edits elsewhere in the doc are kept; an undo that clashes with them does nothing. Undoing an undo redoes it.",
+      "Undo changes by revision, newest first, each recorded as a new change by you. Later edits elsewhere in the file are kept; an undo that clashes with them does nothing. Undoing an undo redoes it.",
     input: { type: "object", properties: { revisions: { type: "array", items: { type: "integer" }, minItems: 1 } }, required: ["revisions"] },
     parse: (a) => {
       const revisions = Array.isArray(a.revisions) ? a.revisions.map(count) : [];
