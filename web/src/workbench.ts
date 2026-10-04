@@ -14,6 +14,7 @@ import { createState, fromServer, reconfigure, replaceText, synced } from "./edi
 import { Jumps, type Spot } from "./jumps.ts";
 import { dragged, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import * as L from "./layout.ts";
+import { syncTabs } from "./tabbar.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const RETRY_MS = 5000;
@@ -68,6 +69,8 @@ export class Workbench {
   private layoutTimer = 0;
   private shownView: EditorView | null = null;
   private settings: Settings = DEFAULTS;
+  /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
+  private shape = "";
 
   constructor(
     private host: HTMLElement,
@@ -75,16 +78,48 @@ export class Workbench {
   ) {}
 
   /** Load the saved layout and its files, then show `first` if asked. */
-  async start(first?: FilePath | null): Promise<void> {
+  /**
+   * Load the saved layout and its files, then show `first` (the file the address names): its tab if
+   * the layout has one, or a preview tab if the file exists. A file that doesn't exist isn't opened;
+   * it comes back as `missing`, for the app to say so.
+   */
+  async start(first?: FilePath | null): Promise<{ missing?: FilePath }> {
     const saved = await api.read(L.LAYOUT_PATH);
     this.layoutRevision = saved.revision;
     let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
+    let missing: FilePath | undefined;
     if (first) {
-      await this.load(first);
-      layout = L.showInTab(layout, first);
+      const open = L.groups(layout).find((g) => g.tabs.some((t) => "file" in t && t.file === first));
+      if (open) layout = L.selectTab(layout, open.id, open.tabs.findIndex((t) => "file" in t && t.file === first));
+      else if ((await this.load(first)).exists) layout = L.showInTab(layout, first);
+      else missing = first;
     }
     this.setLayout(layout, { save: false });
+    return { missing };
+  }
+
+  /** A message in the focused window, with buttons, until its tabs change. */
+  notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
+    const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
+    if (!editors) return;
+    const box = document.createElement("div");
+    box.className = "notice";
+    box.setAttribute("role", "status");
+    const p = document.createElement("p");
+    p.textContent = message;
+    box.append(p);
+    for (const a of actions) {
+      const b = document.createElement("button");
+      b.textContent = a.label;
+      b.addEventListener("click", () => {
+        box.remove();
+        void a.run();
+      });
+      box.append(b);
+    }
+    editors.querySelector(".notice")?.remove();
+    editors.prepend(box);
   }
 
   get focusedGroup(): L.Group {
@@ -210,7 +245,7 @@ export class Workbench {
     this.settings = settings;
     for (const view of this.views.values()) reconfigure(view, settings);
     // Empty windows list shortcuts, which settings may have rebound.
-    if (this.groupEls.size) this.render();
+    for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyHint());
   }
 
   focus(): void {
@@ -360,9 +395,25 @@ export class Workbench {
     const shown = new Set(L.groups(this.layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))));
     for (const [path, file] of this.files) if (!file.views.size && !shown.has(path)) this.files.delete(path);
     for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
-    this.host.replaceChildren(this.renderNode(this.layout.root));
+    // Rebuild the windows only when their arrangement changes. Otherwise update them where they are:
+    // moving a focused editor's node would blur it (and save) in the middle of a click.
+    const shape = shapeOf(this.layout.root);
+    if (shape !== this.shape || !this.host.firstElementChild) {
+      this.shape = shape;
+      this.host.replaceChildren(this.renderNode(this.layout.root));
+    } else this.refreshNode(this.layout.root, this.host.firstElementChild as HTMLElement);
     this.renderTabs();
     this.afterFocus();
+  }
+
+  /** Bring the windows up to date in place: split sizes, and each window's contents. */
+  private refreshNode(node: L.Node, el: HTMLElement) {
+    if (node.kind === "group") return this.fillGroup(node);
+    const children = [...el.children].filter((c) => !c.classList.contains("resizer")) as HTMLElement[];
+    node.children.forEach((c, i) => {
+      children[i].style.flex = `${node.sizes[i]} 1 0`;
+      this.refreshNode(c, children[i]);
+    });
   }
 
   private renderNode(node: L.Node, path: number[] = []): HTMLElement {
@@ -370,28 +421,30 @@ export class Workbench {
       const el = document.createElement("div");
       el.className = `split ${node.dir}`;
       node.children.forEach((c, i) => {
-        if (i > 0) el.append(this.resizer(el, node, path, i));
+        if (i > 0) el.append(this.resizer(el, path, i));
         const child = this.renderNode(c, [...path, i]);
         child.style.flex = `${node.sizes[i]} 1 0`;
         el.append(child);
       });
       return el;
     }
-    let el = this.groupEls.get(node.id);
-    if (!el) el = this.makeGroup(node.id);
+    return this.fillGroup(node);
+  }
+
+  /** A window's tabs' contents, the one on show visible; nodes move only when the tabs change. */
+  private fillGroup(node: L.Group): HTMLElement {
+    const el = this.groupEls.get(node.id) ?? this.makeGroup(node.id);
     const editors = el.querySelector<HTMLElement>(".editors")!;
-    editors.replaceChildren(
-      ...node.tabs.map((tab, i) => {
-        const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
-        box.hidden = i !== node.active;
-        if (!box.hidden && "view" in tab) void this.registered.get(tab.view)?.render(box);
-        return box;
-      }),
-      el.querySelector(".drop")!,
-    );
-    if (!node.tabs.length) {
-        editors.prepend(this.emptyHint());
-    }
+    const boxes = node.tabs.map((tab, i) => {
+      const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
+      const showing = i === node.active;
+      if (showing && box.hidden && "view" in tab) void this.registered.get(tab.view)?.render(box);
+      box.hidden = !showing;
+      return box;
+    });
+    const wanted = [...(node.tabs.length ? [] : [this.emptyHint()]), ...boxes, el.querySelector<HTMLElement>(".drop")!];
+    const same = wanted.length === editors.children.length && wanted.every((n, i) => editors.children[i] === n);
+    if (!same) editors.replaceChildren(...wanted);
     return el;
   }
 
@@ -491,13 +544,17 @@ export class Workbench {
   }
 
   /** The border between two windows: drag it to share their space differently. */
-  private resizer(container: HTMLElement, split: L.Split, path: number[], index: number): HTMLElement {
+  private resizer(container: HTMLElement, path: number[], index: number): HTMLElement {
+    const at = (): L.Split => path.reduce<L.Node>((n, i) => (n as L.Split).children[i], this.layout.root) as L.Split;
+    const dir = at().dir;
     const el = document.createElement("div");
-    el.className = `resizer ${split.dir}`;
+    el.className = `resizer ${dir}`;
     el.setAttribute("role", "separator");
-    el.setAttribute("aria-orientation", split.dir === "row" ? "vertical" : "horizontal");
+    el.setAttribute("aria-orientation", dir === "row" ? "vertical" : "horizontal");
     el.addEventListener("pointerdown", (down) => {
       down.preventDefault();
+      // The split as it is now: sizes may have changed since this border was drawn.
+      const split = at();
       el.setPointerCapture(down.pointerId);
       const box = container.getBoundingClientRect();
       const total = split.dir === "row" ? box.width : box.height;
@@ -576,43 +633,51 @@ export class Workbench {
       const el = this.groupEls.get(g.id);
       if (!el) continue;
       el.classList.toggle("focused", g.id === this.layout.focus);
-      el.querySelector(".tabs")!.replaceChildren(
-        ...g.tabs.map((item, i) => {
-          const name = this.tabLabel(item);
-          const tab = document.createElement("div");
-          tab.className = "tab";
-          tab.setAttribute("role", "tab");
-          tab.setAttribute("aria-selected", String(i === g.active));
-          tab.classList.toggle("preview", !!item.preview);
-          tab.title = "file" in item ? item.file : name;
-          tab.draggable = true;
-          tab.addEventListener("dragstart", (e) => startDrag(e, { item: L.openableOf(item), from: { group: g.id, index: i } }, name));
-          tab.addEventListener("dblclick", () => this.setLayout(L.keepTab(this.layout, g.id, i)));
-          tab.addEventListener("contextmenu", (e) => {
-            e.preventDefault();
-            this.setLayout(L.selectTab(this.layout, g.id, i));
-            // From the keyboard's menu key there's no pointer: the menu goes under the tab.
-            const box = tab.getBoundingClientRect();
-            this.on.tabMenu(e.clientX || box.left, e.clientY || box.bottom);
-          });
-          tab.addEventListener("dragend", endDrag);
-          const button = document.createElement("button");
-          button.className = "name";
-          button.textContent = name;
+      syncTabs(
+        el.querySelector<HTMLElement>(".tabs")!,
+        g.tabs.map((item, i) => {
           const status = "file" in item ? this.files.get(item.file)?.session.status : undefined;
-          if (status && status !== "saved") button.dataset.status = status;
-          button.addEventListener("click", () => this.setLayout(L.selectTab(this.layout, g.id, i)));
-          button.addEventListener("auxclick", (e) => e.button === 1 && void this.closeTab(g.id, i));
-          const close = document.createElement("button");
-          close.className = "close";
-          close.textContent = "×";
-          close.setAttribute("aria-label", `Close ${name}`);
-          close.addEventListener("click", () => void this.closeTab(g.id, i));
-          tab.append(button, close);
-          return tab;
+          return {
+            key: L.openableKey(item),
+            label: this.tabLabel(item),
+            title: "file" in item ? item.file : this.tabLabel(item),
+            selected: i === g.active,
+            preview: !!item.preview,
+            status: status && status !== "saved" ? status : undefined,
+          };
         }),
+        this.tabActions(g.id),
       );
     }
+  }
+
+  /** What a tab's clicks, drags and menu do. Tabs are found by key when the event happens, so a tab that moved still acts on itself. */
+  private tabActions(group: L.GroupId) {
+    const index = (key: string) => L.groups(this.layout).find((g) => g.id === group)?.tabs.findIndex((t) => L.openableKey(t) === key) ?? -1;
+    const withIndex = (fn: (i: number) => void) => (key: string) => {
+      const i = index(key);
+      if (i >= 0) fn(i);
+    };
+    return {
+      select: withIndex((i) => {
+        const g = L.groups(this.layout).find((x) => x.id === group);
+        if (g && (g.active !== i || this.layout.focus !== group)) this.setLayout(L.selectTab(this.layout, group, i));
+        else this.afterFocus();
+      }),
+      close: withIndex((i) => void this.closeTab(group, i)),
+      keep: withIndex((i) => this.setLayout(L.keepTab(this.layout, group, i))),
+      menu: (key: string, x: number, y: number) =>
+        withIndex((i) => {
+          this.setLayout(L.selectTab(this.layout, group, i));
+          this.on.tabMenu(x, y);
+        })(key),
+      dragStart: (key: string, e: DragEvent) =>
+        withIndex((i) => {
+          const tab = L.groups(this.layout).find((g) => g.id === group)!.tabs[i];
+          startDrag(e, { item: L.openableOf(tab), from: { group, index: i } }, this.tabLabel(tab));
+        })(key),
+      dragEnd: endDrag,
+    };
   }
 
   /** After the layout changes: focus the right editor, and give it a fresh Vim jump list if it's a different one. */
@@ -629,6 +694,11 @@ export class Workbench {
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
+}
+
+/** The arrangement of splits and windows, without sizes or tabs. */
+function shapeOf(node: L.Node): string {
+  return node.kind === "group" ? node.id : `${node.dir}(${node.children.map(shapeOf).join(",")})`;
 }
 
 function safeJson(text: string): unknown {
