@@ -8,6 +8,7 @@ import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts"
 import { fuzzyFilter } from "./fuzzy.ts";
 import { HistoryPanel } from "./history.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
+import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
 import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import * as L from "./layout.ts";
@@ -50,7 +51,7 @@ const workbench = new Workbench($("#workbench"), {
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
-    if (path) window.history.replaceState(null, "", `?note=${encodeURIComponent(path)}`);
+    if (path) window.history.replaceState(null, "", urlForFile(path));
     void history.refresh();
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
@@ -99,7 +100,7 @@ function renderList() {
   list.replaceChildren(
     ...notes.map((n) => {
       const a = document.createElement("a");
-      a.href = `?note=${encodeURIComponent(n.path)}`;
+      a.href = urlForFile(n.path);
       a.textContent = name(n.path);
       if (n.path === current) a.setAttribute("aria-current", "page");
       a.draggable = true;
@@ -354,10 +355,13 @@ const history = new HistoryPanel($("#history"), {
 
 try {
   files = await api.list();
-  const asked = notePathFor(new URLSearchParams(location.search).get("note") ?? "");
+  const asked = fileFromUrl(location.search);
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
-  await workbench.start(asked);
-  if (!workbench.focusedPath) await workbench.open(fallback);
+  const { missing } = await workbench.start(asked);
+  if (missing) {
+    // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
+    workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
+  } else if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
