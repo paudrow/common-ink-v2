@@ -7,6 +7,7 @@
   --accent: #2f5fd0;
   --selection: #d6e0f7;
   --accent-soft: rgb(47 95 208 / 0.14);
+  --code-bg: rgb(31 30 28 / 0.05);
   --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-family: var(--prose);
@@ -21,6 +22,7 @@
     --accent: #8fb0ff;
     --selection: #2c3a5c;
     --accent-soft: rgb(143 176 255 / 0.16);
+    --code-bg: rgb(232 230 227 / 0.06);
   }
 }
 

@@ -2,7 +2,8 @@
 // finds, line by line, what to draw: widgets that stand in for text (a checkbox for "- [ ]"), marks and
 // line styles. On any line the cursor or a selection touches, the widgets step aside and the raw text
 // shows, so typing, Vim motions (w, e, f, x, visual) and selections only ever meet real characters.
-import type { Extension, Line, Range } from "@codemirror/state";
+import { Facet, type Extension, type Line, type Range } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 
 /** One thing to draw on a line, at document positions. */
@@ -15,6 +16,9 @@ export interface Preview {
 /** What to draw on one line. Called for visible lines only. */
 export type PreviewSource = (line: Line, view: EditorView) => Preview[];
 
+/** Whether live previews draw at all: the "editor.livePreview" setting. Off, every line is raw text. */
+export const previewEnabled = Facet.define<boolean, boolean>({ combine: (values) => values.at(-1) ?? true });
+
 /** The lines the cursor or a selection is on, by number: they show raw text. */
 export function revealedLines(view: EditorView): Set<number> {
   const lines = new Set<number>();
@@ -26,6 +30,7 @@ export function revealedLines(view: EditorView): Set<number> {
 }
 
 function build(view: EditorView, source: PreviewSource): DecorationSet {
+  if (!view.state.facet(previewEnabled)) return Decoration.none;
   const revealed = revealedLines(view);
   const ranges: Range<Decoration>[] = [];
   for (const { from, to } of view.visibleRanges) {
@@ -51,7 +56,10 @@ export function livePreview(source: PreviewSource): Extension {
         this.decorations = build(view, source);
       }
       update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet) this.decorations = build(u.view, source);
+        const switched = u.startState.facet(previewEnabled) !== u.state.facet(previewEnabled);
+        // The parser finishing more of a long note counts too: sources may read its syntax tree.
+        const parsed = syntaxTree(u.startState) !== syntaxTree(u.state);
+        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed) this.decorations = build(u.view, source);
       }
     },
     { decorations: (v) => v.decorations },

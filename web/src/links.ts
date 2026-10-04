@@ -1,22 +1,39 @@
 // Links between notes: [[Note name]] and markdown links to .md files, as `gd` follows them.
 import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
-const LINK = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)[^)]*\)/g;
+const LINK = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)[^)]*\)/g;
 
 /**
  * The note linked at `column` in a line of `from`. A [[name]] is from the top of the workspace; a
  * markdown link's path is relative to `from`'s folder. Null when the column isn't on a link to a note.
  */
 export function noteLinkAt(line: string, column: number, from: FilePath): FilePath | null {
+  const target = linkAt(line, column, from);
+  return target && "note" in target ? target.note : null;
+}
+
+/** What a link's target opens: a note in the workspace, or a page (a web address or an upload) in a new browser tab. */
+export type LinkTarget = { note: FilePath } | { url: string };
+
+/** What a link's target (a [[name]] or a markdown link's href) opens, from `from`. Null if nothing. */
+export function linkTarget(href: string, from: FilePath | null): LinkTarget | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(href.trim());
+  } catch {
+    decoded = href.trim();
+  }
+  if (/^(https?:\/\/|\/uploads\/)/i.test(href.trim())) return { url: href.trim() };
+  const note = notePathFor(decoded, from ?? undefined);
+  return note ? { note } : null;
+}
+
+/** The target of the link at `column` in a line, whatever it is. */
+export function linkAt(line: string, column: number, from: FilePath): LinkTarget | null {
   for (const m of line.matchAll(LINK)) {
     if (column < m.index || column >= m.index + m[0].length) continue;
-    if (m[1] !== undefined) return notePathFor(m[1]);
-    const href = m[2].replace(/^<|>$/g, "");
-    try {
-      return notePathFor(decodeURIComponent(href), from);
-    } catch {
-      return null;
-    }
+    if (m[1] !== undefined) return linkTarget(m[1], null);
+    return linkTarget(m[2].replace(/^<|>$/g, ""), from);
   }
   return null;
 }

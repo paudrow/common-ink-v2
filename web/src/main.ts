@@ -15,7 +15,7 @@ import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
 import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import * as L from "./layout.ts";
-import { noteLinkAt, notePathFor } from "./links.ts";
+import { linkAt, linkTarget, notePathFor, type LinkTarget } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import type { PluginContext } from "./plugins.ts";
@@ -265,9 +265,32 @@ function followLink() {
   if (!view || !from) return;
   const head = view.state.selection.main.head;
   const line = view.state.doc.lineAt(head);
-  const path = noteLinkAt(line.text, head - line.from, from);
-  if (path) void workbench.open(path);
+  follow(linkAt(line.text, head - line.from, from));
 }
+
+/** Open what a link points to: a note here, or a page in a new browser tab. */
+function follow(target: LinkTarget | null, newTab = false) {
+  if (!target) return;
+  if ("note" in target) void workbench.open(target.note, { newTab });
+  else window.open(target.url, "_blank", "noopener");
+}
+
+// ⌘-click (Ctrl-click off a Mac) on a link the live preview draws follows it, from the note it's in.
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    const link = (e.target as HTMLElement).closest?.<HTMLElement>(".cm-md-link");
+    if (!link || e.button !== 0 || !(IS_MAC ? e.metaKey : e.ctrlKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const group = link.closest<HTMLElement>(".tab-editor")?.dataset.group;
+    const g = L.groups(workbench.layout).find((x) => x.id === group);
+    const tab = g?.tabs[g.active];
+    const from = tab && "file" in tab ? tab.file : workbench.focusedPath;
+    follow(linkTarget(link.dataset.href ?? "", from), e.shiftKey);
+  },
+  { capture: true },
+);
 
 /** How the next pick in the command bar opens a note: in place of the tab on show, in a new tab, or in a new split. */
 let openHow: "here" | "tab" | "right" | "down" = "here";
