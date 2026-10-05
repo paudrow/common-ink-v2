@@ -87,6 +87,12 @@ body {
   min-height: 0;
 }
 
+/* A split's windows share it by their sizes (--share, set by the workbench). Only a split's children:
+   a window that's left on its own fills the area, whatever share it had. */
+.split > :not(.resizer) {
+  flex: var(--share, 1) 1 0;
+}
+
 .split.row {
   flex-direction: row;
 }
@@ -1022,6 +1028,19 @@ button.status-item:hover {
 .setting-desc {
   margin: 0.25rem 0 0.5rem;
   color: var(--ink);
+}
+
+/* Under the User | Workspace switch: what the level on show is. */
+.settings-level {
+  margin: 0.25rem 0 0.75rem;
+  color: var(--muted);
+}
+
+/* Where a value comes from when it isn't set at this level, or what wins over it. */
+.setting-note {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--accent);
 }
 
 .setting-default {

@@ -503,6 +503,9 @@ export class Workbench {
       this.shape = shape;
       this.host.replaceChildren(this.renderNode(this.layout.root));
     } else this.refreshNode(this.layout.root, this.host.firstElementChild as HTMLElement);
+    // The root fills the area. A window that was in a split keeps its element, and with it the share
+    // of the split it had: that only sizes a split's children (style.css), and it's cleared besides.
+    (this.host.firstElementChild as HTMLElement).style.removeProperty("--share");
     this.renderTabs();
     this.afterFocus();
   }
@@ -512,7 +515,7 @@ export class Workbench {
     if (node.kind === "group") return this.fillGroup(node);
     const children = [...el.children].filter((c) => !c.hasAttribute("data-divider")) as HTMLElement[];
     node.children.forEach((c, i) => {
-      children[i].style.flex = `${node.sizes[i]} 1 0`;
+      children[i].style.setProperty("--share", String(node.sizes[i]));
       this.refreshNode(c, children[i]);
     });
   }
@@ -528,7 +531,7 @@ export class Workbench {
           el.append(divider);
         }
         const child = this.renderNode(c, [...path, i]);
-        child.style.flex = `${node.sizes[i]} 1 0`;
+        child.style.setProperty("--share", String(node.sizes[i]));
         el.append(child);
       });
       return el;
