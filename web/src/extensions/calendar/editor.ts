@@ -64,6 +64,9 @@ function popover(className: string, at: DOMRect, onClose: () => void, ...childre
   const box = el("div", { class: `chip-pop cal-pop ${className}`, role: "dialog", tabindex: "-1" }, ...children);
   document.body.append(box);
   place(box, at);
+  // It grows as its parts draw (a rule's form, a long summary): keep it on screen as it does.
+  const grown = new ResizeObserver(() => place(box, at));
+  grown.observe(box);
   const outside = (e: PointerEvent) => {
     if (!box.contains(e.target as Node)) close();
   };
@@ -79,6 +82,7 @@ function popover(className: string, at: DOMRect, onClose: () => void, ...childre
     if (closed) return;
     closed = true;
     box.remove();
+    grown.disconnect();
     document.removeEventListener("pointerdown", outside, true);
     box.removeEventListener("keydown", keys);
     if (open === handle) open = null;

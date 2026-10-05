@@ -1929,7 +1929,8 @@ iframe.webview {
 .cal-panels, .cal-strip { position: absolute; inset: 0; }
 .cal-strip { overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; outline: none; }
 .cal-track { display: flex; height: 100%; }
-.cal-panel { flex: none; height: 100%; box-sizing: border-box; scroll-snap-align: start; }
+.cal-slot { flex: none; height: 100%; scroll-snap-align: start; }
+.cal-panel { height: 100%; box-sizing: border-box; }
 .cal-month { display: flex; flex-direction: column; padding: 0 0 6px; }
 .cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); padding: 6px 0; color: var(--muted); font-size: 11px; text-align: center; text-transform: uppercase; letter-spacing: 0.04em; }
 .cal-weeks { flex: 1; display: grid; grid-template-rows: repeat(var(--weeks), 1fr); min-height: 0; }

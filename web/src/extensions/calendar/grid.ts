@@ -43,6 +43,7 @@ export class TimeGrid implements CalendarView {
   private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; day: number; minutes: number; edge: boolean } | null = null;
   private drag: Drag | null = null;
   private onScreen: Occurrence[] = [];
+  private columns = new Map<Day, HTMLElement>();
 
   constructor(
     private env: ViewEnv,
@@ -223,9 +224,22 @@ export class TimeGrid implements CalendarView {
           this.env.writable(o) ? el("span", { class: "cal-resize", "aria-hidden": "true" }) : null,
         );
       });
-      columns.push(el("div", { class: `cal-day${day === today ? " is-today" : ""}${snapStart ? " is-snap" : ""}`, style: { left: `${i * this.col}px`, width: `${this.col}px` }, "data-day": day }, ...nodes));
+      // A day keeps its column from one drawing to the next: columns are where scrolling stops, and
+      // a browser that loses the one it stopped on snaps somewhere else.
+      const column = this.columns.get(day) ?? el("div", { "data-day": day });
+      column.className = `cal-day${day === today ? " is-today" : ""}${snapStart ? " is-snap" : ""}`;
+      Object.assign(column.style, { left: `${i * this.col}px`, width: `${this.col}px` });
+      column.replaceChildren(...nodes);
+      columns.push(column);
     }
-    this.body.replaceChildren(...columns);
+    const left = this.scroller.scrollLeft;
+    for (const [day, column] of this.columns) if (!columns.includes(column)) (column.remove(), this.columns.delete(day));
+    for (const column of columns) {
+      this.columns.set(column.dataset.day!, column);
+      if (column.parentElement !== this.body) this.body.append(column);
+    }
+    for (const stray of [...this.body.children]) if (!columns.includes(stray as HTMLElement)) stray.remove();
+    if (this.scroller.scrollLeft !== left) this.scroller.scrollLeft = left;
     this.onScreen = [...long, ...shown.sort((a, b) => a.day.localeCompare(b.day) || a.start - b.start).map((s) => s.o)];
     this.drawNow();
   }

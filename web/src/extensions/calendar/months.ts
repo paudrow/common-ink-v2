@@ -93,13 +93,29 @@ abstract class Strip implements CalendarView {
     this.draw();
   }
 
+  /** Each period's place in the strip, kept from one drawing to the next: they're where scrolling stops. */
+  private slots = new Map<Day, HTMLElement>();
+
   protected draw() {
     const last = this.shift(this.first, 2 * AROUND + 1);
     const events = this.env.events(this.weekBefore(this.first), this.weekAfter(last)) ?? [];
     this.onScreen = [];
-    this.track.replaceChildren(...Array.from({ length: 2 * AROUND + 1 }, (_, i) => this.panel(this.shift(this.first, i), events)));
+    const left = this.scroller.scrollLeft;
+    const starts = Array.from({ length: 2 * AROUND + 1 }, (_, i) => this.shift(this.first, i));
+    const slots = starts.map((start) => {
+      const slot = this.slots.get(start) ?? el("div", { class: "cal-slot" });
+      slot.style.width = `${this.width}px`;
+      slot.replaceChildren(this.panel(start, events));
+      return slot;
+    });
+    for (const [start, slot] of this.slots) if (!slots.includes(slot)) (slot.remove(), this.slots.delete(start));
+    starts.forEach((start, i) => this.slots.set(start, slots[i]));
+    // In order, moving only what's out of place.
+    slots.forEach((slot, i) => {
+      if (this.track.children[i] !== slot) this.track.insertBefore(slot, this.track.children[i] ?? null);
+    });
     this.track.style.width = `${(2 * AROUND + 1) * this.width}px`;
-    for (const p of this.track.children) (p as HTMLElement).style.width = `${this.width}px`;
+    if (this.scroller.scrollLeft !== left) this.scroller.scrollLeft = left;
   }
 
   /** A month's grid shows days of the weeks around it too. */
