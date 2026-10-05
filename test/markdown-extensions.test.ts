@@ -32,11 +32,14 @@ import type { ExtensionContext } from "../web/src/extension-api.ts";
 /** Start the three extensions as the app would, collecting what they add to note editors. */
 const added: unknown[] = [];
 const copied: string[] = [];
+const commands = new Map<string, () => void>();
+let focusedView: unknown = null;
 const settings: Record<string, unknown> = { "code-blocks.wrap": true };
 const ctx = {
-  editor: { markdown: addMarkdownSyntax, extend: (e: unknown) => void added.push(e), focused: () => null },
+  editor: { markdown: addMarkdownSyntax, extend: (e: unknown) => void added.push(e), focused: () => focusedView },
   settings: { get: (key: string) => settings[key] },
   clipboard: { write: async (text: string) => void copied.push(text) },
+  commands: { register: (id: string, run: () => void) => void commands.set(id, run) },
 } as unknown as ExtensionContext;
 for (const ext of [gfm, codeBlocks.default, latex]) ext.activate(ctx);
 
@@ -101,21 +104,35 @@ test("code blocks: a block's language loads on first use, then its code parses i
   assert.equal(tree.resolveInner(12, 1).parent?.name, "FunctionDefinition", "the code is Python's syntax tree");
 });
 
-test("code blocks: Copy copies the code, and Wrap flips wrapping for that block alone", async () => {
+test("code blocks are cards until the cursor is in them; Copy copies in the click, and Wrap flips one block", async () => {
   const view = editor("```js\nconst x = 1;\nconsole.log(x);\n```\n\n```\nplain\n```\n\nEnd");
-  const tools = view.dom.querySelectorAll<HTMLElement>(".cm-code-tools");
-  assert.equal(tools.length, 2, "each block has its buttons on its first line");
-  const [wrap, copy] = [...tools[0].querySelectorAll("button")];
+  const headers = () => [...view.dom.querySelectorAll<HTMLElement>(".cm-code-header")];
+  assert.deepEqual(headers().map((h) => h.querySelector(".cm-code-lang")!.textContent), ["js", "code"], "each block's first line is its header");
+  const [wrap, copy] = [...headers()[0].querySelectorAll("button")];
   assert.equal(wrap.getAttribute("aria-pressed"), "true", "wrapping, as the setting says");
   copy.click();
-  await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(copied, ["const x = 1;\nconsole.log(x);"]);
+  assert.deepEqual(copied, ["const x = 1;\nconsole.log(x);"], "written in the click, before anything waits");
   wrap.click();
-  const unwrapped = () => [...view.contentDOM.querySelectorAll(".cm-line.cm-code-nowrap")].map((l) => l.textContent!.replace(/WrapCopy$/, ""));
-  assert.deepEqual(unwrapped(), ["```js", "const x = 1;", "console.log(x);", "```"], "that block's lines, and not the other's");
-  assert.equal(view.dom.querySelector(".cm-code-tools button")!.getAttribute("aria-pressed"), "false");
+  const unwrapped = () => [...view.contentDOM.querySelectorAll(".cm-line.cm-code-nowrap")].length;
+  assert.equal(unwrapped(), 4, "that block's lines, and not the other's");
+  assert.equal(headers()[0].querySelector("button")!.getAttribute("aria-pressed"), "false");
+
+  // In the block: its fences show, in the same lines, and its code lines are the same lines as before.
+  const lines = () => [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].slice(0, 4).map((l) => [l.className, l.textContent]);
+  const card = lines();
+  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 3 } });
+  const editing = lines();
+  assert.equal(headers().length, 1, "the other block is still a card");
+  assert.deepEqual(editing.map(([, text]) => text), ["```js", "const x = 1;", "console.log(x);", "```"]);
+  assert.deepEqual(editing.map(([cls]) => cls), card.map(([cls]) => cls), "every line keeps its classes: nothing moves");
+  assert.deepEqual(editing.map(([cls]) => cls!.includes("cm-code-fence")), [true, false, false, true], "the fences' lines are fences' lines either way");
+
+  // ⌘⇧C copies the block the cursor is in.
+  focusedView = view;
+  commands.get("code-blocks.copy")!();
+  assert.equal(copied.at(-1), "const x = 1;\nconsole.log(x);");
   view.dispatch({ changes: { from: 0, insert: "Intro\n\n" } });
-  assert.equal(unwrapped().length, 4, "its choice follows the block as the note changes");
+  assert.equal(unwrapped(), 4, "its choice follows the block as the note changes");
   view.destroy();
 });
 
@@ -140,5 +157,41 @@ test("LaTeX: $…$ and $$…$$ parse as math, prices don't, and each draws with 
   assert.match(document.head.innerHTML, /\/assets\/katex-[\d.]+\/katex\.min\.css/, "with its styles from the app");
   view.dispatch({ selection: { anchor: view.state.doc.line(4).from } });
   assert.deepEqual(drawn().map((m) => m.classList.contains("cm-math-display")), [false], "the cursor in the equation shows its TeX");
+  view.destroy();
+});
+
+test("j and k step into a table or displayed math rather than over it, and Backspace after one selects it", async () => {
+  const { runScopeHandlers } = await import("@codemirror/view");
+  // A table ends at a blank line (a line under it without one is another row).
+  const doc = ["Above", "| a | b |", "|---|---|", "| 1 | 2 |", "", "Between", "$$", "x^2", "$$", "Below", ""].join("\n");
+  const view = editor(doc);
+  const line = () => view.state.doc.lineAt(view.state.selection.main.head).number;
+  const go = (n: number) => view.dispatch({ selection: { anchor: view.state.doc.line(n).from } });
+  // A one-line move as Vim's j makes it: the next visible line is past the table, whose lines are one widget.
+  go(1);
+  go(5);
+  assert.equal(line(), 2, "down onto the table's first line");
+  go(6);
+  go(10);
+  assert.equal(line(), 7, "down into the math");
+  go(10);
+  go(6);
+  assert.equal(line(), 9, "up onto the math's last line");
+  go(5);
+  go(1);
+  assert.equal(line(), 4, "up onto the table's last line");
+  go(1);
+  view.dispatch({ selection: { anchor: view.state.doc.line(10).from }, userEvent: "select.pointer" });
+  assert.equal(line(), 10, "a click lands where it was clicked");
+  go(1);
+  go(11);
+  assert.equal(line(), 11, "a jump further than one line (G, a search) goes where it was sent");
+
+  // Backspace at the start of the line after the math would join it onto the math's hidden text.
+  go(10);
+  const backspace = new window.KeyboardEvent("keydown", { key: "Backspace" }) as unknown as KeyboardEvent;
+  assert.ok(runScopeHandlers(view, backspace, "editor"));
+  const sel = view.state.selection.main;
+  assert.deepEqual([view.state.doc.lineAt(sel.from).number, view.state.doc.lineAt(sel.to).number], [7, 9], "it selects the math, which shows; a second press deletes it");
   view.destroy();
 });
