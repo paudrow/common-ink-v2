@@ -11,6 +11,7 @@ import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
+import { embedFrameHosts } from "./embed-list.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -35,11 +36,15 @@ const HEADERS: Record<string, string> = {
   "Cross-Origin-Opener-Policy": "same-origin",
 };
 
-/** The app's headers on a response. Its policy goes on in `fetch`, which knows the origin. */
-function secure(res: Response): Response {
+/** Hosts a page may frame, handed from `handle` to `fetch`, and never sent. */
+const FRAME_HOSTS = "X-Common-Ink-Frame-Hosts";
+
+/** The app's headers on a response. Its policy goes on in `fetch`, which knows the origin; a page names the hosts its link embeds may frame. */
+function secure(res: Response, frameHosts: readonly string[] = []): Response {
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(HEADERS)) out.headers.set(k, v);
   out.headers.set("Content-Security-Policy", "{app}");
+  if (frameHosts.length) out.headers.set(FRAME_HOSTS, frameHosts.join(" "));
   return out;
 }
 
@@ -51,7 +56,8 @@ export default {
     const res = await handle(req, env, url);
     if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
     const out = new Response(res.body, res);
-    out.headers.set("Content-Security-Policy", appCsp(url.origin));
+    out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
+    out.headers.delete(FRAME_HOSTS);
     return out;
   },
 } satisfies ExportedHandler<Env>;
@@ -95,7 +101,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
-    if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
+    if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
+      const asset = await env.ASSETS.fetch(req);
+      // The app's page may frame the hosts of the link embeds that are on for this person.
+      const isPage = asset.headers.get("Content-Type")?.startsWith("text/html");
+      return secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
+    }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
       const size = Number(req.headers.get("Content-Length") ?? "0");

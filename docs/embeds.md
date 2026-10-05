@@ -16,6 +16,10 @@ The person sees it drawn, and its markdown when their cursor is in it. Ask the `
 - One embed per block. Put a blank line before and after it.
 - Embeds don't run anything for you. A timer runs when the person starts it.
 
+## Links
+
+A link alone on its own line is drawn as what it links to: a YouTube video, a post on X or Bluesky, a Spotify track, album or playlist, or, for any other page, a card with its title, description and picture. Put a blank line before and after it. A link in a sentence or a list stays a link.
+
 ## Built in
 
 | Embed | What it is | Arguments |

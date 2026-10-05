@@ -10,10 +10,11 @@ export const SANDBOX_PREFIX = "/sandbox/";
 /**
  * The app's Content Security Policy. Its own scripts only; connections only to itself (the API and the
  * live socket); images and media from itself, data: and blob:; and frames only from the sandbox route,
- * which also stops a sandboxed frame from navigating itself anywhere else (ADR 0006). Even code running
- * in the page can't quietly reach a third party.
+ * which also stops a sandboxed frame from navigating itself anywhere else (ADR 0006), and from the
+ * hosts of link embeds that are on (a video from youtube-nocookie.com, say). Even code running in the
+ * page can't quietly reach a third party.
  */
-export function appCsp(origin: string): string {
+export function appCsp(origin: string, frameHosts: readonly string[] = []): string {
   const ws = origin.replace(/^http/, "ws");
   return [
     "default-src 'self'",
@@ -23,7 +24,7 @@ export function appCsp(origin: string): string {
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
-    `frame-src ${origin}${SANDBOX_PREFIX}`,
+    `frame-src ${[`${origin}${SANDBOX_PREFIX}`, ...frameHosts.filter((h) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(h)).map((h) => `https://${h}`)].join(" ")}`,
     "worker-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",

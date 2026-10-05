@@ -39,9 +39,10 @@ export function globMatches(glob: string, path: string): boolean {
   return new RegExp(`^${re}$`).test(path);
 }
 
-/** A host against a declared one: exact, or "*.example.com" for any subdomain. */
+/** Whether a declared host covers a host: exactly, "*.example.com" for its subdomains, or "*" for any. */
 export function hostMatches(pattern: string, host: string): boolean {
   const h = host.toLowerCase();
+  if (pattern === "*") return true;
   if (pattern.startsWith("*.")) return h.endsWith(pattern.slice(1)) && h.length > pattern.length - 1;
   return h === pattern.toLowerCase();
 }

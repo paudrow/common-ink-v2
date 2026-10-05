@@ -11,6 +11,8 @@ export interface SafeFetchOptions {
   maxBytes?: number;
   timeoutMs?: number;
   maxRedirects?: number;
+  /** Keep the body's bytes too (`bytes`), for a picture. */
+  binary?: boolean;
   /** For tests: the fetch and DNS lookup to use. */
   fetcher?: typeof fetch;
   resolve?: (host: string) => Promise<string[]>;
@@ -22,6 +24,8 @@ export interface SafeResponse {
   headers: Record<string, string>;
   /** The body as text (UTF-8), cut off at maxBytes. */
   body: string;
+  /** The body's bytes, when asked for (`binary`). */
+  bytes?: Uint8Array;
   truncated: boolean;
 }
 
@@ -97,8 +101,8 @@ async function checkResolved(host: string, resolve: (host: string) => Promise<st
 }
 
 /** Read at most `max` bytes of a body as text. */
-async function readCapped(res: Response, max: number): Promise<{ body: string; truncated: boolean }> {
-  if (!res.body) return { body: "", truncated: false };
+async function readCapped(res: Response, max: number): Promise<{ body: string; bytes: Uint8Array; truncated: boolean }> {
+  if (!res.body) return { body: "", bytes: new Uint8Array(), truncated: false };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -122,7 +126,7 @@ async function readCapped(res: Response, max: number): Promise<{ body: string; t
     all.set(c, at);
     at += c.byteLength;
   }
-  return { body: new TextDecoder().decode(all), truncated };
+  return { body: new TextDecoder().decode(all), bytes: all, truncated };
 }
 
 /** Fetch a URL with every check. Throws FetchRefused for a URL it won't fetch, and on time running out. */
@@ -154,7 +158,7 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
       if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) [method, body] = ["GET", undefined];
       continue;
     }
-    const { body: text, truncated } = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
-    return { url, status: res.status, headers: Object.fromEntries(res.headers), body: text, truncated };
+    const { body: text, bytes, truncated } = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    return { url, status: res.status, headers: Object.fromEntries(res.headers), body: text, truncated, ...(o.binary ? { bytes } : {}) };
   }
 }

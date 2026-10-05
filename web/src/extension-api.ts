@@ -12,6 +12,7 @@ import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Embed } from "./embeds.ts";
+import type { LinkCard } from "../../worker/src/link-card.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { WorkbenchChrome } from "./workbench.ts";
 
@@ -124,6 +125,11 @@ export interface ExtensionContext {
     /** How an embed language the manifest declares draws. */
     register(language: string, provider: EmbedProvider): void;
   };
+  /** Links alone on their own line, drawn as embeds (contributes.urlEmbeds). Trusted extensions with the "editor" permission. */
+  urlEmbeds: {
+    /** How a URL embed the manifest declares draws, in the page: `match` is its pattern's match (groups included). */
+    register(id: string, provider: { render(el: HTMLElement, link: { url: string; match: string[] }): void }): void;
+  };
   /**
    * The extension's state, kept in .common-ink/extensions/<id>/state.json as a change by it in history,
    * so it's synced, and survives reloads. Its own; no permission needed.
@@ -170,6 +176,8 @@ export interface ExtensionContext {
   /** The network, through the Worker: only hosts the manifest declares and you've allowed. */
   net: {
     fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<FetchResponse>;
+    /** A link's card: its page's title, description, site and picture (as a data: URL), fetched the same way. */
+    card(url: string): Promise<LinkCard>;
   };
   /** Data sources: outside data shown but not stored as files. They answer for the signed-in person. */
   sources: {

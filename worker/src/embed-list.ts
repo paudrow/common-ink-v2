@@ -23,29 +23,52 @@ export function exampleOf(e: EmbedContribution): string {
   return `\`\`\`${[e.language, ...args].join(" ")}\n${e.body ? `${e.body}\n` : ""}\`\`\``;
 }
 
-async function disabledIn(store: Store, person: string | null): Promise<Set<string>> {
-  const off = new Set<string>();
+/** The ids a list setting names (extensions.disabled, extensions.trusted), in workspace settings and, for a person, theirs. */
+export async function idsIn(store: Store, key: string, person: string | null): Promise<Set<string>> {
+  const ids = new Set<string>();
   for (const path of [WORKSPACE_SETTINGS, person ? userSettingsPath(person) : null]) {
     if (!path) continue;
     try {
-      const value = JSON.parse((await store.read(path))?.text || "{}")["extensions.disabled"];
-      if (Array.isArray(value)) for (const id of value) if (typeof id === "string") off.add(id);
+      const value = JSON.parse((await store.read(path))?.text || "{}")[key];
+      if (Array.isArray(value)) for (const id of value) if (typeof id === "string") ids.add(id);
     } catch {
-      // A settings file that doesn't parse turns nothing off.
+      // A settings file that doesn't parse names nothing.
     }
   }
-  return off;
+  return ids;
 }
 
-export async function listEmbeds(store: Store, person: string | null): Promise<EmbedType[]> {
-  const manifests = new Map<string, ExtensionManifest>(BUILT_IN_MANIFESTS.map((m) => [m.id, m]));
-  // A workspace extension with a built-in's id runs in its place.
+/** The workspace's extensions' manifests, by id. */
+export async function workspaceManifests(store: Store): Promise<Map<string, ExtensionManifest>> {
+  const out = new Map<string, ExtensionManifest>();
   for (const f of await store.list()) {
     const at = extensionFileOf(f.path);
     if (!at || f.path !== manifestPath(at.id)) continue;
     const parsed = parseManifest((await store.read(f.path))?.text ?? "", at.id);
-    if (typeof parsed !== "string") manifests.set(at.id, parsed);
+    if (typeof parsed !== "string") out.set(at.id, parsed);
   }
-  const off = await disabledIn(store, person);
+  return out;
+}
+
+/**
+ * The hosts the app's page may frame for link embeds: those of the extensions that are on and draw in
+ * the page (built-ins, and workspace extensions you trust). Nothing else can put a frame in the page.
+ */
+export async function embedFrameHosts(store: Store, person: string | null): Promise<string[]> {
+  const off = await idsIn(store, "extensions.disabled", person);
+  const trusted = await idsIn(store, "extensions.trusted", person);
+  const manifests = new Map<string, ExtensionManifest>(BUILT_IN_MANIFESTS.map((m) => [m.id, m]));
+  // A copy in the workspace runs in a built-in's place: trusted, in the page; or else sandboxed, framing nothing.
+  for (const [id, m] of await workspaceManifests(store)) {
+    if (trusted.has(id)) manifests.set(id, m);
+    else manifests.delete(id);
+  }
+  return [...new Set([...manifests.values()].filter((m) => !off.has(m.id)).flatMap((m) => m.contributes.urlEmbeds.flatMap((e) => e.frameHosts)))].sort();
+}
+
+export async function listEmbeds(store: Store, person: string | null): Promise<EmbedType[]> {
+  // A workspace extension with a built-in's id runs in its place.
+  const manifests = new Map<string, ExtensionManifest>([...BUILT_IN_MANIFESTS.map((m) => [m.id, m] as const), ...(await workspaceManifests(store))]);
+  const off = await idsIn(store, "extensions.disabled", person);
   return [...manifests.values()].flatMap((m) => m.contributes.embeds.map((e) => ({ ...e, extension: m.id, on: !off.has(m.id), example: exampleOf(e) })));
 }

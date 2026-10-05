@@ -128,7 +128,7 @@
         read: (path) => call("files.read", path),
         write: (path, text, base) => call("files.write", path, text, base),
       },
-      net: { fetch: (url, init) => call("net.fetch", url, init || {}) },
+      net: { fetch: (url, init) => call("net.fetch", url, init || {}), card: (url) => call("net.card", url) },
       clipboard: { read: () => call("clipboard.read"), write: (text) => call("clipboard.write", text) },
       notifications: { show: (title, body) => call("notifications.show", title, body) },
       sources: { events: (from, to) => call("sources.events", from.toISOString(), to.toISOString()), contacts: (query) => call("sources.contacts", query) },

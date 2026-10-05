@@ -7,6 +7,7 @@ import { extensionFilePath, manifestPath, parseManifest, type ExtensionManifest 
 import { isExtensionScript, parseFilePath, type Author } from "./files.ts";
 import type { Store } from "./operations.ts";
 import { decide, parseGrants } from "./permissions.ts";
+import { linkCard } from "./link-card.ts";
 import { FetchRefused, safeFetch } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
 import { userSettingsPath } from "./settings.ts";
@@ -91,7 +92,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     return json({ token: await signCodeToken(await store.sandboxKey(), id, Date.now() + TOKEN_LIFETIME_MS) });
   }
   if (route === "POST /api/extensions/fetch") {
-    const body = (await req.json().catch(() => ({}))) as { extension?: string; url?: string; method?: string; headers?: Record<string, string>; body?: string; once?: boolean };
+    const body = (await req.json().catch(() => ({}))) as { extension?: string; url?: string; method?: string; headers?: Record<string, string>; body?: string; once?: boolean; card?: boolean };
     const found = await manifestOf(store, body.extension ?? "");
     if (!found || typeof body.url !== "string") return json({ error: "Say which extension and which URL" }, 400);
     let host: string;
@@ -106,6 +107,8 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     if (decision.outcome === "undeclared") return json({ error: `${found.manifest.name} doesn't declare ${host} in its extension.json, so it can't reach it` }, 403);
     if (decision.outcome !== "allow") return json({ error: `${found.manifest.name} isn't allowed to reach ${host}` }, 403);
     try {
+      // A link's card (title, description, picture) rather than its page.
+      if (body.card) return json(await linkCard(body.url));
       const res = await safeFetch(body.url, { method: body.method, headers: body.headers, body: body.body });
       return json(res);
     } catch (err) {

@@ -3,7 +3,8 @@
 // info string's key=value words are the embed's arguments (```timer duration=25m label="Focus"), and
 // the body is whatever the embed takes (an html-app's HTML). Webviews (code an extension runs) sit in
 // a quiet frame with a Stop button. A block for an embed a Catalog extension draws, when it isn't
-// installed, stays code, with a line above it offering to install it.
+// installed, stays code, with a line above it offering to install it. A link alone on its own line is
+// drawn too, by the extension whose urlEmbeds pattern matches it (a video, a post, a link card).
 import { syntaxTree } from "@codemirror/language";
 import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
@@ -32,6 +33,59 @@ export interface EmbedHost {
   draw(el: HTMLElement, embed: Embed): void;
   /** The Catalog extension that would draw a language no installed extension does, and installing it. */
   needs(language: string): { name: string; install(): Promise<void> } | null;
+  /** Which URL embed draws a link alone on its line, if one does: its id. */
+  urlEmbed(url: string): string | null;
+  drawUrl(el: HTMLElement, url: string, id: string): void;
+}
+
+/** A line that's just a link: https://… or <https://…>. */
+const LINK_LINE = /^\s*<?(https?:\/\/[^\s<>]+?)>?\s*$/;
+
+class UrlWidget extends WidgetType {
+  constructor(
+    readonly url: string,
+    readonly id: string,
+    readonly host: EmbedHost,
+  ) {
+    super();
+  }
+  eq(other: UrlWidget) {
+    return other.url === this.url && other.id === this.id;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("div");
+    el.className = "cm-embed cm-url-embed";
+    el.dataset.urlEmbed = this.id;
+    this.host.drawUrl(el, this.url, this.id);
+    el.addEventListener("mousedown", (e) => {
+      if (e.target !== el) return;
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+      view.focus();
+    });
+    return el;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/** Every link alone on a line of its own, outside lists and quotes, with the URL embed that draws it. */
+export function findUrlEmbeds(state: EditorState, host: Pick<EmbedHost, "urlEmbed">): Array<{ from: number; to: number; url: string; id: string }> {
+  const out: Array<{ from: number; to: number; url: string; id: string }> = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name === "Document") return;
+      if (node.name !== "Paragraph") return false;
+      const line = state.doc.lineAt(node.from);
+      if (line.to < node.to) return false;
+      const url = LINK_LINE.exec(line.text)?.[1];
+      const id = url ? host.urlEmbed(url) : null;
+      if (url && id) out.push({ from: line.from, to: line.to, url, id });
+      return false;
+    },
+  });
+  return out;
 }
 
 /** The file an editor shows, for what's drawn in it to know. */
@@ -167,6 +221,7 @@ export function embeds(host: EmbedHost) {
       provide: (field) => EditorView.decorations.from(field),
     }),
     blockPreview((state): BlockPreview[] => findEmbeds(state, host.languages()).map(({ from, to, embed }) => ({ from, to, widget: new EmbedWidget(embed, host) }))),
+    blockPreview((state): BlockPreview[] => findUrlEmbeds(state, host).map(({ from, to, url, id }) => ({ from, to, widget: new UrlWidget(url, id, host) }))),
     EditorView.theme({
       ".cm-embed": { padding: "0.6em 0 0.25em", cursor: "text" },
       ".cm-embed-frame": { position: "relative", border: "1px solid var(--line)", borderRadius: "6px" },
