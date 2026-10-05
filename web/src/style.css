@@ -101,6 +101,15 @@ body {
   flex-direction: column;
 }
 
+/* Without the Workbench extension's borders, a line between windows. */
+.split.row > :not([data-divider]) + :not([data-divider]) {
+  border-left: 1px solid var(--line);
+}
+
+.split.column > :not([data-divider]) + :not([data-divider]) {
+  border-top: 1px solid var(--line);
+}
+
 .resizer {
   flex: 0 0 5px;
   background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat;

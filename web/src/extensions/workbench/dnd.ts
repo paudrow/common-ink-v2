@@ -1,6 +1,6 @@
 // Dragging things into windows. Anything that opens in a window drags the same way: as an Openable (a
 // file or a view), plus where it came from when it's a tab, so dropping it moves the tab.
-import type { Direction, GroupId, Openable } from "./layout.ts";
+import type { Direction, GroupId, Openable } from "common-ink/layout";
 
 export const DRAG_TYPE = "application/x-common-ink-openable";
 

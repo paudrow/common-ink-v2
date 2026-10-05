@@ -43,7 +43,6 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
   { key: "Mod-p", command: "quickOpen" },
   { key: "Mod-Shift-p", command: "commandBar" },
   { key: "Mod-s", command: "note.save" },
-  { key: "Mod-\\", command: "window.splitRight" },
   { key: "Mod-,", command: "settings.user" },
 ];
 

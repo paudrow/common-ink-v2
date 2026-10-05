@@ -13,8 +13,6 @@ import { describeAuthor, docLabel } from "./describe.ts";
 import { connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
-import { endDrag, startDrag } from "./dnd.ts";
-import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import * as L from "./layout.ts";
 import { linkAt, linkTarget, notePathFor, type LinkTarget } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
@@ -114,36 +112,9 @@ const workbench = new Workbench(
       const key = keyFor(command, settings.keybindings);
       return key && formatKeys(key);
     },
-    tabMenu: (x, y) => showMenu(x, y, tabMenuItems()),
   },
   offline,
 );
-
-/** The tab menu, for the focused window's tab on show: VSCode's items, each also a command. */
-function tabMenuItems(): Array<MenuItem | null> {
-  const g = L.focused(workbench.layout);
-  const tab = g.tabs[g.active];
-  const item = (command: string, label: string, disabled = false): MenuItem => {
-    const key = keyFor(command, settings.keybindings);
-    return { label, detail: key && formatKeys(key), disabled, run: () => commands.run(command) };
-  };
-  return [
-    item("tab.close", "Close"),
-    item("tab.closeOthers", "Close Others", g.tabs.length < 2),
-    item("tab.closeRight", "Close to the Right", g.active >= g.tabs.length - 1),
-    item("tab.closeLeft", "Close to the Left", g.active === 0),
-    item("tab.closeSaved", "Close Saved", !g.tabs.some((t) => workbench.isSaved(t))),
-    item("tab.closeAll", "Close All"),
-    SEPARATOR,
-    item("tab.keepOpen", "Keep Open", !tab?.preview),
-    item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
-    // Extensions' items, for the file on show.
-    ...extensions.menu("tabMenu").map((i) => item(i.command, i.title, !tab || !("file" in tab))),
-    SEPARATOR,
-    item("window.splitRight", "Split Right"),
-    item("window.splitDown", "Split Down"),
-  ];
-}
 
 /** Each settings file's settings the last time it could be read. */
 const lastGood: { user: Partial<Settings>; workspace: Partial<Settings> } = { user: {}, workspace: {} };
@@ -241,9 +212,8 @@ function renderList() {
       a.href = urlForFile(n.path);
       a.textContent = name(n.path);
       if (n.path === current) a.setAttribute("aria-current", "page");
-      a.draggable = true;
-      a.addEventListener("dragstart", (e) => startDrag(e, { item: L.fileTab(n.path) }, name(n.path)));
-      a.addEventListener("dragend", endDrag);
+      // What it opens, for the Workbench extension's dragging into windows.
+      a.dataset.open = JSON.stringify(L.fileTab(n.path));
       // Double-click opens it kept, not as the preview tab.
       a.addEventListener("dblclick", (e) => {
         e.preventDefault();
@@ -327,52 +297,15 @@ commands.register(
   { id: "go.forward", title: "Go forward", run: () => workbench.step("forward") },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
-  { id: "tab.closeOthers", title: "Close other tabs", run: () => workbench.closeTabs((_, i) => i !== L.focused(workbench.layout).active) },
-  { id: "tab.closeRight", title: "Close tabs to the right", run: () => workbench.closeTabs((_, i) => i > L.focused(workbench.layout).active) },
-  { id: "tab.closeLeft", title: "Close tabs to the left", run: () => workbench.closeTabs((_, i) => i < L.focused(workbench.layout).active) },
-  { id: "tab.closeSaved", title: "Close saved tabs", run: () => workbench.closeTabs((_, __, saved) => saved) },
-  { id: "tab.closeAll", title: "Close all tabs", run: () => workbench.closeTabs(() => true) },
-  { id: "tab.keepOpen", title: "Keep tab open", run: () => workbench.change((l) => L.keepTab(l, l.focus, L.focused(l).active)) },
-  {
-    id: "tab.copyPath",
-    title: "Copy path of tab",
-    run: () => {
-      const path = workbench.focusedPath;
-      if (path) void navigator.clipboard.writeText(path);
-    },
-  },
-  { id: "tab.next", title: "Next tab", run: () => workbench.change((l) => L.cycleTab(l, 1)) },
-  { id: "tab.previous", title: "Previous tab", run: () => workbench.change((l) => L.cycleTab(l, -1)) },
-  { id: "window.splitRight", title: "Split right", run: () => workbench.split("right") },
-  { id: "window.splitDown", title: "Split down", run: () => workbench.split("down") },
-  { id: "window.splitLeft", title: "Split left", run: () => workbench.split("left") },
-  { id: "window.splitUp", title: "Split up", run: () => workbench.split("up") },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
-  { id: "window.only", title: "Close other windows", run: () => workbench.change(L.only) },
-  { id: "window.next", title: "Focus next window", run: () => workbench.change((l) => L.cycleGroup(l, 1)) },
-  { id: "window.left", title: "Focus window to the left", run: () => workbench.change((l) => L.focusDirection(l, "left")) },
-  { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
-  { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
-  { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
   { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
   { id: "settings.workspaceJson", title: "Open workspace settings (JSON)", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
-  { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
-  { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
-  { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
-  { id: "tab.moveDown", title: "Move tab to the window below", run: () => workbench.change((l) => L.moveTabDirection(l, "down")) },
-  { id: "tab.moveEarlier", title: "Move tab earlier in its window", run: () => workbench.change((l) => L.shiftTab(l, -1)) },
-  { id: "tab.moveLater", title: "Move tab later in its window", run: () => workbench.change((l) => L.shiftTab(l, 1)) },
-  { id: "window.wider", title: "Make window wider", run: () => workbench.change((l) => L.resizeFocused(l, "row", 0.05)) },
-  { id: "window.narrower", title: "Make window narrower", run: () => workbench.change((l) => L.resizeFocused(l, "row", -0.05)) },
-  { id: "window.taller", title: "Make window taller", run: () => workbench.change((l) => L.resizeFocused(l, "column", 0.05)) },
-  { id: "window.shorter", title: "Make window shorter", run: () => workbench.change((l) => L.resizeFocused(l, "column", -0.05)) },
-  { id: "window.equalize", title: "Make windows the same size", run: () => workbench.change(L.equalize) },
 );
 
 const bar = new CommandBar();

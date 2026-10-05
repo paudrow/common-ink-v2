@@ -1,6 +1,6 @@
 // A context menu: a short list of actions at the pointer, worked by mouse or keyboard (arrows or
 // Ctrl-N and Ctrl-P to move, Enter or Space to choose, Escape to close).
-import { matchKeys } from "./keys.ts";
+import { matchKeys } from "common-ink/keys";
 
 export interface MenuItem {
   label: string;

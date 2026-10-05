@@ -59,7 +59,7 @@ A unit of functionality that adds commands, views, settings, embeds and more thr
 _Avoid_: Plugin, add-on
 
 **Default extension**:
-A built-in extension that's on until you turn it off, such as Vim, Live preview or Todos. With all of them off, the app still has notes, history, windows, commands and settings, and a plain editor.
+A built-in extension that's on until you turn it off, such as Workbench, Vim, Live preview or Todos. With all of them off, the app still has notes, history, plain windows, commands and settings, and a plain editor.
 
 **Catalog**:
 The list of extensions you can install from the Extensions view: first-party ones that aren't on by default, served by the app, and any other catalogs you add, whose extensions are other people's and installed at your own risk.

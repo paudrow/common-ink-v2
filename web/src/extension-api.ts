@@ -11,6 +11,8 @@ import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResul
 import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
+import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
+import type { WorkbenchChrome } from "./workbench.ts";
 
 export type { Item, Provider };
 
@@ -65,6 +67,28 @@ export interface ExtensionContext {
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
     keybindings(): Array<{ command: string; key?: string; vim?: string }>;
+    /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext"), with their titles. */
+    menu(menu: "commandBar" | "tabMenu" | "editorContext"): Array<{ command: string; title: string }>;
+  };
+  /**
+   * The layout of windows and tabs: the core's model (layout.ts), changed with common-ink/layout's
+   * helpers. Trusted extensions only; `chrome` needs the "editor" permission.
+   */
+  layout: {
+    /** The layout now: the tree of splits and windows, each window's tabs, and which window has focus. */
+    get(): Layout;
+    /** Change the arrangement. Files the change brings in are loaded as they show. */
+    change(fn: (layout: Layout) => Layout): void;
+    /** Close a window's tab, saving its file first; one that can't be saved stays open. */
+    close(group: GroupId, index: number): Promise<void>;
+    /** Close the focused window's tabs that `which` picks, saving each file first. */
+    closeTabs(which: (tab: Tab, index: number, saved: boolean) => boolean): Promise<void>;
+    /** Whether a tab has nothing waiting to be saved. */
+    isSaved(tab: Tab): boolean;
+    /** What a tab shows as its title. */
+    title(tab: Openable): string;
+    /** Draw the windows' chrome: tab bars, drop targets, borders, empty windows. One extension draws it (the Workbench extension). */
+    chrome(chrome: WorkbenchChrome): void;
   };
   /** The status bar items the manifest declares (contributes.statusBarItems). */
   statusBar: {

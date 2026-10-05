@@ -24,7 +24,7 @@ import type { Panels } from "./panels.ts";
 import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
 import type { StatusItems } from "./status-items.ts";
-import type { Workbench } from "./workbench.ts";
+import type { Workbench, WorkbenchChrome } from "./workbench.ts";
 
 /** What of the app extensions reach, through their contexts. */
 export interface RuntimeApp {
@@ -301,6 +301,33 @@ export class ExtensionRuntime {
           return key && formatKeys(key);
         },
         keybindings: () => this.allKeybindings(),
+        menu: (id) => this.menu(id),
+      },
+      layout: {
+        get: () => app.workbench.layout,
+        change: (fn) => app.workbench.change(fn),
+        close: (group, index) => app.workbench.closeTab(group, index),
+        closeTabs: (which) => app.workbench.closeTabs(which),
+        isSaved: (tab) => app.workbench.isSaved(tab),
+        title: (tab) => app.workbench.title(tab),
+        chrome: (chrome) => {
+          needsEditor();
+          // Chrome that throws is dropped, for the plain windows, and the extension is marked failed.
+          const safe = <K extends keyof WorkbenchChrome>(k: K) => {
+            const part = chrome[k] as ((...args: unknown[]) => unknown) | undefined;
+            if (!part) return undefined;
+            return ((...args: unknown[]) => {
+              try {
+                return part(...args);
+              } catch (err) {
+                failed(err);
+                queueMicrotask(() => app.workbench.setChrome(null));
+                return undefined;
+              }
+            }) as WorkbenchChrome[K];
+          };
+          app.workbench.setChrome({ window: safe("window"), tabs: safe("tabs"), divider: safe("divider"), empty: safe("empty") });
+        },
       },
       statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {

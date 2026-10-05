@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dropZone, tabIndexAt } from "../web/src/dnd.ts";
+import { dropZone, tabIndexAt } from "../web/src/extensions/workbench/dnd.ts";
 
 test("a drop near a window's edge splits that way; anywhere else is its center", () => {
   const rect = { left: 0, top: 0, width: 400, height: 200 };

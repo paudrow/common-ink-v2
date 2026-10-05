@@ -1,0 +1,154 @@
+{
+  "id": "workbench",
+  "name": "Workbench",
+  "version": "1.0.0",
+  "description": "The windows' chrome: tab bars with preview tabs, each tab's menu, dragging tabs and notes into windows and splits, the borders that resize windows, and what an empty window says; with the commands to split windows, move between them, resize them, and move and close tabs. Off, each window shows only its tab on show, and ⌘⇧P, settings and the Extensions view work as ever.",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "tabbar.ts",
+    "dnd.ts",
+    "menu.ts"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": {
+    "editor": {
+      "why": "Draw the windows' tab bars, drop targets and borders in the page"
+    },
+    "clipboard:write": {
+      "why": "Copy a tab's path"
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "tab.closeOthers",
+        "title": "Close other tabs"
+      },
+      {
+        "command": "tab.closeRight",
+        "title": "Close tabs to the right"
+      },
+      {
+        "command": "tab.closeLeft",
+        "title": "Close tabs to the left"
+      },
+      {
+        "command": "tab.closeSaved",
+        "title": "Close saved tabs"
+      },
+      {
+        "command": "tab.closeAll",
+        "title": "Close all tabs"
+      },
+      {
+        "command": "tab.keepOpen",
+        "title": "Keep tab open"
+      },
+      {
+        "command": "tab.copyPath",
+        "title": "Copy path of tab"
+      },
+      {
+        "command": "tab.next",
+        "title": "Next tab"
+      },
+      {
+        "command": "tab.previous",
+        "title": "Previous tab"
+      },
+      {
+        "command": "window.splitRight",
+        "title": "Split right"
+      },
+      {
+        "command": "window.splitDown",
+        "title": "Split down"
+      },
+      {
+        "command": "window.splitLeft",
+        "title": "Split left"
+      },
+      {
+        "command": "window.splitUp",
+        "title": "Split up"
+      },
+      {
+        "command": "window.only",
+        "title": "Close other windows"
+      },
+      {
+        "command": "window.next",
+        "title": "Focus next window"
+      },
+      {
+        "command": "window.left",
+        "title": "Focus window to the left"
+      },
+      {
+        "command": "window.right",
+        "title": "Focus window to the right"
+      },
+      {
+        "command": "window.up",
+        "title": "Focus window above"
+      },
+      {
+        "command": "window.down",
+        "title": "Focus window below"
+      },
+      {
+        "command": "tab.moveLeft",
+        "title": "Move tab to the window to the left"
+      },
+      {
+        "command": "tab.moveRight",
+        "title": "Move tab to the window to the right"
+      },
+      {
+        "command": "tab.moveUp",
+        "title": "Move tab to the window above"
+      },
+      {
+        "command": "tab.moveDown",
+        "title": "Move tab to the window below"
+      },
+      {
+        "command": "tab.moveEarlier",
+        "title": "Move tab earlier in its window"
+      },
+      {
+        "command": "tab.moveLater",
+        "title": "Move tab later in its window"
+      },
+      {
+        "command": "window.wider",
+        "title": "Make window wider"
+      },
+      {
+        "command": "window.narrower",
+        "title": "Make window narrower"
+      },
+      {
+        "command": "window.taller",
+        "title": "Make window taller"
+      },
+      {
+        "command": "window.shorter",
+        "title": "Make window shorter"
+      },
+      {
+        "command": "window.equalize",
+        "title": "Make windows the same size"
+      }
+    ],
+    "keybindings": [
+      {
+        "key": "Mod-\\",
+        "command": "window.splitRight"
+      }
+    ]
+  }
+}
