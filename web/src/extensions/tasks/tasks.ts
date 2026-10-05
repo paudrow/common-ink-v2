@@ -21,6 +21,8 @@ export interface TaskMeta {
   until: string | null;
   /** How many times it's left to happen, this one included (`times:`); each tick counts one down. */
   times: number | null;
+  /** When a repeating task was last done (`last:`): each tick that moves it on sets it. */
+  last: string | null;
   priority: Priority | null;
   assignees: string[];
   tags: string[];
@@ -39,7 +41,7 @@ export interface ParsedTask {
  */
 export type TaskPatch = Partial<TaskMeta> & { checked?: boolean; summary?: string };
 
-type Field = "due" | "start" | "done" | "rec" | "until" | "times" | "priority" | "assignees" | "tags";
+type Field = "due" | "start" | "done" | "rec" | "until" | "times" | "last" | "priority" | "assignees" | "tags";
 /** One token in a task's text; `from`/`to` are its columns there. `key` is how it's written (`scheduled` for a start). */
 interface Token {
   field: Field;
@@ -51,7 +53,7 @@ interface Token {
 
 const PERSON = "[\\p{L}\\p{N}_-]+(?:\\.[\\p{L}\\p{N}_-]+)*";
 /** A person ends where the word does, so `@jane,` and `@jane.` count and `@jane's` doesn't. */
-const WORD = new RegExp(`(?<!\\S)(due|start|scheduled|done|rec|until|times):(\\S+)|(?<!\\S)!(high|low)(?!\\S)|(?<!\\S)@(${PERSON})(?=$|[\\s,.;:!?)\\]])`, "giu");
+const WORD = new RegExp(`(?<!\\S)(due|start|scheduled|done|rec|until|times|last):(\\S+)|(?<!\\S)!(high|low)(?!\\S)|(?<!\\S)@(${PERSON})(?=$|[\\s,.;:!?)\\]])`, "giu");
 const DATE = /^(\d{4})-(\d{2})-(\d{2})(?:T([01]\d|2[0-3]):[0-5]\d)?$/;
 
 const TIMES = /^[1-9]\d{0,3}$/;
@@ -112,7 +114,7 @@ export function parseTask(line: string): ParsedTask | null {
     done: m[2] !== " ",
     text,
     summary: text.slice(0, end).trimEnd(),
-    meta: { due: first("due"), start: first("start"), done: first("done"), rec: first("rec"), until: first("until"), times: first("times") === null ? null : Number(first("times")), priority: first("priority") as Priority | null, assignees: all("assignees"), tags: all("tags") },
+    meta: { due: first("due"), start: first("start"), done: first("done"), rec: first("rec"), until: first("until"), times: first("times") === null ? null : Number(first("times")), last: first("last"), priority: first("priority") as Priority | null, assignees: all("assignees"), tags: all("tags") },
   };
 }
 
@@ -128,13 +130,13 @@ function trailing(text: string, tokens: Token[]): Token[] {
   return run;
 }
 
-/** The order tokens are shown in, and the place a new one goes: priority, due, start, repeat (and its ends), people, tags, done. */
-const RANK: Record<Field, number> = { priority: 0, due: 1, start: 2, rec: 3, until: 4, times: 5, assignees: 6, tags: 7, done: 8 };
+/** The order tokens are shown in, and the place a new one goes: priority, due, start, repeat (and its ends), when it was last done, people, tags, done. */
+const RANK: Record<Field, number> = { priority: 0, due: 1, start: 2, rec: 3, until: 4, times: 5, last: 6, assignees: 7, tags: 8, done: 9 };
 
 /** What's wrong with a patch that couldn't be written back as tokens, or null if nothing is. */
 export function patchProblem(patch: TaskPatch): string | null {
   if (patch.summary !== undefined && /[\r\n]/.test(patch.summary)) return "A task's text is one line";
-  for (const f of ["due", "start", "done"] as const) {
+  for (const f of ["due", "start", "done", "last"] as const) {
     const v = patch[f];
     if (v !== undefined && v !== null && !isDate(v)) return `"${f}" must be a date like 2026-10-01 or 2026-10-01T09:30, not "${v}"`;
   }
@@ -225,19 +227,11 @@ export function editTask(line: string, patch: TaskPatch): string {
  * Apply a patch to a task line, with what ticking means. Ticking stamps `done:` with `today` and
  * unticking takes it off, unless the patch sets it. Ticking a repeating task doesn't tick it: it
  * stays open on the same line and moves on to its next date (its due and start dates, and one fewer
- * `times:`), so nothing piles up. Its last time, it's ticked like any other.
+ * `times:`), with `last:` saying when it was done, so nothing piles up. Its last time, it's ticked like
+ * any other.
  */
 export function editTaskLine(line: string, patch: TaskPatch, today: string): string {
-  const was = parseTask(line);
-  if (!was) return line;
-  if (patch.checked === undefined || patch.checked === was.done) return editTask(line, patch);
-  if (!patch.checked) return editTask(line, "done" in patch ? patch : { ...patch, done: null });
-  const next = following(was.meta, patch.done ?? today);
-  if (next) {
-    const { checked: _, done: __, ...rest } = patch;
-    return editTask(line, { ...rest, ...next.patch });
-  }
-  return editTask(line, "done" in patch ? patch : { ...patch, done: today });
+  return completeTask(line, undefined, patch, today, { mode: "none", note: "" }).lines[0];
 }
 
 /** Where a completion is recorded: the daily note's `## Done` (and the task moves on), a ticked copy left in the note (v1's way), or only history. */
@@ -266,8 +260,9 @@ export function completeTask(line: string, below: string | undefined, patch: Tas
     return { lines: [ticked, nextOccurrence(ticked, day)!], replaced: 1, log: null };
   }
   if (next) {
+    // It moves on, and says when it was done: `last:`, rewritten in place each time.
     const { checked: _, done: __, ...rest } = patch;
-    return { lines: [editTask(line, { ...rest, ...next.patch })], replaced: 1, log: opts.mode === "daily" ? logLine(was, day, opts.note) : null };
+    return { lines: [editTask(line, { ...rest, ...next.patch, last: day })], replaced: 1, log: opts.mode === "daily" ? logLine(was, day, opts.note) : null };
   }
   return { lines: [editTask(line, { ...patch, done: day })], replaced: 1, log: opts.mode === "daily" && opts.logPlain ? logLine(was, day, opts.note) : null };
 }
@@ -332,17 +327,17 @@ export function withoutDone(content: string, line: string): string | null {
 
 /**
  * Put a repeating task that moved on back to the day it was done (`day`): its due date that day,
- * its start moved by as many days, one more `times:` (or COUNT) left. Used to take back a
- * completion from the log when how the line was before isn't known; null for a task that isn't a
- * repeating one with a due date.
+ * its start moved by as many days, one more `times:` (or COUNT) left, and `last:` the completion
+ * before it (`before`, or none). Used to take back a completion from the log when how the line was
+ * before isn't known; null for a task that isn't a repeating one with a due date.
  */
-export function backTo(line: string, day: string): string | null {
+export function backTo(line: string, day: string, before: string | null = null): string | null {
   const task = parseTask(line);
   if (!task?.meta.rec || !task.meta.due) return null;
   const rule = parseRule(task.meta.rec);
   const time = task.meta.due.slice(10);
   const shift = daysBetween(task.meta.due.slice(0, 10), day);
-  const patch: TaskPatch = { due: day + time };
+  const patch: TaskPatch = { due: day + time, last: before };
   if (task.meta.start) patch.start = shiftDate(task.meta.start, shift);
   if (task.meta.times !== null) patch.times = task.meta.times + 1;
   else if (rule?.count) patch.rec = formatRule({ ...rule, count: rule.count + 1 });

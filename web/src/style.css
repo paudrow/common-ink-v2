@@ -1824,3 +1824,22 @@ iframe.webview {
 .qa-target:hover { color: var(--ink); }
 .qa-float { position: fixed; z-index: 70; top: 18vh; left: 50%; width: min(620px, calc(100vw - 32px)); box-sizing: border-box; transform: translateX(-50%); padding: 14px 14px 12px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--bg); box-shadow: var(--shadow-lg); }
 
+
+/* A tick, made obvious: struck through for a moment, then the new due date stands out. */
+.cm-task-completing { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.cm-task-completing .tk { text-decoration: none; }
+@keyframes task-fresh { from { box-shadow: 0 0 0 3px var(--accent-soft); background: var(--accent-soft); } to { box-shadow: 0 0 0 0 transparent; } }
+.cm-task-fresh .tk-due, .tk-due.is-fresh { animation: task-fresh 1.6s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .cm-task-fresh .tk-due, .tk-due.is-fresh { animation: none; box-shadow: 0 0 0 2px var(--accent-soft); background: var(--accent-soft); }
+}
+.tk-last { cursor: pointer; }
+
+/* Task notices: what a tick did, with Undo and Open log, stacked at the bottom, out of the way. */
+.task-toasts { position: fixed; z-index: 80; right: 16px; bottom: 36px; display: grid; gap: 8px; justify-items: end; max-width: min(460px, calc(100vw - 32px)); pointer-events: none; }
+.task-toast { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-elev); color: var(--ink); box-shadow: var(--shadow-lg); font: 13px var(--prose); }
+.task-toast-text { flex: 1; min-width: 0; }
+.task-toast-action { flex: none; padding: 3px 8px; border: 0; border-radius: 6px; background: none; color: var(--accent-ink); font: 600 12.5px var(--prose); cursor: pointer; }
+.task-toast-action:hover, .task-toast-action:focus-visible { background: var(--accent-soft); outline: none; }
+.task-toast-close { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.task-toast-close:hover { background: var(--hover); color: var(--ink); }

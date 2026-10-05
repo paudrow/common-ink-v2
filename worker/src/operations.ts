@@ -257,7 +257,7 @@ export const OPERATIONS = {
   }),
   complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
     description:
-      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
     input: {
       type: "object",
       properties: {

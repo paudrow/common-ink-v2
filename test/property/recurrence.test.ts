@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { formatRule, nextDue, nth, parseRule } from "../../web/src/extensions/tasks/recurrence.ts";
-import { editTaskLine, parseTask } from "../../web/src/extensions/tasks/tasks.ts";
+import { editTask, editTaskLine, parseTask } from "../../web/src/extensions/tasks/tasks.ts";
 import { forAll, type Rng } from "./gen.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -107,13 +107,13 @@ test("after- rules count from the day it's done: days and weeks exactly, months 
   );
 });
 
-test("ticking a repeating task keeps it open on its line, with only its due date moved on to the rule's next date", () => {
+test("ticking a repeating task keeps it open on its line, with only its due date moved on to the rule's next date and last: the day it was done", () => {
   forAll(
     (r) => ({ due: date(r), today: date(r), rec: token(r), summary: r.pick(["Pay rent", "Water the plants", "Call Sam about #garden"]), tail: r.pick(["", " @jane", " #home", " !high"]) }),
     ({ due, today, rec, summary, tail }) => {
       const line = `- [ ] ${summary} due:${due} rec:${rec}${tail}`;
       const ticked = editTaskLine(line, { checked: true }, today);
-      assert.equal(ticked, line.replace(`due:${due}`, `due:${nextDue(parseRule(rec)!, due, today)}`));
+      assert.equal(ticked, editTask(line.replace(`due:${due}`, `due:${nextDue(parseRule(rec)!, due, today)}`), { last: today }));
       assert.equal(parseTask(ticked)?.done, false);
     },
     { runs: 300 },

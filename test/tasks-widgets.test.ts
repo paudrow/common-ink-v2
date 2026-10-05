@@ -43,6 +43,9 @@ const env: TaskEnv = {
   log: () => {},
   unlog: () => {},
   putBack: async () => {},
+  ticked: () => {},
+  completions: () => [],
+  openAt: () => {},
 };
 
 function editor(doc = NOTE, e = env) {
@@ -106,7 +109,7 @@ test("a repeating task shows ticked for a moment, then moves on to its next date
   assert.equal(box.getAttribute("aria-checked"), "true");
   assert.equal(lineText(view, 3), "- [ ] Water the plants due:2026-10-04 rec:3d", "not yet");
   await new Promise((r) => setTimeout(r, CHECKED_FOR_MS + 50));
-  assert.equal(lineText(view, 3), "- [ ] Water the plants due:2026-10-07 rec:3d");
+  assert.equal(lineText(view, 3), `- [ ] Water the plants due:2026-10-07 rec:3d last:${TODAY}`);
   assert.equal(view.state.doc.lines, before, "no line added");
   assert.equal(boxes(view)[1].getAttribute("aria-checked"), "false");
   undo(view);
@@ -184,7 +187,7 @@ test("ticking a repeating task logs it, and one undo takes back both the tick an
   press(boxes(view)[1]);
   await new Promise((r) => setTimeout(r, CHECKED_FOR_MS + 50));
   const line = `- [x] Water the plants done:${TODAY} ([[Chores]])`;
-  assert.equal(lineText(view, 3), "- [ ] Water the plants due:2026-10-07 rec:3d");
+  assert.equal(lineText(view, 3), `- [ ] Water the plants due:2026-10-07 rec:3d last:${TODAY}`);
   assert.deepEqual(calls, [`log ${line}`]);
   undo(view);
   assert.equal(lineText(view, 3), "- [ ] Water the plants due:2026-10-04 rec:3d");
@@ -218,5 +221,29 @@ test("in a daily note, unticking a completion under ## Done asks: put it back, o
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(back, [`- [x] Water the plants done:${TODAY} ([[Chores]])`]);
   assert.equal(view.state.doc.toString(), `# ${TODAY}\n\n## Done\n\n`, "and the line leaves the log");
+  view.destroy();
+});
+
+test("a tick says what it did, and the notice's Undo puts back the line as it was, last: included, and takes its log line out", async () => {
+  const calls: string[] = [];
+  let said: { after: string; log: string | null; undo(): void } | null = null;
+  const doc = "# Chores\n- [ ] Water the plants due:2026-10-04 rec:3d last:2026-10-01";
+  const view = editor(doc, {
+    ...env,
+    how: () => ({ mode: "daily", logPlain: false, note: "Chores", path: "Chores.md" }),
+    log: (c) => void calls.push(`log ${c.line}`),
+    unlog: (c) => void calls.push(`unlog ${c.line}`),
+    ticked: (what) => void (said = what),
+  });
+  press(boxes(view)[0]);
+  assert.match(view.contentDOM.querySelector(".cm-line:nth-child(2)")!.className, /cm-task-completing/, "struck through while it shows ticked");
+  await new Promise((r) => setTimeout(r, CHECKED_FOR_MS + 50));
+  assert.equal(lineText(view, 2), `- [ ] Water the plants due:2026-10-07 rec:3d last:${TODAY}`);
+  assert.match(view.contentDOM.querySelector(".cm-line:nth-child(2)")!.className, /cm-task-fresh/, "its new due date stands out");
+  assert.equal(said!.after, lineText(view, 2));
+  assert.equal(said!.log, `- [x] Water the plants done:${TODAY} ([[Chores]])`);
+  said!.undo();
+  assert.equal(lineText(view, 2), "- [ ] Water the plants due:2026-10-04 rec:3d last:2026-10-01", "last: back to what it was");
+  assert.deepEqual(calls, [`log ${said!.log}`, `unlog ${said!.log}`]);
   view.destroy();
 });

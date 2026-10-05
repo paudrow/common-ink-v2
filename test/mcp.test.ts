@@ -61,7 +61,7 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   await run("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d #home\n- [ ] Call mum\n", base: 0 });
   const ticked = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Water the plants due:2026-10-05 rec:3d #home", today: "2026-10-05" });
   assert.equal(ticked.ok, true);
-  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d #home\n- [ ] Call mum\n");
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home\n- [ ] Call mum\n");
   assert.equal(files.files.read("Journal/2026-10-05.md" as never)?.text, "# 2026-10-05\n\n## Done\n\n- [x] Water the plants #home done:2026-10-05 ([[Chores]])\n");
   // A plain task is ticked where it is, and not logged by default.
   await run("complete_task", { path: "Chores.md", line: 4, today: "2026-10-05" });
@@ -70,7 +70,7 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   // The person's settings say how: v1's ticked copy, in another folder.
   await run("write_file", { path: ".common-ink/users/ada@example.com/settings.json", text: '{ "tasks.completionLog": "inline" }', base: 0 });
   await run("complete_task", { path: "Chores.md", line: 3, today: "2026-10-08" });
-  assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Water the plants due:2026-10-08 rec:3d #home done:2026-10-08\n- \[ \] Water the plants due:2026-10-11 rec:3d #home/);
+  assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08\n- \[ \] Water the plants due:2026-10-11 rec:3d last:2026-10-05 #home/);
   // A line that isn't that task any more isn't ticked.
   const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
   assert.equal(stale.ok, false);
