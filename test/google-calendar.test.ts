@@ -217,3 +217,24 @@ test("edits made at once go to Google once each, in order", async () => {
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
 });
+
+test("moving a whole series a day moves changed occurrences next to each other along, and Google keeps both", async () => {
+  const { fake, store } = google();
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  fake.put("ada@example.com", { id: "sync", summary: "Sync", start: at("12", "08:00"), end: at("12", "08:30"), recurrence: ["RRULE:FREQ=DAILY;COUNT=4"] });
+  fake.put("ada@example.com", { id: "sync_20261013T150000Z", summary: "Sync (Tue)", recurringEventId: "sync", originalStartTime: at("13", "08:00"), start: at("13", "08:00"), end: at("13", "08:30") });
+  fake.put("ada@example.com", { id: "sync_20261014T150000Z", summary: "Sync (Wed)", recurringEventId: "sync", originalStartTime: at("14", "08:00"), start: at("14", "08:00"), end: at("14", "08:30") });
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/sync_20261012T150000Z", start: "2026-10-13T08:00", scope: "all", zone: LA });
+  const there = (id: string) => [fake.event("ada@example.com", id)?.summary, fake.event("ada@example.com", id)?.status];
+  assert.deepEqual(there("sync_20261014T150000Z"), ["Sync (Tue)", "confirmed"], "Tuesday's change is on Wednesday now");
+  assert.deepEqual(there("sync_20261015T150000Z"), ["Sync (Wed)", "confirmed"], "Wednesday's is on Thursday");
+  await op(store, "sync_calendar", { force: true });
+  const next = { from: "2026-10-12T00:00:00-07:00", to: "2026-10-19T00:00:00-07:00", zone: LA };
+  assert.deepEqual(((await op(store, "list_events", next)) as Occurrence[]).map((o) => `${o.start.slice(0, 16)} ${o.title}`), [
+    "2026-10-13T15:00 Sync",
+    "2026-10-14T15:00 Sync (Tue)",
+    "2026-10-15T15:00 Sync (Wed)",
+    "2026-10-16T15:00 Sync",
+  ]);
+});
