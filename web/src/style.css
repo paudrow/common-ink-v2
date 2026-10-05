@@ -687,6 +687,19 @@ body {
   color: var(--accent);
 }
 
+#unsent {
+  color: var(--muted);
+  cursor: default;
+}
+
+#unsent[data-state="waiting"] {
+  color: #b45309;
+}
+
+#unsent[data-state="conflict"] {
+  color: #c2410c;
+}
+
 .notice {
   position: absolute;
   top: 1rem;

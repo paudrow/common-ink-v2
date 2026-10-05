@@ -1,0 +1,59 @@
+// Keeps the app itself (its page, scripts and styles, and workspace plugins' code) so it opens without
+// a connection. Files are not kept here: the app caches those itself, and holds edits it couldn't send
+// (web/src/offline.ts).
+const CACHE = "common-ink-app-v1";
+
+self.addEventListener("install", () => self.skipWaiting());
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.origin !== location.origin) return;
+  // Built scripts and styles never change under their hashed names: the kept copy is always right.
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(event.request).then(
+        (kept) =>
+          kept ??
+          fetch(event.request).then((res) => {
+            if (res.ok) void caches.open(CACHE).then((c) => c.put(event.request, res.clone()));
+            return res;
+          }),
+      ),
+    );
+    return;
+  }
+  // A workspace plugin's code: the server's when it answers, the last copy kept when it doesn't, so
+  // workspace plugins start offline too. Each version has its own address (?v=), and one copy per plugin is kept.
+  if (/^\/plugins\/[^/]+\/index\.js$/.test(url.pathname)) {
+    const key = url.pathname;
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          if (res.ok) void caches.open(CACHE).then((c) => c.put(key, res.clone()));
+          return res;
+        })
+        .catch(() => caches.match(key).then((kept) => kept ?? Response.error())),
+    );
+    return;
+  }
+  // The page: the server's when it answers, the last one kept when it doesn't.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          if (res.ok && res.headers.get("Content-Type")?.startsWith("text/html")) void caches.open(CACHE).then((c) => c.put("/", res.clone()));
+          return res;
+        })
+        .catch(() => caches.match("/").then((kept) => kept ?? Response.error())),
+    );
+  }
+});

@@ -1,0 +1,11 @@
+{
+  "pr": 14,
+  "title": "Offline mode",
+  "steps": [
+    "Open this Preview and wait a moment: every note is kept in this browser.",
+    "Turn off Wi-Fi (or in Chrome's developer tools, Network → Offline). The status bar says Offline. Open other notes: they open from what this browser kept.",
+    "Edit Offline test while offline. The status bar says `1 unsent change`, and the tab shows •. Reload the page: the app still opens, and your edit is still there.",
+    "Turn Wi-Fi back on. Within a few seconds the edit is sent, merged on the server with anything that changed meanwhile, and the count goes away. History shows it as yours.",
+    "To see a merge: edit a line of Offline test offline, change a different line of it from another browser while you're offline, then reconnect. Both edits end up in the note."
+  ]
+}
