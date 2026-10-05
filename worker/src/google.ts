@@ -3,7 +3,16 @@
 import { toContact, toEvent, type Contact, type Event, type GoogleEvent, type GooglePerson } from "./sources.ts";
 
 export const SIGN_IN_SCOPES = ["openid", "email", "profile"];
-export const DATA_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/contacts.readonly"];
+/**
+ * The least that calendar and contacts need. calendar.events reads and writes events on every calendar
+ * you can see; calendar.calendarlist.readonly lists those calendars with their colours. Contacts stay
+ * read-only.
+ */
+export const DATA_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/contacts.readonly",
+];
 
 export interface GoogleConfig {
   clientId: string;

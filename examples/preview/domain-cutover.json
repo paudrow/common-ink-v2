@@ -1,0 +1,9 @@
+{
+  "pr": 0,
+  "title": "commonink.app moves to Common Ink v2",
+  "steps": [
+    "The domain itself changes only in production: this Preview opens signed in as a dev user, as before.",
+    "Links kept from v1 go on to v1.commonink.app: open <this Preview>/s/abc or <this Preview>/notes/sync-k3x9q2mf, and the browser lands on v1.commonink.app with the same path. Everything else here is v2.",
+    "Production asks Google for calendar.events and calendar.calendarlist.readonly now, with contacts still read-only. scripts/cutover-wizard.sh walks through the steps only a person can take, in order."
+  ]
+}

@@ -14,6 +14,7 @@ import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts } from "./embed-list.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
+import { redirectFor } from "./hosts.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -57,6 +58,8 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    const elsewhere = redirectFor(url);
+    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
     const res = await handle(req, env, url);
     if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
     const out = new Response(res.body, res);

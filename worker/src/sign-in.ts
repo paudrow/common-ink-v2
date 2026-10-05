@@ -76,7 +76,7 @@ export async function signInRoute(req: Request, url: URL, config: SignInConfig |
       return page("Not on the list", `<p>${escape(granted.email)} can't use this Common Ink. Ask its owner to add you to ALLOWED_EMAILS, or <a href="/auth/google">use another account</a>.</p>`, 403);
     }
     if (state.data && !(await connect(granted))) {
-      return page("Calendar and contacts weren't connected", `<p>Google didn't grant read access to both. <a href="/auth/google?data=1">Try again</a> and tick both boxes.</p>`, 400);
+      return page("Calendar and contacts weren't connected", `<p>Google didn't grant everything they need. <a href="/auth/google?data=1">Try again</a> and tick every box.</p>`, 400);
     }
     const session = await sign({ email: granted.email }, config.sessionSecret, SESSION_SECONDS);
     const headers = new Headers({ Location: state.next });
