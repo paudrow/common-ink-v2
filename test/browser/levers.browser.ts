@@ -6,15 +6,15 @@ import { browserTest, harness } from "./harness.ts";
 const h = harness();
 
 const chip = (app: { page: import("playwright-core").Page }, todo: string) =>
-  app.page.locator(".cm-line", { hasText: todo }).locator(".todo-chip").first().textContent();
+  app.page.locator(".cm-line", { hasText: todo }).locator('.tk[data-field="due"]').first().textContent();
 
 browserTest(h, "a scenario's clock dates its todos, ?now= moves the page's clock, and the clock keeps running across a reload", { scenario: "todos", open: "Chores" }, async (app) => {
   assert.match((await app.state()).clock, /^2026-10-0[45]T/, "the scenario's own day");
-  await app.page.waitForSelector(".todo-chip");
+  await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
   assert.equal(await chip(app, "Water the plants"), "Today");
   await app.goto({ now: "2026-10-07T09:00" }, "Chores");
-  await app.page.waitForSelector(".todo-chip");
-  assert.equal(await chip(app, "Water the plants"), "Overdue 2d");
+  await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
+  assert.equal(await chip(app, "Water the plants"), "Oct 5", "two days ago");
   const before = Date.parse((await app.state()).clock);
   await app.reload();
   const after = Date.parse((await app.state()).clock);

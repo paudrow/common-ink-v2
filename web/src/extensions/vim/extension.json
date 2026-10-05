@@ -2,7 +2,7 @@
   "id": "vim",
   "name": "Vim",
   "version": "1.0.0",
-  "description": "Vim keys in every editor: modes, motions, registers and searches, :w, :e, :q, :sp, :vs and :tabe, Ctrl-W to move between windows and split them, gt and gT between tabs, gd to follow a link, and Ctrl-O and Ctrl-I back and forward, past each note's jumps to the notes before and after. Turn it off for standard keys. Other extensions' Vim sequences (\"vim\" in their keybindings) work while it's on.",
+  "description": "Vim keys in every editor: modes, motions, registers and searches, :w, :e, :q, :sp, :vs and :tabe, Ctrl-W to move between windows and split them, gt and gT between tabs, gd to follow a link, and Ctrl-O and Ctrl-I back and forward through where you've been, app-wide (Go back and Go forward): jumps within a note, other notes and other windows. Turn it off for standard keys. Other extensions' Vim sequences (\"vim\" in their keybindings) work while it's on.",
   "main": "index.ts",
   "files": ["index.ts"],
   "activationEvents": ["onStartup"],
@@ -10,14 +10,10 @@
     "editor": { "why": "Vim keys in every editor, and the mode in the status bar" }
   },
   "contributes": {
-    "commands": [
-      { "command": "vim.jumpBack", "title": "Jump back (Vim's Ctrl-O)" },
-      { "command": "vim.jumpForward", "title": "Jump forward (Vim's Ctrl-I)" }
-    ],
     "keybindings": [
       { "vim": "gd", "command": "note.followLink" },
-      { "vim": "<C-o>", "command": "vim.jumpBack" },
-      { "vim": "<C-i>", "command": "vim.jumpForward" },
+      { "vim": "<C-o>", "command": "go.back" },
+      { "vim": "<C-i>", "command": "go.forward" },
       { "vim": "gt", "command": "tab.next" },
       { "vim": "gT", "command": "tab.previous" },
       { "vim": "<C-w>h", "command": "window.left" },

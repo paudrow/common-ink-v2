@@ -11,6 +11,7 @@ const LOADERS: Record<LibraryName, () => Promise<unknown>> = {
   "@lezer/markdown": () => import("@lezer/markdown"),
   katex: () => import("katex"),
   "@codemirror/commands": () => import("@codemirror/commands"),
+  "@codemirror/autocomplete": () => import("@codemirror/autocomplete"),
   "@lezer/highlight": () => import("@lezer/highlight"),
   "@replit/codemirror-vim": () => import("@replit/codemirror-vim"),
   "common-ink/live-preview": () => import("./live-preview.ts"),

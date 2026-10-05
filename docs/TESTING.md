@@ -72,7 +72,7 @@ A scenario is a workspace to test against, as data: `test/scenarios/<name>.json`
 | `preview` | Every Preview's sample notes and a Try this PR note. It's the default. | real |
 | `empty` | No notes at all. | real |
 | `lists` | The lists tour: nested bullets, numbered lists and todo lists. | 2026-10-05 09:00 |
-| `todos` | Todos due yesterday, today and later, recurring todos, Boards, and a week of recorded calendar events and contacts. | 2026-10-05 09:00 |
+| `todos` | Tasks due yesterday, today and later, repeating tasks, `::tasks` lists, a Kanban board, and a week of recorded calendar events and contacts. | 2026-10-05 09:00 |
 | `embeds` | Timers, noise, an html-app with uPlot and three.js, link embeds, code blocks, tables and math. | 2026-10-05 09:00 |
 | `extensions` | Word count installed from the Catalog, sandboxed, asking before it reads a note. | 2026-10-05 09:00 |
 | `history` | A note with four changes by two agents after the seed, and a label. | 2026-10-05 09:00 |
@@ -112,7 +112,7 @@ With levers on, the page also checks what must always hold, and logs a console e
 | `slow(pattern?, ms)` | See the levers. |
 | `levers.get()`, `levers.set(changes)` | Reads or changes levers. |
 | `clock.now()`, `clock.set(time)`, `clock.advance(ms)` | Reads or moves the page's clock. |
-| `check.overlaps()` | Widgets inside a line (todo chips and checkboxes, bullets, numbers, inline math) that sit over its text or each other, or chips whose text spills out. |
+| `check.overlaps()` | Widgets inside a line (task chips and checkboxes, bullets, numbers, inline math) that sit over its text or each other, or chips whose text spills out. |
 | `check.lineShift(lines?)` | How far each line's text moves sideways when the cursor comes onto it, for the given lines or every line on screen. |
 | `check.layoutFill()` | Windows that don't take the share of the workbench their layout gives them. |
 | `check.layoutShifts(since)` | The layout shifts Chrome saw since a `performance.now()` time, with each moved element's `dx` and `dy`. |

@@ -1,131 +1,96 @@
-// Todos, a built-in extension: todos drawn as checkboxes with due-date and recurrence chips, checked off
-// with a click, ⌘Enter or gx (recurring ones move to their next due date), and every open todo in the
-// Todos view.
+// Todos, a built-in extension: tasks are checkbox lines with todo.txt-style tokens (due:, start:, rec:,
+// until:, times:, !high, @person, #tag). In notes, the box ticks and each token is a chip that opens
+// its own editor; ⌘. opens the line's field menu, and tokens complete as you type them. The Todos view
+// and the ::tasks embed list tasks from across the notes, in the same rows. Ticking a repeating task
+// moves it on to its next date, on the same line.
 import { isNote } from "common-ink/files";
-import type { Change, FilePath, Revision } from "../../../../worker/src/files.ts";
-import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
-import { describeTodoEdit, localToday, parseTodo, todosIn, toggleLine, when, type Todo, type When } from "./model.ts";
-import { checkboxEl, CHECKED_FOR_MS, dueChipEl, everyChipEl, todosPreview, toggleTodoAt } from "./widgets.ts";
+import type { Change, FilePath } from "../../../../worker/src/files.ts";
+import type { Embed, ExtensionContext, ExtensionModule } from "../../extension-api.ts";
+import { today } from "./chips.ts";
+import { taskCompletions } from "./complete.ts";
+import { mountTaskList, type ListArgs } from "./list.ts";
+import type { RowEnv } from "./rows.ts";
+import { TaskStore } from "./store.ts";
+import { describeTaskEdit } from "./tasks.ts";
+import { TodosView } from "./view.ts";
+import { openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
 
 const todos: ExtensionModule = {
   activate(ctx) {
-    const panel = new TodosPanel(ctx);
-    ctx.commands.register("todos.toggle", () => toggle(ctx));
+    const store = new TaskStore(ctx);
+    const rowEnv: Omit<RowEnv, "reload" | "openTag" | "openPerson"> = {
+      store,
+      open: (path, line, side) => void open(ctx, path as FilePath, line, side),
+      notice: (message, actions) => ctx.workbench.notice(message, actions),
+    };
+    const view = new TodosView({ ...rowEnv, tasks: () => store.all() });
+    const showPerson = (name: string) => {
+      view.showPerson(name);
+      ctx.views.show("todos");
+    };
+    const env: TaskEnv = {
+      today,
+      chips: () => ctx.settings.get<boolean>("todos.chips") !== false,
+      people: () => store.people(),
+      tags: () => store.tags(),
+      showPerson,
+      say: (message) => ctx.workbench.notice(message),
+      path: () => ctx.workbench.focusedPath() ?? "",
+    };
+
+    ctx.commands.register("todos.toggle", () => {
+      const view = ctx.editor.focused();
+      return !!view && toggleTaskAt(view, view.state.selection.main.head, env);
+    });
+    ctx.commands.register("todos.menu", () => {
+      const view = ctx.editor.focused();
+      return !!view && openMenuAt(view, env);
+    });
     ctx.commands.register("todos.show", () => ctx.views.toggle("todos"));
-    ctx.views.register("todos", { render: (root) => panel.render(root) });
-    ctx.events.onSaved((path) => isNote(path) && ctx.views.refresh("todos"));
-    ctx.editor.extend(todosPreview(localToday, () => ctx.settings.get<boolean>("todos.chips")));
+    ctx.views.register("todos", { render: (root) => view.render(root) });
+    ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);
+
+    // ::tasks{folder=Projects tag=work due<=today}: a list of tasks in a note, redrawn as notes change.
+    const lists = new Map<HTMLElement, { load(): Promise<void>; set(args: ListArgs): void }>();
+    ctx.embeds.register("tasks", {
+      render(el: HTMLElement, embed: Embed) {
+        const host = document.createElement("div");
+        host.className = "qw-tasks is-embed";
+        el.replaceChildren(host);
+        // A tag or person chip in an embed narrows the Todos view, which has room for it.
+        lists.set(el, mountTaskList(host, embed.args, { ...rowEnv, tasks: () => store.all(), openTag: () => ctx.views.show("todos"), openPerson: showPerson }));
+      },
+      update(el: HTMLElement, embed: Embed) {
+        lists.get(el)?.set(embed.args);
+      },
+    });
+
+    // Every list redraws when a note changes, a moment after (a tick writes one note, then reads them).
+    let timer = 0;
+    ctx.events.onSaved((path) => {
+      if (!isNote(path)) return;
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        ctx.views.refresh("todos");
+        for (const [el, list] of lists) el.isConnected ? void list.load() : lists.delete(el);
+      }, 150);
+    });
   },
 };
 
 export default todos;
 
-/** Check off the todo under the cursor, in place. */
-function toggle(ctx: ExtensionContext) {
-  const view = ctx.editor.focused();
-  if (!view || view.state.readOnly) return;
-  toggleTodoAt(view, view.state.selection.main.head, localToday());
+/** Open a task's note at its line (1-based): here, or in a new window to the right. */
+async function open(ctx: ExtensionContext, path: FilePath, line: number, side?: boolean) {
+  if (side) await ctx.workbench.split("right", path);
+  await ctx.workbench.open(path, { line: Math.max(0, line - 1) });
 }
 
-/** What a change did to todos, for history: each line that changed by itself, if it was a todo checked off or reopened. */
+/** What a change did to tasks, for history: each line that changed by itself, if it was a task ticked, reopened or moved on to its next date. */
 export function describeChange(change: Pick<Change, "diff">): string | null {
   const said = change.diff.flatMap(({ buffer1, buffer2 }) =>
-    buffer1.chunk.length === buffer2.chunk.length ? buffer1.chunk.flatMap((before, i) => describeTodoEdit(before, buffer2.chunk[i]) ?? []) : [],
+    buffer1.chunk.length === buffer2.chunk.length ? buffer1.chunk.flatMap((before, i) => describeTaskEdit(before, buffer2.chunk[i]) ?? []) : [],
   );
   return said.length ? said.join("; ") : null;
-}
-
-const GROUPS: Array<[When, string]> = [
-  ["overdue", "Overdue"],
-  ["today", "Today"],
-  ["upcoming", "Upcoming"],
-  ["someday", "No date"],
-];
-
-/** Every open todo in every note, by when it's due. Notes are read again only when their revision changes. */
-class TodosPanel {
-  private cache = new Map<FilePath, { revision: Revision; todos: Todo[] }>();
-
-  constructor(private ctx: ExtensionContext) {}
-
-  async render(root: HTMLElement) {
-    const notes = (await this.ctx.files.fetchList()).filter((d) => isNote(d.path));
-    await Promise.all(
-      notes.map(async (n) => {
-        if (this.cache.get(n.path)?.revision === n.revision) return;
-        const file = await this.ctx.files.read(n.path);
-        this.cache.set(n.path, { revision: file.revision, todos: todosIn(file.text) });
-      }),
-    );
-    const today = localToday();
-    const open = notes.flatMap((n) => (this.cache.get(n.path)?.todos ?? []).filter((t) => !t.done).map((t) => ({ ...t, path: n.path })));
-    const sections = GROUPS.map(([w, title]) => {
-      const items = open.filter((t) => when(t, today) === w).sort((a, b) => (a.due ?? "").localeCompare(b.due ?? "") || a.path.localeCompare(b.path) || a.line - b.line);
-      if (!items.length) return null;
-      const list = document.createElement("ul");
-      list.append(...items.map((t) => this.item(t, today)));
-      const h = document.createElement("h3");
-      h.textContent = `${title} (${items.length})`;
-      h.dataset.when = w;
-      const section = document.createElement("section");
-      section.append(h, list);
-      return section;
-    }).filter((s) => s !== null);
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "No open todos. A todo is a checkbox line: - [ ] Call the plumber due:2026-11-01";
-    root.replaceChildren(...(sections.length ? sections : [empty]));
-  }
-
-  /** One open todo: its checkbox, its title (which opens it), its chips and its note. */
-  private item(t: Todo & { path: FilePath }, today: string): HTMLElement {
-    const box = checkboxEl(false, `Check off ${t.title || "todo"}`);
-    box.tabIndex = 0;
-    const check = () => void this.toggle(t, box);
-    box.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      check();
-    });
-    box.addEventListener("keydown", (e) => {
-      if (e.key !== " " && e.key !== "Enter") return;
-      e.preventDefault();
-      check();
-    });
-    const open = document.createElement("button");
-    open.className = "todo";
-    open.title = "Open its note at this line";
-    const title = document.createElement("span");
-    title.textContent = t.title || "(untitled)";
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    if (t.due) meta.append(dueChipEl(t.due, today));
-    if (t.every) meta.append(everyChipEl(t.every));
-    meta.append(this.ctx.util.label(t.path));
-    open.append(title, meta);
-    open.addEventListener("click", () => void this.ctx.workbench.open(t.path, { line: t.line }));
-    const li = document.createElement("li");
-    li.className = "todo-item";
-    li.append(box, open);
-    return li;
-  }
-
-  /** Check a todo off from the view: the same edit ⌘Enter makes, written to its note as one change by you. */
-  private async toggle(t: Todo & { path: FilePath }, box: HTMLElement) {
-    box.setAttribute("aria-checked", "true");
-    box.textContent = "✓";
-    box.classList.add("checking");
-    await new Promise((r) => setTimeout(r, CHECKED_FOR_MS));
-    const file = await this.ctx.files.read(t.path);
-    const lines = file.text.split("\n");
-    const now = parseTodo(lines[t.line] ?? "");
-    // The note changed under the view: redraw it rather than check off the wrong line.
-    if (now && now.title === t.title && !now.done) {
-      lines[t.line] = toggleLine(lines[t.line], localToday())!;
-      await this.ctx.files.write(t.path, lines.join("\n"), file.revision);
-      await this.ctx.workbench.refreshFromServer([t.path]);
-    }
-    this.ctx.views.refresh("todos");
-  }
 }

@@ -10,12 +10,12 @@ const h = harness();
 
 const where = (app: App) => app.call<{ path: string; line: number; column: number; lines: number; mode: string | null }>("where");
 
-browserTest(h, "todo chips, checkboxes, bullets, numbers and inline math never sit over a line's text, wide or narrow", { scenario: "todos" }, async (app) => {
+browserTest(h, "task chips, checkboxes, bullets, numbers and inline math never sit over a line's text, wide or narrow", { scenario: "todos" }, async (app) => {
   for (const width of [1100, 420]) {
     await app.page.setViewportSize({ width, height: 800 });
     for (const note of ["Chores", "Todo edge cases"]) {
       await app.open(note);
-      await app.page.waitForSelector(".tab-editor:not([hidden]) .todo-chip");
+      await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
       assert.deepEqual(await app.call("check.overlaps"), [], `${note} at ${width}px`);
     }
   }

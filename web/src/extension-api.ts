@@ -214,6 +214,8 @@ export interface ExtensionContext {
     refreshFromServer(paths: FilePath[]): Promise<void>;
     /** A short message over the focused window, with buttons. */
     notice(message: string, actions?: Array<{ label: string; run(): unknown }>): void;
+    /** Whether there's a place to go back (-1) or forward (1) to: what Go back and Go forward would do. */
+    canGo(by: -1 | 1): boolean;
   };
   /** Helpers the built-ins use, so a copy of one runs as a workspace extension with nothing to import. */
   util: {

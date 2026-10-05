@@ -20,7 +20,7 @@ function textRects(node: Node): Rect[] {
 const quote = (s: string | null | undefined) => `"${(s ?? "").replace(/\s+/g, " ").trim().slice(0, 50)}"`;
 
 /**
- * Widgets drawn inside a line of text (todo chips and checkboxes, list bullets and numbers, inline
+ * Widgets drawn inside a line of text (task chips and checkboxes, list bullets and numbers, inline
  * math): none sits over the line's text or another widget, and a chip's text stays inside its box.
  */
 export function overlaps(root: ParentNode = document): string[] {
@@ -34,7 +34,7 @@ export function overlaps(root: ParentNode = document): string[] {
     const name = (w: HTMLElement) => quote(w.textContent || w.getAttribute("aria-label") || w.className);
     widgets.forEach((w, i) => {
       // Chips are text in a box; math and pictures draw past their boxes on purpose.
-      if (w.matches(".todo-chip, .todo-box") && !textRects(w).every((t) => within(t, boxes[i]))) problems.push(`${name(w)} spills out of its box in ${quote(line.textContent)}`);
+      if (w.matches(".tk") && !textRects(w).every((t) => within(t, boxes[i]))) problems.push(`${name(w)} spills out of its box in ${quote(line.textContent)}`);
       for (let j = i + 1; j < widgets.length; j++) if (!apart(boxes[i], boxes[j])) problems.push(`${name(w)} overlaps ${name(widgets[j])} in ${quote(line.textContent)}`);
     });
     const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);

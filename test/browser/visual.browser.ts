@@ -14,7 +14,7 @@ for (const dark of [false, true]) {
   browserTest(h, `the lists tour and Chores look as they did (${theme})`, { scenario: "todos", viewport, dark }, async (app) => {
     const problems: Array<string | null> = [];
     await app.open("Chores");
-    await app.page.waitForSelector(".tab-editor:not([hidden]) .todo-chip");
+    await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
     await app.editor.at(1);
     await app.idle();
     problems.push(await matchSnapshot(app.page, `chores-${theme}`));
