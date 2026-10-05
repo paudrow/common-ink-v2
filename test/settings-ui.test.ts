@@ -20,29 +20,37 @@ test("a missing settings file starts from the template", () => {
   assert.equal(withSetting("", "editor.vim", false), '{\n  "$schema": "/schema/settings.json",\n  "editor.vim": false\n}\n');
 });
 
-/** A settings editor over one in-memory user settings file, recording each write. */
-function setup(text: string) {
-  const file = { text, revision: 1 as Revision };
+const USER = ".common-ink/users/you@example.com/settings.json" as FilePath;
+const WORKSPACE = ".common-ink/settings.json" as FilePath;
+
+/** A settings editor over in-memory user (`text`) and workspace settings files, recording each write. */
+function setup(text: string, workspaceText = "") {
+  const files = new Map([
+    [USER, { text, revision: 1 as Revision }],
+    [WORKSPACE, { text: workspaceText, revision: 1 as Revision }],
+  ]);
+  const file = files.get(USER)!;
   const writes: string[] = [];
-  const path = ".common-ink/users/you@example.com/settings.json" as FilePath;
+  const writtenTo: FilePath[] = [];
   const ui = settingsEditor({
-    pathFor: (level) => (level === "user" ? path : (".common-ink/settings.json" as FilePath)),
-    read: async () => ({ ...file }),
-    write: async (_p, next, base) => {
-      assert.equal(base, file.revision);
+    pathFor: (level) => (level === "user" ? USER : WORKSPACE),
+    read: async (path) => ({ ...files.get(path)! }),
+    write: async (path, next, base) => {
+      const f = files.get(path)!;
+      assert.equal(base, f.revision);
       writes.push(next);
-      file.text = next;
-      file.revision++;
-      return { status: "saved", revision: file.revision } as never;
+      writtenTo.push(path);
+      f.text = next;
+      f.revision++;
+      return { status: "saved", revision: f.revision } as never;
     },
-    effective: () => DEFAULTS,
     catalog: () => CORE_CATALOG,
     openJson: () => writes.push("open json"),
     changed: () => {},
   });
   const root = window.document.createElement("div");
   window.document.body.replaceChildren(root);
-  return { ui, root, writes, file };
+  return { ui, root, writes, file, files, writtenTo };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -98,7 +106,6 @@ test("a change that can't reach the server says so", async () => {
     write: async () => {
       throw new TypeError("Failed to fetch");
     },
-    effective: () => DEFAULTS,
     catalog: () => CORE_CATALOG,
     openJson: () => {},
     changed: () => void ui.render(root),
@@ -110,6 +117,37 @@ test("a change that can't reach the server says so", async () => {
   await settle();
   await settle();
   assert.match(root.querySelector('[role="alert"]')!.textContent!, /^Not saved: Failed to fetch/);
+});
+
+test("User and Workspace each show their own values, say what the other does, and write to their own file", async () => {
+  const { ui, root, files, writtenTo } = setup('{"editor.fontSize": 18, "editor.lineNumbers": true}', '{"editor.lineNumbers": false}');
+  const value = (key: string) => root.querySelector<HTMLInputElement>(`input[aria-label="${key}"]`)!;
+  const note = (key: string) => [...root.querySelectorAll(".setting")].find((r) => r.querySelector(".setting-key")!.textContent === key)!.querySelector(".setting-note")?.textContent;
+  const switchTo = async (level: string) => {
+    root.querySelector<HTMLButtonElement>(`[data-focus="level:${level}"]`)!.click();
+    await settle();
+    await settle();
+  };
+  await ui.render(root);
+  assert.equal(value("editor.fontSize").value, "18");
+  assert.equal(value("editor.lineNumbers").checked, true, "yours, though the workspace's wins");
+  assert.equal(note("editor.lineNumbers"), "This workspace sets it to false, which wins here.");
+  assert.match(root.querySelector(".settings-level")!.textContent!, /^Your settings/);
+
+  await switchTo("workspace");
+  assert.equal(root.querySelector('[aria-selected="true"]')!.textContent, "Workspace");
+  assert.match(root.querySelector(".settings-level")!.textContent!, /^This workspace's settings/);
+  assert.equal(value("editor.lineNumbers").checked, false, "the workspace's own");
+  assert.equal(value("editor.fontSize").value, "18", "not set here: yours applies");
+  assert.equal(note("editor.fontSize"), "Not set here: your user setting, 18, applies.");
+  assert.equal(value("editor.lineWrapping").checked, true, "set nowhere: the default");
+
+  value("editor.lineWrapping").checked = false;
+  value("editor.lineWrapping").dispatchEvent(new window.Event("change"));
+  await settle();
+  assert.deepEqual(writtenTo, [WORKSPACE], "a control writes to the level on show");
+  assert.match(files.get(WORKSPACE)!.text, /"editor.lineWrapping": false/);
+  assert.doesNotMatch(files.get(USER)!.text, /lineWrapping/);
 });
 
 test("search narrows the settings, and the switch shows the other level", async () => {
