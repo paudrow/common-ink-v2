@@ -238,3 +238,21 @@ test("moving a whole series a day moves changed occurrences next to each other a
     "2026-10-16T15:00 Sync",
   ]);
 });
+
+test("undoing a change to one occurrence puts it back as its series has it, in Google too", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  const [renamed] = store.files.recent({ limit: 1 });
+  assert.deepEqual(await op(store, "undo", { revisions: [renamed.revision] }).then((r) => (r as Array<{ status: string }>).map((u) => u.status)), ["undone"]);
+  const there = fake.event("ada@example.com", "standup_20261009T160000Z");
+  assert.deepEqual([there?.summary, there?.status], ["Standup", "confirmed"], "Google has the occurrence back, not cancelled");
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await listed(store), [
+    "2026-10-05T16:00 Standup",
+    "2026-10-06T17:00 Standup (late)",
+    "2026-10-06T21:30 Dentist",
+    "2026-10-08 Offsite",
+    "2026-10-09T16:00 Standup",
+  ]);
+});
