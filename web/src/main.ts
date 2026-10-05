@@ -613,10 +613,10 @@ window.addEventListener(
     // A modal has the keys while it's up: its own, and Tab and Escape.
     if (modalOpen()) return;
     const id = commandForKey(e, settings.keybindings);
-    if (!id) return;
+    // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
+    if (!id || !commands.runForKey(id)) return;
     e.preventDefault();
     e.stopPropagation();
-    commands.run(id);
   },
   { capture: true },
 );

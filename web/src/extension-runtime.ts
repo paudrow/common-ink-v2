@@ -181,7 +181,9 @@ export class ExtensionRuntime {
         title: c.title,
         run: () => {
           this.broker.cause(m.id, { kind: "command", title: c.title });
-          return this.runCommand(c.command);
+          // Started already, its answer comes back at once: false declines a key (commands.runForKey).
+          const handler = this.handlers.get(c.command);
+          return handler ? handler() : this.runCommand(c.command);
         },
       });
     for (const view of Object.values(m.contributes.views).flat()) {

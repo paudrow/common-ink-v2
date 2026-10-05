@@ -1,10 +1,14 @@
 // Lists as they read (on the live-preview mechanism): real bullets that change with depth, numbers
 // right-aligned in their column, text that hangs past its marker when it wraps, and a faint guide for
-// each level. A bullet with folded children has a ring; pressing a bullet folds or unfolds them. The
-// line the cursor is on shows its markdown. Todos' boxes are the Todos extension's.
+// each level. A bullet with folded children has a ring; pressing a bullet folds or unfolds them.
+// A line looks the same with the cursor on it: its indent, number column and guides stay, so the text
+// never moves. Numbers are always their own text, styled into their column. A bullet shows as its `-`,
+// in the same box, only while the cursor is on the marker. The real characters are all still there
+// (marks and hidden spaces, not text swapped out), so Vim motions across a marker stay exact. Todos'
+// boxes are the Todos extension's.
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
-import { livePreview, revealedLines, type Preview } from "common-ink/live-preview";
+import { livePreview, touches, type Preview } from "common-ink/live-preview";
 import { isFolded, toggleFoldAt } from "./edit.ts";
 import * as M from "./model.ts";
 
@@ -43,22 +47,9 @@ class BulletWidget extends WidgetType {
   }
 }
 
-class NumberWidget extends WidgetType {
-  constructor(readonly marker: string) {
-    super();
-  }
-  eq(other: NumberWidget) {
-    return other.marker === this.marker;
-  }
-  toDOM() {
-    const n = document.createElement("span");
-    n.className = "cm-list-number";
-    n.textContent = this.marker;
-    return n;
-  }
-}
-
 const hide = Decoration.replace({});
+const numberMark = Decoration.mark({ class: "cm-list-number" });
+const rawBullet = Decoration.mark({ class: "cm-list-bullet raw" });
 
 /** How deep a list node is: 0 for a top-level item. */
 function depthOf(node: { parent: { name: string; parent: unknown } | null }): number {
@@ -68,7 +59,6 @@ function depthOf(node: { parent: { name: string; parent: unknown } | null }): nu
 }
 
 export const listPreview = livePreview((line, view) => {
-  if (revealedLines(view).has(line.number)) return [];
   const out: Preview[] = [];
   const state = view.state;
   const indent = /^[ \t]*/.exec(line.text)![0].length;
@@ -80,19 +70,27 @@ export const listPreview = livePreview((line, view) => {
   if (!listItem) return out;
   const depth = depthOf(listItem);
   const style = (cls: string) => Decoration.line({ class: cls, attributes: { style: `--list-depth: ${depth}` } });
-  if (indent) out.push({ from: line.from, to: line.from + indent, decoration: hide });
+  // The layout stays with the cursor on the line: it's the same line, edited.
+  if (indent) out.push({ from: line.from, to: line.from + indent, decoration: hide, always: true });
   if (!item || state.doc.lineAt(listItem.from).number !== line.number) {
     // A line of an item's text after its first.
     out.push({ from: line.from, to: line.from, decoration: style("cm-list-cont") });
     return out;
   }
   out.push({ from: line.from, to: line.from, decoration: style("cm-list-line") });
+  const marker = { from: line.from + indent, to: line.from + indent + item.marker.length };
   const markEnd = line.from + item.markerEnd;
-  if (item.kind === "number") out.push({ from: line.from + indent, to: markEnd, decoration: Decoration.replace({ widget: new NumberWidget(item.marker) }) });
-  else if (item.kind === "bullet") {
+  // The space after the marker is the column's: the text starts where it does on the lines below.
+  const space = () => markEnd > marker.to && out.push({ from: marker.to, to: markEnd, decoration: hide, always: true });
+  if (item.kind === "number") {
+    out.push({ from: marker.from, to: marker.to, decoration: numberMark, always: true });
+    space();
+  } else if (item.kind === "bullet") {
     const i = line.number - 1;
     const parent = M.subtreeEnd(state.doc.toString().split("\n"), i) > i + 1;
-    out.push({ from: line.from + indent, to: markEnd, decoration: Decoration.replace({ widget: new BulletWidget(depth, parent && isFolded(state, i), parent) }) });
+    const glyph = Decoration.replace({ widget: new BulletWidget(depth, parent && isFolded(state, i), parent) });
+    out.push({ ...marker, decoration: touches(state, marker) ? rawBullet : glyph, always: true });
+    space();
   }
   return out;
 });
@@ -114,6 +112,7 @@ export const listTheme = EditorView.theme({
   ".cm-list-bullet.parent": { cursor: "pointer" },
   ".cm-list-bullet .dot": { display: "inline-block", minWidth: "1.1em", lineHeight: "1.1em", borderRadius: "50%" },
   ".cm-list-bullet.folded .dot": { backgroundColor: "var(--line)", color: "var(--ink)" },
+  ".cm-list-bullet.raw": { fontFamily: "var(--mono)" },
   ".cm-list-number": { display: "inline-block", width: UNIT, textIndent: "0", textAlign: "right", paddingRight: "0.35em", boxSizing: "border-box", fontVariantNumeric: "tabular-nums", color: "var(--muted)" },
   ".cm-list-folded": { margin: "0 0.35em", padding: "0 0.3em", borderRadius: "4px", color: "var(--muted)", backgroundColor: "var(--code-bg)", cursor: "pointer" },
 });

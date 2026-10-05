@@ -29,6 +29,16 @@ export class Commands {
     void command.run();
     return true;
   }
+
+  /**
+   * Run a command for a key press. A command can decline the key by returning false at once (a list
+   * command off a list): then the key should do what it would have done. True if it took the key.
+   */
+  runForKey(id: string): boolean {
+    const command = this.byId.get(id);
+    if (!command) return false;
+    return command.run() !== false;
+  }
 }
 
 /** The command a key press is bound to, if any. A later binding for the same key wins, and a null command unbinds it. */

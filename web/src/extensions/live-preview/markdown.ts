@@ -1,7 +1,8 @@
 // Markdown as it reads, on the live-preview mechanism (live-preview.ts): headings at size without
 // their #, emphasis, strikethrough and inline code without their markers, links as their text, wiki
-// links as their name, uploaded images as images, and rules, quotes and code blocks styled. The line
-// the cursor is on shows its raw markdown.
+// links as their name, uploaded images as images, and rules, quotes and code blocks styled. Inline
+// markup shows its raw markdown while the cursor is on it (that bold, that link), and a heading's #
+// while the cursor is on its line.
 import { syntaxTree } from "@codemirror/language";
 import type { Line } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
@@ -57,7 +58,7 @@ const showsAsImage = (src: string) => src.startsWith("/");
 export function markdownPreviews(line: Line, view: EditorView): Preview[] {
   const out: Preview[] = [];
   const doc = view.state.doc;
-  const at = (from: number, to: number, decoration: Decoration) => out.push({ from, to, decoration });
+  const at = (from: number, to: number, decoration: Decoration, span?: { from: number; to: number }) => out.push({ from, to, decoration, ...(span ? { span } : {}) });
   let inCode = false;
   syntaxTree(view.state).iterate({
     from: line.from,
@@ -87,9 +88,12 @@ export function markdownPreviews(line: Line, view: EditorView): Preview[] {
           return;
         case "EmphasisMark":
         case "StrikethroughMark":
-        case "CodeMark":
-          if (node.to <= line.to && node.from >= line.from) at(node.from, node.to, hide);
+        case "CodeMark": {
+          // Its markers show while the cursor is in what they mark: **bold**, ~~gone~~, `code`.
+          const marked = node.node.parent;
+          if (node.to <= line.to && node.from >= line.from) at(node.from, node.to, hide, marked ? { from: marked.from, to: marked.to } : undefined);
           return;
+        }
         case "HorizontalRule":
           at(node.from, node.to, rule);
           return false;
@@ -99,11 +103,12 @@ export function markdownPreviews(line: Line, view: EditorView): Preview[] {
           if (!url || marks.length < 2 || node.to > line.to) return false;
           const src = doc.sliceString(url.from, url.to).replace(/^<|>$/g, "");
           const alt = doc.sliceString(marks[0].to, marks[1].from);
-          if (showsAsImage(src)) at(node.from, node.to, Decoration.replace({ widget: new ImageWidget(src, alt) }));
+          const image = { from: node.from, to: node.to };
+          if (showsAsImage(src)) at(node.from, node.to, Decoration.replace({ widget: new ImageWidget(src, alt) }), image);
           else {
-            at(node.from, marks[0].to, hide);
-            at(marks[0].to, marks[1].from, linkMark(src));
-            at(marks[1].from, node.to, hide);
+            at(node.from, marks[0].to, hide, image);
+            at(marks[0].to, marks[1].from, linkMark(src), image);
+            at(marks[1].from, node.to, hide, image);
           }
           return false;
         }
@@ -113,9 +118,10 @@ export function markdownPreviews(line: Line, view: EditorView): Preview[] {
           const marks = node.node.getChildren("LinkMark");
           if (!url || marks.length < 2 || node.to > line.to) return false;
           const href = doc.sliceString(url.from, url.to).replace(/^<|>$/g, "");
-          at(node.from, marks[0].to, hide);
-          at(marks[0].to, marks[1].from, linkMark(href));
-          at(marks[1].from, node.to, hide);
+          const link = { from: node.from, to: node.to };
+          at(node.from, marks[0].to, hide, link);
+          at(marks[0].to, marks[1].from, linkMark(href), link);
+          at(marks[1].from, node.to, hide, link);
           return false;
         }
       }
@@ -127,9 +133,10 @@ export function markdownPreviews(line: Line, view: EditorView): Preview[] {
     const to = from + m[0].length;
     // [[Name]] shows "Name"; [[Name|text]] shows "text". Either way it links to Name.
     const textFrom = m[2] === undefined ? from + 2 : from + 3 + m[1].length;
-    at(from, textFrom, hide);
-    at(textFrom, to - 2, linkMark(m[1].trim()));
-    at(to - 2, to, hide);
+    const wiki = { from, to };
+    at(from, textFrom, hide, wiki);
+    at(textFrom, to - 2, linkMark(m[1].trim()), wiki);
+    at(to - 2, to, hide, wiki);
   }
   return out;
 }
