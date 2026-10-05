@@ -87,6 +87,12 @@ body {
   min-height: 0;
 }
 
+/* A split's windows share it by their sizes (--share, set by the workbench). Only a split's children:
+   a window that's left on its own fills the area, whatever share it had. */
+.split > :not(.resizer) {
+  flex: var(--share, 1) 1 0;
+}
+
 .split.row {
   flex-direction: row;
 }
