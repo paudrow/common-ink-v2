@@ -41,3 +41,41 @@ test("Vim's < and > move list items with their children, and ]e moves them past 
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+/** What's wrong with the page's todo chips and checkmarks: text spilling out of its box, or boxes over text or each other. */
+const CHIP_PROBLEMS = `(() => {
+  const textRects = (el) => { const r = document.createRange(); r.selectNodeContents(el); return [...r.getClientRects()]; };
+  const inside = (inner, outer) => inner.left >= outer.left - 1 && inner.right <= outer.right + 1;
+  const apart = (a, b) => a.right <= b.left + 1 || b.right <= a.left + 1 || a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
+  const problems = [];
+  for (const line of document.querySelectorAll(".cm-line")) {
+    const chips = [...line.querySelectorAll(".todo-chip")];
+    if (!chips.length) continue;
+    const boxes = chips.map((c) => c.getBoundingClientRect());
+    chips.forEach((c, i) => {
+      if (!textRects(c).every((t) => inside(t, boxes[i]))) problems.push('"' + c.textContent + '" spills out of its chip');
+      boxes.forEach((o, j) => { if (j > i && !apart(boxes[i], o)) problems.push('"' + c.textContent + '" overlaps "' + chips[j].textContent + '"'); });
+    });
+    const words = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let n = words.nextNode(); n; n = words.nextNode()) {
+      if (n.parentElement.closest(".todo-chip, .todo-box") || !n.textContent.trim()) continue;
+      for (const t of textRects(n)) boxes.forEach((b, i) => { if (!apart(t, b)) problems.push('"' + chips[i].textContent + '" overlaps "' + n.textContent + '"'); });
+    }
+  }
+  for (const box of document.querySelectorAll('.todo-box[aria-checked="true"]')) {
+    if (!textRects(box).every((t) => inside(t, box.getBoundingClientRect()))) problems.push("a checkmark sits outside its box");
+  }
+  return problems;
+})()`;
+
+test("a todo's chips and checkmark sit in their own boxes, clear of its text, wide and narrow", async () => {
+  for (const width of [1100, 420]) {
+    const page = await h.browser.newPage({ viewport: { width, height: 700 } });
+    await page.goto(`${h.base}/?file=Chores.md`);
+    await page.waitForSelector(".todo-chip");
+    // Plain JavaScript, as a string: the test runner's TypeScript would name these functions with a helper the page doesn't have.
+    const report = (await page.evaluate(CHIP_PROBLEMS)) as string[];
+    assert.deepEqual(report, [], `at ${width}px`);
+    await page.close();
+  }
+});
