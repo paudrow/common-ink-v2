@@ -169,7 +169,6 @@ const settingsUi = settingsEditor({
   pathFor: settingsPath,
   read: (path) => offline.read(path),
   write: (path, text, base) => offline.write(path, text, base),
-  effective: () => settings,
   catalog: () => catalog,
   openJson: (level) => void openSettings(settingsPath(level)),
   changed: () => void loadSettings(),
