@@ -29,6 +29,9 @@ browserTest(h, "the calendar syncs from Google as it shows, and after Google end
   assert.match(await banner.innerText(), /One edit is waiting to go to Google/);
   // Reconnecting goes to Google, saying to come back here.
   // Google sign-in isn't set up in this Worker, so the page it lands on says so: what matters is where it went.
+  await app.writeFile("Here.md", "# Here\n");
+  await app.open("Here");
+  await app.idle();
   const here = new URL(app.page.url());
   await Promise.all([app.page.waitForURL(/\/auth\/google\?/), banner.locator("button", { hasText: "Reconnect Google Calendar" }).click()]);
   const went = app.page.url();
