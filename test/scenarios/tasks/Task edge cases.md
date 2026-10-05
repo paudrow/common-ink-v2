@@ -1,4 +1,4 @@
-# Todo edge cases
+# Task edge cases
 
 Tasks whose chips sit close to their words, for checking that nothing overlaps at any width.
 

@@ -1,5 +1,5 @@
 // A few key views as pictures, in light and dark, compared with their baselines (snapshots.ts): lists,
-// todos, markdown extras, two windows side by side, and the Extensions view. Each is on a scenario
+// tasks, markdown extras, two windows side by side, and the Extensions view. Each is on a scenario
 // with a fixed clock, so nothing in it changes from run to run.
 import assert from "node:assert/strict";
 import { browserTest, harness } from "./harness.ts";
@@ -11,7 +11,7 @@ const viewport = { width: 1000, height: 700 };
 for (const dark of [false, true]) {
   const theme = dark ? "dark" : "light";
 
-  browserTest(h, `the lists tour and Chores look as they did (${theme})`, { scenario: "todos", viewport, dark }, async (app) => {
+  browserTest(h, `the lists tour and Chores look as they did (${theme})`, { scenario: "tasks", viewport, dark }, async (app) => {
     const problems: Array<string | null> = [];
     await app.open("Chores");
     await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");

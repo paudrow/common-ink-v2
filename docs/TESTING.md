@@ -9,12 +9,12 @@ Levers work only where everyone is a dev user anyway: `npm run dev`, the browser
 ```sh
 npm run dev                            # http://localhost:8787, every Preview's sample notes
 npm run dev -- --scenario lists        # just the lists tour, on the scenario's clock
-npm run dev -- --scenario todos --fresh --port 8790
+npm run dev -- --scenario tasks --fresh --port 8790
 ```
 
 `npm run dev` builds the app, seeds the workspace and starts the Worker with its Durable Object as the dev user `dev@localhost`. Each scenario keeps its own workspace on disk in `.wrangler/scenarios/<name>`, so switching scenarios keeps what you did in each. `--fresh` resets the workspace to its scenario once the server is up.
 
-In Claude Code, `preview_start` starts the same servers by name from `.claude/launch.json`: `common-ink` on port 8787, and `common-ink-lists`, `common-ink-todos`, `common-ink-embeds`, `common-ink-extensions`, `common-ink-history` and `common-ink-empty` on ports 8788 to 8793. Stop a server by the process you started, never by what listens on its port.
+In Claude Code, `preview_start` starts the same servers by name from `.claude/launch.json`: `common-ink` on port 8787, and `common-ink-lists`, `common-ink-tasks`, `common-ink-embeds`, `common-ink-extensions`, `common-ink-history` and `common-ink-empty` on ports 8788 to 8793. Stop a server by the process you started, never by what listens on its port.
 
 ## Check a change in one command
 
@@ -22,7 +22,7 @@ In Claude Code, `preview_start` starts the same servers by name from `.claude/la
 
 ```sh
 npm run probe -- --scenario lists --open "Lists tour" --keys "/Basil<CR>>>" --wait idle --dump cursor
-npm run probe -- --scenario todos --open "Todo edge cases" --check all --screenshot chips.png
+npm run probe -- --scenario tasks --open "Task edge cases" --check all --screenshot chips.png
 npm run probe -- --scenario embeds --open "Three.js scene" --wait 3000 --probe-embeds --screenshot scene.png
 npm run probe -- --url http://localhost:8788 --dump state
 ```
@@ -71,8 +71,8 @@ A scenario is a workspace to test against, as data: `test/scenarios/<name>.json`
 | --- | --- | --- |
 | `preview` | Every Preview's sample notes and a Try this PR note. It's the default. | real |
 | `empty` | No notes at all. | real |
-| `lists` | The lists tour: nested bullets, numbered lists and todo lists. | 2026-10-05 09:00 |
-| `todos` | Tasks due yesterday, today and later, repeating tasks, `::tasks` lists, a Kanban board, and a week of recorded calendar events and contacts. | 2026-10-05 09:00 |
+| `lists` | The lists tour: nested bullets, numbered lists and task lists. | 2026-10-05 09:00 |
+| `tasks` | Tasks due yesterday, today and later, repeating tasks, `::tasks` lists, a Kanban board, and a week of recorded calendar events and contacts. | 2026-10-05 09:00 |
 | `embeds` | Timers, noise, an html-app with uPlot and three.js, link embeds, code blocks, tables and math. | 2026-10-05 09:00 |
 | `extensions` | Word count installed from the Catalog, sandboxed, asking before it reads a note. | 2026-10-05 09:00 |
 | `history` | A note with four changes by two agents after the seed, and a label. | 2026-10-05 09:00 |

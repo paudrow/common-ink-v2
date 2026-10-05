@@ -2,7 +2,7 @@
 // one command to check a change instead of clicking around.
 //
 //   npm run probe -- --scenario lists --open "Lists tour" --keys "/Basil<CR>>>" --wait idle --dump cursor --screenshot out.png
-//   npm run probe -- --url https://pr-26-common-ink-v2.example.workers.dev --scenario todos --check overlaps
+//   npm run probe -- --url https://pr-26-common-ink-v2.example.workers.dev --scenario tasks --check overlaps
 //
 // Without --url it starts the Worker itself, on a fresh workspace, rebuilding the app first if the code
 // changed. With --url it drives that app (npm run dev, or a Preview); --scenario resets its workspace.

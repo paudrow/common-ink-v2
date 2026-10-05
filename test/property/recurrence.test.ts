@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatRule, nextDue, nth, parseRule } from "../../web/src/extensions/todos/recurrence.ts";
-import { editTaskLine, parseTask } from "../../web/src/extensions/todos/tasks.ts";
+import { formatRule, nextDue, nth, parseRule } from "../../web/src/extensions/tasks/recurrence.ts";
+import { editTaskLine, parseTask } from "../../web/src/extensions/tasks/tasks.ts";
 import { forAll, type Rng } from "./gen.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");

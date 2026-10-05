@@ -28,7 +28,7 @@
       "port": 8788
     },
     {
-      "name": "common-ink-todos",
+      "name": "common-ink-tasks",
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--import",
@@ -37,7 +37,7 @@
         "--port",
         "8789",
         "--scenario",
-        "todos"
+        "tasks"
       ],
       "port": 8789
     },

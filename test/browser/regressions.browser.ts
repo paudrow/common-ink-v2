@@ -10,10 +10,10 @@ const h = harness();
 
 const where = (app: App) => app.call<{ path: string; line: number; column: number; lines: number; mode: string | null }>("where");
 
-browserTest(h, "task chips, checkboxes, bullets, numbers and inline math never sit over a line's text, wide or narrow", { scenario: "todos" }, async (app) => {
+browserTest(h, "task chips, checkboxes, bullets, numbers and inline math never sit over a line's text, wide or narrow", { scenario: "tasks" }, async (app) => {
   for (const width of [1100, 420]) {
     await app.page.setViewportSize({ width, height: 800 });
-    for (const note of ["Chores", "Todo edge cases"]) {
+    for (const note of ["Chores", "Task edge cases"]) {
       await app.open(note);
       await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
       assert.deepEqual(await app.call("check.overlaps"), [], `${note} at ${width}px`);
@@ -49,14 +49,14 @@ browserTest(
     const { lines } = (await where(app))!;
     const items = await app.page.evaluate(() => [...document.querySelectorAll(".cm-line")].length);
     assert.ok(items > 20 && lines === 33);
-    // Lines 5 to 24 are the tour's bullets, numbered items and todos.
+    // Lines 5 to 24 are the tour's bullets, numbered items and tasks.
     assert.deepEqual(await app.call("check.lineShift", Array.from({ length: 20 }, (_, i) => i + 5)), []);
   },
 );
 
-browserTest(h, "a tab click lands even when the tabs redraw between the press and the release", { scenario: "todos", open: "Chores" }, async (app) => {
-  await app.keys(":tabe Todo edge cases<CR>");
-  await app.page.waitForFunction(() => document.title.startsWith("Todo edge cases"));
+browserTest(h, "a tab click lands even when the tabs redraw between the press and the release", { scenario: "tasks", open: "Chores" }, async (app) => {
+  await app.keys(":tabe Task edge cases<CR>");
+  await app.page.waitForFunction(() => document.title.startsWith("Task edge cases"));
   // An unsaved edit: pressing a tab moves focus off the editor, which saves, which redraws the tabs.
   const press = async (target: import("playwright-core").Locator) => {
     await app.keys("Ax<Esc>");
@@ -69,7 +69,7 @@ browserTest(h, "a tab click lands even when the tabs redraw between the press an
   await press(app.tabs.tab(0, "Chores").locator(".name"));
   assert.equal(await app.tabs.selected(), "Chores");
   await app.page.waitForFunction(() => document.title.startsWith("Chores"));
-  await press(app.tabs.tab(0, "Todo edge cases").locator(".close"));
+  await press(app.tabs.tab(0, "Task edge cases").locator(".close"));
   await app.idle();
   assert.deepEqual((await app.tabs.windows())[0].tabs.map((t) => t.label), ["Chores"]);
 });
@@ -118,7 +118,7 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
-browserTest(h, "moving through lists and todos with j and k shifts nothing on screen but the cursor", { scenario: "todos" }, async (app) => {
+browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
       await app.reset("lists");
@@ -136,9 +136,9 @@ browserTest(h, "moving through lists and todos with j and k shifts nothing on sc
 });
 
 browserTest(h, "the settings editor's User and Workspace each show their own values", { scenario: "empty" }, async (app) => {
-  await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "todos.chips": false }));
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "tasks.chips": false }));
   await app.settings.open("user");
-  const chips = app.settings.control("todos.chips");
+  const chips = app.settings.control("tasks.chips");
   await chips.waitFor();
   assert.equal(await chips.locator(".badge", { hasText: "Modified" }).count(), 1, "set in user settings");
   await app.settings.switchTo("Workspace");

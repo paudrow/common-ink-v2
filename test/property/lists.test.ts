@@ -4,7 +4,7 @@ import * as M from "../../web/src/extensions/lists/model.ts";
 import { forAll, type Rng } from "./gen.ts";
 
 /**
- * A well-formed outline: lists of bullets ("-" or "*"), numbers or todos, one kind per list, with each
+ * A well-formed outline: lists of bullets ("-" or "*"), numbers or tasks, one kind per list, with each
  * item's children indented to where its text starts, blank lines between some items, and paragraphs
  * around the lists (and, with `between`, between top-level lists). Numbers count up from a random first
  * number when `ordered`, and are random otherwise. Every item's text is unique: "t0", "t1"…
@@ -13,11 +13,11 @@ function outline(r: Rng, { between = false, ordered = true } = {}): string[] {
   const lines: string[] = [];
   let word = 0;
   const list = (indent: number, depth: number) => {
-    const style = r.pick(["-", "*", "number", "todo"]);
+    const style = r.pick(["-", "*", "number", "task"]);
     let n = r.int(1, 9);
     for (let k = r.int(1, 4); k > 0; k--) {
       const marker = style === "number" ? `${ordered ? n++ : r.int(1, 12)}.` : style === "*" ? "*" : "-";
-      lines.push(`${" ".repeat(indent)}${marker} ${style === "todo" ? r.pick(["[ ] ", "[x] "]) : ""}t${word++}`);
+      lines.push(`${" ".repeat(indent)}${marker} ${style === "task" ? r.pick(["[ ] ", "[x] "]) : ""}t${word++}`);
       if (depth < 3 && r.bool(0.35)) list(indent + marker.length + 1, depth + 1);
       if (r.bool(0.15)) lines.push("");
     }
@@ -69,7 +69,7 @@ type Case = { lines: string[]; i: number; j: number; kind: M.Kind };
 const outlineCase = (options: Parameters<typeof outline>[1]) => (r: Rng): Case => {
   const lines = outline(r, options);
   const all = items(lines);
-  return { lines, i: r.pick(all), j: r.int(0, lines.length - 1), kind: r.pick(["bullet", "number", "todo"] as const) };
+  return { lines, i: r.pick(all), j: r.int(0, lines.length - 1), kind: r.pick(["bullet", "number", "task"] as const) };
 };
 
 test("indenting, dedenting, moving, converting and renumbering keep every item's text, the number of lines, and children indented as far as their parent's text", () => {

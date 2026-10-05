@@ -59,11 +59,11 @@ test("production sets none of the dev-only variables, and Previews set levers wi
 test("every scenario builds: its sections exist, its dates follow its clock, and it opens on a note it has", () => {
   const sections = readSections(path.join(root, "examples/preview"));
   const scenarios = readScenarios(path.join(root, "test/scenarios"));
-  assert.deepEqual(scenarios.map((s) => s.name), ["embeds", "empty", "extensions", "history", "lists", "todos"]);
-  const todos = scenarioSeed(scenarios.find((s) => s.name === "todos")!, sections, "2030-01-01");
-  assert.deepEqual(todos.scenario, { name: "todos", now: "2026-10-05T09:00" });
-  assert.match(todos.notes.find((n) => n.path === "Chores.md")!.text, /Water the plants due:2026-10-05 rec:3d/);
-  assert.deepEqual(JSON.parse(todos.notes.find((n) => n.path === ".common-ink/layout.json")!.text).root.tabs, [{ file: "Chores.md" }]);
+  assert.deepEqual(scenarios.map((s) => s.name), ["embeds", "empty", "extensions", "history", "lists", "tasks"]);
+  const tasks = scenarioSeed(scenarios.find((s) => s.name === "tasks")!, sections, "2030-01-01");
+  assert.deepEqual(tasks.scenario, { name: "tasks", now: "2026-10-05T09:00" });
+  assert.match(tasks.notes.find((n) => n.path === "Chores.md")!.text, /Water the plants due:2026-10-05 rec:3d/);
+  assert.deepEqual(JSON.parse(tasks.notes.find((n) => n.path === ".common-ink/layout.json")!.text).root.tabs, [{ file: "Chores.md" }]);
   assert.deepEqual(scenarioSeed(scenarios.find((s) => s.name === "empty")!, sections).notes, []);
   const extensions = scenarioSeed(scenarios.find((s) => s.name === "extensions")!, sections);
   assert.ok(extensions.notes.some((n) => n.path === ".common-ink/extensions/word-count/extension.json"), "installs Word count");

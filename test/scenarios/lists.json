@@ -1,5 +1,5 @@
 {
-  "about": "Lists that edit like an outliner: nested bullets, numbered lists and todo lists.",
+  "about": "Lists that edit like an outliner: nested bullets, numbered lists and task lists.",
   "sections": ["lists"],
   "now": "2026-10-05T09:00",
   "open": "Lists tour.md"

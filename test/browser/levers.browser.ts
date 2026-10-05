@@ -8,7 +8,7 @@ const h = harness();
 const chip = (app: { page: import("playwright-core").Page }, todo: string) =>
   app.page.locator(".cm-line", { hasText: todo }).locator('.tk[data-field="due"]').first().textContent();
 
-browserTest(h, "a scenario's clock dates its todos, ?now= moves the page's clock, and the clock keeps running across a reload", { scenario: "todos", open: "Chores" }, async (app) => {
+browserTest(h, "a scenario's clock dates its tasks, ?now= moves the page's clock, and the clock keeps running across a reload", { scenario: "tasks", open: "Chores" }, async (app) => {
   assert.match((await app.state()).clock, /^2026-10-0[45]T/, "the scenario's own day");
   await app.page.waitForSelector(".tab-editor:not([hidden]) .tk");
   assert.equal(await chip(app, "Water the plants"), "Today");
