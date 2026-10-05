@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { EditorState } from "@codemirror/state";
 import { EditorView, WidgetType } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
-import type { BlockPreview } from "common-ink/live-preview";
+import { blockHeight, measureBlock, type BlockPreview } from "common-ink/live-preview";
 
 type Align = "left" | "center" | "right" | "";
 
@@ -46,10 +46,14 @@ class TableWidget extends WidgetType {
   eq(other: TableWidget) {
     return other.source === this.source;
   }
+  get estimatedHeight() {
+    return blockHeight(`table|${this.source}`, 12 + this.source.split("\n").length * 30);
+  }
   toDOM(view: EditorView) {
     const box = document.createElement("div");
     box.className = "cm-gfm-table";
     box.append(this.build());
+    measureBlock(`table|${this.source}`, box);
     // A click puts the cursor in the table, which shows its markdown to edit.
     box.addEventListener("mousedown", (e) => {
       if ((e.target as HTMLElement).closest(".cm-md-link") && (e.metaKey || e.ctrlKey)) return;

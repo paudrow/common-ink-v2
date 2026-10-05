@@ -507,9 +507,11 @@ export class ExtensionRuntime {
           await services.check({ kind: "clipboard:read" });
           return navigator.clipboard.readText();
         },
-        write: async (text) => {
-          await services.check({ kind: "clipboard:write" });
-          await navigator.clipboard.writeText(text);
+        write: (text) => {
+          // A browser lets a page write the clipboard only while it handles a click or a key. Allowed
+          // already, it's written now, before anything waits; otherwise you're asked first.
+          if (this.broker.granted(m, { kind: "clipboard:write" })) return navigator.clipboard.writeText(text);
+          return services.check({ kind: "clipboard:write" }).then(() => navigator.clipboard.writeText(text));
         },
       },
       notifications: { show: (title, body) => this.notify(services, title, body) },
