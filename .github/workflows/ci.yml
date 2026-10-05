@@ -36,8 +36,10 @@ jobs:
       - run: npm run check
 
   # The app in a real Chrome against the real Worker, in two halves side by side: the sandbox, test
-  # levers, regressions and visual snapshots (docs/TESTING.md). A failed test leaves its screenshot,
-  # the inspector's state and a trace in the test-results artifact.
+  # levers, regressions and visual snapshots (docs/TESTING.md). Each test file starts its own Worker
+  # and Chrome, so a runner (4 CPUs) runs two files at a time, not as many as it can: overloaded,
+  # pages draw late and waits time out. A failed test leaves its screenshot, the inspector's state and
+  # a trace in the test-results artifact.
   browser:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
@@ -55,6 +57,7 @@ jobs:
       - run: npm run test:browser
         env:
           SHARD: ${{ matrix.shard }}/2
+          BROWSER_CONCURRENCY: 2
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

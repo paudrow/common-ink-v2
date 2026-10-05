@@ -129,7 +129,7 @@ Keys are written as Vim writes them: characters as they are, and `<Esc>`, `<CR>`
 
 ## Browser tests
 
-`npm run test:browser` runs `test/browser/*.browser.ts` against the real Worker and headless Chrome (`CHROME_PATH`, or Chrome where it usually is). Each file starts its own Worker, with levers on unless it says otherwise. CI runs them in two shards.
+`npm run test:browser` runs `test/browser/*.browser.ts` against the real Worker and headless Chrome (`CHROME_PATH`, or Chrome where it usually is). Each file starts its own Worker and Chrome, with levers on unless it says otherwise. Four files run at a time (`BROWSER_CONCURRENCY`), and `SHARD=1/2` runs half of them. CI runs two shards, two files at a time each.
 
 `browserTest(h, name, options, body)` in `test/browser/harness.ts` runs one test in a fresh browser context. It resets to `scenario` and opens `open` first, and stubs every other site with an empty page unless `internet: "live"`. Any error the page logs fails the test, except a 404 for a file that doesn't exist yet and what `allowErrors` names. A failed test leaves `screenshot.png`, `state.json` (the inspector's state), `errors.txt` and, in CI or with `TRACE=1`, `trace.zip` in `test-results/<test>/`, which CI uploads.
 
