@@ -21,7 +21,7 @@ export const PACKAGES = [
 
 /** The app's own modules, by the name extensions import them as, with what they export. */
 export const APP_MODULES = {
-  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockPreview", "livePreview", "previewEnabled", "revealedLines"] },
+  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockHeight", "blockPreview", "collapsedBlockAt", "livePreview", "measureBlock", "previewEnabled", "revealedLines"] },
   "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
   "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },

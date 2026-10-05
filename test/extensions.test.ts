@@ -298,3 +298,41 @@ test("the app's catalog lists folders on the app only", async () => {
   }
   assert.deepEqual(parseCatalog({ extensions: [{ id: "far", name: "Far", path: "https://elsewhere.example/far/" }] }, "https://app.example/catalog/index.json", true), [], "not another site's");
 });
+
+test("a built-in allowed to copy writes the clipboard in the click itself, before anything waits", async () => {
+  const { Commands } = await import("../web/src/commands.ts");
+  const { ExtensionRuntime } = await import("../web/src/extension-runtime.ts");
+  const { DEFAULTS } = await import("../worker/src/settings.ts");
+  const runtime = new ExtensionRuntime({
+    me: "you@example.com",
+    commands: new Commands(),
+    bar: { provide() {}, open() {} } as never,
+    panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
+    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
+    offline: { read: async () => ({ text: "", revision: 0 }) } as never,
+    settings: () => DEFAULTS,
+    files: () => [],
+    openFromBar() {},
+    lastFile: () => null,
+    statusItems: { declare() {}, set() {} } as never,
+    onSaved: [],
+    onFocus: [],
+    saveGrant: async () => {},
+    prompt: async () => "deny" as const,
+    changed() {},
+  });
+  let ctx!: ExtensionContext;
+  await runtime.load([builtIn("copier", { activate: (c) => void (ctx = c) }, { activationEvents: ["onStartup"], permissions: { "clipboard:write": { why: "Copy" } } })], [], [], false, []);
+  runtime.declare();
+  await runtime.start();
+  const written: string[] = [];
+  const nav = globalThis.navigator;
+  Object.defineProperty(globalThis, "navigator", { value: { clipboard: { writeText: async (t: string) => void written.push(t) } }, configurable: true });
+  try {
+    const done = ctx.clipboard.write("some code");
+    assert.deepEqual(written, ["some code"], "written already, with nothing awaited first");
+    await done;
+  } finally {
+    Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });
+  }
+});
