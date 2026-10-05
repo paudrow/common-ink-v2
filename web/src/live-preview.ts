@@ -1,7 +1,9 @@
 // Live preview: markdown shown as it reads, with the raw text back wherever you're working. A source
 // finds, line by line, what to draw: widgets that stand in for text (a checkbox for "- [ ]"), marks and
-// line styles. On any line the cursor or a selection touches, the widgets step aside and the raw text
-// shows, so typing, Vim motions (w, e, f, x, visual) and selections only ever meet real characters.
+// line styles. Where the cursor or a selection is, the widgets step aside and the raw text shows, so
+// typing, Vim motions (w, e, f, x, visual) and selections only ever meet real characters: on the whole
+// line, or, for a preview that says which markup it belongs to (its span), only when that's touched.
+// A line's layout (a list's hanging indent) can say it always stays, so the line never jumps.
 // A block preview stands in for whole lines (a table, display math, an embed) the same way: anywhere
 // in it, the cursor brings back its raw text.
 import { EditorSelection, EditorState, Facet, Prec, StateField, type Extension, type Line, type Range, type StateCommand } from "@codemirror/state";
@@ -13,6 +15,10 @@ export interface Preview {
   from: number;
   to: number;
   decoration: Decoration;
+  /** The markup it stands for (a link, **bold**): it steps aside only when the cursor or a selection touches that, not the whole line. */
+  span?: { from: number; to: number };
+  /** Drawn even where the text shows: layout that keeps the line from moving (a list's indent and number column). */
+  always?: boolean;
 }
 
 /** What to draw on one line. Called for visible lines only. */
@@ -31,6 +37,9 @@ export function revealedLines(view: EditorView): Set<number> {
   return lines;
 }
 
+/** Whether the cursor or a selection is in or at the edge of a range. */
+export const touches = (state: EditorState, span: { from: number; to: number }) => state.selection.ranges.some((r) => r.from <= span.to && r.to >= span.from);
+
 function build(view: EditorView, source: PreviewSource): DecorationSet {
   if (!view.state.facet(previewEnabled)) return Decoration.none;
   const revealed = revealedLines(view);
@@ -39,9 +48,12 @@ function build(view: EditorView, source: PreviewSource): DecorationSet {
     for (let pos = from; pos <= to; ) {
       const line = view.state.doc.lineAt(pos);
       for (const p of source(line, view)) {
-        // What stands in for text (a widget, or hidden markers) is left out where the text shows. A
-        // line's own style (a code block's, a quote's) stays, so the line doesn't jump as the cursor comes.
-        if (revealed.has(line.number) && (p.from < p.to || p.decoration.spec.widget)) continue;
+        // What stands in for text (a widget, or hidden markers) is left out where the text shows: the
+        // markup it's for, when it says, or else the line. A line's own style (a code block's, a
+        // quote's) stays, so the line doesn't jump as the cursor comes.
+        const standsIn = p.from < p.to || !!p.decoration.spec.widget;
+        const shown = p.span ? touches(view.state, p.span) : revealed.has(line.number);
+        if (standsIn && shown && !p.always) continue;
         ranges.push(p.decoration.range(p.from, p.to));
       }
       pos = line.to + 1;

@@ -79,3 +79,54 @@ test("a todo's chips and checkmark sit in their own boxes, clear of its text, wi
     await page.close();
   }
 });
+
+/** Where an item's words start on screen, and where the line starts: found by its text. */
+const textX = (page: Page, words: string) =>
+  page.evaluate((words) => {
+    const line = [...document.querySelectorAll<HTMLElement>(".cm-line")].find((l) => l.textContent!.includes(words))!;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const at = n.textContent!.indexOf(words);
+      if (at < 0) continue;
+      const r = document.createRange();
+      r.setStart(n, at);
+      r.setEnd(n, at + 1);
+      return { x: Math.round(r.getBoundingClientRect().left * 10) / 10, top: Math.round(line.getBoundingClientRect().top) };
+    }
+    return null;
+  }, words);
+
+test("an item's line doesn't move as the cursor comes onto it, its marker or its words; Vim motions cross the marker as on raw text", async () => {
+  const page = await h.browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await page.goto(`${h.base}/?file=${encodeURIComponent("Lists tour.md")}`);
+  await page.waitForSelector(".cm-list-number");
+  await page.click(".cm-content");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("g");
+  await page.keyboard.press("g");
+  const away = { bake: await textX(page, "Bake for"), basil: await textX(page, "Basil") };
+  // Onto "4. Bake for twenty minutes": on its words, then on its number.
+  await page.keyboard.type("/Bake for");
+  await page.keyboard.press("Enter");
+  assert.deepEqual(await textX(page, "Bake for"), away.bake, "the cursor on its words: the line stays put");
+  assert.equal(await page.locator(".cm-line", { hasText: "Bake for" }).locator(".cm-list-number").textContent(), "4.", "its number is still its number");
+  await page.keyboard.press("0");
+  assert.deepEqual(await textX(page, "Bake for"), away.bake, "the cursor on its number: the line stays put");
+  // A nested bullet: on its marker, the bullet is its "-", in the same box; the words don't move.
+  await page.keyboard.type("/Basil");
+  await page.keyboard.press("Enter");
+  assert.deepEqual(await textX(page, "Basil"), away.basil);
+  await page.keyboard.press("^");
+  assert.equal(await page.locator(".cm-line", { hasText: "Basil" }).locator(".cm-list-bullet.raw").textContent(), "-", "on the marker, the bullet is its -");
+  assert.deepEqual(await textX(page, "Basil"), away.basil, "and the words are where they were");
+  // Vim's w from the marker goes to the word, and x deletes what's under the cursor, as on raw text.
+  await page.keyboard.press("w");
+  await page.keyboard.press("x");
+  const file = await page.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 1300));
+    return (await fetch(`/api/file?path=${encodeURIComponent("Lists tour.md")}`).then((r) => r.json())).text as string;
+  });
+  assert.match(file, /^    - asil$/m, "w landed on the B");
+  await page.keyboard.press("u");
+  await page.close();
+});

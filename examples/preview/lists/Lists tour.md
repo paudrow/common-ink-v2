@@ -1,6 +1,6 @@
 # Lists tour
 
-Lists edit like an outliner. Put the cursor on an item and try the keys below; the line you're on shows its markdown.
+Lists edit like an outliner. Put the cursor on an item and try the keys below. The line you're on doesn't move: its indent, bullet and number stay where they are, and a bullet shows its `-` only while the cursor is on it.
 
 - Plan the garden
   - Order seeds

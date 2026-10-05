@@ -70,11 +70,16 @@ test("markdown shows as it reads: markers hidden, links as their text, code raw"
   view.destroy();
 });
 
-test("the line the cursor is on shows its raw markdown", () => {
+test("markup shows its raw markdown where the cursor is: that bold, that code, not the whole line", () => {
   const view = editor();
   view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 3 } });
-  assert.equal(shown(view)[1], "**Pack** the *maps* and ~~skis~~ and `boots`.");
-  assert.equal(shown(view)[0], "Trip plan", "the others stay drawn");
+  assert.equal(shown(view)[1], "**Pack** the maps and skis and boots.", "in the bold, its markers");
+  assert.equal(shown(view)[0], "Trip plan", "the other lines stay drawn");
+  const line = view.state.doc.line(2);
+  view.dispatch({ selection: { anchor: line.from + line.text.indexOf("boots") } });
+  assert.equal(shown(view)[1], "Pack the maps and skis and `boots`.", "in the code, its backticks");
+  view.dispatch({ selection: { anchor: line.from + line.text.indexOf("maps"), head: line.from + line.text.indexOf("skis") } });
+  assert.equal(shown(view)[1], "Pack the *maps* and ~~skis~~ and boots.", "a selection shows what it touches");
   // A line's own style stays as the cursor comes onto it: a code line is still a code line.
   view.dispatch({ selection: { anchor: view.state.doc.line(7).from + 2 } });
   assert.ok(view.contentDOM.querySelectorAll(".cm-line")[6].classList.contains("cm-md-codeblock"));

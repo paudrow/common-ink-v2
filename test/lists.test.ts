@@ -195,7 +195,7 @@ test("the commands convert items, and fold an item's children away and back", ()
   view.destroy();
 });
 
-test("lists are drawn with bullets by depth, numbers in a column, hanging indents and the raw line where the cursor is", () => {
+test("lists are drawn with bullets by depth, numbers in a column and hanging indents, and keep that layout under the cursor", () => {
   const view = editor("- top\n  - inner\n    text of inner\n1. one\n- [ ] todo\n\nEnd", "End");
   const lines = [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")];
   assert.equal(lines[0].querySelector(".cm-list-bullet")?.textContent, "•");
@@ -206,9 +206,18 @@ test("lists are drawn with bullets by depth, numbers in a column, hanging indent
   assert.equal(lines[3].querySelector(".cm-list-number")?.textContent, "1.");
   assert.equal(lines[4].querySelector(".cm-list-bullet"), null, "a todo's box is the Todos extension's");
   assert.ok(lines[4].classList.contains("cm-list-line"));
-  view.dispatch({ selection: { anchor: view.state.doc.line(2).from } });
-  const raw = view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[1];
-  assert.equal(raw.textContent, "  - inner", "the cursor's line is its markdown");
-  assert.ok(!raw.classList.contains("cm-list-line"));
+  // The cursor on an item's text: its line is laid out the same, bullet and all.
+  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 6 } });
+  const inner = () => view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[1];
+  assert.ok(inner().classList.contains("cm-list-line"), "its hanging indent stays");
+  assert.equal(inner().style.getPropertyValue("--list-depth"), "1");
+  assert.equal(inner().querySelector(".cm-list-bullet")?.textContent, "◦");
+  // On its marker, the bullet is its "-", in the same box.
+  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 2 } });
+  assert.equal(inner().querySelector(".cm-list-bullet.raw")?.textContent, "-");
+  assert.ok(inner().classList.contains("cm-list-line"));
+  // A number is always its own text, whatever the cursor's doing.
+  view.dispatch({ selection: { anchor: view.state.doc.line(4).from } });
+  assert.equal(view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[3].querySelector(".cm-list-number")?.textContent, "1.");
   view.destroy();
 });
