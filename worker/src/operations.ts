@@ -1,6 +1,8 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
+import type { SourceStatus } from "./data-sources.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
+import type { Contact, Event } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
@@ -11,10 +13,26 @@ export interface Store {
   write(w: Write): Promise<WriteResult> | WriteResult;
   recent(q: HistoryQuery): Promise<Change[]> | Change[];
   undo(revisions: Revision[], author: Author): Promise<UndoResult[]> | UndoResult[];
+  sourceStatus(email: string): Promise<SourceStatus> | SourceStatus;
+  events(email: string, from: string, to: string): Promise<Event[]>;
+  contacts(email: string, query: string): Promise<Contact[]>;
   combined(revisions: Revision[]): Promise<FileDiff[]> | FileDiff[];
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
 }
+
+/** The person whose data sources an author reads: themselves, or whoever an agent works for. */
+function personOf(author: Author): string {
+  const email = author.kind === "user" ? author.email : author.by;
+  if (!email) throw new Error("Data sources belong to a person, and this agent isn't working for one");
+  return email;
+}
+
+const isoTime = (v: unknown, fallback: Date): string | null => {
+  if (v === undefined || v === "") return fallback.toISOString();
+  const t = typeof v === "string" ? Date.parse(v) : NaN;
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+};
 
 /** Files are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
 const MAX_FILE_BYTES = 1_000_000;
@@ -129,6 +147,30 @@ export const OPERATIONS = {
     },
     run: async (store, { revisions }, author) => store.undo(revisions, author),
   }),
+  data_sources: op<Record<string, never>>({
+    description: "Which data sources you have: your Google calendar and contacts, sample data, or none yet.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store, _args, author) => store.sourceStatus(personOf(author)),
+  }),
+  list_events: op<{ from: string; to: string }>({
+    description: "Calendar events between two times (ISO 8601; by default the next 14 days), with recurring events as separate occurrences.",
+    input: { type: "object", properties: { from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" } } },
+    parse: (a) => {
+      const now = new Date();
+      const from = isoTime(a.from, now);
+      const to = isoTime(a.to, new Date(Date.parse(from ?? now.toISOString()) + 14 * 86_400_000));
+      if (!from || !to) return fail('"from" and "to" must be times, like "2026-10-05T00:00:00Z"');
+      return to > from ? ok({ from, to }) : fail('"to" must be after "from"');
+    },
+    run: async (store, { from, to }, author) => store.events(personOf(author), from, to),
+  }),
+  list_contacts: op<{ query: string }>({
+    description: "Your contacts, optionally only those whose name, email or organization contains `query`.",
+    input: { type: "object", properties: { query: { type: "string" } } },
+    parse: (a) => ok({ query: typeof a.query === "string" ? a.query : "" }),
+    run: async (store, { query }, author) => store.contacts(personOf(author), query),
+  }),
   diff: op<{ revisions: Revision[] }>({
     description:
       "What chosen changes did together, file by file: each run of changes next to each other in a file's history, as its text before and after. Changes not chosen are left out.",
@@ -219,6 +261,8 @@ export async function runOperation(name: OperationName, args: Args, store: Store
   try {
     return ok(await operation.run(store, parsed.value, author));
   } catch (err) {
+    // Data sources fail in ways the caller can fix (connect Google); say how instead of a 500.
+    if (name === "data_sources" || name === "list_events" || name === "list_contacts") return fail((err as Error).message);
     if (err instanceof OperationError) return fail(err.message);
     throw err;
   }

@@ -1,0 +1,26 @@
+{
+  "totalPeople": 4,
+  "connections": [
+    {
+      "resourceName": "people/c1",
+      "names": [{ "displayName": "Sam Rivera" }],
+      "emailAddresses": [{ "value": "sam@example.com" }],
+      "phoneNumbers": [{ "value": "+1 555 0100" }]
+    },
+    {
+      "resourceName": "people/c2",
+      "names": [{ "displayName": "Ada Lovelace" }],
+      "emailAddresses": [{ "value": "ada@example.org" }, { "value": "ada.l@example.com" }],
+      "organizations": [{ "name": "Analytical Engines Ltd" }]
+    },
+    {
+      "resourceName": "people/c3",
+      "names": [{ "displayName": "Dr. Patel's office" }],
+      "phoneNumbers": [{ "value": "+1 555 0142" }]
+    },
+    {
+      "resourceName": "people/c4",
+      "emailAddresses": [{ "value": "no-name@example.com" }]
+    }
+  ]
+}

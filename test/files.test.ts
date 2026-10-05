@@ -271,7 +271,7 @@ test("starting twice, or from an empty database, ends in the same shape", () => 
   const first = tables();
   new Files(db);
   assert.deepEqual(tables(), first);
-  assert.deepEqual(first, ["changes", "files", "meta"]);
+  assert.deepEqual(first, ["changes", "connections", "files", "meta"]);
 });
 
 test("a Preview database with an undo column already, and no record of it, starts fine", () => {

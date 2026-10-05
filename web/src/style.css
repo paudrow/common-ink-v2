@@ -647,6 +647,46 @@ body {
   padding: 0;
 }
 
+:is(#panel, .tab-view) .event,
+:is(#panel, .tab-view) .contact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.375rem 0;
+  border-top: 1px solid var(--line);
+}
+
+:is(#panel, .tab-view) .event .when,
+:is(#panel, .tab-view) .where {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+:is(#panel, .tab-view) .contact a {
+  color: var(--accent);
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+:is(#panel, .tab-view) .search {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+:is(#panel, .tab-view) .connect {
+  border: 1px solid var(--line) !important;
+  border-radius: 4px;
+  padding: 0.375rem 0.75rem;
+  color: var(--accent);
+}
+
 .notice {
   position: absolute;
   top: 1rem;

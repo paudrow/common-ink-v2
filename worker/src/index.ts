@@ -5,13 +5,19 @@ import type { FilePath, Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
-import type { Workspace } from "./workspace.ts";
+import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type SignInConfig } from "./sign-in.ts";
+import { cookie } from "./session.ts";
+import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 
 export { Workspace } from "./workspace.ts";
 
-interface Env {
+interface Env extends WorkspaceEnv {
   ASSETS: Fetcher;
   WORKSPACE: DurableObjectNamespace<Workspace>;
+  /** Signs session cookies (a secret). With GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, turns on Google sign-in. */
+  SESSION_SECRET?: string;
+  /** Who may sign in with Google: addresses separated by commas or spaces. */
+  ALLOWED_EMAILS?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   /** Set by `npm run dev` and in Previews: who you are signed in as there. */
@@ -38,20 +44,44 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 export default {
   async fetch(req, env) {
     // The settings schema is public, so editors outside the app can check settings files against it.
-    if (new URL(req.url).pathname === SCHEMA_URL) return secure(json(schema));
-    const who = await identify(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD, devUser: env.DEV_USER });
-    if (!who) return secure(new Response("Sign in through Cloudflare Access to use Common Ink.\n", { status: 401 }));
     const url = new URL(req.url);
+    if (url.pathname === SCHEMA_URL) return secure(json(schema));
+    const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
+    const signIn = signInConfig(env);
+    if (url.pathname.startsWith("/auth/")) {
+      const answer = await signInRoute(req, url, signIn, (granted) => workspace.connectGoogle(granted));
+      if (answer) return secure(answer);
+    }
+    const who = await identify(req, {
+      teamDomain: env.ACCESS_TEAM_DOMAIN,
+      aud: env.ACCESS_AUD,
+      devUser: env.DEV_USER,
+      sessionEmail: (r) => sessionEmail(r, env.SESSION_SECRET),
+    });
+    if (!who) {
+      // A person opening the app goes to sign in; anything else is told no.
+      if (signIn && req.method === "GET" && !url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
+        return secure(Response.redirect(`${url.origin}/auth/google?next=${encodeURIComponent(url.pathname + url.search)}`, 302));
+      }
+      return secure(new Response("Sign in to use Common Ink.\n", { status: 401 }));
+    }
+    // A signed-in browser's cookie goes with requests other sites make; only this site may change things.
+    const origin = req.headers.get("Origin");
+    if (req.method !== "GET" && origin && origin !== url.origin && cookie(req, SESSION_COOKIE)) {
+      return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
+    }
     // A workspace plugin's code, from its file, so the page can import it under `script-src 'self'`.
     const plugin = /^\/plugins\/([a-zA-Z0-9][\w.-]*)\/index\.js$/.exec(url.pathname);
     if (plugin && req.method === "GET") {
-      const store = env.WORKSPACE.get(env.WORKSPACE.idFromName("main")) as unknown as Store;
-      const file = await store.read(`.common-ink/plugins/${plugin[1]}/index.js` as FilePath);
+      const file = await (workspace as unknown as Store).read(`.common-ink/plugins/${plugin[1]}/index.js` as FilePath);
       if (!file) return secure(new Response("No such plugin\n", { status: 404 }));
       return secure(new Response(file.text, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
-    const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
+    if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
+      await workspace.disconnectGoogle(who.email);
+      return secure(json({ ok: true }));
+    }
     const store = workspace as unknown as Store;
     // The live connection goes straight to the workspace: a WebSocket's response can't be rewrapped.
     if (url.pathname === "/api/live") return workspace.fetch(req);
@@ -61,6 +91,12 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** Google sign-in, if this Worker has what it needs for it. */
+function signInConfig(env: Env): SignInConfig | null {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.SESSION_SECRET) return null;
+  return { google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET }, sessionSecret: env.SESSION_SECRET, allowed: allowedEmails(env.ALLOWED_EMAILS) };
+}
+
 /** The API routes, each running one workspace operation with its arguments from the query and the body. */
 const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
@@ -69,6 +105,9 @@ const ROUTES: Record<string, OperationName> = {
   "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
+  "GET /api/sources": "data_sources",
+  "GET /api/events": "list_events",
+  "GET /api/contacts": "list_contacts",
   "POST /api/diff": "diff",
   "GET /api/version": "read_version",
   "POST /api/restore": "restore",

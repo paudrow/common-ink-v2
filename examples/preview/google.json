@@ -1,0 +1,11 @@
+{
+  "pr": 13,
+  "title": "Google sign-in, calendar and contacts",
+  "steps": [
+    "⌘⇧P, Show calendar: the next two weeks, from the recorded sample calendar (this Preview has no Google account). The standup repeats, and ↻ marks its occurrences; one was cancelled and doesn't show.",
+    "⌘⇧P, Show contacts, and type in the search box: Ada, Sam, or an email.",
+    "Both are panels, so they open in windows too: drag the panel's title into a window, or Open Calendar in a window.",
+    "Agents get the same data: the MCP tools list_events and list_contacts, or `curl <this Preview>/api/events`.",
+    "Google sign-in itself runs in production only: a Preview opens signed in as a dev user, as before. Sign out is in ⌘⇧P."
+  ]
+}

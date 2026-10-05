@@ -22,7 +22,7 @@
   // Each Preview has its own Durable Objects, so its own notes, filled from the build's seed.json. It
   // signs you in as a dev user, so there's nothing real in it to reach.
   "previews": {
-    "vars": { "SEED": "1", "DEV_USER": "preview@common-ink" },
+    "vars": { "SEED": "1", "DEV_USER": "preview@common-ink", "DATA_FIXTURES": "1" },
     "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] }
   }
 }

@@ -8,7 +8,7 @@
     "common-ink": "bin/common-ink"
   },
   "scripts": {
-    "dev": "npm run build && npm run seed && wrangler dev -c worker/wrangler.jsonc --port 8787 --var DEV_USER:dev@localhost --var SEED:1",
+    "dev": "npm run build && npm run seed && wrangler dev -c worker/wrangler.jsonc --port 8787 --var DEV_USER:dev@localhost --var SEED:1 --var DATA_FIXTURES:1",
     "build": "vite build web --outDir ../dist --emptyOutDir",
     "seed": "node --import tsx scripts/write-seed.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",

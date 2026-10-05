@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Files, type Author } from "../worker/src/files.ts";
+import type { Author } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { combine, DEFAULT_SETTINGS, DEFAULTS, defaultsText, parseSettings, schema, SETTINGS } from "../worker/src/settings.ts";
 import { commandForKey, keyFor } from "../web/src/commands.ts";
 import { docLabel } from "../web/src/describe.ts";
 import type { FilePath } from "../worker/src/files.ts";
-import { memoryDb } from "./sqlite.ts";
+import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
 
@@ -42,7 +42,7 @@ test("the schema and the defaults view list every setting", () => {
 });
 
 test("the defaults read like a file but can't be written", async () => {
-  const files = new Files(memoryDb());
+  const files = memoryStore();
   const read = await runOperation("read_file", { path: DEFAULT_SETTINGS }, files, you);
   assert.ok(read.ok && (read.value as { text: string }).text === defaultsText());
   const write = await runOperation("write_file", { path: DEFAULT_SETTINGS, text: "{}", base: 0 }, files, you);

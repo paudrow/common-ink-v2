@@ -285,6 +285,7 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
+  { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
@@ -340,6 +341,12 @@ const plugins: PluginContext = {
       panels.refresh(id);
       workbench.refreshView(id);
     },
+  },
+  sources: {
+    status: api.sources,
+    events: api.events,
+    contacts: api.contacts,
+    connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
   },
   files: { list: () => files, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {

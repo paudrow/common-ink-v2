@@ -150,10 +150,15 @@ const SCHEMA: Array<(db: Db) => void> = [
     );
     db.run("CREATE INDEX IF NOT EXISTS changes_by_path ON changes(path, revision)");
   },
-  // 2. Undo and redo are changes that record which change they undid.
+  // Undo and redo are changes that record which change they undid.
   (db) => {
     if (!hasColumn(db, "changes", "undoes")) db.run("ALTER TABLE changes ADD COLUMN undoes INTEGER");
   },
+  // Data source connections: a person's Google refresh token and what it may read.
+  (db) =>
+    db.run(
+      "CREATE TABLE IF NOT EXISTS connections(email TEXT NOT NULL, provider TEXT NOT NULL, refresh_token TEXT NOT NULL, scopes TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(email, provider))",
+    ),
   // 3. A change can delete its file.
   (db) => {
     if (!hasColumn(db, "changes", "deletes")) db.run("ALTER TABLE changes ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0");

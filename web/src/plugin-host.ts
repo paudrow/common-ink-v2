@@ -23,6 +23,8 @@ export interface Contributions {
   editor: string[];
   /** What it adds to history, such as words for the changes it knows. */
   history: string[];
+  /** The data sources it reads, noted as it reads them. */
+  dataSources: string[];
 }
 
 export type PluginState =
@@ -100,7 +102,12 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
  * A context that notes what a plugin adds and catches what its commands, views and listeners throw,
  * calling `failed` instead of letting it reach the app.
  */
-export function recording(ctx: PluginContext, adds: Contributions, failed: (err: unknown) => void): PluginContext {
+export function recording(ctx: PluginContext, adds: Contributions, failed: (err: unknown) => void, changed: () => void = () => {}): PluginContext {
+  const reads = (source: string) => {
+    if (adds.dataSources.includes(source)) return;
+    adds.dataSources.push(source);
+    changed();
+  };
   // Errors, thrown or from a returned promise, stop here.
   const guard =
     <A extends unknown[], R>(fn: (...args: A) => R, fallback?: R) =>
@@ -121,6 +128,17 @@ export function recording(ctx: PluginContext, adds: Contributions, failed: (err:
       register: (...commands) => {
         adds.commands.push(...commands.map((c) => c.title));
         ctx.commands.register(...commands.map((c) => ({ ...c, run: guard(() => c.run()) })));
+      },
+    },
+    sources: {
+      ...ctx.sources,
+      events: (from, to) => {
+        reads("Calendar events");
+        return ctx.sources.events(from, to);
+      },
+      contacts: (query) => {
+        reads("Contacts");
+        return ctx.sources.contacts(query);
       },
     },
     keybindings: {
@@ -182,7 +200,7 @@ const inert: PluginContext = new Proxy(function () {}, { get: () => inert, apply
 
 /** What a plugin would add, found by starting it where nothing it does takes effect. For built-ins that are off. */
 export function dryRun(module: PluginModule): Contributions | null {
-  const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [] };
+  const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] };
   try {
     module.activate(recording(inert, adds, () => {}));
     return adds;
@@ -211,14 +229,14 @@ export async function startPlugins(o: StartOptions): Promise<PluginEntry[]> {
   const entries: PluginEntry[] = [];
 
   const start = (entry: PluginEntry, module: PluginModule) => {
-    const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [] };
+    const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [], dataSources: [] };
     const failed = (err: unknown) => {
       console.error(`Plugin ${entry.manifest.id}:`, err);
       entry.error = message(err);
       o.changed();
     };
     try {
-      module.activate(recording(o.ctx, adds, failed));
+      module.activate(recording(o.ctx, adds, failed, o.changed));
       entry.state = "on";
     } catch (err) {
       console.error(`Plugin ${entry.manifest.id} didn't start:`, err);

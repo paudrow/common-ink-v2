@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true
   },

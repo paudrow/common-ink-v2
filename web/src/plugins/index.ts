@@ -6,6 +6,8 @@ import commandsBar from "./command-bar-commands.js";
 import commandsBarSource from "./command-bar-commands.js?raw";
 import notesBar from "./command-bar-notes.js";
 import notesBarSource from "./command-bar-notes.js?raw";
+import { calendarPlugin, contactsPlugin } from "./google.ts";
+import googleSource from "./google.ts?raw";
 import { historyPlugin } from "./history.ts";
 import historySource from "./history.ts?raw";
 import { todosPlugin } from "./todos/index.ts";
@@ -43,5 +45,21 @@ export const BUILT_IN: BuiltIn[] = [
     module: todosPlugin,
     source: todosSource,
     file: "web/src/plugins/todos/index.ts",
+  },
+  {
+    id: "calendar",
+    name: "Calendar",
+    description: "The calendar data source: your Google Calendar's next two weeks, recurring events included.",
+    module: calendarPlugin,
+    source: googleSource,
+    file: "web/src/plugins/google.ts",
+  },
+  {
+    id: "contacts",
+    name: "Contacts",
+    description: "The contacts data source: your Google Contacts, searchable.",
+    module: contactsPlugin,
+    source: googleSource,
+    file: "web/src/plugins/google.ts",
   },
 ];

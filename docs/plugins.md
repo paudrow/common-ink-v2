@@ -40,6 +40,7 @@ The Worker serves `index.js` at `/plugins/<id>/index.js` from the workspace, so 
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
 - `ctx.panels.register({ id, title, render(el) })` adds a side panel, which also opens in a window. `toggle`, `show` and `refresh` control it.
 - `ctx.workbench.provideViews(prefix, make)` adds views made from their id, such as `version:<rev>:<path>`, and `ctx.workbench.openView(id)` opens one in a window.
+- `ctx.sources` reads data sources (calendar events, contacts) for the signed-in person. The Plugins view lists the ones a plugin reads.
 - `ctx.files` lists, reads and writes files. Writes are changes by the signed-in person.
 - `ctx.workbench` opens files and tells you what's focused, including the focused CodeMirror view.
 - `ctx.events.onSaved` and `ctx.events.onFocus` say when a file saved and when focus moved.

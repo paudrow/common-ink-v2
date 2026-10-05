@@ -29,3 +29,13 @@ Agents use the same operations as the app: list, read and write files, read hist
 
 - **CLI.** `bin/common-ink ls | cat <path> | write <path> | history [path] | show <revision> | undo <revision...>` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token.
 - **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are `list_files`, `read_file`, `write_file`, `history` and `undo`.
+
+## Google sign-in, calendar and contacts
+
+People sign in with Google, and only addresses in `ALLOWED_EMAILS` get in. Cloudflare Access still works too, for anyone it lets through and for agents with an Access service token. To turn Google sign-in on:
+
+1. In Google Cloud, create an OAuth client (Web application). Add `https://common-ink-v2.<subdomain>.workers.dev/auth/google/callback` as an authorized redirect URI, and enable the Google Calendar API and the People API. While the OAuth consent screen is in testing, add yourself as a test user.
+2. In the repository's settings, set the variables `GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` (addresses separated by commas), and the secrets `GOOGLE_CLIENT_SECRET` and `SESSION_SECRET` (any long random string, such as the output of `openssl rand -base64 32`). The next deploy sends them to the Worker.
+3. In the app, run "Connect Google calendar and contacts" (⌘⇧P) to give it read access to both.
+
+Previews and `npm run dev` use recorded sample data (`worker/src/fixtures/`) instead of Google, and open signed in as a dev user.
