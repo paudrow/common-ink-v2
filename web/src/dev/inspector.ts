@@ -226,7 +226,8 @@ export function makeInspector(app: DevApp, kept: Kept) {
       }
     },
 
-    reset: (scenario?: string) => kept.reset(scenario),
+    /** Reset the workspace to a scenario, by default the one it holds, and start the page over. */
+    reset: (scenario = kept.page.scenario || undefined) => kept.reset(scenario),
 
     /** The geometry checks: each answers with the problems it finds. */
     check: {
@@ -256,7 +257,8 @@ export function makeInspector(app: DevApp, kept: Kept) {
   function waiting(): string[] {
     const busy: string[] = [];
     if (net.inFlight) busy.push(`${net.inFlight} request${net.inFlight === 1 ? "" : "s"} in flight`);
-    for (const p of workbench.pending()) if (p.status !== "conflict" && p.status !== "offline") busy.push(`${p.path} ${p.status}`);
+    // A conflict waits for you, and an unsent edit for the network: neither moves on its own.
+    for (const p of workbench.pending()) if (p.status !== "conflict" && !(p.status === "offline" && net.offline)) busy.push(`${p.path} ${p.status}`);
     if (!net.offline && socketState() !== "open") busy.push(`live socket ${socketState()}`);
     const reaching = extensions.broker.busy();
     if (reaching.length) busy.push(`${reaching.join(", ")} reaching the network`);

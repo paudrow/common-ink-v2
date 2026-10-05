@@ -1,37 +1,96 @@
-// What the browser tests share: the real Worker (wrangler's unstable_dev) with the Preview's seed, and
-// headless Chrome (CHROME_PATH, or Chrome where it usually is). Each file starts its own.
+// What the browser tests share: the real Worker with test levers on and the Preview's seed, and headless
+// Chrome (test/browser/launch.ts). Each file starts its own. browserTest runs one test in a fresh
+// browser context: on a scenario if it names one, with the internet stubbed, failing on any error the
+// page logs, and keeping a screenshot, the inspector's state and (in CI) a trace when it fails.
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { after, before } from "node:test";
-import { chromium, type Browser, type Page } from "playwright-core";
-import { unstable_dev, type Unstable_DevWorker } from "wrangler";
+import fs from "node:fs";
+import path from "node:path";
+import { after, before, test } from "node:test";
+import type { Browser, Page } from "playwright-core";
+import { ensureBuilt, isExpectedConsoleError, launchChrome, startWorker, type LocalWorker } from "./launch.ts";
+import { App } from "./pages.ts";
 
-const CHROME = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"].find(
-  (p) => p && existsSync(p),
-);
-
-/** Start the Worker and Chrome before this file's tests, and stop them after. */
-export function harness() {
+/** Start the Worker and Chrome before this file's tests, and stop them after. `vars` replace the Worker's dev ones. */
+export function harness(vars?: Record<string, string>) {
   const h = { base: "", browser: null as unknown as Browser };
-  let worker: Unstable_DevWorker;
+  let worker: LocalWorker | undefined;
   before(async () => {
-    assert.ok(CHROME, "Chrome is needed: set CHROME_PATH");
-    worker = await unstable_dev("worker/src/index.ts", {
-      config: "worker/wrangler.jsonc",
-      vars: { DEV_USER: "tester@localhost", SEED: "1", DATA_FIXTURES: "1" },
-      experimental: { disableExperimentalWarning: true },
-      persist: false,
-      logLevel: "none",
-    } as never);
-    h.base = `http://${worker.address}:${worker.port}`;
-    // WebGL without a GPU (CI), for three.js in an html-app.
-    h.browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+    ensureBuilt();
+    [worker, h.browser] = await Promise.all([startWorker(vars), launchChrome()]);
+    h.base = worker.base;
   });
   after(async () => {
     await h.browser?.close();
     await worker?.stop();
   });
   return h;
+}
+
+export interface BrowserTestOptions {
+  /** Reset the workspace to this scenario (test/scenarios/) first. */
+  scenario?: string;
+  /** Levers for the page's address: { now: "2026-10-05T09:00", permissions: "allow", net: "replay" }. */
+  levers?: Record<string, string>;
+  /** The note to open first, by name or path. */
+  open?: string;
+  viewport?: { width: number; height: number };
+  dark?: boolean;
+  /** Browser permissions, such as clipboard-read. */
+  grant?: string[];
+  /** Errors the page may log without failing the test. */
+  allowErrors?: RegExp[];
+  /** Requests to other sites get an empty page ("stub", the default), or reach the internet ("live"). */
+  internet?: "stub" | "live";
+  /** Known to fail, and why: the pull request that fixes it. The test runs, and its failure is reported but doesn't fail the run. */
+  todo?: string;
+}
+
+const RESULTS = path.resolve(import.meta.dirname, "../../test-results");
+const tracing = !!(process.env.CI || process.env.TRACE);
+
+/** One browser test, in its own context, as a person would meet the app: see BrowserTestOptions. */
+export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
+  test(name, o.todo ? { todo: o.todo } : {}, async (t) => {
+    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light" });
+    // TypeScript run by the test runner names functions with a helper that pages passed them don't have.
+    await context.addInitScript("window.__name = (f) => f");
+    if (o.grant) await context.grantPermissions(o.grant, { origin: h.base });
+    if ((o.internet ?? "stub") === "stub") await context.route((url) => !url.href.startsWith(h.base) && url.protocol.startsWith("http"), (route) => route.fulfill({ contentType: "text/html", body: "" }));
+    if (tracing) await context.tracing.start({ screenshots: true, snapshots: true });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (m) => m.type() === "error" && !isExpectedConsoleError(m.text(), m.location().url) && errors.push(m.text()));
+    const app = new App(page, h.base);
+    try {
+      if (o.scenario) await app.reset(o.scenario);
+      await app.goto(o.levers, o.open);
+      await body(app);
+      assert.deepEqual(
+        errors.filter((e) => !o.allowErrors?.some((r) => r.test(e))),
+        [],
+        "the page logged no errors",
+      );
+      if (tracing) await context.tracing.stop();
+      if (o.todo) t.diagnostic(`This passes now: take its todo off (${o.todo})`);
+    } catch (err) {
+      await keepEvidence(name, page, errors, tracing ? (file) => context.tracing.stop({ path: file }) : null);
+      throw err;
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+/** A failed test's screenshot, inspector state, page errors and trace, in test-results/<test>/ (CI uploads it). */
+async function keepEvidence(name: string, page: Page, errors: string[], trace: ((file: string) => Promise<void>) | null) {
+  const dir = path.join(RESULTS, name.replace(/[^\w]+/g, "-").slice(0, 80));
+  fs.mkdirSync(dir, { recursive: true });
+  await page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true }).catch(() => {});
+  const state = await page.evaluate(() => (window as unknown as { __commonInk?: { state(): unknown } }).__commonInk?.state()).catch((e: Error) => ({ unavailable: e.message }));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(state ?? { unavailable: "no inspector on the page" }, null, 2));
+  fs.writeFileSync(path.join(dir, "errors.txt"), errors.join("\n"));
+  await trace?.(path.join(dir, "trace.zip")).catch(() => {});
 }
 
 /** Run a command from the command bar, by its title. */
