@@ -88,7 +88,7 @@ export const SETTINGS = {
   "editor.lineNumbers": bool("Line numbers beside the text.", false),
   "editor.lineWrapping": bool("Wrap long lines to the window instead of scrolling sideways.", true),
   "editor.fontSize": int("The editor's text size, in pixels.", 16, 10, 32),
-  "editor.livePreview": bool("Show markdown as it reads: headings, emphasis and links drawn, todos as checkboxes, images shown. The line you're on always shows its raw text.", true),
+  "editor.livePreview": bool("Show markdown as it reads: headings, emphasis and links drawn, tasks as checkboxes, images shown. The line you're on always shows its raw text.", true),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
   "extensions.disabled": { ...strings('Extensions to turn off, by id, such as "history" or "quick-open".'), reload: true as const },

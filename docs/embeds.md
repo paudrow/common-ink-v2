@@ -8,7 +8,7 @@ An embed is markdown that an extension draws in place in a note: a timer, backgr
   ::timer{duration=25m label="Deep work"}
   ```
 
-- **Container:** markdown wrapped in a directive, for embeds whose content is markdown. The content stays real markdown, so its todos, links and tags keep working. Close it with `:::` on a line of its own; one left open shows as text, with a note saying so.
+- **Container:** markdown wrapped in a directive, for embeds whose content is markdown. The content stays real markdown, so its tasks, links and tags keep working. Close it with `:::` on a line of its own; one left open shows as text, with a note saying so.
 
   ```markdown
   :::kanban

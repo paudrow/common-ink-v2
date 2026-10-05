@@ -1,5 +1,5 @@
 // The CodeMirror 6 editor, as plain as it comes: CommonMark (or JSON) highlighting and standard keys.
-// Everything else (Vim keys, live preview, todos) comes from extensions, through `extensions`, and what
+// Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";

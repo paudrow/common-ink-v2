@@ -1,5 +1,5 @@
 // Every task in every note, read through the extension API and kept until a note's revision changes,
-// and the one way the Todos view and task lists change a task: read its note, find its line, rewrite
+// and the one way the Tasks view and task lists change a task: read its note, find its line, rewrite
 // it with the token writer, and save it as a change by you.
 import { isNote } from "common-ink/files";
 import type { FilePath, Revision } from "../../../../worker/src/files.ts";

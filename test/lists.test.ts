@@ -6,7 +6,7 @@ const L = (text: string) => text.split("\n");
 const T = (lines: string[]) => lines.join("\n");
 
 test("a line is an item with a kind, a marker and where its text starts; rules and plain text aren't", () => {
-  assert.deepEqual(M.parseItem("  - [x] Done"), { indent: 2, marker: "-", kind: "todo", number: undefined, markerEnd: 4, contentStart: 8 });
+  assert.deepEqual(M.parseItem("  - [x] Done"), { indent: 2, marker: "-", kind: "task", number: undefined, markerEnd: 4, contentStart: 8 });
   assert.deepEqual(M.parseItem("12) Twelve"), { indent: 0, marker: "12)", kind: "number", number: 12, markerEnd: 4, contentStart: 4 });
   assert.equal(M.parseItem("- - -"), null);
   assert.equal(M.parseItem("-not an item"), null);
@@ -92,11 +92,11 @@ test("numbered lists renumber at every level as items move, and a wider number t
   assert.equal(T(M.renumberAround(L("1. a\n1. b\n\nText\n\n1. x\n1. y"), [0])), "1. a\n2. b\n\nText\n\n1. x\n1. y", "lists far from the edit stay as written");
 });
 
-test("converting between bullets, numbers and todos keeps the text and the children", () => {
+test("converting between bullets, numbers and tasks keeps the text and the children", () => {
   const list = L("- a\n  - child\n- b");
   assert.equal(T(M.convert(list, 0, 0, "number")), "1. a\n   - child\n- b", "its children move with its wider marker");
   assert.equal(T(M.convert(list, 0, 2, "number")), "1. a\n   1. child\n2. b", "a selection converts every item in it");
-  assert.equal(T(M.convert(list, 0, 0, "todo")), "- [ ] a\n  - child\n- b");
+  assert.equal(T(M.convert(list, 0, 0, "task")), "- [ ] a\n  - child\n- b");
   assert.equal(T(M.convert(L("- [x] done\n- [ ] not"), 0, 1, "bullet")), "- done\n- not");
   assert.equal(T(M.convert(L("1. a\n2. b"), 0, 1, "bullet")), "- a\n- b");
 });
@@ -199,7 +199,7 @@ test("the commands convert items, and fold an item's children away and back", ()
   const view = editor("- a\n  - child\n- b", "a");
   commands.get("lists.toNumbers")!();
   assert.equal(view.state.doc.toString(), "1. a\n   - child\n- b");
-  commands.get("lists.toTodos")!();
+  commands.get("lists.toTasks")!();
   assert.equal(view.state.doc.toString(), "- [ ] a\n  - child\n- b");
   commands.get("lists.toggleFold")!();
   assert.ok(edit.isFolded(view.state, 0));
@@ -210,7 +210,7 @@ test("the commands convert items, and fold an item's children away and back", ()
 });
 
 test("lists are drawn with bullets by depth, numbers in a column and hanging indents, and keep that layout under the cursor", () => {
-  const view = editor("- top\n  - inner\n    text of inner\n1. one\n- [ ] todo\n\nEnd", "End");
+  const view = editor("- top\n  - inner\n    text of inner\n1. one\n- [ ] task\n\nEnd", "End");
   const lines = [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")];
   assert.equal(lines[0].querySelector(".cm-list-bullet")?.textContent, "•");
   assert.ok(lines[0].querySelector(".cm-list-bullet.parent"), "a bullet with children folds them");
@@ -218,7 +218,7 @@ test("lists are drawn with bullets by depth, numbers in a column and hanging ind
   assert.equal(lines[1].style.getPropertyValue("--list-depth"), "1");
   assert.ok(lines[2].classList.contains("cm-list-cont"), "a continuation hangs under its text");
   assert.equal(lines[3].querySelector(".cm-list-number")?.textContent, "1.");
-  assert.equal(lines[4].querySelector(".cm-list-bullet"), null, "a todo's box is the Todos extension's");
+  assert.equal(lines[4].querySelector(".cm-list-bullet"), null, "a task's box is the Tasks extension's");
   assert.ok(lines[4].classList.contains("cm-list-line"));
   // The cursor on an item's text: its line is laid out the same, bullet and all.
   view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 6 } });

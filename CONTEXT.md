@@ -1,6 +1,6 @@
 # Common Ink
 
-A hosted workspace where a person and their agents read and edit markdown notes, todos and data from outside sources, with every change visible and attributed.
+A hosted workspace where a person and their agents read and edit markdown notes, tasks and data from outside sources, with every change visible and attributed.
 
 ## Content
 
@@ -16,9 +16,9 @@ _Avoid_: Doc, document, asset
 A markdown file in a workspace. Its title is its first `#` heading.
 _Avoid_: Document, page
 
-**Todo**:
-A markdown checkbox line in a note, with optional inline due date and recurrence.
-_Avoid_: Task, item
+**Task**:
+A markdown checkbox line in a note, with optional inline tokens (due:, rec:, …).
+_Avoid_: Todo, item
 
 **Data source**:
 External structured data connected to a workspace, such as calendar events or contacts. Its contents are visible but aren't stored as notes.
@@ -59,7 +59,7 @@ A unit of functionality that adds commands, views, settings, embeds and more thr
 _Avoid_: Plugin, add-on
 
 **Default extension**:
-A built-in extension that's on until you turn it off, such as Workbench, Vim, Live preview or Todos. With all of them off, the app still has notes, history, plain windows, commands and settings, and a plain editor.
+A built-in extension that's on until you turn it off, such as Workbench, Vim, Live preview or Tasks. With all of them off, the app still has notes, history, plain windows, commands and settings, and a plain editor.
 
 **Catalog**:
 The list of extensions you can install from the Extensions view: first-party ones that aren't on by default, served by the app, and any other catalogs you add, whose extensions are other people's and installed at your own risk.

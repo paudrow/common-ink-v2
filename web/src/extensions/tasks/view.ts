@@ -1,4 +1,4 @@
-// The Todos view: Today (what's overdue, due today or starting today), then every other task, in the
+// The Tasks view: Today (what's overdue, due today or starting today), then every other task, in the
 // same rows the ::tasks embed draws. Narrowed to a tag or a person, the list stands alone. Ticking a
 // box here edits the note the task lives in.
 import { el, icon } from "./dom.ts";
@@ -17,7 +17,7 @@ const SECTIONS = [
 export type ViewEnv = Omit<ListEnv, "skip" | "empty" | "openTag" | "openPerson">;
 
 /** The view in `root`: drawn the first time, and read again (keeping its filters) each time after. */
-export class TodosView {
+export class TasksView {
   private drawn = new WeakMap<HTMLElement, () => Promise<void>>();
   private filter: { tag?: string; assignee?: string } = {};
   /** The filter changed from outside (a person chip in a note): the next render draws it anew. */
@@ -33,7 +33,7 @@ export class TodosView {
 
   async render(root: HTMLElement) {
     const reload = this.drawn.get(root);
-    if (reload && !this.changed && root.querySelector(".todos-view")) return reload();
+    if (reload && !this.changed && root.querySelector(".tasks-view")) return reload();
     this.changed = false;
     this.draw(root);
   }
@@ -44,7 +44,7 @@ export class TodosView {
     const whole = !filter.tag && !filter.assignee;
     const todayHost = el("div", { class: "td-block", hidden: true });
     const host = el("div", { class: "qw-tasks" });
-    const filters = el("div", { class: "todos-filters" });
+    const filters = el("div", { class: "tasks-filters" });
     const set = (next: { tag?: string; assignee?: string }) => {
       this.filter = next;
       this.draw(root);
@@ -89,17 +89,17 @@ export class TodosView {
     const load = () => list.load();
 
     // A tag to narrow to (the tags in use, most first), and the person it's narrowed to, if any.
-    const tagSelect = el("select", { class: "qt-select todos-tag", "aria-label": "Tag" }, el("option", { value: "" }, "All tags"));
+    const tagSelect = el("select", { class: "qt-select tasks-tag", "aria-label": "Tag" }, el("option", { value: "" }, "All tags"));
     tagSelect.addEventListener("change", () => set({ ...filter, tag: tagSelect.value || undefined }));
     void env.store.tags().then((tags) => {
       for (const t of filter.tag && !tags.some((x) => x.toLowerCase() === filter.tag) ? [filter.tag, ...tags] : tags) tagSelect.append(el("option", { value: t.toLowerCase() }, `#${t}`));
       tagSelect.value = filter.tag ?? "";
     });
     const person = filter.assignee
-      ? el("span", { class: "todos-filter" }, icon("at", 13), filter.assignee, el("button", { type: "button", class: "todos-filter-clear", title: "Everyone's tasks", onclick: () => set({ ...filter, assignee: undefined }) }, icon("close", 12)))
+      ? el("span", { class: "tasks-filter" }, icon("at", 13), filter.assignee, el("button", { type: "button", class: "tasks-filter-clear", title: "Everyone's tasks", onclick: () => set({ ...filter, assignee: undefined }) }, icon("close", 12)))
       : null;
     filters.replaceChildren(tagSelect, ...(person ? [person] : []));
-    root.replaceChildren(el("div", { class: "todos-view" }, todayHost, filters, host));
+    root.replaceChildren(el("div", { class: "tasks-view" }, todayHost, filters, host));
     this.drawn.set(root, load);
   }
 }

@@ -19,7 +19,7 @@
       { "command": "lists.moveDown", "title": "Move list item down" },
       { "command": "lists.toBullets", "title": "Make bullets" },
       { "command": "lists.toNumbers", "title": "Make a numbered list" },
-      { "command": "lists.toTodos", "title": "Make todos" },
+      { "command": "lists.toTasks", "title": "Make tasks" },
       { "command": "lists.toggleFold", "title": "Fold or unfold list item" }
     ],
     "statusBarItems": [{ "id": "lists.message", "alignment": "left", "priority": 0 }],

@@ -1635,7 +1635,7 @@ iframe.webview {
   accent-color: var(--accent);
 }
 
-/* Tasks (extensions/todos): the checkbox, token chips, the cursor line's tools, chip editors, and task lists. */
+/* Tasks (extensions/tasks): the checkbox, token chips, the cursor line's tools, chip editors, and task lists. */
 .cm-checkbox {
   display: inline-block;
   box-sizing: border-box;
@@ -1738,8 +1738,8 @@ iframe.webview {
 .qw-btn:disabled { opacity: 0.4; cursor: default; }
 .qw-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); min-width: 96px; justify-content: center; }
 
-/* Task lists: the Todos view and ::tasks. */
-.todos-view { display: grid; gap: 14px; }
+/* Task lists: the Tasks view and ::tasks. */
+.tasks-view { display: grid; gap: 14px; }
 .qw-tasks.is-embed { padding: 8px 12px 10px; }
 .qt-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .qt-top .spacer { flex: 1; }
@@ -1786,6 +1786,6 @@ iframe.webview {
 .td-block[hidden] { display: none; }
 .td-title { display: flex; align-items: center; gap: 6px; font: 650 13px var(--prose); color: var(--ink); }
 .td-section.is-overdue .qt-note.is-label { color: var(--bad-ink); }
-.todos-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.todos-filter { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; }
-.todos-filter-clear { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+.tasks-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tasks-filter { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; }
+.tasks-filter-clear { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }

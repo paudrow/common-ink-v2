@@ -1,4 +1,4 @@
-# Todos tour
+# Tasks tour
 
 A task is a checkbox line. Tokens anywhere in it say more, todo.txt style: `due:2026-10-01` (or `due:2026-10-01T09:30`), `start:` (hidden until then), `rec:` (how it repeats), `until:` and `times:` (when the repeat ends), `!high` or `!low`, `@person`, and `#tag`. The line is the source of truth: every change rewrites one token in place.
 

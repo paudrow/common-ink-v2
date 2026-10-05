@@ -1,27 +1,27 @@
 {
-  "id": "todos",
-  "name": "Todos",
+  "id": "tasks",
+  "name": "Tasks",
   "version": "2.0.0",
-  "description": "Checkbox lines with todo.txt-style tokens: due:2026-10-01, start:, rec:monthly, until:, times:, !high, @person, #tag. Each token is a chip that opens its own editor; ⌘. opens a task's fields. Show todos and ::tasks list them from across your notes.",
+  "description": "Checkbox lines with todo.txt-style tokens: due:2026-10-01, start:, rec:monthly, until:, times:, !high, @person, #tag. Each token is a chip that opens its own editor; ⌘. opens a task's fields. Show tasks and ::tasks list them from across your notes.",
   "main": "index.ts",
   "files": ["index.ts", "tasks.ts", "recurrence.ts", "tags.ts", "chips.ts", "dom.ts", "editors.ts", "edit.ts", "widgets.ts", "complete.ts", "store.ts", "rows.ts", "list.ts", "view.ts"],
   "activationEvents": ["onStartup"],
   "permissions": {
-    "files:read": { "paths": ["**/*.md"], "why": "List tasks from every note in the Todos view and ::tasks lists" },
-    "files:write": { "paths": ["**/*.md"], "why": "Tick tasks and change their details from the Todos view and ::tasks lists" },
+    "files:read": { "paths": ["**/*.md"], "why": "List tasks from every note in the Tasks view and ::tasks lists" },
+    "files:write": { "paths": ["**/*.md"], "why": "Tick tasks and change their details from the Tasks view and ::tasks lists" },
     "editor": { "why": "Draw tasks as checkboxes and chips in notes, and complete their tokens" }
   },
   "contributes": {
     "commands": [
-      { "command": "todos.toggle", "title": "Tick task (or reopen it)" },
-      { "command": "todos.menu", "title": "Task fields: priority, due, repeat, person, tags" },
-      { "command": "todos.show", "title": "Show todos" }
+      { "command": "tasks.toggle", "title": "Tick task (or reopen it)" },
+      { "command": "tasks.menu", "title": "Task fields: priority, due, repeat, person, tags" },
+      { "command": "tasks.show", "title": "Show tasks" }
     ],
     "keybindings": [
-      { "key": "Mod-Enter", "command": "todos.toggle" },
-      { "key": "Mod-.", "command": "todos.menu" }
+      { "key": "Mod-Enter", "command": "tasks.toggle" },
+      { "key": "Mod-.", "command": "tasks.menu" }
     ],
-    "views": { "sidebar": [{ "id": "todos", "name": "Todos" }] },
+    "views": { "sidebar": [{ "id": "tasks", "name": "Tasks" }] },
     "embeds": [
       {
         "language": "tasks",
@@ -41,9 +41,9 @@
       }
     ],
     "configuration": {
-      "title": "Todos",
+      "title": "Tasks",
       "properties": {
-        "todos.chips": { "type": "boolean", "default": true, "description": "Show a task's tokens as chips (\"Tomorrow\", \"Monthly\", \"High\") on lines the cursor isn't on." }
+        "tasks.chips": { "type": "boolean", "default": true, "description": "Show a task's tokens as chips (\"Tomorrow\", \"Monthly\", \"High\") on lines the cursor isn't on." }
       }
     }
   }

@@ -22,7 +22,7 @@ A link to [the Welcome note](Welcome.md), a wiki link to [[Reading list]], one w
 Code blocks stay raw: **this isn't bold**, and # isn't a heading.
 ```
 
-## Todos
+## Tasks
 
-- [ ] Todos are checkboxes, as before due:{{today+1}}
+- [ ] Tasks are checkboxes, as before due:{{today+1}}
 - [x] This one is done

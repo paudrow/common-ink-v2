@@ -18,4 +18,4 @@ Boards draws a Kanban board made of markdown. It runs sandboxed, so the first ti
 
 Drag a card to another column (or use its ← → buttons): it moves at once, and the markdown above changes to match, as a change by Boards in history. Put the cursor in it to see it: the board is real markdown between `:::kanban` and `:::`.
 
-Task lists gathered from your notes are the Todos extension's: see [[Todos tour]].
+Task lists gathered from your notes are the Tasks extension's: see [[Tasks tour]].

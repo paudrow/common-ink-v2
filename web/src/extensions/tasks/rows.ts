@@ -1,4 +1,4 @@
-// One task in a list (the Todos view, a ::tasks embed): its checkbox, its words, its chips in the fixed
+// One task in a list (the Tasks view, a ::tasks embed): its checkbox, its words, its chips in the fixed
 // order, and its ⚙, ↗ and split buttons. Click the words to edit them in place, a chip to edit that
 // token, ⌘-click (Ctrl-click off a Mac) to open the note at the line to the side. Every change goes to
 // the note the task lives in.
