@@ -9,15 +9,18 @@
 // when its extension can take them, so its frame isn't reloaded. A container left unclosed says so.
 // A block for an embed a Catalog extension draws, when it isn't installed, stays markdown, with a line
 // above it offering to install it. A link alone on its own line is drawn too, by the extension whose
-// urlEmbeds pattern matches it (a video, a post, a link card).
-import { syntaxTree } from "@codemirror/language";
+// urlEmbeds pattern matches it (a video, a post, a link card). What an embed draws is drawn once and
+// kept (lives.ts): while the cursor shows its markdown it's hidden, not removed, so a frame never
+// reloads and shows again as it was.
+import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
-import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
 import type { EmbedContribution, EmbedSyntax } from "../../worker/src/extensions.ts";
 import type { FilePath } from "../../worker/src/files.ts";
 import { attrsRecord, directiveText, parseAttrs, serializeAttrs, withValues, type Attr } from "./directives.ts";
 import { embedForm } from "./embed-form.ts";
-import { blockPreview, type BlockPreview } from "./live-preview.ts";
+import { blockHeight, blockPreview, type BlockPreview } from "./live-preview.ts";
+import { dropLives, livesOf } from "./lives.ts";
 
 /** One embed in a note, as its extension gets it. */
 export interface Embed {
@@ -55,38 +58,57 @@ export interface EmbedHost {
 /** A line that's just a link: https://… or <https://…>. */
 const LINK_LINE = /^\s*<?(https?:\/\/[^\s<>]+?)>?\s*$/;
 
-class UrlWidget extends WidgetType {
+/** A link drawn by a URL embed: its frame, drawn once and kept alive (see Lives), over this slot. */
+class UrlSlot extends WidgetType {
   constructor(
     readonly url: string,
     readonly id: string,
+    /** Which of the note's links to this URL it is: two copies of a video are two frames. */
+    readonly n: number,
     readonly host: EmbedHost,
   ) {
     super();
   }
-  eq(other: UrlWidget) {
-    return other.url === this.url && other.id === this.id;
+  get key() {
+    return urlKey(this);
+  }
+  eq(other: UrlSlot) {
+    return other.key === this.key;
+  }
+  get estimatedHeight() {
+    return blockHeight(this.key, -1);
   }
   toDOM(view: EditorView) {
-    const el = document.createElement("div");
-    el.className = "cm-embed cm-url-embed";
-    el.dataset.urlEmbed = this.id;
-    this.host.drawUrl(el, this.url, this.id);
-    el.addEventListener("mousedown", (e) => {
-      if (e.target !== el) return;
-      e.preventDefault();
-      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
-      view.focus();
+    return livesOf(view).slot(this.key, () => {
+      const el = document.createElement("div");
+      el.className = "cm-embed cm-url-embed";
+      el.dataset.urlEmbed = this.id;
+      this.host.drawUrl(el, this.url, this.id);
+      // A click on its edge puts the cursor on its line, to edit the link.
+      el.addEventListener("mousedown", (e) => {
+        const slot = livesOf(view).slotOf(el);
+        if (e.target !== el || !slot) return;
+        e.preventDefault();
+        view.dispatch({ selection: { anchor: view.state.doc.lineAt(view.posAtDOM(slot)).from } });
+        view.focus();
+      });
+      return el;
     });
-    return el;
+  }
+  destroy(dom: HTMLElement) {
+    livesOf(dom).let(this.key, dom);
   }
   ignoreEvent() {
     return true;
   }
 }
 
+/** What keeps a link's frame: its embed, its URL, and which of the note's links to it it is. */
+const urlKey = (u: { id: string; n: number; url: string }) => `url:${u.id}:${u.n}:${u.url}`;
+
 /** Every link alone on a line of its own, outside lists and quotes, with the URL embed that draws it. */
-export function findUrlEmbeds(state: EditorState, host: Pick<EmbedHost, "urlEmbed">): Array<{ from: number; to: number; url: string; id: string }> {
-  const out: Array<{ from: number; to: number; url: string; id: string }> = [];
+export function findUrlEmbeds(state: EditorState, host: Pick<EmbedHost, "urlEmbed">): Array<{ from: number; to: number; url: string; id: string; n: number }> {
+  const out: Array<{ from: number; to: number; url: string; id: string; n: number }> = [];
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name === "Document") return;
@@ -95,7 +117,7 @@ export function findUrlEmbeds(state: EditorState, host: Pick<EmbedHost, "urlEmbe
       if (line.to < node.to) return false;
       const url = LINK_LINE.exec(line.text)?.[1];
       const id = url ? host.urlEmbed(url) : null;
-      if (url && id) out.push({ from: line.from, to: line.to, url, id });
+      if (url && id) out.push({ from: line.from, to: line.to, url, id, n: out.filter((o) => o.url === url).length });
       return false;
     },
   });
@@ -198,26 +220,46 @@ const sameEmbed = (a: Embed, b: Embed) => a.key === b.key && a.syntax === b.synt
 /** The embed each drawn box shows now: given new arguments in place, a box keeps going with them. */
 const showing = new WeakMap<HTMLElement, Embed>();
 
-class EmbedWidget extends WidgetType {
+/** An embed drawn by its extension: its box, drawn once and kept alive (see Lives), over this slot. */
+class EmbedSlot extends WidgetType {
   constructor(
     readonly embed: Embed,
     readonly host: EmbedHost,
   ) {
     super();
   }
-  eq(other: EmbedWidget) {
+  eq(other: EmbedSlot) {
     return sameEmbed(this.embed, other.embed);
   }
-  /** The same embed with new arguments or body: its extension takes them in place when it can, so nothing reloads. */
-  updateDOM(dom: HTMLElement) {
-    const was = showing.get(dom);
-    if (!was || was.key !== this.embed.key || was.syntax !== this.embed.syntax) return false;
-    const body = dom.querySelector<HTMLElement>(":scope > .cm-embed-body");
-    if (!body || !this.host.update(body, this.embed)) return false;
-    showing.set(dom, this.embed);
+  get estimatedHeight() {
+    return blockHeight(this.embed.key, -1);
+  }
+  /** The same embed with new arguments or body: its box takes them (see toDOM), and this slot stays. */
+  updateDOM(dom: HTMLElement, view: EditorView) {
+    if (livesOf(view).keyOf(dom) !== this.embed.key) return false;
+    livesOf(view).refresh(this.embed.key, (el) => this.take(el));
     return true;
   }
   toDOM(view: EditorView) {
+    return livesOf(view).slot(this.embed.key, () => this.draw(view), (el) => this.take(el));
+  }
+  destroy(dom: HTMLElement) {
+    livesOf(dom).let(this.embed.key, dom);
+  }
+  /**
+   * Give a box that's kept this embed's arguments and body, if they changed (its markdown was edited,
+   * maybe while it showed): its extension takes them in place when it can. False if it can't, and the
+   * box is drawn again.
+   */
+  private take(el: HTMLElement): boolean {
+    const was = showing.get(el);
+    if (was && sameEmbed(was, this.embed)) return true;
+    const body = el.querySelector<HTMLElement>(":scope > .cm-embed-body");
+    if (!was || was.syntax !== this.embed.syntax || !body || !this.host.update(body, this.embed)) return false;
+    showing.set(el, this.embed);
+    return true;
+  }
+  private draw(view: EditorView): HTMLElement {
     const el = document.createElement("div");
     el.className = "cm-embed";
     el.dataset.embed = this.embed.language;
@@ -257,9 +299,11 @@ class EmbedWidget extends WidgetType {
 function foundAt(view: EditorView, el: HTMLElement): Found | null {
   const embed = showing.get(el);
   if (!embed) return null;
+  const slot = livesOf(view).slotOf(el);
+  if (!slot) return null;
   let pos: number;
   try {
-    pos = view.posAtDOM(el);
+    pos = view.posAtDOM(slot);
   } catch {
     return null;
   }
@@ -371,6 +415,34 @@ function noteBars(state: EditorState, host: EmbedHost): DecorationSet {
   return Decoration.set(bars, true);
 }
 
+/**
+ * Keep embeds' boxes alive (lives.ts): place each over its slot after every update, before the page
+ * paints, and let go of a box once its markdown is gone from the note (once the whole note is parsed,
+ * so one not parsed yet isn't taken for gone).
+ */
+function keepAlive(host: EmbedHost) {
+  return [
+    ViewPlugin.define((view) => {
+      livesOf(view);
+      return { destroy: () => dropLives(view) };
+    }),
+    EditorView.updateListener.of((u) => {
+      const lives = livesOf(u.view);
+      if ((u.docChanged || u.transactions.some((tr) => tr.reconfigured)) && syntaxTreeAvailable(u.state, u.state.doc.length)) {
+        lives.prune(new Set([...findEmbeds(u.state, host.contributions()).found.map((f) => f.embed.key), ...findUrlEmbeds(u.state, host).map(urlKey)]));
+      }
+      lives.place();
+    }),
+    EditorView.theme({
+      ".cm-scroller": { position: "relative" },
+      ".cm-embed-layer": { position: "absolute", top: "0", left: "0", width: "0", height: "0", zIndex: "1" },
+      ".cm-embed-layer > .cm-embed": { position: "absolute", boxSizing: "border-box" },
+      ".cm-embed-layer > .cm-embed.is-hidden": { visibility: "hidden", pointerEvents: "none" },
+      ".cm-embed-slot": { display: "block" },
+    }),
+  ];
+}
+
 /** Embeds drawn in place of their markdown, in a note's editor. */
 export function embeds(host: EmbedHost) {
   return [
@@ -379,8 +451,9 @@ export function embeds(host: EmbedHost) {
       update: (bars, tr) => (tr.docChanged || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? noteBars(tr.state, host) : bars),
       provide: (field) => EditorView.decorations.from(field),
     }),
-    blockPreview((state): BlockPreview[] => findEmbeds(state, host.contributions()).found.map(({ from, to, embed }) => ({ from, to, widget: new EmbedWidget(embed, host) }))),
-    blockPreview((state): BlockPreview[] => findUrlEmbeds(state, host).map(({ from, to, url, id }) => ({ from, to, widget: new UrlWidget(url, id, host) }))),
+    blockPreview((state): BlockPreview[] => findEmbeds(state, host.contributions()).found.map(({ from, to, embed }) => ({ from, to, widget: new EmbedSlot(embed, host) }))),
+    blockPreview((state): BlockPreview[] => findUrlEmbeds(state, host).map(({ from, to, url, id, n }) => ({ from, to, widget: new UrlSlot(url, id, n, host) }))),
+    keepAlive(host),
     EditorView.theme({
       ".cm-embed": { position: "relative", padding: "0.6em 0 0.25em", cursor: "text" },
       // On the top edge of what it draws, over its border rather than over what it shows.

@@ -1,0 +1,11 @@
+{
+  "pr": 0,
+  "title": "Embeds keep their frame while you edit their markdown",
+  "steps": [
+    "Open Boards tour. Move the cursor into the board's markdown (j from the line above, or click its edge): the raw :::kanban lines show. Move out again (k): the same board is back at once, with no blank flash and nothing below it moving. It's the same frame: it was hidden, not reloaded.",
+    "Drag a card, then go into the markdown and out again: the board is as you left it.",
+    "Edit the board's markdown while it shows raw (add a card under a column), then move out: the board shows the change, in the same frame.",
+    "Open Embeds tour: start the Focus timer, put the cursor on its line and off again. It's still counting. The same holds for the HTML app's scene in Three.js scene: it keeps turning where it was.",
+    "Scroll an embed far out of view and back: it's kept too."
+  ]
+}
