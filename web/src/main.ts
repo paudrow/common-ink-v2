@@ -22,6 +22,7 @@ import { Panels } from "./panels.ts";
 import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { ExtensionRuntime } from "./extension-runtime.ts";
 import { builtInSourceView, extensionsView } from "./extensions-view.ts";
+import { modalOpen } from "./modal.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
 import { askPermission, confirmDialog, textDialog } from "./dialog.ts";
@@ -572,6 +573,8 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
+    // A modal has the keys while it's up: its own, and Tab and Escape.
+    if (modalOpen()) return;
     const id = commandForKey(e, settings.keybindings);
     if (!id) return;
     e.preventDefault();

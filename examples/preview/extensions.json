@@ -2,13 +2,13 @@
   "pr": 17,
   "title": "Extensions",
   "steps": [
-    "⌘⇧P, Show extensions. Every extension is listed from its manifest (extension.json): the built-ins (Open by name, Command list, History, Todos, Calendar, Contacts, Uploads) and Word count, a workspace extension this Preview starts with. Each shows its version, what it adds (commands, keybindings, menus, views, settings) and what it may ask for, with why.",
+    "⌘⇧P, Show extensions. Every extension is listed from its manifest (extension.json), a row each with a search box: Word count under Installed (a workspace extension this Preview starts with), then the built-ins (Open by name, Command list, History, Todos, Calendar, Contacts, Uploads). Click a row, or Tab to it and press Enter: its details open in a modal, with its version, what it adds (commands, keybindings, menus, views, settings) and what it may ask for in plain words (\"Read all your notes\"), each with the extension's own reason. Tab stays in the modal; Escape closes it and puts you back on the row.",
     "History says \"On, starts when used\": its code hasn't run yet. ⌘⇧P lists Show history of this note all the same. Run it: History starts, the view shows, and it now says On.",
     "Open settings (⌘,): History, Todos and Calendar each have a section of their own. Set Calendar's Days to 3 and Show calendar: three days. Turn off Todos' Chips: due dates and repeats show as text at once.",
-    "In the Extensions view, press Settings on History: the settings editor opens at its section.",
-    "Customize Command list: its files are copied to `.common-ink/extensions/command-list/` and its code opens. Change `label: c.title,` to ``label: `▸ ${c.title}`,``. The status bar says `Extension changes apply after reload · Reload`. Reload, then ⌘⇧P: each command starts with ▸. Revert to built-in deletes the copy (history shows it as Deleted, and Undo brings it back).",
+    "In History's details, press Settings: the settings editor opens at its section.",
+    "In Command list's details, Customize it: its files are copied to `.common-ink/extensions/command-list/` and its code opens. Change `label: c.title,` to ``label: `▸ ${c.title}`,``. The status bar says `Extension changes apply after reload · Reload`. Reload, then ⌘⇧P: each command starts with ▸. Revert to built-in deletes the copy (history shows it as Deleted, and Undo brings it back).",
     "Word count's files are `.common-ink/extensions/word-count/extension.json` and `index.js`. Show word count: the view counts the note on show.",
-    "Break Word count: add `throw new Error(\"oops\")` as the first line of `activate` and reload, then Show word count. The Extensions view says it failed, with the error; everything else works. `?safe=1` starts only the built-ins.",
+    "Break Word count: add `throw new Error(\"oops\")` as the first line of `activate` and reload, then Show word count. Its row says Failed, and its details say what went wrong; everything else works. `?safe=1` starts only the built-ins.",
     "Turn History off with its checkbox: it writes `extensions.disabled` to workspace settings, as a change by you. Reload: the history commands and view are gone, and the tab menu has no Add Label. Turn it back on."
   ]
 }

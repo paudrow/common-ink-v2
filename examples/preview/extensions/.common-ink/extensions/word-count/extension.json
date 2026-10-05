@@ -6,7 +6,7 @@
   "main": "index.js",
   "activationEvents": ["onView:wordCount", "onCommand:wordCount.show"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "Count the words in the note on show" }
+    "files:read": { "paths": ["**/*.md"], "why": "Count the words in the note on show" }
   },
   "contributes": {
     "commands": [{ "command": "wordCount.show", "title": "Show word count" }],
