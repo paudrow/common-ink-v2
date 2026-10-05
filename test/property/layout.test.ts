@@ -14,7 +14,6 @@ import {
   insertTab,
   keepFile,
   keepTab,
-  layoutProblems,
   moveTab,
   moveTabDirection,
   only,
@@ -34,6 +33,7 @@ import {
   type Openable,
   type Split,
 } from "../../web/src/layout.ts";
+import { layoutProblems } from "../../web/src/layout-problems.ts";
 import { forAll, type Rng } from "./gen.ts";
 
 const FILES = ["A.md", "B.md", "C.md", "D.md"] as FilePath[];
