@@ -47,8 +47,8 @@ export function place(box: HTMLElement, at: DOMRect) {
   let left = at.right + 8;
   if (left + r.width > w - 8) left = at.left - r.width - 8;
   if (left < 8) left = Math.min(Math.max(8, at.left), w - r.width - 8);
-  let top = at.top;
-  if (top + r.height > h - 8) top = Math.max(8, h - r.height - 8);
+  // Beside what it's for, but on screen, even when that's scrolled partly out of view.
+  const top = Math.max(8, Math.min(at.top, h - r.height - 8));
   box.style.left = `${Math.round(left)}px`;
   box.style.top = `${Math.round(top)}px`;
 }
