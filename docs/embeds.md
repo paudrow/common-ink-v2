@@ -109,6 +109,8 @@ A task is a checkbox line, `- [ ] Send the invoice`, with todo.txt-style tokens 
 | `@jane` | A person |
 | `#work/clients` | A tag; `/` nests |
 
+Typed in words, in the quick-add bar (⌘⇧.) or a task's inline edit, phrases become tokens: "Pay rent every month on the 1st" is `- [ ] Pay rent due:… rec:1st`, and so are "tomorrow", "next fri", "in 3 days", "every weekday", "the last friday of every month", "until dec 1", "for 6 months" and "10 times". In a note, Tab right after such a phrase on a task line does the same.
+
 Ticking a repeating task doesn't tick it: it moves on to its next date, on the same line (and `times:` counts down). Its last time, it's ticked with `done:`.
 
 ```markdown

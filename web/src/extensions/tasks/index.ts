@@ -2,15 +2,20 @@
 // until:, times:, !high, @person, #tag). In notes, the box ticks and each token is a chip that opens
 // its own editor; ⌘. opens the line's field menu, and tokens complete as you type them. The Tasks view
 // and the ::tasks embed list tasks from across the notes, in the same rows. Ticking a repeating task
-// moves it on to its next date, on the same line.
+// moves it on to its next date, on the same line. ⌘⇧. opens the quick-add bar anywhere: a task typed
+// the way you'd say it ("Pay rent every month on the 1st"), added to the inbox.
+import { getCM } from "@replit/codemirror-vim";
 import { isNote } from "common-ink/files";
+import { formatKeys } from "common-ink/keys";
 import type { Change, FilePath } from "../../../../worker/src/files.ts";
 import type { Embed, ExtensionContext, ExtensionModule } from "../../extension-api.ts";
+import { openQuickAdd, type Inbox, type QuickAddOptions } from "./bar.ts";
 import { today } from "./chips.ts";
 import { taskCompletions } from "./complete.ts";
 import { mountTaskList, type ListArgs } from "./list.ts";
 import type { RowEnv } from "./rows.ts";
 import { TaskStore } from "./store.ts";
+import { taskInputPrefs } from "./input.ts";
 import { describeTaskEdit } from "./tasks.ts";
 import { TasksView } from "./view.ts";
 import { openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
@@ -23,7 +28,24 @@ const extension: ExtensionModule = {
       open: (path, line, side) => void open(ctx, path as FilePath, line, side),
       notice: (message, actions) => ctx.workbench.notice(message, actions),
     };
-    const view = new TasksView({ ...rowEnv, tasks: () => store.all() });
+    taskInputPrefs.sources = { tags: () => store.tags(), people: () => store.people(), notes: async () => store.noteList().map((n) => n.title) };
+    /** Where quick-add puts a task: the "tasks.inbox" note, or today's daily note. */
+    const inbox = (): Inbox => {
+      const name = ctx.settings.get<string>("tasks.inbox")?.trim();
+      const path = name ? ctx.util.notePathFor(name) : null;
+      if (name && path) return { label: ctx.util.label(path), path };
+      return { label: `Journal/${today()}`, path: `Journal/${today()}.md`, daily: true };
+    };
+    const shortcut = () => {
+      const key = ctx.commands.shortcut("tasks.quickAdd");
+      return key ?? formatKeys("Mod-Shift-.");
+    };
+    const quickAdd: Omit<QuickAddOptions, "added" | "escape"> = {
+      add: (text, ignore, to) => store.add(text, ignore, to),
+      open: (path, line) => void open(ctx, path as FilePath, line),
+      inbox,
+    };
+    const view = new TasksView({ ...rowEnv, tasks: () => store.all(), quickAdd: () => ({ ...quickAdd, shortcut: shortcut() }) });
     const showPerson = (name: string) => {
       view.showPerson(name);
       ctx.views.show("tasks");
@@ -47,6 +69,18 @@ const extension: ExtensionModule = {
       return !!view && openMenuAt(view, env);
     });
     ctx.commands.register("tasks.show", () => ctx.views.toggle("tasks"));
+    ctx.commands.register("tasks.quickAdd", () => {
+      const editor = ctx.editor.focused();
+      // A task typed here types with the editor's keys: Vim's, if the note's editor has Vim.
+      taskInputPrefs.vim = !!(editor && getCM(editor));
+      const from = ctx.workbench.focusedPath();
+      openQuickAdd({
+        ...quickAdd,
+        shortcut: shortcut(),
+        note: from && isNote(from) ? from : undefined,
+        added: (r) => ctx.workbench.notice(`Added to ${ctx.util.label(r.path as FilePath)}`, [{ label: "Open", run: () => open(ctx, r.path as FilePath, r.line) }]),
+      });
+    });
     ctx.views.register("tasks", { render: (root) => view.render(root) });
     ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);

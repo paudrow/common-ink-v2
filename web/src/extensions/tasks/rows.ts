@@ -3,9 +3,11 @@
 // token, ⌘-click (Ctrl-click off a Mac) to open the note at the line to the side. Every change goes to
 // the note the task lives in.
 import { IS_MAC } from "common-ink/keys";
-import { dayLabel, endTags, metaChips } from "./chips.ts";
+import { dayLabel, endTags, metaChips, today } from "./chips.ts";
 import { el, icon } from "./dom.ts";
 import { openChipEditor, openTaskMenu, type ChipContext } from "./editors.ts";
+import { taskInput } from "./input.ts";
+import { retypeTask } from "./quickadd.ts";
 import type { TaskStore } from "./store.ts";
 import { tagsInLine } from "./tags.ts";
 import type { Task, TaskPatch } from "./tasks.ts";
@@ -165,34 +167,33 @@ function linger(row: HTMLElement, ms: number) {
 const clip = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
 
 /**
- * Edit a task's words in place, its chips left as they are. Enter or leaving the field saves; Escape
- * puts the words back.
+ * Edit a task's words in place, in the task input (input.ts), its chips left as they are. Phrases
+ * typed there ("tomorrow", "every week") and tokens typed after the words become the task's tokens,
+ * as in quick-add. Enter or leaving the field saves; Escape puts the words back.
  */
 function editWords(t: Task, words: HTMLElement, save: (patch: TaskPatch) => Promise<void>, env: RowEnv) {
   let done = false;
-  const input = el("input", { class: "qt-input", value: t.summary, "aria-label": "Task", spellcheck: "true" });
-  const edit = el("span", { class: "qt-edit", onclick: (e: Event) => e.stopPropagation() }, input);
   const finish = (keep: boolean) => {
     if (done) return;
     done = true;
-    const text = input.value.trim();
+    const text = input.value().trim();
+    const ignore = input.ignore();
     edit.replaceWith(words);
-    if (!keep || !text || text === t.summary) return;
-    words.replaceChildren(...inline(text)); // show it now; the reload confirms it
-    void save({ summary: text }).catch((e) => {
+    input.destroy();
+    if (!keep || !text) return;
+    const patch = retypeTask(t.raw, text, today(), ignore);
+    if (Object.keys(patch).length === 1 && patch.summary === t.summary) return; // nothing changed
+    words.replaceChildren(...inline(patch.summary ?? t.summary)); // show it now; the reload confirms it
+    void save(patch).catch((e) => {
       words.replaceChildren(...inline(t.summary));
       env.notice(e instanceof Error ? e.message : "Couldn't change the task");
     });
   };
-  input.addEventListener("keydown", (e) => {
-    e.stopPropagation(); // the page's own keys stay out of the field
-    if (e.key === "Enter") (e.preventDefault(), finish(true));
-    else if (e.key === "Escape") (e.preventDefault(), finish(false));
-  });
-  input.addEventListener("blur", () => finish(true));
+  const input = taskInput({ value: t.summary, compact: true, submit: () => finish(true), cancel: () => finish(false), blur: () => finish(true) });
+  // Clicks in the field and its preview are the field's, not the row's (a preview chip isn't the task's chip).
+  const edit = el("span", { class: "qt-edit", onclick: (e: Event) => e.stopPropagation() }, input.dom, input.preview);
   words.replaceWith(edit);
   input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 /**

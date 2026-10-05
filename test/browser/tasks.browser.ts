@@ -113,3 +113,58 @@ test("Show tasks puts what's overdue and due today at the top, then the rest", a
   assert.equal(await rest.locator(".qt-row", { hasText: "Water the plants" }).count(), 0);
   await page.close();
 });
+
+/** Today as the page has it. */
+const todayIn = (page: Page) => page.evaluate(() => new Date().toLocaleDateString("en-CA"));
+
+test("⌘⇧. opens quick-add from a note, Dvorak's key included; Enter adds the task, read from words, to today's note", async () => {
+  const page = await h.browser.newPage({ viewport: { width: 1100, height: 800 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`${h.base}/?file=Chores.md`);
+  await page.waitForSelector(".cm-line .tk");
+  await page.locator(".cm-line", { hasText: "Chores" }).click();
+  await page.keyboard.press("ControlOrMeta+Shift+Period");
+  await page.waitForSelector(".qa-float .cm-content");
+  // (A tag typed last opens its suggestions, whose Enter picks one: the tag goes first here.)
+  await page.keyboard.type("Pay the gas bill #home every month on the 1st");
+  assert.equal(await page.textContent(".qa-float .qa-hl"), "every month on the 1st");
+  assert.ok(await page.locator('.qa-float .qa-preview .tk[data-field="rec"]').count(), "the repeat's chip, before it's added");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector(".qa-float", { state: "detached" });
+  const day = await todayIn(page);
+  await until(page, `Journal/${day}.md`, (text) => /## Tasks\n\n- \[ \] Pay the gas bill due:\d{4}-\d{2}-01 rec:1st #home/.test(text));
+
+  // On Dvorak, "." is the physical E key: the shortcut is the character, wherever it is, and with Shift the browser may say ">".
+  await page.locator(".cm-line", { hasText: "Chores" }).click();
+  await page.evaluate((mac) => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: ">", code: "KeyE", metaKey: mac, ctrlKey: !mac, shiftKey: true, bubbles: true, cancelable: true }));
+  }, process.platform === "darwin");
+  await page.waitForSelector(".qa-float .cm-content");
+  // It types with the note's Vim keys: the first Esc is Vim's, to normal mode; the second leaves.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".qa-float", { state: "detached" });
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("on a task line, Tab right after a phrase makes it a token, and it's in the command list as Add a task", async () => {
+  const page = await h.browser.newPage({ viewport: { width: 1100, height: 800 } });
+  await page.goto(`${h.base}/?file=Chores.md`);
+  await page.waitForSelector(".cm-line .tk");
+  // To the end of Ask's line with Vim, not a click (that could land on a chip and open its editor).
+  await page.locator(".cm-line", { hasText: "Chores" }).click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("/Ask");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("A");
+  await page.keyboard.type(" tomorrow");
+  assert.equal(await page.textContent(".cm-phrase"), "tomorrow");
+  await page.keyboard.press("Tab");
+  await until(page, "Chores.md", (text) => /- \[ \] Ask @jane about the #garden plan !low due:\d{4}-\d{2}-\d{2}\n/.test(text));
+  await page.keyboard.press("Escape");
+  await runCommand(page, "Add a task");
+  await page.waitForSelector(".qa-float .cm-content");
+  await page.close();
+});

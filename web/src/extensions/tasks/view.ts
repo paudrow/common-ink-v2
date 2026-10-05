@@ -1,6 +1,7 @@
-// The Tasks view: Today (what's overdue, due today or starting today), then every other task, in the
-// same rows the ::tasks embed draws. Narrowed to a tag or a person, the list stands alone. Ticking a
-// box here edits the note the task lives in.
+// The Tasks view: the quick-add bar, then Today (what's overdue, due today or starting today), then
+// every other task, in the same rows the ::tasks embed draws. Narrowed to a tag or a person, the list
+// stands alone. Ticking a box here edits the note the task lives in.
+import { quickAddBar, type QuickAddOptions } from "./bar.ts";
 import { el, icon } from "./dom.ts";
 import { mountTaskList, type ListEnv } from "./list.ts";
 import { redrawRows, taskRow, type RowEnv } from "./rows.ts";
@@ -14,7 +15,10 @@ const SECTIONS = [
 ] as const;
 
 /** What the view needs: a tag or person chip in it narrows the view itself. */
-export type ViewEnv = Omit<ListEnv, "skip" | "empty" | "openTag" | "openPerson">;
+export type ViewEnv = Omit<ListEnv, "skip" | "empty" | "openTag" | "openPerson"> & {
+  /** What the quick-add bar at the top needs. */
+  quickAdd(): Omit<QuickAddOptions, "added" | "escape">;
+};
 
 /** The view in `root`: drawn the first time, and read again (keeping its filters) each time after. */
 export class TasksView {
@@ -22,6 +26,8 @@ export class TasksView {
   private filter: { tag?: string; assignee?: string } = {};
   /** The filter changed from outside (a person chip in a note): the next render draws it anew. */
   private changed = false;
+  /** The quick-add bar drawn last, to let go of when the view draws anew. */
+  private bar: { destroy(): void } | null = null;
 
   constructor(private env: ViewEnv) {}
 
@@ -99,7 +105,10 @@ export class TasksView {
       ? el("span", { class: "tasks-filter" }, icon("at", 13), filter.assignee, el("button", { type: "button", class: "tasks-filter-clear", title: "Everyone's tasks", onclick: () => set({ ...filter, assignee: undefined }) }, icon("close", 12)))
       : null;
     filters.replaceChildren(tagSelect, ...(person ? [person] : []));
-    root.replaceChildren(el("div", { class: "tasks-view" }, todayHost, filters, host));
+    this.bar?.destroy();
+    // Added: the lists read the notes again when the note saves.
+    const bar = (this.bar = quickAddBar({ ...env.quickAdd(), added: () => {} }));
+    root.replaceChildren(el("div", { class: "tasks-view" }, bar.root, todayHost, filters, host));
     this.drawn.set(root, load);
   }
 }
