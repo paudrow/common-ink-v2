@@ -5,10 +5,12 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { MarkdownExtension } from "@lezer/markdown";
-import type { SourceStatus } from "../../worker/src/data-sources.ts";
+import type { EditResult, SourceState, SourceStatus } from "../../worker/src/data-sources.ts";
+import type { Calendar, Occurrence, Scope } from "../../worker/src/calendar.ts";
+import type { EventFound } from "../../worker/src/operations.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResult } from "../../worker/src/files.ts";
-import type { Contact, Event } from "../../worker/src/sources.ts";
+import type { Contact } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Embed } from "./embeds.ts";
@@ -73,6 +75,20 @@ export interface MadeView extends ViewRenderer {
   title: string;
 }
 
+/** An event's fields as an edit gives them (create_event and update_event take the same): null or "" clears one. */
+export interface EventInput {
+  title?: string;
+  start?: string;
+  end?: string;
+  allDay?: boolean;
+  timeZone?: string | null;
+  calendar?: string;
+  location?: string | null;
+  description?: string | null;
+  /** A rule as tasks write it (weekly, 1st-tue) or RRULE lines; null stops a series repeating. */
+  recurrence?: string | string[] | null;
+}
+
 export interface ExtensionContext {
   /** This extension, as its manifest says. */
   extension: ExtensionManifest;
@@ -92,8 +108,8 @@ export interface ExtensionContext {
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
     keybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }>;
-    /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext"), with their titles. */
-    menu(menu: "commandBar" | "tabMenu" | "editorContext"): Array<{ command: string; title: string }>;
+    /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext", or "quickOpen", which ⌘P lists with files), with their titles. */
+    menu(menu: "commandBar" | "tabMenu" | "editorContext" | "quickOpen"): Array<{ command: string; title: string }>;
   };
   /**
    * The layout of windows and tabs: the core's model (layout.ts), changed with common-ink/layout's
@@ -218,14 +234,35 @@ export interface ExtensionContext {
     /** A link's card: its page's title, description, site and picture (as a data: URL), fetched the same way. */
     card(url: string): Promise<LinkCard>;
   };
-  /** Data sources: outside data shown but not stored as files. They answer for the signed-in person. */
-  sources: {
-    /** "google" when connected, "fixtures" for sample data (Previews), "none" when not connected yet. */
+  /**
+   * Data sources (ADR 0007): records from outside the workspace, such as calendar events, kept apart
+   * from notes. Reading them asks for data:calendar:read (or data:contacts:read), and changing them
+   * for data:calendar:write.
+   */
+  data: {
+    /** Each source's state: connected or not, its last sync, its errors, what it holds, and what's waiting to reach it. */
     status(): Promise<SourceStatus>;
-    events(from: Date, to: Date): Promise<Event[]>;
-    contacts(query?: string): Promise<Contact[]>;
-    /** Go to Google to connect calendar and contacts, then come back. */
+    /** Go to Google to connect calendar and contacts, then come back here. */
     connect(): void;
+    /** Bring the calendar's own changes in now (at most twice a minute), after sending edits waiting for it; how it stands after. */
+    sync(force?: boolean): Promise<SourceState>;
+    calendar: {
+      calendars(): Promise<Calendar[]>;
+      /** Every time events happen between two times, in your time zone; a series comes once per occurrence. */
+      events(from: Date, to: Date, calendars?: string[]): Promise<Occurrence[]>;
+      /** One event by its address, as stored or worked out from its series. */
+      event(address: string): Promise<EventFound | null>;
+      /** Add an event: wall times ("2026-10-05T09:00") or days for all day, as create_event takes them. */
+      create(event: EventInput & { title: string; start: string }): Promise<EditResult>;
+      /** Change an event; for an occurrence of a series, `scope` says which ones ("this" by default). */
+      update(address: string, change: EventInput, scope?: Scope): Promise<EditResult>;
+      remove(address: string, scope?: Scope): Promise<EditResult>;
+      /** After any record changes, from here, sync, an agent or another tab. */
+      onChange(fn: () => void): void;
+    };
+    contacts: {
+      search(query?: string): Promise<Contact[]>;
+    };
   };
   workbench: {
     /** Open a file in place of the tab on show, or in a new tab, optionally at a line (0-based). */

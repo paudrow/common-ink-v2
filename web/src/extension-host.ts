@@ -107,7 +107,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [] },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [] },
 });
 
 export interface HostOptions {

@@ -7,10 +7,11 @@
   "files": ["index.ts"],
   "activationEvents": ["onView:contacts", "onCommand:contacts.show"],
   "permissions": {
-    "contacts:read": { "why": "Search your contacts, which the Common Ink server reads from Google" }
+    "data:contacts:read": { "why": "Search your contacts, which the Common Ink server reads from Google" }
   },
   "contributes": {
     "commands": [{ "command": "contacts.show", "title": "Show contacts" }],
-    "views": { "sidebar": [{ "id": "contacts", "name": "Contacts" }] }
+    "views": { "sidebar": [{ "id": "contacts", "name": "Contacts" }] },
+    "dataSources": [{ "id": "contacts", "kind": "contacts", "title": "Contacts", "description": "People from Google Contacts, read when you search." }]
   }
 }

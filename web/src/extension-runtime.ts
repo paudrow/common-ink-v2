@@ -18,12 +18,14 @@ import { addMarkdownSyntax } from "./editor.ts";
 import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
 import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
-import type { ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
+import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
+import { newEventId, type Scope } from "../../worker/src/calendar.ts";
 import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
-import type { Offline } from "./offline.ts";
+import { unreachable, type HeldOp, type Offline } from "./offline.ts";
+import type { EditResult } from "../../worker/src/data-sources.ts";
 import type { Panels } from "./panels.ts";
 import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
@@ -46,6 +48,8 @@ export interface RuntimeApp {
   statusItems: StatusItems;
   onSaved: Array<(path: FilePath) => void>;
   onFocus: Array<(path: FilePath | null) => void>;
+  /** After any data source's record changes. */
+  onRecords: Array<() => void>;
   /** Keep an answer to a permission prompt in your settings. */
   saveGrant(extension: string, key: string, answer: "allow" | "deny"): Promise<void>;
   /** Show a permission prompt. */
@@ -55,6 +59,44 @@ export interface RuntimeApp {
   /** An extension's state, error or activity changed. */
   changed(): void;
 }
+
+type DataApi = Omit<ExtensionContext["data"], "connect" | "calendar"> & { calendar: Omit<ExtensionContext["data"]["calendar"], "onChange"> };
+
+/**
+ * Data sources for an extension (ADR 0007), each call checked against its permissions first. A
+ * built-in changes records as you; any other extension, as itself acting for you.
+ */
+function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined, offline: Offline): DataApi {
+  const read = async <T>(kind: "data:calendar:read" | "data:contacts:read", run: () => Promise<T>) => (await check({ kind }), run());
+  /** A write, sent now, or kept to send once the server can be reached (offline.ts). */
+  const send = async (method: HeldOp["method"], body: Record<string, unknown>, what: string): Promise<EditResult> => {
+    await check({ kind: "data:calendar:write" });
+    try {
+      return await api.editEvent(method, body, author);
+    } catch (err) {
+      if (!unreachable(err)) throw err;
+      await offline.holdOp({ method, body, ...(author ? { extension: author } : {}), what });
+      return { status: "queued", address: String(body.address ?? ""), written: [], deleted: [], error: "you're offline, so it goes when you're back" };
+    }
+  };
+  return {
+    status: api.sources,
+    sync: (force) => read("data:calendar:read", () => api.sync(force)),
+    calendar: {
+      calendars: () => read("data:calendar:read", api.calendars),
+      events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
+      event: (address) => read("data:calendar:read", () => api.event(address)),
+      // The id is made here, so an edit held offline and sent twice makes one event.
+      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
+      update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
+      remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
+    },
+    contacts: { search: (query) => read("data:contacts:read", () => api.contacts(query)) },
+  };
+}
+
+/** Go to Google to connect calendar and contacts, and come back to where you were. */
+const connectGoogle = () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`);
 
 /** The services an extension reaches, each checked against its manifest and your answers first. */
 interface Services {
@@ -230,7 +272,7 @@ export class ExtensionRuntime {
   }
 
   /** Tell sandboxed extensions something happened. */
-  broadcast(name: "saved" | "focus", arg: FilePath | null): void {
+  broadcast(name: "saved" | "focus" | "records", arg: FilePath | null): void {
     for (const host of this.sandboxes.values()) host.event(name, arg);
   }
 
@@ -657,18 +699,10 @@ export class ExtensionRuntime {
         },
       },
       notifications: { show: (title, body) => this.notify(services, title, body) },
-      sources: {
-        status: api.sources,
-        events: async (from, to) => {
-          await services.check({ kind: "calendar:read" });
-          return api.events(from, to);
-        },
-        contacts: async (query) => {
-          await services.check({ kind: "contacts:read" });
-          return api.contacts(query);
-        },
-        connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
-      },
+      data: (() => {
+        const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
+        return { ...data, connect: connectGoogle, calendar: { ...data.calendar, onChange: (fn: () => void) => void app.onRecords.push(guard(fn)) } };
+      })(),
       workbench: {
         open: (path, how) => app.workbench.open(path, how),
         openPicked: (path) => app.openFromBar(path),
@@ -698,6 +732,7 @@ export class ExtensionRuntime {
     const m = record.manifest;
     const app = this.app;
     const services = this.services(m);
+    const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
@@ -796,12 +831,24 @@ export class ExtensionRuntime {
             return navigator.clipboard.writeText(a);
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
-          case "sources.events":
-            await services.check({ kind: "calendar:read" });
-            return api.events(new Date(a), new Date(String(b)));
-          case "sources.contacts":
-            await services.check({ kind: "contacts:read" });
-            return api.contacts(a);
+          case "data.status":
+            return data.status();
+          case "data.sync":
+            return data.sync(a === "force");
+          case "data.calendars":
+            return data.calendar.calendars();
+          case "data.events":
+            return data.calendar.events(new Date(a), new Date(String(b)), (c ?? undefined) as string[] | undefined);
+          case "data.event":
+            return data.calendar.event(a);
+          case "data.create":
+            return data.calendar.create(b as Parameters<DataApi["calendar"]["create"]>[0]);
+          case "data.update":
+            return data.calendar.update(a, b as EventInput, (c ?? undefined) as Scope | undefined);
+          case "data.remove":
+            return data.calendar.remove(a, (b ?? undefined) as Scope | undefined);
+          case "data.contacts":
+            return data.contacts.search(a);
           case "workbench.open":
             return app.workbench.open(a as FilePath, b as { newTab?: boolean });
           case "workbench.focusedPath":

@@ -1,0 +1,11 @@
+{
+  "pr": 38,
+  "title": "Notes link to events: chips that keep up, backlinks, and meeting notes",
+  "steps": [
+    "Open Meeting prep: each link to an event is a chip with its day, time and title as they are now (tomorrow's standup starts late, so it says so). Put the cursor on one: it's a markdown link, [Title](event:…).",
+    "Click Dentist: the Calendar opens on it, with its editor. Under Notes, Meeting prep links here; New meeting note makes Meetings/<day> Dentist, linked, and opens it.",
+    "Rename the dentist in the calendar: the chips in both notes follow; the notes' own text doesn't change.",
+    "In a note, ⌘⇧P, Insert event link…: type part of an event's name and press Enter, and its link goes where the cursor is.",
+    "Agents: read_event lists the notes that link to an event (or its series); link_event adds a link to a note."
+  ]
+}

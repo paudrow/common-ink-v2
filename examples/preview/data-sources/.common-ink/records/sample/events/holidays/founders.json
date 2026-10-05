@@ -1,0 +1,9 @@
+{
+  "id": "founders",
+  "calendar": "holidays",
+  "title": "Founders' Day",
+  "status": "confirmed",
+  "allDay": true,
+  "start": "{{today+10}}",
+  "end": "{{today+11}}"
+}

@@ -2,7 +2,7 @@
 // mark, a person, a tag. The markdown keeps the tokens; these only draw them. Each chip says which
 // token it is (data-field, data-value), so a click can open that token's editor.
 import { avatar, el, icon } from "./dom.ts";
-import { endsLabel, nextDue, parseRule, ruleLabel } from "./recurrence.ts";
+import { endsLabel, nextDue, parseRule, ruleLabel } from "common-ink/recurrence";
 import { tagsInLine } from "./tags.ts";
 import { endsOf, localDate, type TaskMeta } from "./tasks.ts";
 

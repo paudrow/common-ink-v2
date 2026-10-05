@@ -40,8 +40,10 @@ export type PermissionKind =
   | "notifications"
   | "media"
   | "history:read"
-  | "calendar:read"
-  | "contacts:read"
+  /** Data sources' records (ADR 0007): reading and changing calendar events, reading contacts. */
+  | "data:calendar:read"
+  | "data:calendar:write"
+  | "data:contacts:read"
   | "settings:write"
   /** CodeMirror extensions in note editors: decorations, keys, live preview. Trusted extensions only. */
   | "editor";
@@ -55,8 +57,9 @@ export const PERMISSION_KINDS: readonly PermissionKind[] = [
   "notifications",
   "media",
   "history:read",
-  "calendar:read",
-  "contacts:read",
+  "data:calendar:read",
+  "data:calendar:write",
+  "data:contacts:read",
   "settings:write",
   "editor",
 ];
@@ -91,7 +94,7 @@ export interface CommandContribution {
  */
 export type KeybindingContribution = { key: string; command: string } | { vim: string; command: string; operator?: true };
 
-export type MenuId = "commandBar" | "tabMenu" | "editorContext";
+export type MenuId = "commandBar" | "tabMenu" | "editorContext" | "quickOpen";
 
 export interface MenuContribution {
   command: string;
@@ -184,6 +187,17 @@ export interface UrlEmbedContribution {
   frameHosts: string[];
 }
 
+/**
+ * A data source the extension shows (ADR 0007): records of one kind from outside the workspace. The
+ * sync that fills it runs in the Worker; the extension draws its views and embeds from its records.
+ */
+export interface DataSourceContribution {
+  id: string;
+  kind: "calendar" | "contacts";
+  title: string;
+  description?: string;
+}
+
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -195,6 +209,7 @@ export interface Contributions {
   statusBarItems: StatusBarItemContribution[];
   embeds: EmbedContribution[];
   urlEmbeds: UrlEmbedContribution[];
+  dataSources: DataSourceContribution[];
 }
 
 export interface ExtensionManifest {
@@ -261,7 +276,7 @@ function contributions(v: unknown, id: string): Contributions {
   };
   const menus: Contributions["menus"] = {};
   for (const [menu, items] of Object.entries(c.menus === undefined ? {} : object(c.menus, "contributes.menus"))) {
-    if (!["commandBar", "tabMenu", "editorContext"].includes(menu)) throw new ManifestError(`contributes.menus.${menu} isn't a menu (commandBar, tabMenu, editorContext)`);
+    if (!["commandBar", "tabMenu", "editorContext", "quickOpen"].includes(menu)) throw new ManifestError(`contributes.menus.${menu} isn't a menu (commandBar, tabMenu, editorContext, quickOpen)`);
     menus[menu as MenuId] = list(items, `contributes.menus.${menu}`, (item, at) => ({ command: text(object(item, at).command, `${at}.command`) }));
   }
   let configuration: ConfigurationContribution | null = null;
@@ -310,6 +325,11 @@ function contributions(v: unknown, id: string): Contributions {
         priority: typeof o.priority === "number" ? o.priority : 0,
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
+    }),
+    dataSources: list(c.dataSources, "contributes.dataSources", (item, at) => {
+      const o = object(item, at);
+      if (o.kind !== "calendar" && o.kind !== "contacts") throw new ManifestError(`${at}.kind must be calendar or contacts`);
+      return { id: text(o.id, `${at}.id`), kind: o.kind, title: text(o.title, `${at}.title`), ...(typeof o.description === "string" ? { description: o.description } : {}) };
     }),
     embeds: list(c.embeds, "contributes.embeds", (item, at) => {
       const o = object(item, at);

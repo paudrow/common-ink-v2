@@ -1,0 +1,10 @@
+{
+  "id": "dinner",
+  "calendar": "personal",
+  "title": "Dinner with Sam",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today+4}}T19:00:00",
+  "end": "{{today+4}}T21:00:00",
+  "location": "Luigi's"
+}

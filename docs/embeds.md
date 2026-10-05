@@ -47,6 +47,7 @@ A link alone on its own line is drawn as what it links to: a YouTube video, a po
 | `alarm` | leaf | Rings and notifies at a time of day while Common Ink is open | `at` (07:30), `label`, `id` |
 | `noise` | leaf | White, pink or brown noise, made in the browser | `color`, `volume` (0 to 1), `label` |
 | `tasks` | leaf | Tasks from across the notes, live, grouped, to tick and change where they are | `folder`, `note`, `tag`, `assignee`, `due` (`<=today`, `tomorrow`, `>=2026-10-01`), `group` (note, due, priority, tag, person), `status` (open, done, all), `limit` |
+| `calendar` | leaf | Your calendar's events, live: the coming days as a list, or 3 days, a week or a month to click and drag in, as in the Calendar | `view` (agenda, 3day, week, month), `days` (for the list), `calendars` (ids, comma-separated), `height` (pixels), `id` |
 
 ## From the Catalog
 

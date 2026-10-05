@@ -7,6 +7,7 @@ import contacts from "../../web/src/extensions/contacts/extension.json";
 import gfm from "../../web/src/extensions/gfm/extension.json";
 import history from "../../web/src/extensions/history/extension.json";
 import daily from "../../web/src/extensions/daily/extension.json";
+import dataSources from "../../web/src/extensions/data-sources/extension.json";
 import latex from "../../web/src/extensions/latex/extension.json";
 import lists from "../../web/src/extensions/lists/extension.json";
 import linkEmbeds from "../../web/src/extensions/link-embeds/extension.json";
@@ -20,7 +21,7 @@ import vim from "../../web/src/extensions/vim/extension.json";
 import workbench from "../../web/src/extensions/workbench/extension.json";
 import { parseManifest, type ExtensionManifest } from "./extensions.ts";
 
-const RAW: unknown[] = [workbench, quickOpen, commandList, vim, livePreview, gfm, codeBlocks, latex, lists, history, daily, tasks, timers, media, linkEmbeds, calendar, contacts, uploads];
+const RAW: unknown[] = [workbench, quickOpen, commandList, vim, livePreview, gfm, codeBlocks, latex, lists, history, daily, tasks, timers, media, linkEmbeds, calendar, contacts, dataSources, uploads];
 
 export const BUILT_IN_MANIFESTS: ExtensionManifest[] = RAW.map((m) => {
   const id = (m as { id: string }).id;

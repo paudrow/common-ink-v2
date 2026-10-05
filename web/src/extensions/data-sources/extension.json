@@ -1,0 +1,17 @@
+{
+  "id": "data-sources",
+  "name": "Data sources",
+  "version": "1.0.0",
+  "description": "Where your calendar and contacts come from: whether each is connected, when it last synced, what it holds, what's waiting to reach it, and what went wrong. When Google ends the connection, the status bar says so, with one click to reconnect.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onStartup"],
+  "contributes": {
+    "commands": [
+      { "command": "dataSources.show", "title": "Show data sources" },
+      { "command": "dataSources.reconnect", "title": "Reconnect Google Calendar" }
+    ],
+    "views": { "sidebar": [{ "id": "dataSources", "name": "Data sources" }] },
+    "statusBarItems": [{ "id": "dataSources.reconnect", "alignment": "right", "priority": 30, "command": "dataSources.reconnect" }]
+  }
+}
