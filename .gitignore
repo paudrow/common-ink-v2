@@ -5,3 +5,6 @@ dist/
 .env*
 .DS_Store
 test-results/
+# Visual baselines are kept for Linux (CI) only; other machines write their own on a first run.
+test/browser/snapshots/*
+!test/browser/snapshots/linux/
