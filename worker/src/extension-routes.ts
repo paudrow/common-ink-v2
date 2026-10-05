@@ -8,7 +8,7 @@ import { isExtensionScript, parseFilePath, type Author } from "./files.ts";
 import type { Store } from "./operations.ts";
 import { decide, parseGrants } from "./permissions.ts";
 import { linkCard } from "./link-card.ts";
-import { FetchRefused, safeFetch } from "./safe-fetch.ts";
+import { FetchRefused, safeFetch, type SafeFetchOptions } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
 import { userSettingsPath } from "./settings.ts";
 import { LIBRARY_NAMES, libraryUrl } from "../../web/src/library-names.ts";
@@ -84,7 +84,7 @@ async function grantsOf(store: Store, email: string) {
 }
 
 /** The signed-in parts: a code token, a brokered fetch, and installing from a URL. Null if the route isn't one of them. */
-export async function extensionApi(req: Request, url: URL, email: string, author: Author, store: SandboxStore): Promise<Response | null> {
+export async function extensionApi(req: Request, url: URL, email: string, author: Author, store: SandboxStore, net: Pick<SafeFetchOptions, "fetcher" | "resolve"> = {}): Promise<Response | null> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/sandbox/token") {
     const id = url.searchParams.get("extension") ?? "";
@@ -108,8 +108,8 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     if (decision.outcome !== "allow") return json({ error: `${found.manifest.name} isn't allowed to reach ${host}` }, 403);
     try {
       // A link's card (title, description, picture) rather than its page.
-      if (body.card) return json(await linkCard(body.url));
-      const res = await safeFetch(body.url, { method: body.method, headers: body.headers, body: body.body });
+      if (body.card) return json(await linkCard(body.url, net));
+      const res = await safeFetch(body.url, { ...net, method: body.method, headers: body.headers, body: body.body });
       return json(res);
     } catch (err) {
       if (err instanceof FetchRefused) return json({ error: err.message }, 400);
@@ -120,7 +120,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     // Another catalog's index, for the Extensions view: fetched safely, like an install, and checked.
     const target = url.searchParams.get("url") ?? "";
     try {
-      const res = await safeFetch(target, { maxBytes: 256_000 });
+      const res = await safeFetch(target, { ...net, maxBytes: 256_000 });
       if (res.status !== 200 || res.truncated) return json({ error: `${target} answered ${res.truncated ? "with too much" : res.status}` }, 400);
       return json({ entries: parseCatalog(JSON.parse(res.body), res.url, false) });
     } catch (err) {
@@ -133,7 +133,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     const body = (await req.json().catch(() => ({}))) as { url?: string };
     if (typeof body.url !== "string") return json({ error: "Give the URL of an extension's folder or its extension.json" }, 400);
     try {
-      return json(await install(store, body.url, author));
+      return json(await install(store, body.url, author, net));
     } catch (err) {
       if (err instanceof FetchRefused || err instanceof InstallError) return json({ error: err.message }, 400);
       throw err;
@@ -145,9 +145,9 @@ export async function extensionApi(req: Request, url: URL, email: string, author
 class InstallError extends Error {}
 
 /** Copy an extension's files from where it's published into the workspace, as changes by `author`. */
-async function install(store: Store, raw: string, author: Author): Promise<{ id: string; name: string; files: string[] }> {
+async function install(store: Store, raw: string, author: Author, net: Pick<SafeFetchOptions, "fetcher" | "resolve">): Promise<{ id: string; name: string; files: string[] }> {
   const manifestUrl = raw.endsWith("extension.json") ? raw : `${raw.replace(/\/?$/, "/")}extension.json`;
-  const res = await safeFetch(manifestUrl, { maxBytes: 64_000 });
+  const res = await safeFetch(manifestUrl, { ...net, maxBytes: 64_000 });
   if (res.status !== 200) throw new InstallError(`${manifestUrl} answered ${res.status}`);
   let data: { id?: unknown };
   try {
@@ -161,7 +161,7 @@ async function install(store: Store, raw: string, author: Author): Promise<{ id:
   if (BUILT_IN_MANIFESTS.some((m) => m.id === id)) throw new InstallError(`"${id}" is a built-in's id. To change a built-in, Customize it.`);
   const files: Array<[string, string]> = [["extension.json", res.body]];
   for (const file of manifest.files) {
-    const got = await safeFetch(new URL(file, res.url).toString(), { maxBytes: 1_000_000 });
+    const got = await safeFetch(new URL(file, res.url).toString(), { ...net, maxBytes: 1_000_000 });
     if (got.status !== 200 || got.truncated) throw new InstallError(`${file} couldn't be fetched (${got.truncated ? "too big" : got.status})`);
     files.push([file, got.body]);
   }

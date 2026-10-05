@@ -1,9 +1,12 @@
 // What a Preview starts with: each pull request's sample notes from examples/preview/<slug>/, and a
-// "Try this PR" note that lists what to test, this PR's steps first.
+// "Try this PR" note that lists what to test, this PR's steps first. And the scenarios tests start
+// from (test/scenarios/), each a few of those sections' notes on a fixed clock.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parseFilePath, type Seed } from "../worker/src/files.ts";
+import { readLevers } from "../worker/src/levers.ts";
+import * as L from "../web/src/layout.ts";
 
 export interface Section {
   slug: string;
@@ -43,21 +46,27 @@ export function readSections(dir: string, catalog = path.join(dir, "../../web/pu
       if (!valid) throw new Error(`${file} must look like {"pr": 1, "title": "...", "steps": ["..."]}`);
       const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
       if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}`);
-      const notesDir = path.join(dir, slug);
-      // Notes at the top, and other workspace files (a sample extension, say) in folders below, such as .common-ink/extensions/.
-      const notes = fs.existsSync(notesDir)
-        ? (fs.readdirSync(notesDir, { recursive: true }) as string[])
-            .map((f) => f.split(path.sep).join("/"))
-            .filter((f) => parseFilePath(f) && fs.statSync(path.join(notesDir, f)).isFile())
-            .sort()
-            .map((f) => ({ path: f, text: fs.readFileSync(path.join(notesDir, f), "utf8") }))
-        : [];
-      const installed = (install as string[]).flatMap((id) => {
-        const manifest = JSON.parse(fs.readFileSync(path.join(catalog, id, "extension.json"), "utf8")) as { main?: string; files?: string[] };
-        return ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
-      });
-      return { slug, pr, title, steps, notes: [...notes, ...installed], edits };
+      const notes = folderFiles(path.join(dir, slug));
+      return { slug, pr, title, steps, notes: [...notes, ...catalogFiles(catalog, install as string[])], edits };
     });
+}
+
+/** The workspace files in a folder: notes at the top, and others (a sample extension, say) in folders below, such as .common-ink/extensions/. */
+function folderFiles(dir: string): Array<{ path: string; text: string }> {
+  if (!fs.existsSync(dir)) return [];
+  return (fs.readdirSync(dir, { recursive: true }) as string[])
+    .map((f) => f.split(path.sep).join("/"))
+    .filter((f) => parseFilePath(f) && fs.statSync(path.join(dir, f)).isFile())
+    .sort()
+    .map((f) => ({ path: f, text: fs.readFileSync(path.join(dir, f), "utf8") }));
+}
+
+/** A Catalog extension's files, as workspace files, for a seed that installs it. */
+function catalogFiles(catalog: string, ids: readonly string[]): Array<{ path: string; text: string }> {
+  return ids.flatMap((id) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(catalog, id, "extension.json"), "utf8")) as { main?: string; files?: string[] };
+    return ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+  });
 }
 
 export function tryThisPr(sections: Section[], pr: PullRequest): string {
@@ -92,6 +101,61 @@ export function buildSeed(sections: Section[], pr: PullRequest, today = new Date
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
   const edits = sections.flatMap((s) => s.edits);
-  const id = createHash("sha256").update(JSON.stringify({ notes, edits })).digest("hex").slice(0, 16);
-  return { id, notes, edits };
+  return { id: seedId(notes, edits), notes, edits, scenario: { name: PREVIEW_SCENARIO } };
+}
+
+const seedId = (notes: Seed["notes"], edits: Seed["edits"]) => createHash("sha256").update(JSON.stringify({ notes, edits })).digest("hex").slice(0, 16);
+
+/** The scenario a Preview starts with: every section's notes and a Try this PR note. */
+export const PREVIEW_SCENARIO = "preview";
+
+/**
+ * A workspace to test against (docs/TESTING.md), as data in test/scenarios/<name>.json: the notes of
+ * some Preview sections, notes of its own in test/scenarios/<name>/, the Catalog extensions it
+ * installs, the clock its dates are written against, and the note it opens on.
+ */
+export interface Scenario {
+  name: string;
+  about: string;
+  sections: string[];
+  /** Local time ("2026-10-05T09:00"): `{{today}}` in its notes is this day, and the page's clock starts here. */
+  now?: string;
+  open?: string;
+  notes: Array<{ path: string; text: string }>;
+}
+
+/** Every test/scenarios/<name>.json with its notes. Throws on a malformed file. */
+export function readScenarios(dir: string, catalog = path.join(dir, "../../web/public/catalog")): Scenario[] {
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((file) => {
+      const name = file.slice(0, -".json".length);
+      const { about, sections = [], install = [], now, open } = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")) ?? {};
+      const strings = (v: unknown) => Array.isArray(v) && v.every((s) => typeof s === "string");
+      if (typeof about !== "string" || !strings(sections) || !strings(install)) throw new Error(`${file} must look like {"about": "...", "sections": ["lists"], "install": []}`);
+      if (now !== undefined && (typeof now !== "string" || readLevers(new URLSearchParams({ now })).now !== now || now === "real")) throw new Error(`${file}: "now" must be a local time like "2026-10-05T09:00"`);
+      if (!(install as string[]).every((id) => fs.existsSync(path.join(catalog, id, "extension.json")))) throw new Error(`${file}: "install" must be a list of the Catalog's extension ids`);
+      if (open !== undefined && typeof open !== "string") throw new Error(`${file}: "open" must be a note's path`);
+      return { name, about, sections, now, open, notes: [...folderFiles(path.join(dir, name)), ...catalogFiles(catalog, install)] };
+    });
+}
+
+/** A scenario's seed: its sections' notes and its own, dated from its clock, opening on its note. */
+export function scenarioSeed(scenario: Scenario, sections: Section[], today = new Date().toISOString().slice(0, 10)): Seed {
+  const picked = scenario.sections.map((slug) => {
+    const section = sections.find((s) => s.slug === slug);
+    if (!section) throw new Error(`Scenario ${scenario.name}: no examples/preview/${slug}.json`);
+    return section;
+  });
+  const day = scenario.now?.slice(0, 10) ?? today;
+  const notes = [...picked.flatMap((s) => s.notes), ...scenario.notes].map((n) => ({ ...n, text: fillDates(n.text, day), replace: false }));
+  if (scenario.open) {
+    const open = parseFilePath(scenario.open);
+    if (!open || !notes.some((n) => n.path === open)) throw new Error(`Scenario ${scenario.name} opens ${scenario.open}, which it doesn't have`);
+    notes.push({ path: L.LAYOUT_PATH, text: `${JSON.stringify(L.openTab(L.emptyLayout(), open), null, 2)}\n`, replace: false });
+  }
+  const edits = picked.flatMap((s) => s.edits);
+  return { id: seedId(notes, edits), notes, edits, scenario: { name: scenario.name, ...(scenario.now ? { now: scenario.now } : {}) } };
 }

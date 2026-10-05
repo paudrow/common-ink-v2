@@ -12,6 +12,8 @@ import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts } from "./embed-list.ts";
+import { leversOn } from "./levers.ts";
+import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -28,6 +30,8 @@ interface Env extends WorkspaceEnv {
   DEV_USER?: string;
   /** "1" in Previews and local development: the workspace is filled from the build's seed.json. */
   SEED?: string;
+  /** "1" in Previews, local development and the browser tests, with DEV_USER: test levers (docs/TESTING.md). */
+  LEVERS?: string;
 }
 
 const HEADERS: Record<string, string> = {
@@ -101,11 +105,16 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
+    const levers = leversOn(env);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
       // The app's page may frame the hosts of the link embeds that are on for this person.
       const isPage = asset.headers.get("Content-Type")?.startsWith("text/html");
-      return secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
+      const out = secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
+      if (!levers || !isPage) return out;
+      await seedOnce(env, workspace);
+      const seeded = await workspace.scenario();
+      return withLeversMeta(out, { scenario: seeded?.name ?? "", ...(seeded?.now ? { now: seeded.now } : {}) });
     }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
@@ -122,8 +131,13 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     // The live connection goes straight to the workspace: a WebSocket's response can't be rewrapped.
     if (url.pathname === "/api/live") return workspace.fetch(req);
     if (who.kind === "user") {
-      const extensionAnswer = await extensionApi(req, url, who.email, authorFor(who, null), store);
+      const extensionAnswer = await extensionApi(req, url, who.email, authorFor(who, null), store, levers ? await netFor(req, env.ASSETS) : {});
       if (extensionAnswer) return secure(extensionAnswer);
+    }
+    if (levers && url.pathname.startsWith("/api/levers")) {
+      await seedOnce(env, workspace);
+      const answer = await leversApi(req, url, env.ASSETS, workspace);
+      if (answer) return secure(answer);
     }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
     await seedOnce(env, workspace);

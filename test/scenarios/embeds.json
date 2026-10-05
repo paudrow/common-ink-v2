@@ -1,0 +1,6 @@
+{
+  "about": "Every kind of embed: a timer, background noise, an html-app with a uPlot chart and a three.js scene, link embeds, code blocks, tables and math.",
+  "sections": ["embeds", "rich-embeds", "markdown-extensions"],
+  "now": "2026-10-05T09:00",
+  "open": "Embeds tour.md"
+}

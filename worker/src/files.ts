@@ -123,6 +123,8 @@ export interface Seed {
   notes: Array<{ path: string; text: string; replace: boolean }>;
   /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
   edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
+  /** The scenario it was made from (docs/TESTING.md), and the clock that scenario starts at. */
+  scenario?: { name: string; now?: string };
 }
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
