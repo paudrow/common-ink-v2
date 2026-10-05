@@ -99,8 +99,7 @@ export const api = {
     return answer(await fetch(`/api/events?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), zone: ZONE, ...(calendars ? { calendars: calendars.join(",") } : {}) })}`));
   },
   async event(address: string): Promise<EventFound | null> {
-    const res = await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`);
-    return res.status === 404 ? null : answer(res);
+    return answer(await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`));
   },
   /** Bring the calendar's own changes in, unless it synced just now: how its source stands after. */
   async sync(force = false): Promise<SourceState> {

@@ -12,6 +12,13 @@ import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
 
+/** A note that links to an event; `series` when it links to the event's series rather than this occurrence. */
+export interface LinkingNote {
+  path: FilePath;
+  title: string;
+  series?: true;
+}
+
 /** Where a source stands, for the Data sources view and agents. */
 export interface SourceState {
   source: SourceId;
@@ -207,14 +214,29 @@ export class DataSources {
     return occurrences(events, { from, to, zone }, (calendar, id) => addressOf({ source, collection: calendar, id }));
   }
 
-  /** An event by its address: as stored, or worked out from its series, with its series. Null if there's none. */
-  event(address: string, zone = "UTC"): { address: string; event: CalendarEvent; series?: CalendarEvent; path: FilePath | null } | null {
+  /**
+   * An event by its address: as stored, or worked out from its series, with its series and the notes
+   * that link to it (or to its series). Null if there's none.
+   */
+  event(address: string, zone = "UTC"): { address: string; event: CalendarEvent; series?: CalendarEvent; path: FilePath | null; notes: LinkingNote[] } | null {
     const key = parseAddress(address);
     if (!key) return null;
     const target = findTarget(this.family(key.source, key.collection, key.id), key.id, zone);
     if (!target) return null;
-    if (target.kind === "occurrence") return { address, event: target.occurrence, series: target.series, path: null };
-    return { address, event: target.event, ...(target.series ? { series: target.series } : {}), path: recordPath(key) };
+    const series = target.kind === "occurrence" ? target.series : target.series;
+    const own = addressOf(key);
+    const notes = this.linking([own, ...(series ? [addressOf({ ...key, id: series.id })] : [])]);
+    if (target.kind === "occurrence") return { address, event: target.occurrence, series: target.series, path: null, notes };
+    return { address, event: target.event, ...(target.series ? { series: target.series } : {}), path: recordPath(key), notes };
+  }
+
+  /** The notes with a link to any of some addresses, `[…](event:…)`, each with its title and whether it links to the first. */
+  private linking(addresses: readonly string[]): LinkingNote[] {
+    return this.files.notesWith(addresses.map((a) => `](${a})`)).map((f) => ({
+      path: f.path,
+      title: /^#\s+(.+)$/m.exec(f.text)?.[1].trim() ?? f.path.replace(/\.md$/, ""),
+      ...(f.text.includes(`](${addresses[0]})`) ? {} : { series: true as const }),
+    }));
   }
 
   /** An event's own record, its series, and the series' changed occurrences: what an edit of it may touch. */

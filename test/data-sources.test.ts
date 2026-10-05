@@ -150,3 +150,20 @@ test("a create sent again with its id makes one event, and a bad id says what on
   assert.deepEqual(((await op(store, "list_events", { ...week, zone: "UTC" })) as Occurrence[]).filter((o) => o.title === "Lunch").length, 1);
   assert.deepEqual(await runOperation("create_event", { ...lunch, id: "Lunch!" }, store, ada), { ok: false, error: '"id" is 5 to 1024 of 0-9 and a-v, or left out for a new one' });
 });
+
+test("an event lists the notes that link to it, and to its series", async () => {
+  const store = sampleWorkspace();
+  const write = (path: string, text: string) => store.files.write({ path: path as FilePath, text, base: 0, author: ada });
+  write("Standups.md", "# Standups\n\nAll of them: [Standup](event:sample/work/standup)\n");
+  write("Meetings/Wednesday.md", "# Wednesday's standup\n\n[Standup](event:sample/work/standup_20261007T090000Z)\n");
+  write("Other.md", "# Other\n\n[Fall break](event:sample/holidays/fall)\n");
+  const found = (await op(store, "read_event", { address: "event:sample/work/standup_20261007T090000Z" })) as { notes: unknown[] };
+  assert.deepEqual(found.notes, [
+    { path: "Meetings/Wednesday.md", title: "Wednesday's standup" },
+    { path: "Standups.md", title: "Standups", series: true },
+  ]);
+  const linked = (await op(store, "link_event", { address: "event:sample/holidays/fall", path: "Trips.md" }, claude)) as { link: string };
+  assert.equal(linked.link, "[Fall break](event:sample/holidays/fall)");
+  assert.equal(store.files.read("Trips.md" as FilePath)?.text, "# Fall break\n\n[Fall break](event:sample/holidays/fall)\n");
+  assert.deepEqual(((await op(store, "read_event", { address: "event:sample/holidays/fall" })) as { notes: Array<{ path: string }> }).notes.map((n) => n.path), ["Other.md", "Trips.md"]);
+});

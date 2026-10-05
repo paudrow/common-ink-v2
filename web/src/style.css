@@ -2011,3 +2011,16 @@ iframe.webview {
 @media (prefers-reduced-motion: reduce) {
   .cal-scroll, .cal-strip { scroll-behavior: auto; }
 }
+
+/* An event link in a note, drawn as its day, time and title (links.ts). */
+.cm-event-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 1px 8px 1px 6px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg-elev); font-size: 0.92em; line-height: 1.5; cursor: pointer; vertical-align: baseline; }
+.cm-event-chip:hover { border-color: var(--accent); }
+.cm-event-chip-dot { flex: none; width: 7px; height: 7px; border-radius: 4px; background: var(--accent); align-self: center; }
+.cm-event-chip-when { color: var(--muted); white-space: nowrap; }
+.cm-event-chip-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-event-chip.is-missing { opacity: 0.6; }
+.cm-event-chip.is-missing .cm-event-chip-title { text-decoration: line-through; }
+.cal-notes .cal-stack { align-items: flex-start; }
+.cal-note-link { border: 0; background: none; padding: 3px 0; color: var(--accent); text-align: left; cursor: pointer; font: 13px var(--prose); }
+.cal-note-link:hover { text-decoration: underline; }
+.cal-meeting-note { height: 28px; }
