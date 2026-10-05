@@ -10,6 +10,21 @@
   --code-bg: rgb(31 30 28 / 0.05);
   --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* For tasks' chips, editors and lists. */
+  --hover: rgb(31 30 28 / 0.06);
+  --bg-elev: #ffffff;
+  --line-strong: #d6d2cb;
+  --faint: #a9a49d;
+  --ink-2: #3d3a36;
+  --accent-ink: #2450b8;
+  --on-accent: #ffffff;
+  --bad: #c2410c;
+  --bad-ink: #b0360a;
+  --warn: #b7791f;
+  --warn-ink: #8a5a12;
+  --ok: #2f8f5b;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
   font-family: var(--prose);
 }
 
@@ -23,6 +38,20 @@
     --selection: #2c3a5c;
     --accent-soft: rgb(143 176 255 / 0.16);
     --code-bg: rgb(232 230 227 / 0.06);
+    --hover: rgb(232 230 227 / 0.08);
+    --bg-elev: #22211f;
+    --line-strong: #3d3b38;
+    --faint: #6b6762;
+    --ink-2: #cfccc7;
+    --accent-ink: #a9c2ff;
+    --on-accent: #10131a;
+    --bad: #f0855a;
+    --bad-ink: #f59a76;
+    --warn: #e0a84a;
+    --warn-ink: #ecc078;
+    --ok: #5cc28c;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
   }
 }
 
@@ -622,95 +651,6 @@ button.status-item:hover {
   letter-spacing: 0.04em;
   color: var(--muted);
   margin: 1rem 0 0.25rem;
-}
-
-:is(#panel, .tab-view) h3[data-when="overdue"] {
-  color: #c2410c;
-}
-
-:is(#panel, .tab-view) .todo-item {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-:is(#panel, .tab-view) .todo {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.125rem;
-  width: 100%;
-  text-align: left;
-  padding: 0.375rem 0;
-}
-
-:is(#panel, .tab-view) .todo .meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.375rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-/* A todo's checkbox and chips, in the editor and the Todos view (extensions/todos/widgets.ts). */
-.todo-box {
-  display: inline-block;
-  flex: none;
-  width: 1.2em;
-  height: 1.2em;
-  margin-right: 0.15em;
-  vertical-align: -0.05em;
-  border: 1.5px solid var(--muted);
-  border-radius: 3px;
-  box-sizing: border-box;
-  color: var(--bg);
-  font-family: var(--prose);
-  font-size: 0.8em;
-  font-weight: 700;
-  line-height: 1.05em;
-  text-align: center;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 150ms, border-color 150ms, transform 150ms;
-}
-
-.todo-box[aria-checked="true"] {
-  background-color: var(--accent);
-  border-color: var(--accent);
-}
-
-.todo-box.checking {
-  transform: scale(1.15);
-}
-
-.todo-box:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.todo-chip {
-  display: inline-block;
-  padding: 0 0.4em;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-family: var(--prose);
-  font-size: 0.8em;
-  line-height: 1.5;
-  vertical-align: 0.05em;
-  cursor: pointer;
-  user-select: none;
-}
-
-.todo-chip.todo-overdue {
-  color: #c2410c;
-  border-color: #c2410c;
-}
-
-.todo-chip.todo-today {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 /* History: what a change means, from extensions that know. */
@@ -1694,3 +1634,158 @@ iframe.webview {
   width: 6rem;
   accent-color: var(--accent);
 }
+
+/* Tasks (extensions/tasks): the checkbox, token chips, the cursor line's tools, chip editors, and task lists. */
+.cm-checkbox {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 1.02em;
+  height: 1.02em;
+  vertical-align: -0.16em;
+  border: 1.5px solid var(--faint);
+  border-radius: 5px;
+  cursor: pointer;
+  margin-right: 0.05em;
+  transition: background 0.12s, border-color 0.12s, transform 0.12s;
+  background: var(--bg-elev);
+}
+.cm-checkbox:hover { border-color: var(--accent); }
+.cm-checkbox.is-checked {
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.4l2.6 2.6L12 5.5' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% no-repeat;
+  border-color: var(--accent);
+}
+.cm-checkbox.is-checking { transform: scale(1.15); }
+.cm-checkbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cm-task-done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.cm-task-done .tk { text-decoration: none; }
+/* A tag on a task line: coloured, with its pill drawn by a shadow, so it takes no more room than its text. */
+.cm-task-tag { border-radius: 4px; background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-soft); color: var(--accent-ink); }
+
+/* The cursor's task line: its ⚙ fields button and a hint of the fields it can still have. */
+.cm-task-tools { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; vertical-align: -0.1em; user-select: none; }
+.cm-task-gear { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.cm-task-gear:hover { background: var(--hover); color: var(--ink); }
+.cm-task-hint { font: 12px var(--prose); color: var(--muted); }
+.cm-hint-word { padding: 0 2px; border: 0; border-radius: 4px; background: none; font: inherit; color: inherit; cursor: pointer; }
+.cm-hint-word:hover, .cm-hint-word:focus-visible { color: var(--ink-2); background: var(--hover); }
+
+/* Every chip is one height and sits on the line, whatever it holds (an icon, an avatar, text). */
+.tk { display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; height: 20px; margin: 0 2px; padding: 0 7px; border-radius: 999px; background: var(--hover); color: var(--ink-2); font: 500 12px/1 var(--prose); white-space: nowrap; vertical-align: middle; text-decoration: none; text-indent: 0; cursor: pointer; user-select: none; }
+.tk svg { flex: none; opacity: 0.75; }
+.tk-due.is-today { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn-ink); }
+.tk-due.is-overdue { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad-ink); }
+.tk-priority.is-high { color: var(--bad-ink); }
+.tk-priority.is-low { color: var(--muted); }
+.tk-person { padding-left: 2px; }
+.tk-muted { color: var(--muted); }
+.tk-tag { background: var(--accent-soft); color: var(--accent-ink); }
+.tk-next { color: var(--muted); font-weight: 400; }
+.tk[data-field="done"] { cursor: default; }
+.tk[data-field]:not([data-field="done"]):hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; background: hsl(var(--hue) 75% 91%); color: hsl(var(--hue) 50% 36%); font: 700 7px/1 var(--prose); letter-spacing: 0.02em; }
+@media (prefers-color-scheme: dark) {
+  .avatar { background: hsl(var(--hue) 35% 32%); color: hsl(var(--hue) 80% 88%); }
+}
+
+/* A chip's own editor: a small popover under it. */
+.chip-pop { position: fixed; z-index: 60; width: 260px; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); overflow: hidden; color: var(--ink); font: 14px var(--prose); }
+.chip-pop:focus { outline: none; }
+.chip-pop.is-wide { width: 340px; max-height: calc(100vh - 24px); overflow: auto; }
+:where(.chip-pop) button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.fp-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.fp-input, .chip-pop .fp-head input.chip-date { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: 14px var(--prose); color: var(--ink); }
+.fp-list { max-height: 300px; overflow: auto; padding: 6px; }
+.fp-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border-radius: 7px; font-size: 13.5px; color: var(--ink-2); text-align: left; }
+.fp-item:hover, .fp-item:focus-visible { background: var(--hover); color: var(--ink); outline: none; }
+.fp-item svg { color: var(--muted); flex: none; }
+.fp-item span:first-of-type { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-item > .avatar:first-child { width: 16px; height: 16px; }
+.fp-item > .avatar:first-child + span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-item.is-current { color: var(--muted); }
+.fp-here { font-size: 11px; color: var(--muted); }
+.fp-empty { padding: 10px 8px; font-size: 13px; color: var(--muted); }
+.fp-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.task-menu-value { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
+.task-menu-value.is-empty { color: var(--faint); }
+.chip-rec { display: grid; gap: 10px; padding: 12px; }
+.chip-rec-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.chip-rec .chip-n, .chip-rec .chip-date-in, .qw-select { height: 32px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-elev); color: var(--ink); padding: 0 8px; font: 14px var(--prose); }
+.chip-rec .chip-n { width: 64px; }
+.chip-rec .chip-date-in { flex: 1; min-width: 0; }
+.chip-rec-row .qw-select { flex: 1; min-width: 0; }
+.chip-rec-head span { flex: 1; color: var(--ink); font-size: 13.5px; }
+.chip-rec-body { display: grid; gap: 8px; }
+.chip-rec-sub { padding-left: 12px; }
+.chip-rec-days { display: flex; gap: 4px; }
+.chip-rec-days button { flex: 1; height: 30px; border: 1px solid var(--line-strong); border-radius: 7px; font: 500 12.5px var(--prose); color: var(--ink-2); }
+.chip-rec-days button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.chip-rec-add { display: inline-flex; align-items: center; gap: 6px; justify-self: start; margin-left: 12px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; color: var(--muted); }
+.chip-rec-add:hover { background: var(--hover); color: var(--ink); }
+.chip-rec-seg { display: inline-flex; margin-left: auto; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.chip-rec-seg button { padding: 5px 10px; font-size: 12.5px; color: var(--ink-2); }
+.chip-rec-seg button + button { border-left: 1px solid var(--line-strong); }
+.chip-rec-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+.chip-rec-seg button:disabled { opacity: 0.45; cursor: default; }
+.chip-rec-hint { margin-top: -4px; text-align: right; font-size: 12px; color: var(--muted); }
+.chip-rec-about { display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--hover); }
+.chip-rec-summary { font-size: 13.5px; color: var(--ink); }
+.chip-rec-summary.is-error { color: var(--bad-ink); }
+.chip-rec-dates { font-size: 12.5px; color: var(--muted); }
+.chip-rec-text { width: 100%; height: 32px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-elev); color: var(--ink); padding: 0 8px; font: 13px var(--mono); }
+.qw-config-foot { display: flex; align-items: center; gap: 8px; }
+.qw-config-foot .spacer { flex: 1; }
+.qw-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--bg); font: 600 13px/1 var(--prose); white-space: nowrap; }
+.qw-btn:disabled { opacity: 0.4; cursor: default; }
+.qw-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); min-width: 96px; justify-content: center; }
+
+/* Task lists: the Tasks view and ::tasks. */
+.tasks-view { display: grid; gap: 14px; }
+.qw-tasks.is-embed { padding: 8px 12px 10px; }
+.qt-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qt-top .spacer { flex: 1; }
+.qt-summary { font-size: 13px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.seg { display: flex; flex: none; padding: 2px; border-radius: 8px; background: var(--hover); }
+.seg button { min-height: 22px; font: 11.5px var(--prose); padding: 3px 9px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button.is-on { background: var(--bg-elev); color: var(--ink); box-shadow: var(--shadow-sm); }
+.qt-select { min-height: 24px; font: 12px var(--prose); color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 3px 2px; cursor: pointer; }
+.qt-select:hover { color: var(--ink); background: var(--hover); }
+.qt-progress { height: 4px; border-radius: 99px; background: var(--hover); margin: 8px 0 4px; overflow: hidden; }
+.qt-progress span { display: block; height: 100%; width: 0; background: var(--ok); border-radius: 99px; transition: width 0.3s ease; }
+.qt-progress[hidden], .qt-top[hidden] { display: none; }
+.qt-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.qt-group, .td-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+.qt-note { display: inline-flex; align-items: center; gap: 6px; justify-self: start; margin: 6px 0 2px -4px; padding: 3px 4px; border: 0; border-radius: 5px; background: none; font: 650 11.5px/1 var(--prose); letter-spacing: 0.02em; color: var(--muted); cursor: pointer; }
+.qt-note:hover { color: var(--ink); background: var(--hover); }
+.qt-note.is-label { cursor: default; gap: 8px; }
+.qt-note.is-label:hover { background: none; color: var(--muted); }
+.qt-note .n { font-weight: 500; color: var(--faint); }
+.qt-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 6px; margin: 0 -6px; border-radius: 7px; font-size: 14px; line-height: 1.45; }
+.qt-row:hover { background: var(--hover); }
+.qt-row .cm-checkbox { flex: none; transform: translateY(0.15em); }
+.qt-text { flex: 1; min-width: 0; color: var(--ink); cursor: pointer; }
+.qt-text > .qt-words { margin-right: 4px; }
+.qt-text .tk { font-size: 11.5px; }
+.qt-text code { font: 0.86em var(--mono); background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; }
+.qt-link { color: var(--accent-ink); }
+.qt-text .tag { margin: 0 1px; padding: 0 5px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 0.86em; }
+.qt-row.is-done .qt-text { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.qt-row.is-done .qt-text .tk { text-decoration: none; opacity: 0.75; }
+.qt-where { flex: none; max-width: 38%; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qt-act { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; opacity: 0; align-self: center; }
+.qt-row:hover .qt-act, .qt-row:focus-within .qt-act { opacity: 1; } /* still focusable while hidden: Tab reaches them */
+.qt-act + .qt-act { margin-left: -8px; }
+.qt-act:hover { background: var(--hover); color: var(--ink); }
+.qt-act:focus-visible { opacity: 1; outline: 2px solid var(--accent); }
+.qt-input { width: 100%; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--bg-elev); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 6px; outline: none; }
+.qt-empty { color: var(--muted); font-size: 13px; padding: 6px 0 2px; }
+.qt-empty.is-problem { color: var(--bad-ink); }
+.qt-more { justify-self: start; font: 600 12.5px var(--prose); color: var(--accent-ink); padding: 4px 0; border: 0; background: none; cursor: pointer; }
+.qt-blank { display: grid; justify-items: center; gap: 6px; padding: 24px 8px; text-align: center; color: var(--muted); font-size: 13px; }
+.qt-blank strong { color: var(--ink); font-size: 14px; }
+.td-block { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev); }
+.td-block[hidden] { display: none; }
+.td-title { display: flex; align-items: center; gap: 6px; font: 650 13px var(--prose); color: var(--ink); }
+.td-section.is-overdue .qt-note.is-label { color: var(--bad-ink); }
+.tasks-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tasks-filter { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; }
+.tasks-filter-clear { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }

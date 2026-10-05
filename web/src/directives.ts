@@ -1,6 +1,6 @@
 // Directives, CommonMark's generic directives as remark-directive writes them: a leaf on a line of its
 // own, `::timer{duration=25m label="Focus"}`, with nothing to close; and a container around markdown,
-// `:::kanban{done="Shipped"}` … `:::`, whose lines stay real markdown (headings, lists, todos, links).
+// `:::kanban{done="Shipped"}` … `:::`, whose lines stay real markdown (headings, lists, tasks, links).
 // The parser marks them, and the editor highlights them quietly in raw text; embeds draw them. A
 // container's opening and closing lines are nodes of their own, so what's between parses as usual.
 import { tags as t } from "@lezer/highlight";

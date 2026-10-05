@@ -4,8 +4,8 @@
 // A line looks the same with the cursor on it: its indent, number column and guides stay, so the text
 // never moves. Numbers are always their own text, styled into their column. A bullet shows as its `-`,
 // in the same box, only while the cursor is on the marker. The real characters are all still there
-// (marks and hidden spaces, not text swapped out), so Vim motions across a marker stay exact. Todos'
-// boxes are the Todos extension's.
+// (marks and hidden spaces, not text swapped out), so Vim motions across a marker stay exact. A task's
+// box is the Tasks extension's.
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import { livePreview, touches, type Preview } from "common-ink/live-preview";
@@ -103,7 +103,7 @@ const guides = (levels: string) => ({
 });
 
 export const listTheme = EditorView.theme({
-  // The hanging indent is the line's own. Inline boxes inside it (a todo's box, its chips, math)
+  // The hanging indent is the line's own. Inline boxes inside it (a task's box, its chips, math)
   // would take it too and draw their content a column to the left of themselves.
   ".cm-line.cm-list-line *": { textIndent: "0" },
   ".cm-line.cm-list-line": { paddingLeft: `calc((var(--list-depth) + 1) * ${UNIT})`, textIndent: `calc(-1 * ${UNIT})`, ...guides("var(--list-depth)") },

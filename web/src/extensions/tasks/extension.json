@@ -1,0 +1,50 @@
+{
+  "id": "tasks",
+  "name": "Tasks",
+  "version": "2.0.0",
+  "description": "Checkbox lines with todo.txt-style tokens: due:2026-10-01, start:, rec:monthly, until:, times:, !high, @person, #tag. Each token is a chip that opens its own editor; ⌘. opens a task's fields. Show tasks and ::tasks list them from across your notes.",
+  "main": "index.ts",
+  "files": ["index.ts", "tasks.ts", "recurrence.ts", "tags.ts", "chips.ts", "dom.ts", "editors.ts", "edit.ts", "widgets.ts", "complete.ts", "store.ts", "rows.ts", "list.ts", "view.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "files:read": { "paths": ["**/*.md"], "why": "List tasks from every note in the Tasks view and ::tasks lists" },
+    "files:write": { "paths": ["**/*.md"], "why": "Tick tasks and change their details from the Tasks view and ::tasks lists" },
+    "editor": { "why": "Draw tasks as checkboxes and chips in notes, and complete their tokens" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "tasks.toggle", "title": "Tick task (or reopen it)" },
+      { "command": "tasks.menu", "title": "Task fields: priority, due, repeat, person, tags" },
+      { "command": "tasks.show", "title": "Show tasks" }
+    ],
+    "keybindings": [
+      { "key": "Mod-Enter", "command": "tasks.toggle" },
+      { "key": "Mod-.", "command": "tasks.menu" }
+    ],
+    "views": { "sidebar": [{ "id": "tasks", "name": "Tasks" }] },
+    "embeds": [
+      {
+        "language": "tasks",
+        "syntax": "leaf",
+        "title": "Task list",
+        "description": "Tasks (- [ ] lines) from across your notes, gathered live and grouped by note, due date, priority, tag or person. Tick one here and it's ticked in its note; click a chip to change it.",
+        "arguments": {
+          "folder": { "type": "string", "description": "Only notes in this folder, like Projects" },
+          "note": { "type": "string", "description": "Only this note, by name" },
+          "tag": { "type": "string", "description": "Only tasks with this tag (and the tags under it), like work" },
+          "assignee": { "type": "string", "label": "Person", "description": "Only this person's tasks, like jane" },
+          "due": { "type": "string", "description": "Only tasks due then: <=today, tomorrow, >=2026-10-01", "presets": ["<today", "<=today", "tomorrow"] },
+          "group": { "type": "string", "description": "How to group them", "default": "note", "enum": ["note", "due", "priority", "tag", "person"] },
+          "status": { "type": "string", "label": "Show", "description": "Open, done, or all", "default": "open", "enum": ["open", "done", "all"] },
+          "limit": { "type": "number", "description": "At most this many, then Show more", "default": "50" }
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Tasks",
+      "properties": {
+        "tasks.chips": { "type": "boolean", "default": true, "description": "Show a task's tokens as chips (\"Tomorrow\", \"Monthly\", \"High\") on lines the cursor isn't on." }
+      }
+    }
+  }
+}

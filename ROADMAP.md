@@ -11,7 +11,7 @@ Edited by hand. Agents implement items from here but don't add to it.
 - VSCode-style command bar and file search
 - CLI and MCP server for agents
 - Composable plugin model; built-in features ship as plugins
-- Recurring todos (markdown) and recurring events (data source)
+- Recurring tasks (markdown) and recurring events (data source)
 - Sign in with Google
 - All user and workspace settings in JSON
 - Hosted on Cloudflare, with offline mode; uploads in R2
@@ -25,7 +25,7 @@ Edited by hand. Agents implement items from here but don't add to it.
 4. **Visible history, CLI and MCP.** History view, diffs, attribution, undo/redo through history (including "undo what the agent did").
 5. **Settings in JSON.** User and workspace settings with a schema, a read-only defaults view, keybindings in settings.
 6. **Plugin API.** Extracted from what exists; command bar providers become the first plugins.
-7. **Todos.** Inline due dates and recurrence, as a plugin.
+7. **Tasks.** Inline due dates and recurrence, as a plugin.
 8. **Google sign-in, then calendar and contacts** as data sources.
 9. **Offline mode.** Cached notes, temporary local changes, unsent-changes indicator, merge on reconnect.
 10. **Uploads to R2.**

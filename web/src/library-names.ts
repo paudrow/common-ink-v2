@@ -13,6 +13,7 @@ export const PACKAGES = [
   "@codemirror/language",
   "@codemirror/language-data",
   "@codemirror/commands",
+  "@codemirror/autocomplete",
   "@lezer/highlight",
   "@lezer/markdown",
   "@replit/codemirror-vim",

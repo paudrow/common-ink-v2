@@ -118,7 +118,7 @@ export function moveItem(view: EditorView, by: -1 | 1): boolean {
   return apply(view, edit.lines, edit.at + (cursor.line - i), cursor.offset);
 }
 
-/** Make the items on the selected lines bullets, numbered or todos. */
+/** Make the items on the selected lines bullets, numbered or tasks. */
 export function convertItems(view: EditorView, kind: M.Kind): boolean {
   const lines = linesOf(view.state);
   const { first, last } = selectedLines(view.state);

@@ -55,7 +55,7 @@ export default {
     ctx.commands.register("lists.moveDown", onEditor((view) => moveItem(view, 1)));
     ctx.commands.register("lists.toBullets", onEditor((view) => convertItems(view, "bullet")));
     ctx.commands.register("lists.toNumbers", onEditor((view) => convertItems(view, "number")));
-    ctx.commands.register("lists.toTodos", onEditor((view) => convertItems(view, "todo")));
+    ctx.commands.register("lists.toTasks", onEditor((view) => convertItems(view, "task")));
     ctx.commands.register("lists.toggleFold", onEditor(toggleFold));
   },
 };

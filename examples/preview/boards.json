@@ -1,12 +1,13 @@
 {
   "pr": 24,
-  "title": "Boards: task lists and Kanban",
-  "install": ["boards"],
+  "title": "Boards: Kanban",
+  "install": [
+    "boards"
+  ],
   "steps": [
-    "Open Boards tour. Boards comes from the Catalog and runs sandboxed, so it asks first: \"Boards wants to read your notes\". Choose Always allow. The task lists fill in with the open todos from every note (Chores, This week and the rest), soonest due first.",
-    "Check a todo off in the list: it's checked off in its own note (open it from its name, on the right). History shows the change as Boards'. The second list only has what's due this week.",
-    "In another window, add a todo with a due date to any note: the lists update a moment after it saves.",
-    "Drag \"Book the venue\" to Doing (or use the → on the card). It moves at once, with no flash: the board's frame stays, and its markdown in the note is rewritten to match. Put the cursor in it to see it. Undo takes it back, and the board follows, in the same frame.",
-    "Write your own: `::tasks{…}` takes folder, note, q, due (overdue, today, week, any), done=true and limit, and its Settings offer them as a form; `:::kanban` on a line, then ## columns with - cards, then `:::` on a line. list_embeds tells agents the same."
+    "Open Boards tour. Boards comes from the Catalog and runs sandboxed.",
+    "Drag \"Book the venue\" to Doing (or use the → on the card). Boards asks first: to read the note, then to change it. Choose Always allow. It moves at once, with no flash: the board's frame stays, and its markdown in the note is rewritten to match. Put the cursor in it to see it. Undo takes it back, and the board follows, in the same frame.",
+    "History shows the move as Boards'.",
+    "Write your own: `:::kanban` on a line, then ## columns with - cards, then `:::` on a line. list_embeds tells agents the same. (Task lists, `::tasks`, are the Tasks extension's now: see Tasks tour.)"
   ]
 }

@@ -46,8 +46,9 @@ test("the browser's Back and Forward go through the notes you opened; a reload k
   await page.goBack();
   await until(page, "Chores");
 
-  // The app's own Go back and Go forward move the browser too, so the two agree.
-  await page.locator(".cm-content:visible").first().click();
+  // The app's own Go back and Go forward move the browser too, so the two agree. (A click on the
+  // note's first line: one far down it would be a jump of its own, a place to go back to.)
+  await page.locator(".cm-line:visible").first().click();
   await page.keyboard.press("ControlOrMeta+[");
   await until(page, "Welcome");
   await page.keyboard.press("ControlOrMeta+]");

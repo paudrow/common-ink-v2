@@ -1,0 +1,12 @@
+{
+  "pr": 12,
+  "title": "Tasks",
+  "steps": [
+    "Open Chores. Tasks are checkboxes, with their tokens as chips where they're written: when they're due, how they repeat, priority, people and tags. Done tasks are muted and struck through.",
+    "Move the cursor onto a chip (w and e, or click beside it): that token shows its raw markdown, `due:2026-…`, so you edit real text. The rest of the line stays where it was.",
+    "Click Book a dentist appointment's checkbox: it's ticked, with done: and today's date, and the cursor stays where it was. Click again to reopen it.",
+    "Click Water the plants' checkbox: it shows ticked for a moment, then stays open with its due date moved on 3 days, on the same line.",
+    "Show history of this note: that change reads \"Completed 'Water the plants' (due …)\", by you.",
+    "⌘⇧P, Show tasks: Today, then every other open task, with the same checkboxes and chips."
+  ]
+}

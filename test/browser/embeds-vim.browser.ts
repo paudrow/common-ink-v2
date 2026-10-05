@@ -60,12 +60,9 @@ test("j and k step onto and off every kind of embed, line by line, jumping none"
   await page.waitForSelector(".cm-content");
   await writeFile(page, "Every kind.md", NOTE);
   await page.goto(`${h.base}/?file=${encodeURIComponent("Every kind.md")}`);
-  // The task list reads notes, so Boards asks first.
-  await page.waitForSelector(".dialog");
-  await page.click("text=Allow this time");
   await page.waitForFunction(() => document.querySelectorAll(".cm-embed").length === 5);
   assert.equal(await drawn(page), "timer html-app kanban youtube tasks");
-  await page.frameLocator('.cm-embed[data-embed="tasks"] iframe').locator("body").waitFor();
+  await page.locator('.cm-embed[data-embed="tasks"] .qt-row').first().waitFor();
   await settled(page);
   await page.locator(".cm-line", { hasText: "Every kind" }).click();
   await page.keyboard.press("Escape");
