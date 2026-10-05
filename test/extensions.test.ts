@@ -326,7 +326,7 @@ test("the app's catalog lists folders on the app only", async () => {
   const entries = parseCatalog(index, "https://app.example/catalog/index.json", true);
   assert.deepEqual(
     entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]),
-    ["word-count", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
+    ["word-count", "boards", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
   );
   for (const e of entries) {
     const m = parseManifest(JSON.parse(readFileSync(`web/public/catalog/${e.id}/extension.json`, "utf8")), e.id);

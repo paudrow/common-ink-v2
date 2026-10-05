@@ -327,8 +327,9 @@ export function embeds(host: EmbedHost) {
     }),
     blockPreview((state): BlockPreview[] => findEmbeds(state, host.contributions()).found.map(({ from, to, embed }) => ({ from, to, widget: new EmbedWidget(embed, host) }))),
     EditorView.theme({
-      ".cm-embed": { position: "relative", padding: "0.25em 0", cursor: "text" },
-      ".cm-embed-tools": { position: "absolute", top: "0.4em", right: "0.25rem", zIndex: "2", display: "flex", gap: "0.25rem", opacity: "0", transition: "opacity 120ms" },
+      ".cm-embed": { position: "relative", padding: "0.6em 0 0.25em", cursor: "text" },
+      // On the top edge of what it draws, over its border rather than over what it shows.
+      ".cm-embed-tools": { position: "absolute", top: "0", right: "0.5rem", zIndex: "2", display: "flex", gap: "0.25rem", opacity: "0", transition: "opacity 120ms" },
       ".cm-embed:hover > .cm-embed-tools, .cm-embed-tools:focus-within": { opacity: "1" },
       ".cm-embed-tools button": {
         font: "0.7rem var(--prose)",
@@ -337,6 +338,7 @@ export function embeds(host: EmbedHost) {
         border: "1px solid var(--line)",
         borderRadius: "4px",
         padding: "0 0.4em",
+        lineHeight: "1.1rem",
         cursor: "pointer",
       },
       ".cm-embed-tools button:hover": { color: "var(--ink)" },

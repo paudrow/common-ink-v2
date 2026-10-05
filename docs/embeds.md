@@ -11,7 +11,7 @@ An embed is markdown that an extension draws in place in a note: a timer, backgr
 - **Container:** markdown wrapped in a directive, for embeds whose content is markdown. The content stays real markdown, so its todos, links and tags keep working. Close it with `:::` on a line of its own; one left open shows as text, with a note saying so.
 
   ```markdown
-  :::kanban{done="Shipped"}
+  :::kanban
   ## To do
   - Write the outline
   :::
@@ -50,6 +50,8 @@ These work once the person installs them from the Catalog at the bottom of the E
 | Embed | Syntax | What it is | Arguments |
 |---|---|---|---|
 | `pomodoro` | leaf | Rounds of work and breaks | `work`, `break`, `long`, `rounds`, `label`, `id` |
+| `tasks` | leaf | Open todos from across the notes, live, to check off where they are | `folder`, `note`, `q`, `due` (overdue, today, week, any), `done`, `limit` |
+| `kanban` | container | A board drawn from its own markdown: `## Column`, then `- card` lines; dragging a card rewrites them | none; the content is the board |
 | `html-app` | fence | An HTML page in a sandboxed frame; the body is its HTML | `height` (pixels, default 360), `title` |
 
 ### Writing an html-app
