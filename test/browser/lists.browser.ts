@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Page } from "playwright-core";
-import { harness } from "./harness.ts";
+import { harness, writeFile } from "./harness.ts";
 
 const h = harness();
 
@@ -128,5 +128,38 @@ test("an item's line doesn't move as the cursor comes onto it, its marker or its
   });
   assert.match(file, /^    - asil$/m, "w landed on the B");
   await page.keyboard.press("u");
+  await page.close();
+});
+
+test("Alt-Right and Alt-Left indent and dedent a list item; off a list, the key is left alone", async () => {
+  const page = await h.browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await page.goto(h.base);
+  await page.waitForSelector(".cm-content");
+  await writeFile(page, "Alt keys.md", "# Alt keys\n\nA paragraph first.\n\n- Fix the bike\n  - Patch the inner tube\n- Call the plumber\n");
+  const text = () =>
+    page.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 1300));
+      return ((await fetch(`/api/file?path=${encodeURIComponent("Alt keys.md")}`).then((r) => r.json())).text as string).split("\n").slice(4, 7);
+    });
+  await page.goto(`${h.base}/?file=${encodeURIComponent("Alt keys.md")}`);
+  const item = page.locator(".cm-line:visible", { hasText: "Fix the bike" });
+  await item.waitFor();
+  // After the app's own key handler (also on window, in the capture phase), what it did with the key.
+  await page.evaluate(() => window.addEventListener("keydown", (e) => ((window as unknown as { prevented: boolean }).prevented = e.defaultPrevented), { capture: true }));
+  const prevented = () => page.evaluate(() => (window as unknown as { prevented: boolean }).prevented);
+  await item.click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.type("/Call the plumber");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Alt+ArrowRight");
+  assert.deepEqual(await text(), ["- Fix the bike", "  - Patch the inner tube", "  - Call the plumber"], "under the item above, as its last child");
+  assert.equal(await prevented(), true, "the key was the list's");
+  await page.keyboard.press("Alt+ArrowLeft");
+  assert.deepEqual(await text(), ["- Fix the bike", "  - Patch the inner tube", "- Call the plumber"]);
+  // On the paragraph, it isn't a list's key.
+  await page.keyboard.type("/A paragraph");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Alt+ArrowRight");
+  assert.equal(await prevented(), false, "declined: the editor gets the key as usual");
   await page.close();
 });

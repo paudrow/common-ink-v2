@@ -25,7 +25,7 @@ Lists edit like an outliner. Put the cursor on an item and try the keys below. T
 
 ## Keys
 
-- Tab and Shift-Tab, or >> and << in Vim (> and < on a visual selection): indent or dedent an item with its children.
+- Tab and Shift-Tab, Alt-Right and Alt-Left, or >> and << in Vim (> and < on a visual selection): indent or dedent an item with its children. An item indents only under the item above it, one level at a time; the first item of a list can't.
 - Alt-Up and Alt-Down, or [e and ]e in Vim: move an item, with its children, past the one above or below.
 - Enter carries the list on; Enter on an empty item steps out a level, then out of the list.
 - za in Vim, or a click on a bullet that has children: fold them away, and back.
