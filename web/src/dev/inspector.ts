@@ -4,7 +4,7 @@
 import { getCM } from "@replit/codemirror-vim";
 import { EditorView } from "@codemirror/view";
 import { authorKey, type Change, type FilePath } from "../../../worker/src/files.ts";
-import type { Levers, LeversPage } from "../../../worker/src/levers.ts";
+import { leverInstant, type Levers, type LeversPage } from "../../../worker/src/levers.ts";
 import { parseGrants } from "../../../worker/src/permissions.ts";
 import type { Settings } from "../../../worker/src/settings.ts";
 import type { CommandBar } from "../commandbar.ts";
@@ -96,7 +96,7 @@ export function makeInspector(app: DevApp, kept: Kept) {
       const webview = frame ? webviews.get(frame) : undefined;
       const state = el.querySelector(".cm-embed-stopped")
         ? "stopped"
-        : el.classList.contains("cm-embed-missing") || el.querySelector(".cm-embed-error")
+        : el.classList.contains("cm-embed-missing") || el.querySelector(".draw-error")
           ? "error"
           : el.querySelector(".cm-embed-loading")
             ? "loading"
@@ -124,7 +124,7 @@ export function makeInspector(app: DevApp, kept: Kept) {
     },
     clock: {
       now: () => new Date(clockNow()).toISOString(),
-      set: (when: string) => setClock(when, Date.parse(when), true),
+      set: (when: string) => setClock(when, leverInstant(when), true),
       advance: (ms: number) => advanceClock(ms),
     },
 

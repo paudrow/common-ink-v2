@@ -16,8 +16,11 @@ export function harness(vars?: Record<string, string>) {
   let worker: LocalWorker | undefined;
   before(async () => {
     ensureBuilt();
-    [worker, h.browser] = await Promise.all([startWorker(vars), launchChrome()]);
-    h.base = worker.base;
+    // Started side by side; whichever started is stopped after, even if the other didn't.
+    const [w, b] = await Promise.allSettled([startWorker(vars), launchChrome()]);
+    if (w.status === "fulfilled") [worker, h.base] = [w.value, w.value.base];
+    if (b.status === "fulfilled") h.browser = b.value;
+    for (const r of [w, b]) if (r.status === "rejected") throw r.reason;
   });
   after(async () => {
     await h.browser?.close();
