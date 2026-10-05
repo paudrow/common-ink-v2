@@ -11,10 +11,10 @@ import { Decoration, EditorView, keymap, WidgetType } from "@codemirror/view";
 import { livePreview, type Preview } from "common-ink/live-preview";
 import { tokenChip, type ChipField } from "./chips.ts";
 import { el, icon } from "./dom.ts";
-import { convertPhrases, HINTS, isTaskLine, phrasesAt, phraseTab, taskLineEdit, taskPhrases, taskTools, taskToolsAt, type HintField } from "./edit.ts";
-import { openChipEditor, openFieldEditor, openTaskMenu, type ChipContext } from "./editors.ts";
+import { convertPhrases, HINTS, isTaskLine, logged, logUndo, phrasesAt, phraseTab, taskLineEdit, taskPhrases, taskTools, taskToolsAt, unlogged, type Completion, type HintField, type TickHow } from "./edit.ts";
+import { choose, openChipEditor, openFieldEditor, openTaskMenu, type ChipContext } from "./editors.ts";
 import { tagsInLine } from "./tags.ts";
-import { lineTokens, parseTask, TASK_LINE } from "./tasks.ts";
+import { doneLines, lineTokens, parseLogLine, parseTask, TASK_LINE } from "./tasks.ts";
 
 /** How long a repeating task shows as ticked before it moves on to its next date. */
 export const CHECKED_FOR_MS = 450;
@@ -30,6 +30,13 @@ export interface TaskEnv {
   say(message: string): void;
   /** The path of the note this editor shows. */
   path(view: EditorView): string;
+  /** How a tick in this editor is recorded: the settings, and its note. */
+  how(view: EditorView): TickHow;
+  /** Add a completion to the daily note's `## Done`, or take it out (its tick was undone). */
+  log(c: Completion): void;
+  unlog(c: Completion): void;
+  /** Put a completion's task back in its note, from its line in the daily note. */
+  putBack(line: string): Promise<void>;
 }
 
 /** The task on line `n` as the chip editors take it, saving through a transaction on that line. */
@@ -40,7 +47,7 @@ export function lineTaskContext(view: EditorView, n: number, env: TaskEnv): Chip
   return {
     task: { path: env.path(view), done: task.done, meta: task.meta },
     save: async (patch) => {
-      const spec = taskLineEdit(view.state, n, line.text, patch, env.today());
+      const spec = taskLineEdit(view.state, n, line.text, patch, env.today(), env.how(view));
       if (spec) view.dispatch(spec);
     },
     people: env.people,
@@ -51,15 +58,33 @@ export function lineTaskContext(view: EditorView, n: number, env: TaskEnv): Chip
   };
 }
 
-/** Tick or untick the task on the line at `pos`. A repeating one shows ticked a moment, then moves on to its next date. */
-export function toggleTaskAt(view: EditorView, pos: number, env: Pick<TaskEnv, "today" | "say">, box?: HTMLElement): boolean {
+/**
+ * Tick or untick the task on the line at `pos`. A repeating one shows ticked a moment, then moves on
+ * to its next date (and is logged, as the settings say). A completion in a daily note's `## Done`
+ * asks instead: put the task back in its note, or only take the line out of the log.
+ */
+export function toggleTaskAt(view: EditorView, pos: number, env: Pick<TaskEnv, "today" | "say" | "how" | "putBack">, box?: HTMLElement): boolean {
   const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
   const task = parseTask(line.text);
   if (!task || view.state.readOnly) return false;
+  const entry = task.done && parseLogLine(line.text);
+  if (entry && doneLines(view.state.doc.toString()).some((d) => d.line === line.number)) {
+    const remove = () => {
+      const now = view.state.doc.line(line.number);
+      if (now.text !== line.text) return;
+      view.dispatch({ changes: { from: now.from, to: Math.min(now.to + 1, view.state.doc.length) }, userEvent: "delete.task" });
+    };
+    const anchor = box ?? view.dom;
+    choose(anchor, `Done: ${entry.task.summary}`, [
+      { label: `Put it back in ${entry.note}`, icon: "reset", run: () => env.putBack(line.text).then(remove, (e) => env.say(e instanceof Error ? e.message : "Couldn't put it back")) },
+      { label: "Only take it out of the log", icon: "close", run: remove },
+    ], () => setTimeout(() => view.focus()));
+    return true;
+  }
   const apply = () => {
     const now = view.state.doc.line(line.number);
     try {
-      const spec = taskLineEdit(view.state, line.number, now.text, { checked: !task.done }, env.today());
+      const spec = taskLineEdit(view.state, line.number, now.text, { checked: !task.done }, env.today(), env.how(view));
       // Only the line's text changes; the cursor stays where it is, on this line or another.
       if (spec) view.dispatch(spec);
     } catch (e) {
@@ -269,5 +294,15 @@ export function tasksPreview(env: TaskEnv) {
     taskPhrases(env.today),
     phraseKey(env),
     phraseClick(env),
+    // A tick's log line follows the tick: added with it, taken out when it's undone, back on redo.
+    logUndo,
+    EditorView.updateListener.of((u) => {
+      for (const tr of u.transactions) {
+        for (const e of tr.effects) {
+          if (e.is(logged)) env.log(e.value);
+          else if (e.is(unlogged)) env.unlog(e.value);
+        }
+      }
+    }),
   ];
 }

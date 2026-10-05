@@ -14,7 +14,8 @@
 // reloads and shows again as it was. A link's frame stays in view under its raw line, so a video
 // plays on while its link is edited.
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
-import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
+import { StateField, type EditorState, type Range } from "@codemirror/state";
+import { editorFile } from "./editor-file.ts";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
 import type { EmbedContribution, EmbedSyntax } from "../../worker/src/extensions.ts";
 import type { FilePath } from "../../worker/src/files.ts";
@@ -125,8 +126,7 @@ export function findUrlEmbeds(state: EditorState, host: Pick<EmbedHost, "urlEmbe
   return out;
 }
 
-/** The file an editor shows, for what's drawn in it to know. */
-export const editorFile = Facet.define<FilePath | null, FilePath | null>({ combine: (values) => values.at(-1) ?? null });
+export { editorFile } from "./editor-file.ts";
 
 /** A fence's info string: its language, and its key=value arguments. Values may be quoted: label="Deep work". */
 export function parseInfo(info: string): { language: string; attrs: Attr[] } {

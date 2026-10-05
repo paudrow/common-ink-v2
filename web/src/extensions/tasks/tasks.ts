@@ -240,6 +240,115 @@ export function editTaskLine(line: string, patch: TaskPatch, today: string): str
   return editTask(line, "done" in patch ? patch : { ...patch, done: today });
 }
 
+/** Where a completion is recorded: the daily note's `## Done` (and the task moves on), a ticked copy left in the note (v1's way), or only history. */
+export type LogMode = "daily" | "inline" | "none";
+
+/**
+ * Tick or untick the task on `line` (with the line below it, for v1's way of unticking), as
+ * `mode` says: the lines that replace it (and the line below, if `replaced` is 2), and the line
+ * to add to the daily note's `## Done`, if any. A repeating task moves on to its next date; with
+ * "inline", it's ticked where it is and its next occurrence goes right below, as v1 did, and
+ * unticking it straight after takes that back. A plain task (or a repeat's last time) is ticked
+ * with `done:`, and logged too only with `logPlain`.
+ */
+export function completeTask(line: string, below: string | undefined, patch: TaskPatch, today: string, opts: { mode: LogMode; logPlain?: boolean; note: string }): { lines: string[]; replaced: 1 | 2; log: string | null } {
+  const was = parseTask(line);
+  if (!was || patch.checked === undefined || patch.checked === was.done) return { lines: [was ? editTask(line, patch) : line], replaced: 1, log: null };
+  if (!patch.checked) {
+    const out = editTask(line, "done" in patch ? patch : { ...patch, done: null });
+    const takeBack = opts.mode === "inline" && !!was.meta.done && below !== undefined && below === nextOccurrence(out, was.meta.done);
+    return { lines: [out], replaced: takeBack ? 2 : 1, log: null };
+  }
+  const day = patch.done ?? today;
+  const next = following(was.meta, day);
+  if (next && opts.mode === "inline") {
+    const ticked = editTask(line, { ...patch, done: day });
+    return { lines: [ticked, nextOccurrence(ticked, day)!], replaced: 1, log: null };
+  }
+  if (next) {
+    const { checked: _, done: __, ...rest } = patch;
+    return { lines: [editTask(line, { ...rest, ...next.patch })], replaced: 1, log: opts.mode === "daily" ? logLine(was, day, opts.note) : null };
+  }
+  return { lines: [editTask(line, { ...patch, done: day })], replaced: 1, log: opts.mode === "daily" && opts.logPlain ? logLine(was, day, opts.note) : null };
+}
+
+/**
+ * The task that follows a repeating one done on `done` (v1's way of ticking): the same line,
+ * unticked, due on the rule's next date, with its start moved by as many days and one fewer
+ * `times:` left. Null if it doesn't repeat, or never again.
+ */
+export function nextOccurrence(line: string, done: string): string | null {
+  const task = parseTask(line);
+  const next = task && following(task.meta, done);
+  return next ? editTask(line, { checked: false, done: null, ...next.patch }) : null;
+}
+
+/**
+ * The line a completion leaves under `## Done` in the daily note: the task's words, its people and
+ * tags, the day, and its note, `- [x] Water the plants done:2026-10-05 ([[Chores]])`. Not its
+ * dates or repeat: it records that it was done, not what comes next.
+ */
+export function logLine(task: ParsedTask, day: string, note: string): string {
+  return `${editTask(`- [x] ${task.summary}`, { assignees: task.meta.assignees, tags: task.meta.tags, done: day })} ([[${note}]])`;
+}
+
+const LOG_NOTE = /^(.*\S)\s+\(\[\[([^[\]\n]+)\]\]\)\s*$/;
+
+/** A `## Done` line read back: the task as logged, and the name of the note it was done in. Null if it isn't one. */
+export function parseLogLine(line: string): { task: ParsedTask; note: string } | null {
+  const m = line.match(LOG_NOTE);
+  const task = m && parseTask(m[1]);
+  return m && task ? { task, note: m[2] } : null;
+}
+
+/** The lines of a note's `## Done` section that are completions, with their line numbers (1-based). */
+export function doneLines(content: string): Array<{ line: number; text: string }> {
+  const lines = content.split("\n");
+  const out: Array<{ line: number; text: string }> = [];
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const h = lines[i].match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      if (level && h[1].length <= level) break;
+      if (!level && headingText(h[2]).toLowerCase() === "done") level = h[1].length;
+      continue;
+    }
+    if (level && parseLogLine(lines[i])) out.push({ line: i + 1, text: lines[i] });
+  }
+  return out;
+}
+
+/** A daily note's text with a completion added at the end of its `## Done` (made if it has none). */
+export const withDone = (content: string, line: string) => withSectionAdded(content, [line], "Done", true).content;
+
+/** A daily note's text without a completion line in its `## Done` (the last one that matches), or null if it isn't there. */
+export function withoutDone(content: string, line: string): string | null {
+  const at = doneLines(content).filter((d) => d.text === line).at(-1);
+  if (!at) return null;
+  const lines = content.split("\n");
+  lines.splice(at.line - 1, 1);
+  return lines.join("\n");
+}
+
+/**
+ * Put a repeating task that moved on back to the day it was done (`day`): its due date that day,
+ * its start moved by as many days, one more `times:` (or COUNT) left. Used to take back a
+ * completion from the log when how the line was before isn't known; null for a task that isn't a
+ * repeating one with a due date.
+ */
+export function backTo(line: string, day: string): string | null {
+  const task = parseTask(line);
+  if (!task?.meta.rec || !task.meta.due) return null;
+  const rule = parseRule(task.meta.rec);
+  const time = task.meta.due.slice(10);
+  const shift = daysBetween(task.meta.due.slice(0, 10), day);
+  const patch: TaskPatch = { due: day + time };
+  if (task.meta.start) patch.start = shiftDate(task.meta.start, shift);
+  if (task.meta.times !== null) patch.times = task.meta.times + 1;
+  else if (rule?.count) patch.rec = formatRule({ ...rule, count: rule.count + 1 });
+  return editTask(line, patch);
+}
+
 /**
  * Where a repeat ends: the earlier of its `until:` and its rule's UNTIL, and its `times:` (else the
  * rule's COUNT), the occurrences left with this one included. Null for no end.
@@ -315,6 +424,11 @@ export function addDays(day: string, n: number): string {
  * (a daily note) or right after the last line otherwise. `line` is where the first one landed.
  */
 export function withTasksAdded(content: string, block: string[], heading: boolean): { content: string; line: number } {
+  return withSectionAdded(content, block, "Tasks", heading);
+}
+
+/** The same, for any section by its heading's words (a daily note's "Done"). */
+export function withSectionAdded(content: string, block: string[], name: string, heading: boolean): { content: string; line: number } {
   let last = content.length;
   while (last > 0 && content[last - 1] === "\n") last--; // a loop: /\n+$/ is quadratic on many blank lines
   const lines = content.slice(0, last).split("\n");
@@ -328,7 +442,7 @@ export function withTasksAdded(content: string, block: string[], heading: boolea
     if (f && (!fence || (f[0] === fence[0] && f.length >= fence.length))) fence = fence ? null : f;
     const h = !fence && !f ? lines[i].match(/^(#{1,6})\s+(.*)$/) : null;
     if (!h) continue;
-    if (section < 0 && headingText(h[2]).toLowerCase() === "tasks") [section, level] = [i, h[1].length];
+    if (section < 0 && headingText(h[2]).toLowerCase() === name.toLowerCase()) [section, level] = [i, h[1].length];
     else if (section >= 0 && h[1].length <= level) {
       end = i;
       break;
@@ -346,7 +460,7 @@ export function withTasksAdded(content: string, block: string[], heading: boolea
     const after = last + insert.length;
     if (after < lines.length && lines[after].trim()) lines.splice(after, 0, ""); // keep a blank line before the next heading
   } else if (heading) {
-    lines.push(...(lines.length ? [""] : []), "## Tasks", "", ...block);
+    lines.push(...(lines.length ? [""] : []), `## ${name}`, "", ...block);
     at = lines.length - block.length;
   } else {
     // Straight after a list; after a blank line otherwise.
@@ -379,9 +493,10 @@ export interface Task extends ParsedTask {
   heading: string | null;
 }
 
-/** Every task in a note, in order: lines in fenced code aren't tasks. */
+/** Every task in a note, in order: lines in fenced code aren't tasks, and nor are completions logged under `## Done` (records, not tasks). */
 export function tasksIn(path: string, text: string, title: string): Task[] {
   const out: Task[] = [];
+  const logged = new Set(doneLines(text).map((d) => d.line));
   let fence: string | null = null;
   let heading: string | null = null;
   text.split("\n").forEach((line, i) => {
@@ -390,7 +505,7 @@ export function tasksIn(path: string, text: string, title: string): Task[] {
     if (fence || f) return;
     const h = line.match(/^#{1,6}\s+(.*)$/);
     if (h) heading = headingText(h[1]);
-    const task = parseTask(line);
+    const task = logged.has(i + 1) ? null : parseTask(line);
     if (task) out.push({ ...task, path, raw: line, title, line: i + 1, heading });
   });
   return out;
