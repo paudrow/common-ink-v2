@@ -37,8 +37,9 @@ function build(view: EditorView, source: PreviewSource): DecorationSet {
     for (let pos = from; pos <= to; ) {
       const line = view.state.doc.lineAt(pos);
       for (const p of source(line, view)) {
-        // A widget (a "point" decoration) stands in for text, so it's left out where the text shows.
-        if (p.decoration.point && revealed.has(line.number)) continue;
+        // What stands in for text (a widget, or hidden markers) is left out where the text shows. A
+        // line's own style (a code block's, a quote's) stays, so the line doesn't jump as the cursor comes.
+        if (revealed.has(line.number) && (p.from < p.to || p.decoration.spec.widget)) continue;
         ranges.push(p.decoration.range(p.from, p.to));
       }
       pos = line.to + 1;
@@ -59,7 +60,9 @@ export function livePreview(source: PreviewSource): Extension {
         const switched = u.startState.facet(previewEnabled) !== u.state.facet(previewEnabled);
         // The parser finishing more of a long note counts too: sources may read its syntax tree.
         const parsed = syntaxTree(u.startState) !== syntaxTree(u.state);
-        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed) this.decorations = build(u.view, source);
+        // Settings applied (a reconfiguration) can change what a source draws, so they redraw too.
+        const reconfigured = u.transactions.some((tr) => tr.reconfigured);
+        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed || reconfigured) this.decorations = build(u.view, source);
       }
     },
     { decorations: (v) => v.decorations },

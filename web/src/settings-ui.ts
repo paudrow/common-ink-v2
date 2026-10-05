@@ -1,8 +1,9 @@
-// The settings editor: every setting in the schema, grouped and searchable, with the right control for
-// its type. It's a view of the JSON files, which stay the source of truth: a change here writes just
-// that one key, as an ordinary change, and Reset removes the key.
+// The settings editor: every setting in the catalog, the app's and each extension's in its own
+// section, searchable, with the right control for its type. It's a view of the JSON files, which stay
+// the source of truth: a change here writes just that one key, as an ordinary change, and Reset
+// removes the key.
 import type { FilePath, Revision, WriteResult } from "../../worker/src/files.ts";
-import { schema, settingProblem, type Settings } from "../../worker/src/settings.ts";
+import { settingProblem, type SettingDeclaration, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { setTopLevelKey } from "./json-edit.ts";
 import type { View } from "./workbench.ts";
 
@@ -14,8 +15,8 @@ export interface SettingsUiDeps {
   pathFor(level: Level): FilePath | null;
   read(path: FilePath): Promise<{ text: string; revision: Revision }>;
   write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
-  /** The settings in effect now (defaults, then user, then workspace). */
-  effective(): Settings;
+  /** Every setting there is: the app's and installed extensions'. */
+  catalog(): SettingsCatalog;
   openJson(level: Level): void;
   /** A settings file changed: apply it. */
   changed(): void;
@@ -38,6 +39,14 @@ export function describeKey(key: string): { section: string; title: string } {
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   return { section: cap(words(head)), title: cap(words(rest.length ? rest.join(" ") : head)) };
 }
+
+/** A setting's section and title as the editor shows them: an extension's settings under its section. */
+function placeOf(d: SettingDeclaration): { section: string; title: string } {
+  return { section: d.section, title: describeKey(d.key).title };
+}
+
+/** A declaration as the controls read it: its JSON Schema with its description and default. */
+const propertyOf = (d: SettingDeclaration): Property => ({ ...(d.schema as Property), description: d.description, default: d.default, appliesAfterReload: d.reload });
 
 /** The settings file to start from when there isn't one. */
 const EMPTY = `{\n  "$schema": "/schema/settings.json"\n}\n`;
@@ -73,32 +82,43 @@ function focusable<T extends HTMLElement>(node: T, id: string): T {
 
 const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
 
-/** The settings editor, one view with a User | Workspace switch, as in VSCode. Set `level` before showing it. */
-export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
-  let query = "";
+/** What each level is, said under the switch and on it. */
+const ABOUT: Record<Level, string> = {
+  user: "Your settings, in every workspace. This workspace's settings win over them.",
+  workspace: "This workspace's settings, for everyone in it. They win over each person's own.",
+};
+
+/** A settings file's settings, and whether it's broken (not a JSON object). */
+async function valuesIn(deps: SettingsUiDeps, path: FilePath | null): Promise<{ values: Record<string, unknown>; broken: boolean }> {
+  const file = path ? await deps.read(path) : { text: "", revision: 0 };
+  try {
+    const data: unknown = file.text.trim() ? JSON.parse(file.text) : {};
+    if (data && typeof data === "object" && !Array.isArray(data)) return { values: data as Record<string, unknown>, broken: false };
+  } catch {
+    // Not JSON: broken, below.
+  }
+  return { values: {}, broken: true };
+}
+
+/** The settings editor, one view with a User | Workspace switch, as in VSCode. Set `level` (and `query`, to search) before showing it. */
+export function settingsEditor(deps: SettingsUiDeps): View & { level: Level; query: string } {
   /** Why the last change didn't save, shown once. */
   let failed = "";
   const view = {
     id: SETTINGS_VIEW,
     title: "Settings",
     level: "user" as Level,
+    query: "",
     async render(root: HTMLElement) {
       const level = view.level;
       // It's drawn again after every change: keep the keyboard where it was.
       const active = document.activeElement as HTMLElement | null;
       const focusId = active && root.contains(active) ? active.dataset.focus : undefined;
       const path = deps.pathFor(level);
-      const file = path ? await deps.read(path) : { text: "", revision: 0 };
-      let values: Record<string, unknown> = {};
-      let broken = false;
-      try {
-        const data: unknown = file.text.trim() ? JSON.parse(file.text) : {};
-        if (data && typeof data === "object" && !Array.isArray(data)) values = data as Record<string, unknown>;
-        else broken = true;
-      } catch {
-        broken = true;
-      }
-      const effective = deps.effective() as unknown as Record<string, unknown>;
+      const { values, broken } = await valuesIn(deps, path);
+      // The other level, to say where a value that isn't set here comes from, or what wins over it.
+      const user = level === "user" ? values : (await valuesIn(deps, deps.pathFor("user"))).values;
+      const workspace = level === "workspace" ? values : (await valuesIn(deps, deps.pathFor("workspace"))).values;
 
       const set = async (key: string, value: unknown) => {
         if (!path) return;
@@ -119,7 +139,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
               role: "tab",
               ariaSelected: String(l === level),
               textContent: l === "user" ? "User" : "Workspace",
-              title: l === "user" ? "Your settings, in every workspace" : "This workspace's settings, which win over yours",
+              title: ABOUT[l],
               onclick: () => {
                 view.level = l;
                 void view.render(root);
@@ -129,19 +149,28 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
           ),
         ),
       );
-      const search = focusable(el<HTMLInputElement>("input", { type: "search", className: "search", placeholder: "Search settings", value: query, ariaLabel: "Search settings" }), "search");
+      const search = focusable(el<HTMLInputElement>("input", { type: "search", className: "search", placeholder: "Search settings", value: view.query, ariaLabel: "Search settings" }), "search");
       search.addEventListener("input", () => {
-        query = search.value;
+        view.query = search.value;
         filter();
       });
       const toJson = focusable(el("button", { className: "to-json", textContent: "Open JSON", title: "Edit this settings file as JSON", onclick: () => deps.openJson(level) }), "json");
 
       const sections = new Map<string, HTMLElement[]>();
-      for (const [key, prop] of Object.entries(schema.properties as Record<string, Property>)) {
-        if (key === "$schema") continue;
-        const { section, title } = describeKey(key);
+      for (const d of deps.catalog().values()) {
+        const { key } = d;
+        const prop = propertyOf(d);
+        const { section, title } = placeOf(d);
         const here = Object.hasOwn(values, key);
-        const current = here ? values[key] : effective[key];
+        // What this level has: its own value; or, in workspace settings, yours; or the default.
+        const inherited = level === "workspace" && !here && Object.hasOwn(user, key);
+        const current = here ? values[key] : inherited ? user[key] : d.default;
+        const overridden = level === "user" && Object.hasOwn(workspace, key);
+        const note = inherited
+          ? `Not set here: your user setting, ${show(user[key])}, applies.`
+          : overridden
+            ? `This workspace sets it to ${show(workspace[key])}, which wins here.`
+            : "";
         const row = el(
           "div",
           { className: `setting${here ? " modified" : ""}` },
@@ -155,10 +184,11 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
             here ? focusable(el("button", { className: "reset", textContent: "Reset", title: `Remove "${key}" from ${level} settings`, onclick: () => void set(key, undefined) }), `reset:${key}`) : "",
           ),
           el("p", { className: "setting-desc", textContent: prop.description ?? "" }),
+          note ? el("p", { className: "setting-note", textContent: note }) : "",
           focusable(controlFor(key, prop, current, (v) => void set(key, v), () => deps.openJson(level)), `control:${key}`),
           el("p", { className: "setting-default", textContent: `Default: ${show(prop.default)}` }),
         );
-        const problem = here && settingProblem(key, values[key]);
+        const problem = here && settingProblem(key, values[key], deps.catalog());
         if (problem) row.append(el("p", { className: "setting-problem", role: "status", textContent: `${problem}, so it's ignored.` }));
         row.dataset.search = `${key} ${title} ${section} ${prop.description ?? ""}`.toLowerCase();
         sections.set(section, [...(sections.get(section) ?? []), row]);
@@ -166,7 +196,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
       const groups = [...sections].map(([name, rows]) => el("section", { className: "setting-group" }, el("h3", { textContent: name }), ...rows));
       const none = el("p", { className: "message", textContent: "No setting matches." });
       const filter = () => {
-        const q = query.trim().toLowerCase();
+        const q = view.query.trim().toLowerCase();
         let any = false;
         for (const g of groups) {
           let shown = 0;
@@ -182,6 +212,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level } {
       root.classList.add("settings-editor");
       root.replaceChildren(
         el("div", { className: "settings-top" }, levelSwitch, search, toJson),
+        el("p", { className: "settings-level", textContent: ABOUT[level] }),
         path ? "" : el("p", { className: "message", textContent: "User settings need you signed in." }),
         failed ? el("p", { className: "setting-problem", role: "alert", textContent: failed }) : "",
         broken ? el("p", { className: "message", textContent: "This settings file isn't a JSON object, so changes here can't be saved. Fix it in the JSON." }) : "",

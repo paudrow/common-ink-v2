@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { diffPatch } from "node-diff3";
-import { describeTodoEdit, dueLabel, everyLabel, nextDue, parseTodo, todoParts, todosIn, toggleLine, when } from "../web/src/plugins/todos/model.ts";
+import { describeTodoEdit, dueLabel, everyLabel, nextDue, parseTodo, todoParts, todosIn, toggleLine, when } from "../web/src/extensions/todos/model.ts";
 
-const { describeChange } = await import("../web/src/plugins/todos/index.ts");
+const { describeChange } = await import("../web/src/extensions/todos/index.ts");
 
 test("a checkbox line is a todo, with its due date and recurrence read from the text", () => {
   assert.deepEqual(parseTodo("- [ ] Pay rent due:2026-11-01 every:month", 3), {

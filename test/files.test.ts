@@ -118,19 +118,27 @@ test("a seed adds its notes as changes by the Preview seed", () => {
   assert.deepEqual(notes.history("Welcome.md" as FilePath)[0].author, SEED_AUTHOR);
 });
 
-test("a new seed adds missing notes and rewrites only the ones it replaces", () => {
+test("a new seed adds missing notes, keeps your edits to unchanged demos, and rewrites the ones it replaces or that changed", () => {
   const notes = workspace();
-  notes.seed(first);
+  notes.seed({ ...first, notes: [...first.notes, { path: "Tour.md", text: "```tasks\n```\n", replace: false }] });
   notes.write({ path: "Welcome.md" as FilePath, text: "# Welcome\n\nEdited.\n", base: 1, author: ada });
+  notes.write({ path: "Tour.md" as FilePath, text: "```tasks\n```\n\nEdited too.\n", base: notes.read("Tour.md" as FilePath)!.revision, author: ada });
   notes.seed({
     id: "b",
     notes: [
-      { path: "Welcome.md", text: "# Welcome, again\n", replace: false },
+      { path: "Welcome.md", text: "# Welcome\n", replace: false },
+      { path: "Tour.md", text: "::tasks\n", replace: false },
       { path: "Ideas.md", text: "# Ideas\n", replace: false },
       { path: "Try this PR.md", text: "# Try this PR (#2)\n", replace: true },
     ],
   });
-  assert.equal(notes.read("Welcome.md" as FilePath)?.text, "# Welcome\n\nEdited.\n");
+  assert.equal(notes.read("Welcome.md" as FilePath)?.text, "# Welcome\n\nEdited.\n", "the demo didn't change: your edit stays");
+  assert.equal(notes.read("Tour.md" as FilePath)?.text, "::tasks\n", "the demo changed: it shows as it is now");
+  assert.deepEqual(
+    notes.history("Tour.md" as FilePath).map((c) => c.author.kind),
+    ["agent", "user", "agent"],
+    "and your version is in history, between the two demos",
+  );
   assert.equal(notes.read("Ideas.md" as FilePath)?.text, "# Ideas\n");
   assert.equal(notes.read("Try this PR.md" as FilePath)?.text, "# Try this PR (#2)\n");
 });
@@ -351,9 +359,11 @@ test("deleting a file is a change that undo takes back", () => {
   assert.equal(files.write({ path: "Gone.md" as FilePath, text: "", base: 1, author: ada, delete: true }).status, "conflict", "nothing to delete");
 });
 
-test("JavaScript is a file only as a workspace plugin's code", () => {
-  assert.ok(parseFilePath(".common-ink/plugins/word-count/index.js"));
+test("JavaScript is a file only as a workspace extension's code", () => {
+  assert.ok(parseFilePath(".common-ink/extensions/word-count/index.js"));
+  assert.ok(parseFilePath(".common-ink/extensions/word-count/lib/model.js"), "any file in its folder");
   assert.equal(parseFilePath("notes/script.js"), null);
-  assert.equal(parseFilePath(".common-ink/plugins/word-count/other.js"), null);
-  assert.equal(parseFilePath(".common-ink/plugins/../index.js"), null);
+  assert.equal(parseFilePath(".common-ink/plugins/word-count/index.js"), null);
+  assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
+  assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
 });

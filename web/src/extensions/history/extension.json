@@ -1,0 +1,28 @@
+{
+  "id": "history",
+  "name": "History",
+  "version": "1.0.0",
+  "description": "Changes with their authors and diffs: revert some, restore a note, label a version, undo and redo.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onView:history", "onCommand:history.note", "onCommand:history.all", "onCommand:history.addLabel"],
+  "permissions": {
+    "history:read": { "why": "Show what changed, who changed it, and when" },
+    "files:write": { "paths": ["**"], "why": "Revert changes and restore notes, as changes by you" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "history.note", "title": "Show history of this note" },
+      { "command": "history.all", "title": "Show history of everything" },
+      { "command": "history.addLabel", "title": "Add label to this note…" }
+    ],
+    "menus": { "tabMenu": [{ "command": "history.addLabel" }] },
+    "views": { "sidebar": [{ "id": "history", "name": "History" }] },
+    "configuration": {
+      "title": "History",
+      "properties": {
+        "history.pageSize": { "type": "integer", "default": 50, "minimum": 10, "maximum": 500, "description": "How many changes the History view shows at once." }
+      }
+    }
+  }
+}

@@ -86,7 +86,7 @@ export function createState(
       remoteFlash,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
-      // Code (a plugin's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
+      // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : [new LanguageSupport(markdownLanguage), markdownPreview],
       syntaxHighlighting(highlight),
       theme,

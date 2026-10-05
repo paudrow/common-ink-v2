@@ -84,7 +84,7 @@ export class CommandBar {
 
   private render() {
     const found = this.choices ? { provider: this.choices, query: this.input.value.trim() } : providerFor(this.input.value, this.providers);
-    this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's plugins are turned off";
+    this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's extensions are turned off";
     this.items = found ? found.provider.items(found.query).slice(0, MAX_ITEMS) : [];
     this.selected = 0;
     this.list.replaceChildren(

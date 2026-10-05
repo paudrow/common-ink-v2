@@ -1,0 +1,264 @@
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { test } from "node:test";
+import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
+import type { FilePath, FileSummary, WorkspaceFile } from "../worker/src/files.ts";
+import { combine, describeSchema, parseSettings, settingsCatalog } from "../worker/src/settings.ts";
+import type { ExtensionContext, ExtensionModule } from "../web/src/extension-api.ts";
+import { changedExtensions, extensionStates, ExtensionHost, findWorkspaceExtensions, isSelfContained, type BuiltIn } from "../web/src/extension-host.ts";
+import { contributionLines } from "../web/src/extensions-view.ts";
+import { declaredPermissions, plain } from "../web/src/permission-words.ts";
+
+const manifest = (id: string, more: Record<string, unknown> = {}) => {
+  const m = parseManifest({ name: id, version: "1.0.0", ...more }, id);
+  if (typeof m === "string") throw new Error(m);
+  return m;
+};
+
+const builtIn = (id: string, module: ExtensionModule, more: Record<string, unknown> = {}): BuiltIn => ({
+  manifest: manifest(id, more),
+  module,
+  sources: { "index.js": "export default { activate() {} };" },
+  folder: `web/src/extensions/${id}`,
+});
+
+/** A host whose context records what extensions do, and which starts nothing until told. */
+function host() {
+  const started: string[] = [];
+  const failures: string[] = [];
+  const h = new ExtensionHost({
+    context: (record, failed) => ({ extension: record.manifest, failed }) as unknown as ExtensionContext,
+    load: async () => ({}),
+    changed: () => {},
+  });
+  const starts = (id: string): ExtensionModule => ({ activate: () => void started.push(id) });
+  return { h, started, failures, starts };
+}
+
+const read = (texts: Record<string, string>) => async (path: FilePath): Promise<WorkspaceFile> => ({ path, text: texts[path] ?? "", revision: 1 });
+const summaries = (paths: string[]): FileSummary[] => paths.map((path, i) => ({ path: path as FilePath, revision: i + 1 }));
+
+test("a manifest says what an extension adds and may ask for, with defaults for what it leaves out", () => {
+  const m = manifest("weather", {
+    description: "Forecasts in a view.",
+    activationEvents: ["onView:forecast", "onCommand:weather.refresh"],
+    permissions: { network: { hosts: ["api.weather.gov"], why: "Fetch forecasts" }, "files:read": { paths: ["Journal/**"], why: "Read your journal" } },
+    contributes: {
+      commands: [{ command: "weather.refresh", title: "Refresh the forecast" }],
+      keybindings: [{ key: "Mod-Shift-w", command: "weather.refresh" }, { vim: "gW", command: "weather.refresh" }],
+      menus: { tabMenu: [{ command: "weather.refresh" }] },
+      views: { sidebar: [{ id: "forecast", name: "Forecast" }] },
+      configuration: { title: "Weather", properties: { "weather.units": { type: "string", enum: ["metric", "imperial"], default: "metric", description: "Units." } } },
+    },
+  });
+  assert.equal(m.main, "index.js");
+  assert.deepEqual(m.files, ["index.js"]);
+  assert.deepEqual(m.permissions.network, { why: "Fetch forecasts", hosts: ["api.weather.gov"] });
+  assert.deepEqual(contributionLines(m), [
+    ["Commands", "Refresh the forecast"],
+    ["Keybindings", "Mod-Shift-w → Refresh the forecast, gW (Vim) → Refresh the forecast"],
+    ["Menus", "Refresh the forecast (tab menu)"],
+    ["Views", "Forecast"],
+    ["Settings", "weather.units"],
+  ]);
+  assert.deepEqual(
+    declaredPermissions(m).map((p) => [p.key, plain(p.can), p.why]),
+    [
+      ["network:api.weather.gov", "Connect to api.weather.gov", "Fetch forecasts"],
+      ["files:read:Journal/**", "Read everything in Journal", "Read your journal"],
+    ],
+  );
+  assert.deepEqual(manifest("bare").activationEvents, ["onStartup"]);
+});
+
+test("a manifest that's wrong says what's wrong with it", () => {
+  const wrong = (data: Record<string, unknown>, id = "x") => parseManifest(data, id);
+  assert.equal(wrong({ id: "y" }), 'extension.json says "id": "y", but its folder is x');
+  assert.equal(parseManifest("{oops", "x").toString().startsWith("extension.json isn't valid JSON"), true);
+  assert.match(wrong({ permissions: { camera: { why: "Smile" } } }) as string, /^permissions\["camera"\] isn't a permission/);
+  assert.equal(wrong({ permissions: { network: { why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com"');
+  assert.equal(wrong({ permissions: { network: { hosts: ["http://evil.example"], why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com"; "http://evil.example" isn\'t one');
+  assert.equal(wrong({ permissions: { "files:read": { paths: ["**"] } } }), 'permissions["files:read"].why must be text');
+  assert.equal(wrong({ contributes: { configuration: { properties: { "other.thing": { type: "boolean" } } } } }), 'Setting "other.thing" must start with "x."');
+  assert.equal(wrong({ main: "../escape.js" }), '"main" must be a file in the extension\'s folder, like "index.js"');
+  assert.equal(wrong({ main: "index.ts" }), '"main" must be a file in the extension\'s folder, like "index.js"', "only built-ins are compiled");
+  assert.match(wrong({ activationEvents: ["whenever"] }) as string, /^"activationEvents"\[0\] isn't an activation event/);
+  assert.equal(wrong({}, "../up"), `"../up" can't be an extension's id: letters, digits, dots, dashes and underscores`);
+});
+
+test("every built-in's extension.json is valid, and lists files that are there", () => {
+  const root = "web/src/extensions";
+  const ids = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  assert.ok(ids.length >= 7);
+  for (const id of ids) {
+    const m = parseManifest(readFileSync(`${root}/${id}/extension.json`, "utf8"), id, { builtIn: true });
+    assert.equal(typeof m, "object", `${id}: ${m}`);
+    for (const file of (m as ExtensionManifest).files) assert.ok(readdirSync(`${root}/${id}`).includes(file), `${id} lists ${file}`);
+  }
+});
+
+test("built-ins start on their activation events, not before; one that throws fails alone", async () => {
+  const { h, started, starts } = host();
+  const broken: ExtensionModule = {
+    activate() {
+      throw new Error("broken");
+    },
+  };
+  await h.load(
+    [
+      builtIn("a", starts("a")),
+      builtIn("lazy", starts("lazy"), { activationEvents: ["onCommand:lazy.go"] }),
+      builtIn("off", starts("off")),
+      builtIn("broken", broken),
+    ],
+    [],
+    read({}),
+    ["off"],
+    false,
+  );
+  assert.deepEqual(h.records.map((r) => [r.id, r.state]), [["a", "inactive"], ["lazy", "inactive"], ["off", "off"], ["broken", "inactive"]]);
+  await h.fire("onStartup");
+  assert.deepEqual(started, ["a"]);
+  assert.deepEqual(h.records.map((r) => [r.id, r.state, r.error ?? null]), [["a", "active", null], ["lazy", "inactive", null], ["off", "off", null], ["broken", "failed", "broken"]]);
+  await h.fire("onCommand:lazy.go");
+  await h.fire("onCommand:lazy.go");
+  assert.deepEqual(started, ["a", "lazy"], "started once");
+  assert.deepEqual(h.on().map((m) => m.id), ["a", "lazy"], "a failed extension's contributions are taken out");
+});
+
+test("a workspace extension is read from its folder; one with a built-in's id replaces it, except in safe mode", async () => {
+  const files = summaries([
+    ".common-ink/extensions/word-count/extension.json",
+    ".common-ink/extensions/word-count/index.js",
+    ".common-ink/extensions/a/extension.json",
+    ".common-ink/extensions/a/index.js",
+    ".common-ink/extensions/a/lib/util.js",
+    ".common-ink/extensions/bad/extension.json",
+    ".common-ink/extensions/no-manifest/index.js",
+    "Plan.md",
+  ]);
+  assert.deepEqual(
+    findWorkspaceExtensions(files).map((w) => [w.id, w.files.length]),
+    [["word-count", 2], ["a", 3], ["bad", 1]],
+  );
+  const texts = {
+    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "version": "1.2.0"}',
+    ".common-ink/extensions/a/extension.json": '{"name": "A, customized"}',
+    ".common-ink/extensions/bad/extension.json": "{oops",
+  };
+  const { h } = host();
+  await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false);
+  assert.deepEqual(
+    h.records.map((r) => [r.id, r.manifest.name, r.state, !!r.builtIn, !!r.workspace]),
+    [["word-count", "Word count", "inactive", false, true], ["a", "A, customized", "inactive", true, true], ["bad", "bad", "failed", false, true]],
+  );
+  assert.match(h.records[2].error!, /^extension\.json isn't valid JSON/);
+  assert.deepEqual(h.installed().map((m) => m.id), ["word-count", "a"], "a broken manifest adds nothing");
+
+  const safe = host();
+  await safe.h.load([builtIn("a", { activate() {} })], files, read(texts), [], true);
+  assert.deepEqual(
+    safe.h.records.map((r) => [r.id, r.manifest.name, r.state]),
+    [["a", "a", "inactive"], ["word-count", "Word count", "safe"], ["bad", "bad", "failed"]],
+  );
+});
+
+test("turning an extension on or off, or changing any of its files, needs a reload; nothing else does", () => {
+  const b = [builtIn("history", { activate() {} })];
+  const files = summaries([".common-ink/extensions/mine/extension.json", ".common-ink/extensions/mine/index.js", "Plan.md"]);
+  const start = extensionStates(b, files, [], false);
+  assert.deepEqual(changedExtensions(start, extensionStates(b, [...files.slice(0, 2), { path: "Plan.md" as FilePath, revision: 9 }], [], false)), new Set());
+  assert.deepEqual(changedExtensions(start, extensionStates(b, files, ["history"], false)), new Set(["history"]));
+  assert.deepEqual(changedExtensions(start, extensionStates(b, [files[0], { ...files[1], revision: 8 }, files[2]], [], false)), new Set(["mine"]));
+  assert.deepEqual(changedExtensions(start, extensionStates(b, files.slice(2), [], false)), new Set(["mine"]), "uninstalling");
+});
+
+test("only plain JavaScript that imports nothing outside its folder can run as a copy", () => {
+  const b = (sources: Record<string, string>) => ({ ...builtIn("x", { activate() {} }), sources });
+  assert.ok(isSelfContained(b({ "extension.json": "{}", "index.js": 'import { x } from "./model.js";\nexport default {};' })));
+  assert.ok(!isSelfContained(b({ "index.js": 'import { x } from "../../keys.ts";' })));
+  assert.ok(!isSelfContained(b({ "index.ts": "export default {};" })));
+  assert.ok(isSelfContained({ ...b({}), sources: { "index.js": readFileSync("web/src/extensions/quick-open/index.js", "utf8") } }));
+});
+
+test("an extension's settings join the catalog in its own section, checked against its schema", () => {
+  const weather = manifest("weather", {
+    contributes: {
+      configuration: {
+        title: "Weather",
+        properties: {
+          "weather.units": { type: "string", enum: ["metric", "imperial"], default: "metric", description: "Units." },
+          "weather.days": { type: "integer", minimum: 1, maximum: 10, default: 3, description: "Days ahead." },
+        },
+      },
+    },
+  });
+  const catalog = settingsCatalog([weather]);
+  assert.equal(catalog.get("weather.units")?.section, "Weather");
+  assert.equal(catalog.get("weather.units")?.extension, "weather");
+  assert.equal(catalog.get("editor.vim")?.section, "Editor");
+  assert.deepEqual(parseSettings('{"weather.units": "kelvin", "weather.days": 4, "editor.vim": false}', catalog), {
+    settings: { "weather.days": 4, "editor.vim": false },
+    problems: ['"weather.units" must be one of "metric", "imperial"'],
+  });
+  assert.deepEqual(parseSettings('{"weather.days": 4}').problems, ['Unknown setting "weather.days"'], "unknown without its extension");
+  const settings = combine({ "weather.days": 5 }, {}, [], catalog);
+  assert.equal(settings["weather.units"], "metric", "defaults come from the manifest");
+  assert.equal(settings["weather.days"], 5);
+  assert.equal(describeSchema({ type: "integer", minimum: 1 }), "a whole number of at least 1");
+});
+
+test("in the app, a declared command starts its extension the first time it runs; undeclared ones are refused", async () => {
+  const { Commands } = await import("../web/src/commands.ts");
+  const { ExtensionRuntime } = await import("../web/src/extension-runtime.ts");
+  const { DEFAULTS } = await import("../worker/src/settings.ts");
+  const ran: string[] = [];
+  const views = new Map<string, { render(el: unknown): unknown }>();
+  const commands = new Commands();
+  const quiet = console.error;
+  console.error = () => {};
+  const runtime = new ExtensionRuntime({
+    me: "you@example.com",
+    commands,
+    bar: { provide() {}, open() {} } as never,
+    panels: { register: (v: { id: string; render(el: unknown): unknown }) => views.set(v.id, v), toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
+    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, noteExtensions: [], notice: (m: string) => ran.push(`notice: ${m}`) } as never,
+    offline: { read: async () => ({ text: "", revision: 0 }) } as never,
+    settings: () => DEFAULTS,
+    files: () => [],
+    openFromBar() {},
+    lastFile: () => null,
+    vimKey: (keys: string, command: string) => ran.push(`vim ${keys} → ${command}`),
+    onSaved: [],
+    onFocus: [],
+    changed() {},
+  });
+  const greet: ExtensionModule = {
+    activate(ctx) {
+      ran.push("started");
+      ctx.commands.register("greet.hello", () => ran.push("hello"));
+      ctx.views.register("greeting", { render: () => void ran.push("drawn") });
+      ctx.commands.register("greet.secret", () => ran.push("secret"));
+    },
+  };
+  const m = {
+    activationEvents: ["onCommand:greet.hello"],
+    contributes: {
+      commands: [{ command: "greet.hello", title: "Say hello" }],
+      keybindings: [{ vim: "gH", command: "greet.hello" }],
+      views: { sidebar: [{ id: "greeting", name: "Greeting" }] },
+    },
+  };
+  await runtime.load([builtIn("greet", greet, m)], [], [], false);
+  runtime.declare();
+  await runtime.start();
+  assert.deepEqual(ran, ["vim gH → greet.hello"], "declared, not started");
+  assert.deepEqual(commands.all().map((c) => c.title), ["Open Greeting in a window", "Say hello"]);
+  commands.run("greet.hello");
+  await new Promise((r) => setTimeout(r, 0));
+  console.error = quiet;
+  assert.deepEqual(ran, ["vim gH → greet.hello", "started", "hello"]);
+  const record = runtime.host.records[0];
+  assert.equal(record.state, "failed", "registering an undeclared command fails it");
+  assert.equal(record.error, `Command "greet.secret" isn't declared in greet's contributes.commands`);
+});

@@ -54,5 +54,5 @@ test("settings files have names in tabs and quick open", () => {
   assert.equal(docLabel(".common-ink/users/ada@example.com/settings.json" as FilePath), "User settings");
   assert.equal(docLabel(".common-ink/defaults/settings.json" as FilePath), "Default settings");
   assert.equal(docLabel("Projects/Plan.md" as FilePath), "Projects/Plan");
-  assert.equal(docLabel(".common-ink/plugins/word-count/index.js" as FilePath), "Plugin word-count/index.js");
+  assert.equal(docLabel(".common-ink/extensions/word-count/index.js" as FilePath), "Extension word-count/index.js");
 });

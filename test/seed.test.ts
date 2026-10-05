@@ -65,13 +65,26 @@ test("Try this PR lists this PR's steps first, then the rest newest first", () =
   );
 });
 
-test("the seed keeps sample notes and replaces Try this PR, and its id follows its content", () => {
-  const sections = [{ slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [{ path: "Welcome.md", text: "# Welcome\n" }], edits: [] }];
+test("the seed replaces Try this PR, and leaves the rest to Files.seed; its id follows its content", () => {
+  const sections = [
+    {
+      slug: "a",
+      pr: 4,
+      title: "Scaffold",
+      steps: ["Open it"],
+      notes: [
+        { path: "Welcome.md", text: "# Welcome\n" },
+        { path: ".common-ink/extensions/clock/extension.json", text: "{}" },
+      ],
+      edits: [],
+    },
+  ];
   const seed = buildSeed(sections, { number: 4 });
   assert.deepEqual(
     seed.notes.map((n) => [n.path, n.replace]),
     [
       ["Welcome.md", false],
+      [".common-ink/extensions/clock/extension.json", false],
       ["Try this PR.md", true],
     ],
   );

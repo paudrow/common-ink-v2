@@ -1,12 +1,12 @@
 // The windows on screen: the layout (layout.ts) drawn as split groups of tabs. A file's tab holds an
-// editor; a view's tab holds whatever its plugin draws. A file open in several tabs has one Session,
+// editor; a view's tab holds whatever its extension draws. A file open in several tabs has one Session,
 // and an edit in one tab is copied to the others. Tabs and notes drag into windows (dnd.ts), the
 // borders between windows drag to resize them, and the layout is saved as a JSON file a moment after
 // it changes.
 import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, isPluginScript, type FilePath } from "../../worker/src/files.ts";
+import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
 import type { Offline } from "./offline.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
@@ -31,7 +31,7 @@ interface OpenFile {
   startText: string;
 }
 
-/** Something a plugin draws in a window's tab, such as History. */
+/** Something an extension draws in a window's tab, such as History. */
 export interface View {
   id: string;
   title: string;
@@ -77,7 +77,7 @@ export class Workbench {
   private layoutSaving = false;
   private shownView: EditorView | null = null;
   private settings: Settings = DEFAULTS;
-  /** Plugins' editor extensions, for every note's editor. */
+  /** Extensions' CodeMirror extensions, for every note's editor. */
   readonly noteExtensions: Extension[] = [];
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
@@ -182,13 +182,13 @@ export class Workbench {
     }
   }
 
-  /** Show a plugin's view in the focused group, in place of the tab on show or in a new tab. */
+  /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
   openView(id: string, how: { newTab?: boolean } = {}): void {
     const item = { view: id };
     this.setLayout(how.newTab ? L.insertTab(this.layout, item) : L.showInTab(this.layout, item));
   }
 
-  /** Views that can open in windows. Plugins register them. */
+  /** Views that can open in windows. Extensions register them. */
   registerView(view: View): void {
     this.registered.set(view.id, view);
   }
@@ -398,7 +398,7 @@ export class Workbench {
     const view: EditorView = new EditorView({
       state: createState(text, {
         json: file.path.endsWith(".json"),
-        code: isPluginScript(file.path),
+        code: isExtensionScript(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
         extensions: [...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
@@ -464,6 +464,9 @@ export class Workbench {
       this.shape = shape;
       this.host.replaceChildren(this.renderNode(this.layout.root));
     } else this.refreshNode(this.layout.root, this.host.firstElementChild as HTMLElement);
+    // The root fills the area. A window that was in a split keeps its element, and with it the share
+    // of the split it had: that only sizes a split's children (style.css), and it's cleared besides.
+    (this.host.firstElementChild as HTMLElement).style.removeProperty("--share");
     this.renderTabs();
     this.afterFocus();
   }
@@ -473,7 +476,7 @@ export class Workbench {
     if (node.kind === "group") return this.fillGroup(node);
     const children = [...el.children].filter((c) => !c.classList.contains("resizer")) as HTMLElement[];
     node.children.forEach((c, i) => {
-      children[i].style.flex = `${node.sizes[i]} 1 0`;
+      children[i].style.setProperty("--share", String(node.sizes[i]));
       this.refreshNode(c, children[i]);
     });
   }
@@ -485,7 +488,7 @@ export class Workbench {
       node.children.forEach((c, i) => {
         if (i > 0) el.append(this.resizer(el, path, i));
         const child = this.renderNode(c, [...path, i]);
-        child.style.flex = `${node.sizes[i]} 1 0`;
+        child.style.setProperty("--share", String(node.sizes[i]));
         el.append(child);
       });
       return el;
@@ -524,7 +527,7 @@ export class Workbench {
       // Hidden until shown, so the first showing draws it.
       box.hidden = true;
       box.tabIndex = -1;
-      if (!this.viewFor(id)) box.textContent = `Nothing to show: no plugin draws "${id}". Is it turned off in settings?`;
+      if (!this.viewFor(id)) box.textContent = `Nothing to show: no extension draws "${id}". Is it turned off? See the Extensions view.`;
       this.viewBoxes.set(k, box);
     }
     return box;
@@ -630,7 +633,7 @@ export class Workbench {
         const moved = ((split.dir === "row" ? e.clientX : e.clientY) - start) / total;
         const before = Math.min(Math.max(0.1, split.sizes[index - 1] + moved), pair - 0.1);
         sizes = split.sizes.map((s, i) => (i === index - 1 ? before : i === index ? pair - before : s));
-        sizes.forEach((s, i) => (children[i].style.flex = `${s} 1 0`));
+        sizes.forEach((s, i) => children[i].style.setProperty("--share", String(s)));
       };
       const up = () => {
         el.removeEventListener("pointermove", move);

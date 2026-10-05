@@ -166,6 +166,31 @@ test("windows resize along their split, never below a tenth, and Ctrl-W = evens 
   assert.deepEqual(sizes(equalize(l)), [0.5, 0.5]);
 });
 
+test("closing windows in nested splits leaves no split of one, and sizes that add up to 1", () => {
+  const ok = (l: ReturnType<typeof emptyLayout>) => {
+    const walk = (n: typeof l.root): void => {
+      if (n.kind === "group") return;
+      assert.ok(n.children.length >= 2, "no split of one");
+      assert.ok(Math.abs(n.sizes.reduce((x, y) => x + y, 0) - 1) < 1e-9, "sizes add up to 1");
+      n.children.forEach(walk);
+    };
+    walk(l.root);
+  };
+  // Three windows: left | (top / bottom), the right ones split down.
+  let l = split(split(openTab(emptyLayout(), a), "right", b), "down", c);
+  ok(l);
+  const [left, top, bottom] = groups(l).map((g) => g.id);
+  l = closeTab(l, bottom, 0);
+  ok(l);
+  assert.equal(l.root.kind, "split");
+  assert.deepEqual(groups(l).map((g) => g.id), [left, top]);
+  l = closeTab(l, top, 0);
+  ok(l);
+  assert.equal(l.root.kind, "group", "the last window is the whole area");
+  l = only(split(split(openTab(emptyLayout(), a), "right", b), "down", c));
+  assert.equal(l.root.kind, "group", ":only leaves one window, not a split");
+});
+
 test("a saved layout is read back, and anything malformed is refused or cleaned", () => {
   const l = resizeFocused(split(openTab(emptyLayout(), a), "down", b), "column", 0.1);
   assert.deepEqual(parseLayout(JSON.parse(JSON.stringify(l))), l);
@@ -175,6 +200,20 @@ test("a saved layout is read back, and anything malformed is refused or cleaned"
     root: { kind: "group", id: "g7", tabs: [{ file: "A.md" }, { view: "history" }], active: 1 },
     focus: "g7",
   });
+  // Saved before splits were tidied on load: a split of one, and sizes that don't add up.
+  const one = { kind: "group", id: "g2", tabs: ["B.md"], active: 0 };
+  assert.deepEqual(parseLayout({ root: { kind: "split", dir: "row", children: [one], sizes: [0.5] }, focus: "g2" })!.root, { kind: "group", id: "g2", tabs: [{ file: "B.md" }], active: 0 });
+  const nested = parseLayout({ root: { kind: "split", dir: "row", children: [{ kind: "group", id: "g1", tabs: [], active: 0 }, { kind: "split", dir: "row", children: [one, { kind: "group", id: "g3", tabs: [], active: 0 }], sizes: [1, 1] }], sizes: [2, 2] }, focus: "g1" })!;
+  assert.deepEqual(sizes(nested), [0.5, 0.25, 0.25], "a split inside a split the same way joins it");
   const noSizes = parseLayout({ root: { kind: "split", dir: "row", children: [{ kind: "group", id: "g1", tabs: [], active: 0 }, { kind: "group", id: "g2", tabs: [], active: 0 }] }, focus: "g2" });
   assert.deepEqual(noSizes && sizes(noSizes), [0.5, 0.5]);
+});
+
+test("sizes that add up to 1 but for a float's rounding are read back as written", async () => {
+  const { parseLayout } = await import("../web/src/layout.ts");
+  // 0.6 + 0.3 + 0.1 is 0.9999999999999999; divided by that, they'd change in their last digits.
+  const sizes = [0.6, 0.3, 0.1];
+  const written = { root: { kind: "split", dir: "row", sizes, children: [0, 1, 2].map((i) => ({ kind: "group", id: `g${i}`, tabs: [], active: 0 })) }, focused: "g0" };
+  const read = parseLayout(JSON.parse(JSON.stringify(written)))!;
+  assert.deepEqual(read.root.kind === "split" ? read.root.sizes : null, sizes);
 });

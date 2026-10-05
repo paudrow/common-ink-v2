@@ -1,4 +1,4 @@
-// Keeps the app itself (its page, scripts and styles, and workspace plugins' code) so it opens without
+// Keeps the app itself (its page, scripts and styles, and workspace extensions' code) so it opens without
 // a connection. Files are not kept here: the app caches those itself, and holds edits it couldn't send
 // (web/src/offline.ts).
 const CACHE = "common-ink-app-v1";
@@ -31,9 +31,9 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
-  // A workspace plugin's code: the server's when it answers, the last copy kept when it doesn't, so
-  // workspace plugins start offline too. Each version has its own address (?v=), and one copy per plugin is kept.
-  if (/^\/plugins\/[^/]+\/index\.js$/.test(url.pathname)) {
+  // A workspace extension's code: the server's when it answers, the last copy kept when it doesn't, so
+  // workspace extensions start offline too. Each version has its own address (?v=), and one copy per file is kept.
+  if (/^\/extensions\/[^/]+\/.+\.js$/.test(url.pathname)) {
     const key = url.pathname;
     event.respondWith(
       fetch(event.request)

@@ -1,0 +1,11 @@
+{
+  "id": "quick-open",
+  "name": "Open by name",
+  "version": "1.0.0",
+  "description": "⌘P: open a note or any other file by name, or make a new note.",
+  "main": "index.js",
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "files:read": { "paths": ["**"], "why": "List files by name, so you can open them" }
+  }
+}

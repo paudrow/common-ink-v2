@@ -17,8 +17,8 @@ export type FilePath = string & { readonly __brand: "FilePath" };
 
 export function parseFilePath(value: unknown): FilePath | null {
   if (typeof value !== "string" || value.length > 300) return null;
-  // Notes and JSON anywhere; JavaScript only as a workspace plugin's code.
-  if (!/\.(md|json)$/.test(value) && !PLUGIN_SCRIPT.test(value)) return null;
+  // Notes and JSON anywhere; JavaScript only as a workspace extension's code.
+  if (!/\.(md|json)$/.test(value) && !EXTENSION_SCRIPT.test(value)) return null;
   if (/[\u0000-\u001f\u007f\\]/.test(value)) return null;
   const parts = value.split("/");
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.trim() !== p)) return null;
@@ -27,9 +27,9 @@ export function parseFilePath(value: unknown): FilePath | null {
 
 export const isNote = (path: FilePath) => path.endsWith(".md");
 
-/** A workspace plugin's code: `.common-ink/plugins/<id>/index.js`. */
-const PLUGIN_SCRIPT = /^\.common-ink\/plugins\/[a-zA-Z0-9][\w.-]*\/index\.js$/;
-export const isPluginScript = (path: FilePath) => PLUGIN_SCRIPT.test(path);
+/** A workspace extension's code: any `.js` file in `.common-ink/extensions/<id>/`. */
+const EXTENSION_SCRIPT = /^\.common-ink\/extensions\/[a-zA-Z0-9][\w.-]{0,63}\/([\w.-]+\/)*[\w.-]+\.js$/;
+export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path);
 
 /** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
 export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };
@@ -125,6 +125,13 @@ export interface Seed {
 }
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
+
+/** A short, stable fingerprint of a text (FNV-1a), for telling whether a seed's text changed. */
+function textHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16);
+}
 
 const lines = (text: string) => text.split("\n");
 
@@ -316,7 +323,11 @@ export class Files {
     return this.db.tx(() => this.apply(w));
   }
 
-  /** Apply a seed once: running it again with the same id changes nothing. */
+  /**
+   * Apply a seed once: running it again with the same id changes nothing. A note is written if it's
+   * missing, if the seed says to replace it, or if the seed's text for it changed since it was last
+   * seeded: a demo the PR changed shows as it is now, and what was there is in history.
+   */
   seed(seed: Seed): void {
     this.db.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
@@ -326,8 +337,13 @@ export class Files {
         const path = parseFilePath(raw);
         if (!path) throw new Error(`Not a file path: ${raw}`);
         const current = this.read(path);
+        const key = `seeded:${path}`;
+        const [seeded] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = ?", key);
+        // Seeded before seeds were remembered: changed if it reads differently now.
+        const changed = seeded ? seeded.value !== textHash(text) : current?.text !== text;
         if (!current) added.add(path);
-        if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+        if (!current || replace || changed) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+        this.db.run("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, textHash(text));
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
       for (const { path, text, agent, label } of seed.edits ?? []) {

@@ -6,7 +6,7 @@ import { syntaxTree } from "@codemirror/language";
 import { linter, type Diagnostic } from "@codemirror/lint";
 import type { Extension } from "@codemirror/state";
 import { EditorView, hoverTooltip, showPanel } from "@codemirror/view";
-import { schema, settingProblem } from "../../worker/src/settings.ts";
+import { CORE_CATALOG, schemaOf, settingProblem, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { topLevelKeys } from "./json-edit.ts";
 
 interface Property {
@@ -17,8 +17,9 @@ interface Property {
   appliesAfterReload?: boolean;
 }
 
-const properties = () => Object.entries(schema.properties as Record<string, Property>).filter(([k]) => k !== "$schema");
-const propertyOf = (key: string) => (schema.properties as Record<string, Property>)[key];
+/** Every setting in a catalog, as JSON Schema properties. */
+const propertiesOf = (catalog: SettingsCatalog) => schemaOf(catalog).properties as Record<string, Property>;
+const properties = (catalog: SettingsCatalog) => Object.entries(propertiesOf(catalog)).filter(([k]) => k !== "$schema");
 
 /** What to put after a key when completing it: its default, or an empty list or object for anything bigger. */
 function starter(p: Property): string {
@@ -28,7 +29,8 @@ function starter(p: Property): string {
 }
 
 /** Completions at `pos`: setting names where a key goes, values where a value goes. Exported for tests. */
-export function settingsCompletions(text: string, pos: number): { from: number; to: number; options: Completion[] } | null {
+export function settingsCompletions(text: string, pos: number, catalog: SettingsCatalog = CORE_CATALOG): { from: number; to: number; options: Completion[] } | null {
+  const propertyOf = (key: string) => propertiesOf(catalog)[key];
   const before = text.slice(0, pos);
   const after = text.slice(pos);
   // A value: after `"key":`, on the same line.
@@ -50,7 +52,7 @@ export function settingsCompletions(text: string, pos: number): { from: number; 
   const from = pos - keyMatch[2].length;
   const to = quoted && after.startsWith('"') ? pos + 1 : pos;
   const used = keysIn(text);
-  const options = properties()
+  const options = properties(catalog)
     .filter(([k]) => !used.has(k))
     .map(([key, p]) => ({ label: key, type: "property", info: p.description, apply: `${quoted ? "" : '"'}${key}": ${starter(p)}` }));
   return { from, to, options };
@@ -86,16 +88,16 @@ function depthAt(text: string, pos: number): number {
   return depth;
 }
 
-function complete(ctx: CompletionContext): CompletionResult | null {
-  const result = settingsCompletions(ctx.state.doc.toString(), ctx.pos);
+const complete = (catalog: () => SettingsCatalog) => (ctx: CompletionContext): CompletionResult | null => {
+  const result = settingsCompletions(ctx.state.doc.toString(), ctx.pos, catalog());
   if (!result) return null;
   // Typing a bare word only completes when asked, so Vim's own keys and plain typing aren't interrupted.
   if (result.from === ctx.pos && !ctx.explicit && !/"$/.test(ctx.state.sliceDoc(result.from - 1, result.from))) return null;
   return { ...result, validFor: /^"?[\w.$-]*"?$/ };
-}
+};
 
 /** The problems in a settings file: where it isn't JSON, and each setting that's unknown or wrong. Exported for tests. */
-export function settingsProblems(text: string, syntaxErrors: number[] = []): Array<{ from: number; to: number; message: string }> {
+export function settingsProblems(text: string, syntaxErrors: number[] = [], catalog: SettingsCatalog = CORE_CATALOG): Array<{ from: number; to: number; message: string }> {
   if (!text.trim()) return [];
   try {
     JSON.parse(text);
@@ -106,26 +108,27 @@ export function settingsProblems(text: string, syntaxErrors: number[] = []): Arr
   const parsed = topLevelKeys(text);
   if (!parsed) return [{ from: 0, to: Math.min(text.length, 1), message: "Settings must be a JSON object" }];
   return parsed.keys.flatMap((k) => {
-    const problem = settingProblem(k.key, JSON.parse(text.slice(k.valueStart, k.end)));
+    const problem = settingProblem(k.key, JSON.parse(text.slice(k.valueStart, k.end)), catalog);
     if (!problem) return [];
     // An unknown key is marked on the key; a wrong value on the value.
-    const unknown = !propertyOf(k.key);
+    const unknown = !catalog.has(k.key);
     return [{ from: unknown ? k.start : k.valueStart, to: unknown ? k.valueStart : k.end, message: `${problem}. It's ignored.` }];
   });
 }
 
-const lint = linter(
-  (view): Diagnostic[] => {
-    const errors: number[] = [];
-    syntaxTree(view.state).iterate({ enter: (n) => void (n.type.isError && errors.push(n.from)) });
-    return settingsProblems(view.state.doc.toString(), errors).map((p) => ({ ...p, severity: "warning" }));
-  },
-  { delay: 300 },
-);
+const lint = (catalog: () => SettingsCatalog) =>
+  linter(
+    (view): Diagnostic[] => {
+      const errors: number[] = [];
+      syntaxTree(view.state).iterate({ enter: (n) => void (n.type.isError && errors.push(n.from)) });
+      return settingsProblems(view.state.doc.toString(), errors, catalog()).map((p) => ({ ...p, severity: "warning" }));
+    },
+    { delay: 300 },
+  );
 
-const hover = hoverTooltip((view, pos) => {
+const hover = (catalog: () => SettingsCatalog) => hoverTooltip((view, pos) => {
   const key = topLevelKeys(view.state.doc.toString())?.keys.find((k) => pos >= k.start && pos < k.valueStart);
-  const p = key && propertyOf(key.key);
+  const p = key && propertiesOf(catalog())[key.key];
   if (!key || !p) return null;
   return {
     pos: key.start,
@@ -163,8 +166,8 @@ function backToUi(openUi: () => void) {
 }
 
 /** Everything a settings file's editor gets. The defaults (read-only) get the hovers and the way back. */
-export function settingsJson(opts: { readOnly: boolean; openUi: () => void }): Extension {
-  return [hover, backToUi(opts.openUi), opts.readOnly ? [] : [autocompletion({ override: [complete], icons: false }), lint], theme];
+export function settingsJson(opts: { readOnly: boolean; catalog: () => SettingsCatalog; openUi: () => void }): Extension {
+  return [hover(opts.catalog), backToUi(opts.openUi), opts.readOnly ? [] : [autocompletion({ override: [complete(opts.catalog)], icons: false }), lint(opts.catalog)], theme];
 }
 
 const theme = EditorView.theme({

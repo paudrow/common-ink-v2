@@ -6,7 +6,7 @@ import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
 export type GroupId = string;
 
-/** Anything that opens in a window: a file, or a view that a plugin draws (such as History). */
+/** Anything that opens in a window: a file, or a view that an extension draws (such as History). */
 export type Openable = { file: FilePath } | { view: string };
 
 /**
@@ -84,6 +84,8 @@ const even = (n: number) => Array.from({ length: n }, () => 1 / n);
 
 function normalize(sizes: number[]): number[] {
   const total = sizes.reduce((a, b) => a + b, 0);
+  // Sizes that add up to 1, give or take a float's rounding, are kept as they are: a layout read back is the one written.
+  if (Math.abs(total - 1) < 1e-9) return sizes;
   return total > 0 ? sizes.map((s) => s / total) : even(sizes.length);
 }
 
@@ -412,11 +414,12 @@ export function parseLayout(value: unknown): Layout | null {
       const active = Number.isInteger(o.active) ? Math.min(Math.max(0, o.active as number), Math.max(0, tabs.length - 1)) : 0;
       return { kind: "group", id: o.id, tabs, active };
     }
-    if (o.kind === "split" && (o.dir === "row" || o.dir === "column") && Array.isArray(o.children) && o.children.length >= 2) {
+    if (o.kind === "split" && (o.dir === "row" || o.dir === "column") && Array.isArray(o.children) && o.children.length >= 1) {
       const children = o.children.map(node);
       if (!children.every((c) => c !== null)) return null;
-      const sizes = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && s > 0) ? normalize(o.sizes as number[]) : even(children.length);
-      return { kind: "split", dir: o.dir, children: children as Node[], sizes };
+      const sizes = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && s > 0) ? (o.sizes as number[]) : even(children.length);
+      // Tidied as any split is: one child stands alone, a split the same way joins its parent, sizes add up to 1.
+      return makeSplit(o.dir, children.map((c, i) => ({ node: c as Node, size: sizes[i] })));
     }
     return null;
   };

@@ -87,6 +87,12 @@ body {
   min-height: 0;
 }
 
+/* A split's windows share it by their sizes (--share, set by the workbench). Only a split's children:
+   a window that's left on its own fills the area, whatever share it had. */
+.split > :not(.resizer) {
+  flex: var(--share, 1) 1 0;
+}
+
 .split.row {
   flex-direction: row;
 }
@@ -577,7 +583,7 @@ body {
   font-size: 0.75rem;
 }
 
-/* A todo's checkbox and chips, in the editor and the Todos view (plugins/todos/widgets.ts). */
+/* A todo's checkbox and chips, in the editor and the Todos view (extensions/todos/widgets.ts). */
 .todo-box {
   display: inline-block;
   flex: none;
@@ -637,7 +643,7 @@ body {
   border-color: var(--accent);
 }
 
-/* History: what a change means, from plugins that know. */
+/* History: what a change means, from extensions that know. */
 :is(#panel, .tab-view) .change .described {
   margin-top: 0.125rem;
   font-size: 0.8125rem;
@@ -991,6 +997,19 @@ body {
   color: var(--ink);
 }
 
+/* Under the User | Workspace switch: what the level on show is. */
+.settings-level {
+  margin: 0.25rem 0 0.75rem;
+  color: var(--muted);
+}
+
+/* Where a value comes from when it isn't set at this level, or what wins over it. */
+.setting-note {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--accent);
+}
+
 .setting-default {
   margin: 0.375rem 0 0;
   font-size: 0.75rem;
@@ -1032,20 +1051,21 @@ body {
   text-decoration: underline;
 }
 
-/* The Plugins view (plugins-view.ts), in the side panel or a window. */
-.plugins-view {
+/* The Extensions view (extensions-view.ts), in the side panel or a window. */
+.extensions-view,
+.extension-details {
   font-family: var(--prose);
   font-size: 0.875rem;
 }
 
-.plugins-view .banner {
+.extensions-view .banner {
   margin: 0 0 0.75rem;
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   background: var(--accent-soft);
 }
 
-.plugins-view button {
+:is(.extensions-view, .extension-details) button {
   font: inherit;
   color: var(--accent);
   background: none;
@@ -1055,114 +1075,270 @@ body {
   cursor: pointer;
 }
 
-.plugins-view button:disabled {
+:is(.extensions-view, .extension-details) button:disabled {
   color: var(--muted);
   cursor: default;
 }
 
-.plugins-view :focus-visible {
+:is(.extensions-view, .extension-details) :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.plugin {
-  padding: 0.75rem 0;
+/* The list: a search box, then a row each, in sections (Installed, Built-in). */
+.extensions-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.extensions-search {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+}
+
+.extension-section h2 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.extension-section[hidden],
+.extension-row[hidden] {
+  display: none;
+}
+
+.extension-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
   border-bottom: 1px solid var(--line);
 }
 
-.plugin-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.plugin-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-.plugin-toggle input {
+.extension-row input[type="checkbox"] {
+  margin: 0;
   accent-color: var(--accent);
 }
 
-.plugin-name {
+.extensions-view .extension-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--ink);
+}
+
+.extension-open .extension-desc {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+}
+
+.extension-row.state-off .extension-name,
+.extension-row.state-failed .extension-name {
+  color: var(--muted);
+}
+
+.extension-row.state-failed .extension-state,
+.extension-row.has-error .extension-state,
+.extension-error {
+  color: #c2410c;
+}
+
+.extension-name {
   font-weight: 600;
 }
 
-.plugin-id {
+.extension-id {
   font: 0.75rem var(--mono);
   color: var(--muted);
 }
 
-.plugins-view .badge,
+:is(.extensions-view, .extension-details) .badge,
 .settings-editor .badge.reload {
   font-size: 0.75rem;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 0.4rem;
+  white-space: nowrap;
 }
 
-.plugins-view .badge.reload {
+:is(.extensions-view, .extension-details) .badge.reload {
   color: var(--accent);
   border-color: var(--accent);
 }
 
-.plugin-state {
+.extension-state {
   font-size: 0.75rem;
   color: var(--muted);
 }
 
-.plugin.state-off .plugin-name,
-.plugin.state-safe .plugin-name {
-  color: var(--muted);
-}
-
-.plugin.state-failed .plugin-state,
-.plugin-error {
-  color: #c2410c;
-}
-
-.plugin-desc,
-.plugin-error {
-  margin: 0.25rem 0;
-}
-
-.plugin-adds {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.125rem 0.75rem;
-  margin: 0.375rem 0;
-  font-size: 0.8125rem;
-}
-
-.plugin-adds dt {
-  color: var(--muted);
-}
-
-.plugin-adds dd {
-  margin: 0;
-}
-
-p.plugin-adds.muted {
-  display: block;
-  color: var(--muted);
-}
-
-.plugin-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.375rem;
-}
-
-.plugin-source {
+.extension-source {
   display: flex;
   flex-direction: column;
 }
 
-/* The Uploads view (plugins/uploads.ts). */
+/* Modals (modal.ts): an extension's details, prompts, confirming. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.modal {
+  width: min(28rem, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 0.9375rem/1.5 var(--prose);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+}
+
+.modal:focus {
+  outline: none;
+}
+
+/* An extension's details: what it is and does, then what it adds and may ask for, each readable. */
+.modal.extension-details {
+  width: min(36rem, 100%);
+  line-height: 1.45;
+}
+
+.details-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.details-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.extension-details .modal-close {
+  margin-left: auto;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.extension-meta {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin: 0.125rem 0 0.5rem;
+}
+
+.extension-details .extension-desc,
+.extension-details .extension-error {
+  margin: 0.5rem 0;
+}
+
+.extension-details .extension-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.extension-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.extension-details .extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.extension-details h3 {
+  margin: 1rem 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.extension-adds {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+
+.extension-adds dt {
+  color: var(--muted);
+}
+
+.extension-adds dd {
+  margin: 0;
+}
+
+/* Each permission on its own lines: what it can do, then the extension's reason, in full width. */
+.extension-perms {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.extension-perms li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.125rem 0.75rem;
+  padding: 0.375rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.extension-perms li:first-child {
+  border-top: none;
+}
+
+.perm-can {
+  flex: 1 1 12rem;
+  font-weight: 550;
+}
+
+.perm-why {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* The Uploads view (extensions/uploads/index.ts). */
 :is(#panel, .tab-view) .upload-add {
   margin-bottom: 0.75rem;
 }
@@ -1200,3 +1376,4 @@ p.plugin-adds.muted {
   grid-column: 2;
   grid-row: span 2;
 }
+
