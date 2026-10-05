@@ -4,19 +4,17 @@ Boards draws two embeds: a task list gathered live from your notes, and a Kanban
 
 ## Every open todo
 
-```tasks
-```
+::tasks
 
 ## Due this week
 
-```tasks due=week
-```
+::tasks{due=week}
 
 Check one off here, and it's checked off in its note; a note's name opens it. Add a todo to any note (`- [ ] something due:2026-10-09`) and the lists above update.
 
 ## A board
 
-```kanban
+:::kanban
 ## To do
 - Write the outline
 - Book the venue
@@ -28,6 +26,6 @@ Check one off here, and it's checked off in its note; a note's name opens it. Ad
 
 ## Done
 - Pick a date
-```
+:::
 
-Drag a card to another column (or use its ← → buttons): the markdown above changes to match, as a change by Boards in history. Put the cursor in the block to see it.
+Drag a card to another column (or use its ← → buttons): it moves at once, and the markdown above changes to match, as a change by Boards in history. Put the cursor in it to see it: the board is real markdown between `:::kanban` and `:::`.
