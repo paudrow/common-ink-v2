@@ -6,7 +6,8 @@ import type { FilePath, FileSummary, WorkspaceFile } from "../worker/src/files.t
 import { combine, describeSchema, parseSettings, settingsCatalog } from "../worker/src/settings.ts";
 import type { ExtensionContext, ExtensionModule } from "../web/src/extension-api.ts";
 import { changedExtensions, extensionStates, ExtensionHost, findWorkspaceExtensions, isSelfContained, type BuiltIn } from "../web/src/extension-host.ts";
-import { contributionLines, permissionLines } from "../web/src/extensions-view.ts";
+import { contributionLines } from "../web/src/extensions-view.ts";
+import { declaredPermissions, plain } from "../web/src/permission-words.ts";
 
 const manifest = (id: string, more: Record<string, unknown> = {}) => {
   const m = parseManifest({ name: id, version: "1.0.0", ...more }, id);
@@ -60,10 +61,13 @@ test("a manifest says what an extension adds and may ask for, with defaults for 
     ["Views", "Forecast"],
     ["Settings", "weather.units"],
   ]);
-  assert.deepEqual(permissionLines(m), [
-    ["network api.weather.gov", "Fetch forecasts"],
-    ["files:read Journal/**", "Read your journal"],
-  ]);
+  assert.deepEqual(
+    declaredPermissions(m).map((p) => [p.key, plain(p.can), p.why]),
+    [
+      ["network:api.weather.gov", "Connect to api.weather.gov", "Fetch forecasts"],
+      ["files:read:Journal/**", "Read everything in Journal", "Read your journal"],
+    ],
+  );
   assert.deepEqual(manifest("bare").activationEvents, ["onStartup"]);
 });
 

@@ -43,6 +43,8 @@ const NAMES: Array<[RegExp, string]> = [
   [/^\.common-ink\/defaults\/settings\.json$/, "Default settings"],
   [/^\.common-ink\/users\/[^/]+\/settings\.json$/, "User settings"],
   [/^\.common-ink\/layout\.json$/, "Layout"],
+  [/^\.common-ink\/uploads\.json$/, "Uploads list"],
+  [/^\.common-ink\/labels\.json$/, "Labels"],
 ];
 
 /** What to call a file: a note's path without ".md", or the name of a workspace JSON file. */
