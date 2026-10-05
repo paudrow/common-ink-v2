@@ -105,6 +105,9 @@ const guides = (levels: string) => ({
 });
 
 export const listTheme = EditorView.theme({
+  // The hanging indent is the line's own. Inline boxes inside it (a todo's box, its chips, math)
+  // would take it too and draw their content a column to the left of themselves.
+  ".cm-line.cm-list-line *": { textIndent: "0" },
   ".cm-line.cm-list-line": { paddingLeft: `calc((var(--list-depth) + 1) * ${UNIT})`, textIndent: `calc(-1 * ${UNIT})`, ...guides("var(--list-depth)") },
   ".cm-line.cm-list-cont": { paddingLeft: `calc((var(--list-depth) + 1) * ${UNIT})`, ...guides("(var(--list-depth) + 1)") },
   ".cm-list-bullet": { display: "inline-block", width: UNIT, textIndent: "0", textAlign: "center", color: "var(--muted)" },
