@@ -66,7 +66,10 @@ export function embedForm(
       control = box;
     } else if (a.enum) {
       const select = document.createElement("select");
-      for (const v of a.enum) select.append(new Option(v, v, false, v === values[key]));
+      const option = (value: string, text: string) => Object.assign(document.createElement("option"), { value, textContent: text, selected: value === values[key] });
+      // Without a default, it may be left out: the first choice is none.
+      if (a.default === undefined) select.append(option("", "—"));
+      for (const v of a.enum) select.append(option(v, v));
       select.addEventListener("change", () => {
         values[key] = select.value;
         refresh();
