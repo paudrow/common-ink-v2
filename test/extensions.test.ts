@@ -7,7 +7,8 @@ import { combine, describeSchema, parseSettings, settingsCatalog } from "../work
 import type { ExtensionContext, ExtensionModule } from "../web/src/extension-api.ts";
 import { changedExtensions, extensionStates, ExtensionHost, findWorkspaceExtensions, forbiddenImports, type BuiltIn } from "../web/src/extension-host.ts";
 import { APP_MODULES, LIBRARY_NAMES } from "../web/src/library-names.ts";
-import { contributionLines, permissionLines } from "../web/src/extensions-view.ts";
+import { contributionLines } from "../web/src/extensions-view.ts";
+import { declaredPermissions, plain } from "../web/src/permission-words.ts";
 
 const manifest = (id: string, more: Record<string, unknown> = {}) => {
   const m = parseManifest({ name: id, version: "1.0.0", ...more }, id);
@@ -64,10 +65,13 @@ test("a manifest says what an extension adds and may ask for, with defaults for 
     ["Views", "Forecast"],
     ["Settings", "weather.units"],
   ]);
-  assert.deepEqual(permissionLines(m), [
-    ["network api.weather.gov", "Fetch forecasts"],
-    ["files:read Journal/**", "Read your journal"],
-  ]);
+  assert.deepEqual(
+    declaredPermissions(m).map((p) => [p.key, plain(p.can), p.why]),
+    [
+      ["network:api.weather.gov", "Connect to api.weather.gov", "Fetch forecasts"],
+      ["files:read:Journal/**", "Read everything in Journal", "Read your journal"],
+    ],
+  );
   assert.deepEqual(manifest("bare").activationEvents, ["onStartup"]);
 });
 
@@ -163,6 +167,35 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   );
 });
 
+test("an extension installed from a URL or a catalog says so, and who made it", async () => {
+  const { originOf } = await import("../web/src/extensions-view.ts");
+  const files = summaries([
+    ".common-ink/extensions/weather/extension.json",
+    ".common-ink/extensions/weather/installed.json",
+    ".common-ink/extensions/mine/extension.json",
+    ".common-ink/extensions/word-count/extension.json",
+    ".common-ink/extensions/word-count/installed.json",
+  ]);
+  const texts = {
+    ".common-ink/extensions/weather/extension.json": '{"name": "Weather", "publisher": "Weather Co."}',
+    ".common-ink/extensions/weather/installed.json": '{"from": "https://ext.example/weather/extension.json"}',
+    ".common-ink/extensions/mine/extension.json": "{}",
+    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "publisher": "Common Ink"}',
+    ".common-ink/extensions/word-count/installed.json": '{"from": "https://app.example/catalog/word-count/extension.json", "catalog": "Common Ink"}',
+  };
+  const { h } = host();
+  await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false);
+  assert.deepEqual(
+    h.records.map((r) => [r.id, originOf(r), r.installedFrom ?? null, r.manifest.publisher ?? null]),
+    [
+      ["a", "Built-in", null, null],
+      ["weather", "From URL", "https://ext.example/weather/extension.json", "Weather Co."],
+      ["mine", "Workspace", null, null],
+      ["word-count", "Catalog", "https://app.example/catalog/word-count/extension.json", "Common Ink"],
+    ],
+  );
+});
+
 test("a workspace extension runs sandboxed unless you trust it; built-ins run in the page", async () => {
   const files = summaries([".common-ink/extensions/mine/extension.json", ".common-ink/extensions/mine/index.js", ".common-ink/extensions/yours/extension.json"]);
   const texts = { ".common-ink/extensions/mine/extension.json": "{}", ".common-ink/extensions/yours/extension.json": "{}" };
@@ -249,6 +282,7 @@ test("in the app, a declared command starts its extension the first time it runs
     onFocus: [],
     saveGrant: async () => {},
     prompt: async () => "deny" as const,
+    undeclared() {},
     changed() {},
   });
   const greet: ExtensionModule = {
@@ -319,6 +353,7 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     onFocus: [],
     saveGrant: async () => {},
     prompt: async () => "deny" as const,
+    undeclared() {},
     changed() {},
   });
   let ctx!: ExtensionContext;

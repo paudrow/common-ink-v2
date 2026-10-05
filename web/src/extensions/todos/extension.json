@@ -7,8 +7,8 @@
   "files": ["index.ts", "model.ts", "widgets.ts"],
   "activationEvents": ["onStartup"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "List open todos from every note in the Todos view" },
-    "files:write": { "paths": ["**"], "why": "Check todos off from the Todos view" },
+    "files:read": { "paths": ["**/*.md"], "why": "List open todos from every note in the Todos view" },
+    "files:write": { "paths": ["**/*.md"], "why": "Check todos off from the Todos view" },
     "editor": { "why": "Draw todos as checkboxes and chips in notes" }
   },
   "contributes": {
