@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 27,
   "title": "Back and forward, app-wide",
   "steps": [
     "Open a few notes from the list on the left: Chores, then Shopping, then This week. Press the browser's Back button: Shopping, then Chores, each where the cursor was. Forward goes the other way. The mouse's side buttons and a trackpad swipe do the same.",
