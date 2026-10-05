@@ -3,6 +3,8 @@
   "name": "common-ink-v2",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-20",
+  // Tasks' code, which the Worker shares (complete-task.ts), imports repeat rules by their library name.
+  "alias": { "common-ink/recurrence": "./src/recurrence.ts" },
   // Production is commonink.app, with Google sign-in; www redirects to it (worker/src/hosts.ts), since
   // Google returns only to addresses registered with it. It has no workers.dev address. The two custom
   // domains are named by `npm run deploy` (--domain), not as routes here: with routes, wrangler dev and

@@ -1,6 +1,7 @@
-// How a task repeats: the `rec:` token, read into an RFC 5545 recurrence rule, and the date math
-// for the next due date. Tasks are dates, not times, so everything here is calendar days counted in
-// UTC (a date never moves with a time zone or a daylight-saving change).
+// How a task or an event repeats: the `rec:` token or an event's RRULE, read into an RFC 5545
+// recurrence rule, and the date math for the next due date or an event's days. It's all calendar days
+// counted in UTC (a date never moves with a time zone or a daylight-saving change); an event puts its
+// time of day on each day in its own time zone (worker/src/calendar.ts).
 //
 //   rec:weekly  rec:2w  rec:mon,thu  rec:2w-mon,thu  rec:6th  rec:last-day  rec:1st-tue,3rd-tue
 //   rec:last-fri  rec:mar-1  rec:1st-mon-mar  rec:day-50  rec:after-1m  rec:RRULE:FREQ=…;BYDAY=…
@@ -332,6 +333,23 @@ export function occurrences(r: Rule, from: string, count: number): string[] {
     at = next;
   }
   return out;
+}
+
+/**
+ * The days a rule gives, from `first` (the series' own first day, which always counts) through
+ * `last`, in order. An RRULE's COUNT counts from `first`, and nothing comes after its UNTIL.
+ */
+export function ruleDays(r: Rule, first: string, last: string): string[] {
+  const anchor = fromIso(first);
+  const end = Math.min(fromIso(last), r.until ? fromIso(r.until) : Infinity);
+  const out: number[] = [anchor];
+  // A rule that stops giving days (every Feb 30) is given up on a horizon after its last one.
+  for (let k = 0, hit = 0; out.at(-1)! <= end && (!r.count || out.length < r.count) && k - hit <= HORIZON[r.freq]; k++) {
+    const days = period(r, anchor, k).filter((x) => x > out.at(-1)!).sort((x, y) => x - y);
+    if (days.length) hit = k;
+    for (const x of days) if (!r.count || out.length < r.count) out.push(x);
+  }
+  return out.filter((x) => x <= end).map(toIso);
 }
 
 /** Days from one date to another. */

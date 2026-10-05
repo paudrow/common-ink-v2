@@ -4,7 +4,7 @@
 // where they are. Every phrase it takes is reported as a span of the input, so the app can show it
 // highlighted in place, and a phrase the person clicks away (`ignore`) stays words.
 import { addDays, editTask, isDate, parseTask, TASK_LINE, type TaskMeta, type TaskPatch } from "./tasks.ts";
-import { isInterval, nextDue, nth, parseRule } from "./recurrence.ts";
+import { isInterval, nextDue, nth, parseRule } from "common-ink/recurrence";
 import { tagsInLine } from "./tags.ts";
 
 export type QuickKind = "due" | "start" | "rec" | "ends" | "target";

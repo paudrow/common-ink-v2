@@ -2,7 +2,7 @@
 //   - [ ] Send invoice to Acme due:2026-10-01 rec:monthly #work/clients @jane !high
 // The line stays the source of truth. This reads the tokens and rewrites one at a time in place, so
 // an edit never touches the rest of the line.
-import { daysBetween, formatRule, nextDue, parseRule, ruleProblem, shiftDate, type Rule } from "./recurrence.ts";
+import { daysBetween, formatRule, nextDue, parseRule, ruleProblem, shiftDate, type Rule } from "common-ink/recurrence";
 import { cleanTag, headingText, normalizeTag, tagsInLine, withoutCodeOrLinks } from "./tags.ts";
 
 export const TASK_LINE = /^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.*)$/;

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addDays, describeTaskEdit, dueFilter, editTask, editTaskLine, parseTask, patchProblem, skipPatch, tasksIn, todaySection, withTasksAdded } from "../web/src/extensions/tasks/tasks.ts";
-import { recLabel } from "../web/src/extensions/tasks/recurrence.ts";
+import { recLabel } from "../worker/src/recurrence.ts";
 
 const LINE = "- [ ] Send invoice to Acme due:2026-10-01 rec:monthly #work/clients @jane !high";
 
