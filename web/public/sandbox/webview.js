@@ -1,10 +1,64 @@
 // A webview: a sandboxed frame showing HTML an extension wrote (ADR 0006). The app hands it a
 // MessagePort, then the HTML, which replaces this page. The page it writes gets `commonInk`: post() to
 // send a message to its extension, and onMessage() to hear from it. Nothing in here can connect out.
-// It reports its page's height, for a frame that sizes to its content.
+// It reports its page's height, for a frame that sizes to its content. With test levers on (?probe), it
+// also says when its page first draws on a canvas, keeps WebGL's drawing so it can be read back, and
+// answers a probe with what its canvases show.
 (() => {
   let port = null;
   const listeners = [];
+  const probing = new URLSearchParams(location.search).has("probe");
+  const drawn = { webgl: 0, "2d": 0 };
+  let frames = 0;
+  let sampling = false;
+  const kinds = new WeakMap();
+  if (probing) {
+    const raf = requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (fn) => raf((t) => (frames++, fn(t)));
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (kind, options) {
+      const webgl = /webgl/.test(kind);
+      const ctx = getContext.call(this, kind, webgl ? { ...options, preserveDrawingBuffer: true } : options);
+      if (ctx) kinds.set(this, webgl ? "webgl" : kind);
+      return ctx;
+    };
+    const count = (proto, names, kind) => {
+      for (const name of names) {
+        const draw = proto && proto[name];
+        if (!draw) continue;
+        proto[name] = function (...args) {
+          if (!sampling && drawn[kind]++ === 0 && port) port.postMessage({ type: "drawn", drawn: { ...drawn } });
+          return draw.apply(this, args);
+        };
+      }
+    };
+    count(self.WebGLRenderingContext && WebGLRenderingContext.prototype, ["drawArrays", "drawElements"], "webgl");
+    count(self.WebGL2RenderingContext && WebGL2RenderingContext.prototype, ["drawArrays", "drawElements", "drawArraysInstanced", "drawElementsInstanced", "drawRangeElements"], "webgl");
+    count(CanvasRenderingContext2D.prototype, ["fill", "stroke", "fillRect", "strokeRect", "fillText", "strokeText", "drawImage", "putImageData"], "2d");
+  }
+  /** A canvas at 16 × 16: how much of it is drawn on, and in how many colors. */
+  const sample = (canvas) => {
+    const out = { kind: kinds.get(canvas) || "none", width: canvas.width, height: canvas.height, filled: 0, colors: 0 };
+    if (!canvas.width || !canvas.height) return out;
+    const small = document.createElement("canvas");
+    small.width = small.height = 16;
+    const g = small.getContext("2d");
+    sampling = true;
+    try {
+      g.drawImage(canvas, 0, 0, 16, 16);
+    } finally {
+      sampling = false;
+    }
+    const data = g.getImageData(0, 0, 16, 16).data;
+    const colors = new Set();
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3]) out.filled++;
+      colors.add(data.slice(i, i + 4).join());
+    }
+    out.filled /= 256;
+    out.colors = colors.size;
+    return out;
+  };
   const size = new ResizeObserver(() => port && port.postMessage({ type: "height", height: Math.ceil(document.documentElement.getBoundingClientRect().height) }));
   window.commonInk = {
     post: (message) => port && port.postMessage({ type: "message", data: message }),
@@ -26,6 +80,7 @@
         addEventListener("load", () => port.postMessage({ type: "loaded" }), { once: true });
       } else if (m.type === "message") for (const fn of listeners) fn(m.data);
       else if (m.type === "ping") port.postMessage({ type: "pong", id: m.id });
+      else if (m.type === "probe" && probing) port.postMessage({ type: "probe", id: m.id, frames, drawn: { ...drawn }, canvases: [...document.querySelectorAll("canvas")].map(sample) });
     };
     port.postMessage({ type: "ready" });
   });

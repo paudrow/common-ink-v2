@@ -21,14 +21,14 @@ const run = (cmd: string, args: string[]) => {
   const done = spawnSync(cmd, args, { cwd: root, stdio: "inherit" });
   if (done.status !== 0) process.exit(done.status ?? 1);
 };
-run("npx", ["vite", "build", "web", "--outDir", "../dist", "--emptyOutDir", "--logLevel", "warn"]);
+const bin = (name: string) => path.join(root, "node_modules/.bin", name);
+run(bin("vite"), ["build", "web", "--outDir", "../dist", "--emptyOutDir", "--logLevel", "warn"]);
 run("node", ["--import", "tsx", "scripts/write-seed.ts", ...(values.scenario ? ["--scenario", values.scenario] : [])]);
 
 const vars = { DEV_USER: "dev@localhost", SEED: "1", DATA_FIXTURES: "1", LEVERS: "1" };
 const wrangler = spawn(
-  "npx",
+  bin("wrangler"),
   [
-    "wrangler",
     "dev",
     "-c",
     "worker/wrangler.jsonc",

@@ -31,6 +31,10 @@ import { Workbench } from "./workbench.ts";
 import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
+import { bootLevers } from "./dev-boot.ts";
+
+// Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
+const dev = await bootLevers();
 
 // Extensions in the workspace import CodeMirror and the app's helpers as libraries: the app's copies.
 offerLibraries();
@@ -327,7 +331,7 @@ const extensions = new ExtensionRuntime({
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
     await loadSettings();
   },
-  prompt: askPermission,
+  prompt: dev ? dev.prompt(askPermission) : askPermission,
   changed: () => extensionsChanged(),
 });
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
@@ -679,3 +683,4 @@ try {
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }
+dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings });

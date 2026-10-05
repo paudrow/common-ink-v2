@@ -13,6 +13,8 @@ import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.t
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
 import * as L from "./layout.ts";
+import { layoutProblems } from "./layout-problems.ts";
+import { checkInvariant } from "./invariants.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const RETRY_MS = 5000;
@@ -201,6 +203,12 @@ export class Workbench {
   /** Every file that isn't saved, for the page closing. */
   unsaved() {
     return [...this.files.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
+  }
+
+  /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
+  pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
+    const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
   }
 
   /**
@@ -480,6 +488,7 @@ export class Workbench {
   }
 
   private setLayout(layout: L.Layout, { save = true } = {}) {
+    checkInvariant("layout", () => layoutProblems(layout));
     this.layout = layout;
     this.render();
     if (save) {
@@ -490,6 +499,7 @@ export class Workbench {
 
   /** Last write wins: the layout is where you left it, not something to merge. */
   private async saveLayout() {
+    this.layoutTimer = 0;
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {

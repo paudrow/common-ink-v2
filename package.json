@@ -17,7 +17,8 @@
     "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc",
     "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc",
     "cli": "tsx scripts/cli.ts",
-    "test:browser": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test \"test/browser/*.browser.ts\""
+    "test:browser": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test \"test/browser/*.browser.ts\"",
+    "probe": "node --disable-warning=ExperimentalWarning --import tsx scripts/probe.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
