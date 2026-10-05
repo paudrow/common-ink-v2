@@ -68,8 +68,9 @@ const VERBS: Record<PermissionKind, [base: string, past: string, ing: string]> =
   notifications: ["show notifications", "showed a notification", "showing a notification"],
   media: ["play sound", "played sound", "playing sound"],
   "history:read": ["read the history of your files", "read the history of your files", "reading the history of your files"],
-  "calendar:read": ["read your calendar", "read your calendar", "reading your calendar"],
-  "contacts:read": ["read your contacts", "read your contacts", "reading your contacts"],
+  "data:calendar:read": ["see your calendar's events", "saw your calendar's events", "seeing your calendar's events"],
+  "data:calendar:write": ["add, change and delete events in your calendar", "changed an event in your calendar", "changing an event in your calendar"],
+  "data:contacts:read": ["see your contacts", "saw your contacts", "seeing your contacts"],
   editor: ["change how notes are edited and drawn", "changed how notes are edited and drawn", "changing how notes are edited and drawn"],
 };
 

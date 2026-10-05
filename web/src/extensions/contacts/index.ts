@@ -9,10 +9,10 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<stri
 
 /** What to show when a source can't answer: the reason, and a way to connect when that's what's missing. */
 async function trouble(ctx: ExtensionContext, root: HTMLElement, err: unknown) {
-  const status = await ctx.sources.status().catch(() => null);
+  const status = await ctx.data.status().catch(() => null);
   const message = el("p", { className: "message", textContent: (err as Error).message });
   const connect =
-    status?.using === "none" && status.googleAvailable ? el("button", { className: "connect", textContent: "Connect Google calendar and contacts", onclick: () => ctx.sources.connect() }) : "";
+    status?.using === "none" && status.googleAvailable ? el("button", { className: "connect", textContent: "Connect Google calendar and contacts", onclick: () => ctx.data.connect() }) : "";
   root.replaceChildren(message, connect);
 }
 
@@ -25,7 +25,7 @@ const contacts: ExtensionModule = {
         const list = el("ul", {});
         const fill = async () => {
           try {
-            const contacts = await ctx.sources.contacts(query);
+            const contacts = await ctx.data.contacts.search(query);
             list.replaceChildren(
               ...contacts.map((c) =>
                 el(

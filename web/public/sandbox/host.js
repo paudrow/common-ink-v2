@@ -9,7 +9,7 @@
   let next = 0;
   const calls = new Map();
   const handlers = new Map();
-  const listeners = { saved: [], focus: [] };
+  const listeners = { saved: [], focus: [], records: [] };
   const webviewListeners = new Map();
   let providers = 0;
   let items = 0;
@@ -138,7 +138,19 @@
       net: { fetch: (url, init) => call("net.fetch", url, init || {}), card: (url) => call("net.card", url) },
       clipboard: { read: () => call("clipboard.read"), write: (text) => call("clipboard.write", text) },
       notifications: { show: (title, body) => call("notifications.show", title, body) },
-      sources: { events: (from, to) => call("sources.events", from.toISOString(), to.toISOString()), contacts: (query) => call("sources.contacts", query) },
+      data: {
+        status: () => call("data.status"),
+        calendar: {
+          calendars: () => call("data.calendars"),
+          events: (from, to, calendars) => call("data.events", from.toISOString(), to.toISOString(), calendars || null),
+          event: (address) => call("data.event", address),
+          create: (event) => call("data.create", null, event),
+          update: (address, change, scope) => call("data.update", address, change, scope || null),
+          remove: (address, scope) => call("data.remove", address, scope || null),
+          onChange: (fn) => void listeners.records.push(fn),
+        },
+        contacts: { search: (query) => call("data.contacts", query || "") },
+      },
       workbench: {
         open: (path, how) => call("workbench.open", path, how),
         focusedPath: () => call("workbench.focusedPath"),

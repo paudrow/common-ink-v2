@@ -86,6 +86,7 @@ export function contributionLines(m: ExtensionManifest, titleOf: (command: strin
     ["Status bar", c.statusBarItems.map((s) => s.id)],
     ["Embeds", c.embeds.map((e) => `${e.title} (\`\`\`${e.language})`)],
     ["Link embeds", c.urlEmbeds.map((e) => e.title)],
+    ["Data sources", c.dataSources.map((d) => d.title)],
   ];
   return lines.filter(([, items]) => items.length).map(([label, items]) => [label, items.join(", ")]);
 }

@@ -3,6 +3,7 @@
 // in its manifest (contributes.configuration). Together they make a catalog, which gives the
 // defaults, the JSON Schema, the settings editor's sections and the checks that tell you what in a
 // settings file was ignored.
+import { isRecordPath } from "./records.ts";
 import type { ExtensionManifest, SettingSchema } from "./extensions.ts";
 import { parseFilePath, type FilePath } from "./files.ts";
 
@@ -212,7 +213,8 @@ export const DEFAULT_SETTINGS = parseFilePath(".common-ink/defaults/settings.jso
 export const userSettingsPath = (email: string) => parseFilePath(`.common-ink/users/${email}/settings.json`);
 
 /** Files the app writes itself and nobody may edit: the defaults. */
-export const isReadOnly = (path: FilePath) => path.startsWith(".common-ink/defaults/");
+/** Files only Common Ink writes: the default settings, and data sources' records, which change through their source. */
+export const isReadOnly = (path: FilePath) => path.startsWith(".common-ink/defaults/") || isRecordPath(path);
 
 export const SCHEMA_URL = "/schema/settings.json";
 

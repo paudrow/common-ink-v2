@@ -37,8 +37,9 @@ test("hosts, and each kind of permission, read as what they let it do", () => {
       scopeWords("notifications"),
       scopeWords("media"),
       scopeWords("history:read"),
-      scopeWords("calendar:read"),
-      scopeWords("contacts:read"),
+      scopeWords("data:calendar:read"),
+      scopeWords("data:calendar:write"),
+      scopeWords("data:contacts:read"),
       scopeWords("editor"),
     ].map(plain),
     [
@@ -52,8 +53,9 @@ test("hosts, and each kind of permission, read as what they let it do", () => {
       "show notifications",
       "play sound",
       "read the history of your files",
-      "read your calendar",
-      "read your contacts",
+      "see your calendar's events",
+      "add, change and delete events in your calendar",
+      "see your contacts",
       "change how notes are edited and drawn",
     ],
   );

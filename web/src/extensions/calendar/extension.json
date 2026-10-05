@@ -1,13 +1,13 @@
 {
   "id": "calendar",
   "name": "Calendar",
-  "version": "1.0.0",
-  "description": "Your Google Calendar's coming days, recurring events included.",
+  "version": "2.0.0",
+  "description": "Your calendar's events: the coming days, recurring events included, from Google Calendar or, in Previews, the Sample calendar.",
   "main": "index.ts",
   "files": ["index.ts"],
   "activationEvents": ["onView:calendar", "onCommand:calendar.show", "onCommand:google.connect"],
   "permissions": {
-    "calendar:read": { "why": "Show your events, which the Common Ink server reads from Google Calendar" }
+    "data:calendar:read": { "why": "Show your events" }
   },
   "contributes": {
     "commands": [
@@ -15,6 +15,7 @@
       { "command": "google.connect", "title": "Connect Google calendar and contacts" }
     ],
     "views": { "sidebar": [{ "id": "calendar", "name": "Calendar" }] },
+    "dataSources": [{ "id": "calendar", "kind": "calendar", "title": "Calendar", "description": "Events from Google Calendar, kept as records with history." }],
     "configuration": {
       "title": "Calendar",
       "properties": {
