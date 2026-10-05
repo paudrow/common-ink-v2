@@ -44,6 +44,8 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
   { key: "Mod-Shift-p", command: "commandBar" },
   { key: "Mod-s", command: "note.save" },
   { key: "Mod-,", command: "settings.user" },
+  { key: "Mod-[", command: "go.back" },
+  { key: "Mod-]", command: "go.forward" },
 ];
 
 const keybindings: Declared<Keybinding[]> = {

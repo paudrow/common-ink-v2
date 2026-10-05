@@ -11,7 +11,7 @@ import type { Offline } from "./offline.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
-import { Jumps, type Spot } from "./jumps.ts";
+import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
@@ -74,6 +74,8 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
+  /** Where you are changed: a jump to a new place ("push"), or where you are, updated ("replace"). */
+  navigated?(how: "push" | "replace", visit: Visit): void;
 }
 
 const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
@@ -93,7 +95,8 @@ export class Workbench {
   /** Views made on demand from their id, such as a file at an old revision. */
   private providers: Array<{ prefix: string; make(id: string): View | null }> = [];
   private groupEls = new Map<L.GroupId, HTMLElement>();
-  private jumps = new Map<L.GroupId, Jumps>();
+  /** Going back to a place: what that changes isn't a jump of its own. */
+  private returning = false;
   private layoutRevision = 0;
   private pendingNotice: [string, Array<{ label: string; run: () => unknown }>] | null = null;
   /** Whether start() has loaded the layout: until then, the live socket's news of it is start's to read. */
@@ -117,6 +120,8 @@ export class Workbench {
     private on: WorkbenchEvents,
     /** Files from the server, or as last seen while it can't be reached. */
     private net: Offline,
+    /** Where you've been, across every window (navigation.ts): kept by the app, across reloads. */
+    readonly navigation = new Navigation(),
   ) {}
 
   /** Load the saved layout and its files, then show `first` if asked. */
@@ -138,6 +143,8 @@ export class Workbench {
       else missing = first;
     }
     this.setLayout(layout, { save: false });
+    // Where the page opened is the first place (or, after a reload, where you were, brought up to date).
+    this.arrive(false);
     this.started = true;
     if (this.pendingNotice) this.notice(...this.pendingNotice);
     this.pendingNotice = null;
@@ -215,13 +222,14 @@ export class Workbench {
     if (!how.newTab && replaced && replaced !== path && !(await this.saveToLeave(replaced))) return;
     await this.load(path);
     const layout = how.newTab ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
-    if (from && from.path !== path && how.jump !== false) this.jumpsFor(this.layout.focus).visit(from, path);
     this.setLayout(layout);
     const view = this.focusedView;
     if (view && how.line !== undefined) how.pos = view.state.doc.line(Math.min(how.line + 1, view.state.doc.lines)).from;
     if (view && how.pos !== undefined) {
       view.dispatch({ selection: EditorSelection.cursor(Math.min(how.pos, view.state.doc.length)), scrollIntoView: true });
     }
+    // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
+    if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
   }
 
   /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
@@ -282,12 +290,40 @@ export class Workbench {
     else this.setLayout(next);
   }
 
-  /** Back or forward through the files this group has shown (Ctrl-O and Ctrl-I past Vim's own jumps). */
-  async step(by: "back" | "forward"): Promise<void> {
-    const from = this.here();
-    if (!from || !(await this.saveToLeave(from.path))) return;
-    const to = this.jumpsFor(this.layout.focus)[by](from);
-    if (to) await this.open(to.path, { pos: to.pos, jump: false });
+  /**
+   * Go back to a place you were (by its id, from the browser's history or the app's own Back and
+   * Forward): its window, if it's still there, or else the one focused; its file, in its tab, or its
+   * preview tab again, or a new one; and its cursor. False if it's no longer kept.
+   */
+  async goTo(id: number): Promise<boolean> {
+    const visit = this.navigation.goTo(id);
+    if (!visit) return false;
+    const from = this.focusedPath;
+    if (from && from !== visit.file && !(await this.saveToLeave(from))) return true;
+    const window = L.groups(this.layout).some((g) => g.id === visit.window) ? visit.window : this.layout.focus;
+    let layout = L.focusGroup(this.layout, window);
+    const group = L.groups(layout).find((g) => g.id === window)!;
+    const tab = group.tabs.findIndex((t) => "file" in t && t.file === visit.file);
+    if (tab >= 0) layout = L.selectTab(layout, window, tab);
+    else {
+      await this.load(visit.file);
+      layout = visit.preview ? L.showInTab(layout, visit.file, window) : L.openTab(layout, visit.file, window);
+    }
+    this.returning = true;
+    try {
+      this.setLayout(layout);
+      const view = this.focusedView;
+      if (view) view.dispatch({ selection: EditorSelection.cursor(Math.min(visit.pos, view.state.doc.length)), scrollIntoView: true });
+    } finally {
+      this.returning = false;
+    }
+    return true;
+  }
+
+  /** Back (-1) or forward (1) a place, here in the app; the browser's own Back goes through goTo. */
+  async go(by: -1 | 1): Promise<boolean> {
+    const to = this.navigation.step(by);
+    return !!to && this.goTo(to.id);
   }
 
   async reload(): Promise<void> {
@@ -347,6 +383,8 @@ export class Workbench {
   applySettings(settings: Settings): void {
     this.settings = settings;
     for (const view of this.views.values()) reconfigure(view, settings);
+    // Tab bars may draw by settings (the Workbench extension's back and forward arrows).
+    this.renderTabs();
     // Empty windows list shortcuts, which settings may have rebound.
     for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyState());
   }
@@ -355,16 +393,24 @@ export class Workbench {
     this.focusedView?.focus();
   }
 
-  private here(): Spot | null {
-    const path = this.focusedPath;
+  /** Where you are: the focused window, its file on show, and the cursor in it. */
+  private here(): Place | null {
+    const file = this.focusedPath;
     const view = this.focusedView;
-    return path && view ? { path, pos: view.state.selection.main.head } : null;
+    if (!file || !view) return null;
+    const pos = view.state.selection.main.head;
+    const tab = this.focusedGroup.tabs[this.focusedGroup.active];
+    return { window: this.layout.focus, file, pos, line: view.state.doc.lineAt(pos).number, ...(tab?.preview ? { preview: true } : {}) };
   }
 
-  private jumpsFor(id: L.GroupId): Jumps {
-    let jumps = this.jumps.get(id);
-    if (!jumps) this.jumps.set(id, (jumps = new Jumps(this.here() ?? { path: L.LAYOUT_PATH, pos: 0 })));
-    return jumps;
+  /** You're somewhere: a new place if it's a jump (and not a return to one), or else where you are, updated. */
+  private arrive(jump: boolean): void {
+    const place = this.here();
+    if (!place) return;
+    const { how, visit } = this.navigation.arrive(place, jump && !this.returning);
+    this.on.navigated?.(how, visit);
+    // Somewhere new to go back to: tab bars that show back and forward say so.
+    if (how === "push") this.renderTabs();
   }
 
   private async saveToLeave(path: FilePath): Promise<boolean> {
@@ -435,6 +481,11 @@ export class Workbench {
   }
 
   private viewUpdate(file: OpenFile, view: EditorView, u: ViewUpdate) {
+    // The cursor moved in the editor you're in: far, it's a jump (Vim's G, a search); near, you're still here.
+    if (u.selectionSet && view === this.focusedView) {
+      const lineOf = (state: typeof u.state) => state.doc.lineAt(state.selection.main.head).number;
+      this.arrive(!u.docChanged && Math.abs(lineOf(u.state) - lineOf(u.startState)) > NEAR_LINES);
+    }
     if (!u.docChanged) return;
     const copied = u.transactions.some((tr) => tr.annotation(synced));
     if (copied) return;
@@ -480,8 +531,11 @@ export class Workbench {
   }
 
   private setLayout(layout: L.Layout, { save = true } = {}) {
+    const was = this.layout.focus;
     this.layout = layout;
     this.render();
+    // Going to another window is a jump.
+    if (layout.focus !== was) this.arrive(true);
     if (save) {
       clearTimeout(this.layoutTimer);
       this.layoutTimer = window.setTimeout(() => void this.saveLayout(), LAYOUT_SAVE_MS);

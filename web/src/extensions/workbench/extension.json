@@ -149,6 +149,16 @@
         "key": "Mod-\\",
         "command": "window.splitRight"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Workbench",
+      "properties": {
+        "workbench.navigationArrows": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show ← and → (Go back and Go forward, ⌘[ and ⌘]) at the start of the top left window's tab bar."
+        }
+      }
+    }
   }
 }
