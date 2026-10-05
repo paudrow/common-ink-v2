@@ -1,5 +1,6 @@
 // The agenda: days with events, in order from a day, as a list that scrolls down for as long as you
-// like (more days load as you near the end). Today shows even when it's empty.
+// like (more days load as you near the end). Today shows even when it's empty. In a note it's a set
+// number of days, each shown, empty or not.
 import type { Occurrence } from "common-ink/calendar";
 import { el } from "./dom.ts";
 import { addDays, type Day } from "./model.ts";
@@ -16,11 +17,14 @@ export class Agenda implements CalendarView {
   constructor(
     private env: ViewEnv,
     private from: Day,
+    /** A set number of days, as in a note; otherwise it goes on as you scroll. */
+    private fixed?: number,
   ) {
+    if (fixed) this.days = fixed;
     this.list = el("div", { class: "cal-agenda-list" });
     this.root = el("div", { class: "cal-agenda", tabindex: "-1" }, this.list);
     this.root.addEventListener("scroll", () => {
-      if (this.root.scrollTop + this.root.clientHeight > this.root.scrollHeight - 400) {
+      if (!this.fixed && this.root.scrollTop + this.root.clientHeight > this.root.scrollHeight - 400) {
         this.days += CHUNK;
         this.draw();
       }
@@ -35,7 +39,7 @@ export class Agenda implements CalendarView {
 
   goto(day: Day) {
     this.from = day;
-    this.days = CHUNK;
+    this.days = this.fixed ?? CHUNK;
     this.root.scrollTop = 0;
     this.draw();
     this.env.scrolled(day);
@@ -57,6 +61,7 @@ export class Agenda implements CalendarView {
       days.set(day, [...(days.get(day) ?? []), o]);
     }
     if (today >= this.from && today < to && !days.has(today)) days.set(today, []);
+    if (this.fixed) for (let d = this.from; d < to; d = addDays(d, 1)) if (!days.has(d)) days.set(d, []);
     this.onScreen = [];
     const sections = [...days].sort(([a], [b]) => a.localeCompare(b)).map(([day, list]) => {
       const sorted = list.sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start.localeCompare(b.start));
@@ -81,10 +86,11 @@ export class Agenda implements CalendarView {
                 ),
               ),
             )
-          : el("p", { class: "cal-empty" }, "Nothing today"),
+          : el("p", { class: "cal-empty" }, day === today ? "Nothing today" : "Nothing"),
       );
     });
-    this.list.replaceChildren(...sections, el("p", { class: "cal-agenda-end" }, `Through ${new Date(`${addDays(to, -1)}T12:00:00Z`).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })}; scroll for more`));
+    const end = this.fixed ? null : el("p", { class: "cal-agenda-end" }, `Through ${new Date(`${addDays(to, -1)}T12:00:00Z`).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })}; scroll for more`);
+    this.list.replaceChildren(...sections, ...(end ? [end] : []));
   }
 
   visible(): Occurrence[] {

@@ -1,0 +1,11 @@
+{
+  "pr": 0,
+  "title": "::calendar in notes: the coming days, or a week to drag in, live",
+  "steps": [
+    "Open Week at a glance: the next three days as a list, then the week as in the Calendar. Both keep up as events change: move one in the week, and the list above follows.",
+    "In the week, click an empty half hour or drag to make an event, drag one to move it, and press h and l (with the calendar focused) to go back and on.",
+    "Hover an embed and choose Settings: change View to 3 days, Month or Agenda, Days, or Height. It redraws in place, at the same dates.",
+    "Move the cursor onto an embed's line and off again, or scroll it away and back: it's the same calendar, where you left it.",
+    "Agents: list_embeds describes calendar, with its arguments and an example."
+  ]
+}

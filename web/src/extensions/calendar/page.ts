@@ -38,6 +38,17 @@ const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** The zone an edit of an event keeps: its own, floating (null) if it floats, or the person's for an all-day event given times. */
 const zoneFor = (o: Occurrence): string | null => (o.allDay ? ZONE : (o.timeZone ?? null));
 
+/** A calendar drawn in a note (the ::calendar embed): one view, perhaps a few calendars, a height. */
+export interface Embedded {
+  view: Exclude<View, "year">;
+  /** How many days an agenda shows. */
+  days: number;
+  /** Only these calendars, by id; all of them when empty. */
+  calendars: string[];
+  /** Its height in pixels, for the grids and the month. */
+  height: number;
+}
+
 /** What the view keeps between visits, in its state file: the view, and the calendars you hid. */
 export interface PageState {
   view?: View;
@@ -78,6 +89,8 @@ export class CalendarPage {
     state: PageState,
     /** An event to show and open, from a click on its chip in a note. */
     reveal?: { address: string; day: Day },
+    /** Drawn in a note: one view, no state kept, and a button to open the whole calendar. */
+    private embedded?: Embedded,
   ) {
     this.weekStart = ctx.settings.get<string>("calendar.weekStart") === "sunday" ? 6 : 0;
     this.startHour = ctx.settings.get<number>("calendar.startHour") ?? 7;
@@ -91,6 +104,7 @@ export class CalendarPage {
     }
     this.heading = el("h2", { class: "cal-title-text", "aria-live": "polite" });
     this.switcher = el("div", { class: "cal-switch", role: "group", "aria-label": "View" });
+    if (embedded) this.view = embedded.view;
     const toolbar = el(
       "div",
       { class: "cal-toolbar" },
@@ -99,11 +113,13 @@ export class CalendarPage {
       el("button", { type: "button", class: "icon-btn", title: "On (l)", onclick: () => this.stepBy(1) }, icon("right", 18)),
       this.heading,
       el("span", { class: "spacer" }),
-      this.switcher,
-      el("button", { type: "button", class: "qw-btn cal-calendars", title: "Which calendars show", onclick: (e: MouseEvent) => this.chooseCalendars(e.currentTarget as HTMLElement) }, icon("layers", 15), "Calendars"),
+      ...(embedded
+        ? [el("button", { type: "button", class: "icon-btn", title: "Open the calendar", onclick: () => this.openWhole() }, icon("open", 16))]
+        : [this.switcher, el("button", { type: "button", class: "qw-btn cal-calendars", title: "Which calendars show", onclick: (e: MouseEvent) => this.chooseCalendars(e.currentTarget as HTMLElement) }, icon("layers", 15), "Calendars")]),
     );
     this.body = el("div", { class: "cal-body-host" });
-    this.root = el("div", { class: "cal-page", tabindex: "0", "aria-label": "Calendar" }, toolbar, this.body);
+    this.root = el("div", { class: `cal-page${embedded ? " is-embed" : ""}`, tabindex: "0", "aria-label": "Calendar" }, toolbar, this.body);
+    if (embedded) this.setEmbedded(embedded);
     this.root.addEventListener("keydown", (e) => this.key(e));
     void this.loadCalendars();
     this.show(this.view, this.anchor);
@@ -126,8 +142,22 @@ export class CalendarPage {
   }
 
   private shown(o: Occurrence) {
+    if (this.embedded?.calendars.length) return this.embedded.calendars.includes(o.calendar);
     return !this.hidden?.has(o.calendar);
   }
+
+  /** New arguments for a calendar in a note: drawn again in the same place, the period on screen kept. */
+  setEmbedded(embedded: Embedded) {
+    const changed = !this.embedded || this.embedded.view !== embedded.view || this.embedded.days !== embedded.days;
+    this.embedded = embedded;
+    this.root.style.setProperty("--embed-height", `${embedded.height}px`);
+    this.root.classList.toggle("is-list", embedded.view === "agenda");
+    if (changed && this.renderer) this.show(embedded.view, this.anchor);
+    else this.renderer?.redraw();
+  }
+
+  /** The whole calendar, in a tab, from a calendar in a note. */
+  openWhole: () => void = () => {};
 
   /** Events between two days, from what's loaded; anything not loaded yet is asked for, and the view drawn again once it's in. */
   private events(from: Day, to: Day): Occurrence[] | null {
@@ -219,12 +249,13 @@ export class CalendarPage {
     this.anchor = day;
     this.renderer?.destroy();
     const env = this.env();
-    this.renderer = view === "agenda" ? new Agenda(env, day) : view === "month" ? new MonthView(env, day) : view === "year" ? new YearView(env, day) : new TimeGrid(env, view, day);
+    this.renderer = view === "agenda" ? new Agenda(env, day, this.embedded?.days) : view === "month" ? new MonthView(env, day) : view === "year" ? new YearView(env, day) : new TimeGrid(env, view, day);
     this.body.replaceChildren(this.renderer.root);
     this.heading.textContent = title(view, day, this.weekStart);
     this.switcher.replaceChildren(
       ...VIEWS.map((v) => el("button", { type: "button", "aria-pressed": String(v === view), title: `${VIEW_NAMES[v].label} (${VIEW_NAMES[v].key})`, onclick: () => this.show(v, this.anchor) }, VIEW_NAMES[v].label)),
     );
+    if (this.embedded) return;
     void this.ctx.state.get().then((s) => {
       const kept = (s ?? {}) as PageState;
       if (kept.view !== view) void this.ctx.state.set({ ...kept, view });
@@ -239,7 +270,8 @@ export class CalendarPage {
 
   private stepBy(n: number) {
     const from = this.gliding ?? this.anchor;
-    // The time grid steps by what's on screen: 3 days, or a week.
+    // The time grid steps by what's on screen: 3 days, or a week; an agenda in a note, by its days.
+    if (this.embedded?.view === "agenda") return this.goto(addDays(from, n * this.embedded.days), false);
     this.goto(this.view === "3day" || this.view === "week" ? addDays(from, n * gridDays(this.view)) : step(this.view, from, n, this.weekStart), true);
   }
 
@@ -256,7 +288,7 @@ export class CalendarPage {
   }
 
   private keyFor(key: string): boolean {
-    const view = VIEWS.find((v) => VIEW_NAMES[v].key === key);
+    const view = this.embedded ? undefined : VIEWS.find((v) => VIEW_NAMES[v].key === key);
     if (view) return this.show(view, this.anchor), true;
     switch (key) {
       case "h":

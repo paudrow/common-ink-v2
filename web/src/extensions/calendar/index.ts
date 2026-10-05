@@ -7,7 +7,8 @@ import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import type { EventFound } from "../../../../worker/src/operations.ts";
 import { EventLinks, dayOfEvent, linkTo } from "./links.ts";
 import { notesSection } from "./notes.ts";
-import type { CalendarPage, PageState } from "./page.ts";
+import type { CalendarPage, Embedded, PageState } from "./page.ts";
+import type { Embed } from "../../extension-api.ts";
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -63,7 +64,7 @@ const calendar: ExtensionModule = {
         sync();
         if (!root.closest("#panel")) {
           // In a tab: the whole calendar. One page per tab, kept until the tab draws something else.
-          for (const p of pages) if (!document.contains(p.root)) (p.destroy(), pages.delete(p));
+          for (const p of pages) if (!document.contains(p.root) && ![...embedded.values()].includes(p)) (p.destroy(), pages.delete(p));
           const { CalendarPage } = await import("./page.ts");
           const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState, reveal);
           reveal = undefined;
@@ -154,6 +155,39 @@ const calendar: ExtensionModule = {
     ctx.commands.register("calendar.insertLink", () => {
       target = ctx.editor.focused();
       ctx.commandBar.open("event:");
+    });
+    // ::calendar in a note: a calendar of its own, kept by its embed's key, so drawing it again (the
+    // note scrolled back, the cursor left its line) puts back the same one, where it was.
+    const embedded = new Map<string, CalendarPage>();
+    const argsOf = (embed: Embed): Embedded => {
+      const view = (["agenda", "3day", "week", "month"] as const).find((v) => v === embed.args.view) ?? "agenda";
+      const number = (v: string | undefined, d: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(Number(v ?? d)) || d));
+      return {
+        view,
+        days: number(embed.args.days, 3, 1, 60),
+        calendars: (embed.args.calendars ?? "").split(",").map((c) => c.trim()).filter(Boolean),
+        height: number(embed.args.height, 380, 200, 1200),
+      };
+    };
+    ctx.embeds.register("calendar", {
+      async render(el: HTMLElement, embed: Embed) {
+        let page = embedded.get(embed.key);
+        if (!page) {
+          const { CalendarPage } = await import("./page.ts");
+          page = new CalendarPage(ctx, {}, undefined, argsOf(embed));
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
+          page.openWhole = () => ctx.views.open("calendar", { newTab: true });
+          embedded.set(embed.key, page);
+          pages.add(page);
+        } else page.setEmbedded(argsOf(embed));
+        el.replaceChildren(page.root);
+      },
+      update(el: HTMLElement, embed: Embed) {
+        const page = embedded.get(embed.key);
+        if (!page) return;
+        page.setEmbedded(argsOf(embed));
+        if (page.root.parentElement !== el) el.replaceChildren(page.root);
+      },
     });
     ctx.data.calendar.onChange(() => {
       links.refresh();

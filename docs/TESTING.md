@@ -73,7 +73,7 @@ A scenario is a workspace to test against, as data: `test/scenarios/<name>.json`
 | `empty` | No notes at all. | real |
 | `lists` | The lists tour: nested bullets, numbered lists and task lists. | 2026-10-05 09:00 |
 | `tasks` | Tasks due yesterday, today and later, repeating tasks, `::tasks` lists, a Kanban board, and recorded contacts. | 2026-10-05 09:00 |
-| `calendar` | The Sample calendar: Work, Personal and a read-only Holidays, a weekday standup with a moved and a cancelled occurrence, weekly and monthly series, all-day and multi-day events, and the Calendar tour note. | 2026-10-05 09:00 |
+| `calendar` | The Sample calendar: Work, Personal and a read-only Holidays, a weekday standup with a moved and a cancelled occurrence, weekly and monthly series, all-day and multi-day events, notes that link to events (Meeting prep), `::calendar` embeds (Week at a glance), and the Calendar tour note. | 2026-10-05 09:00 |
 | `embeds` | Timers, noise, an html-app with uPlot and three.js, link embeds, code blocks, tables and math. | 2026-10-05 09:00 |
 | `extensions` | Word count installed from the Catalog, sandboxed, asking before it reads a note. | 2026-10-05 09:00 |
 | `history` | A note with four changes by two agents after the seed, and a label. | 2026-10-05 09:00 |
