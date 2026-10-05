@@ -10,17 +10,17 @@ test("a task line's tokens become its metadata, and its text without the trailin
     done: false,
     text: "Send invoice to Acme due:2026-10-01 rec:monthly #work/clients @jane !high",
     summary: "Send invoice to Acme",
-    meta: { due: "2026-10-01", start: null, done: null, rec: "monthly", until: null, times: null, priority: "high", assignees: ["jane"], tags: ["work/clients"] },
+    meta: { due: "2026-10-01", start: null, done: null, rec: "monthly", until: null, times: null, last: null, priority: "high", assignees: ["jane"], tags: ["work/clients"] },
   });
   assert.deepEqual(parseTask("  * [x] Renew passport done:2026-09-20 scheduled:2026-09-01T09:30")?.meta, {
-    due: null, start: "2026-09-01T09:30", done: "2026-09-20", rec: null, until: null, times: null, priority: null, assignees: [], tags: [],
+    due: null, start: "2026-09-01T09:30", done: "2026-09-20", rec: null, until: null, times: null, last: null, priority: null, assignees: [], tags: [],
   });
   assert.equal(parseTask("Not a task due:2026-10-01"), null);
 });
 
 test("words that only look like tokens stay text", () => {
   const t = parseTask("- [ ] Email me@example.com about `due:2026-01-01` and !highlight, due:tomorrow, due:2026-13-40 #27")!;
-  assert.deepEqual(t.meta, { due: null, start: null, done: null, rec: null, until: null, times: null, priority: null, assignees: [], tags: [] });
+  assert.deepEqual(t.meta, { due: null, start: null, done: null, rec: null, until: null, times: null, last: null, priority: null, assignees: [], tags: [] });
   assert.equal(t.summary, t.text);
 });
 
@@ -111,11 +111,11 @@ test("a repeat's chip label says what it does, and a value it can't read shows a
 
 test("ticking a repeating task moves it on to its next date on the same line, open; a plain one ticks with done:", () => {
   const bill = "- [ ] Pay rent due:2026-10-06 start:2026-10-01 rec:6th @jane #home";
-  assert.equal(editTaskLine(bill, { checked: true }, "2026-10-04"), "- [ ] Pay rent due:2026-11-06 start:2026-11-01 rec:6th @jane #home");
+  assert.equal(editTaskLine(bill, { checked: true }, "2026-10-04"), "- [ ] Pay rent due:2026-11-06 start:2026-11-01 rec:6th last:2026-10-04 @jane #home");
   // after- repeats count from the day it's done.
-  assert.equal(editTaskLine("  - [ ] Dog medicine due:2026-10-01 rec:after-1m", { checked: true }, "2026-10-08"), "  - [ ] Dog medicine due:2026-11-08 rec:after-1m");
+  assert.equal(editTaskLine("  - [ ] Dog medicine due:2026-10-01 rec:after-1m", { checked: true }, "2026-10-08"), "  - [ ] Dog medicine due:2026-11-08 rec:after-1m last:2026-10-08");
   // No due date yet: the next one counts from the day it's done.
-  assert.equal(editTaskLine("- [ ] Water plants rec:weekly", { checked: true }, "2026-10-08"), "- [ ] Water plants due:2026-10-15 rec:weekly");
+  assert.equal(editTaskLine("- [ ] Water plants rec:weekly", { checked: true }, "2026-10-08"), "- [ ] Water plants due:2026-10-15 rec:weekly last:2026-10-08");
   // A plain task ticks, stamped with the day; unticking takes the stamp off.
   assert.equal(editTaskLine("- [ ] Once", { checked: true }, "2026-10-08"), "- [x] Once done:2026-10-08");
   assert.equal(editTaskLine("- [x] Once done:2026-10-08", { checked: false }, "2026-10-09"), "- [ ] Once");
@@ -199,9 +199,9 @@ test("until: and times: are tokens next to rec:, and anything else that looks li
 test("times: counts down on every tick, and the last one is ticked done", () => {
   let line = "- [ ] Pay the loan due:2026-10-06 rec:6th times:3";
   const tick = (day: string) => (line = editTaskLine(line, { checked: true }, day));
-  assert.equal(tick("2026-10-06"), "- [ ] Pay the loan due:2026-11-06 rec:6th times:2");
-  assert.equal(tick("2026-11-06"), "- [ ] Pay the loan due:2026-12-06 rec:6th times:1");
-  assert.equal(tick("2026-12-06"), "- [x] Pay the loan due:2026-12-06 rec:6th times:1 done:2026-12-06"); // the last: it stays, ticked
+  assert.equal(tick("2026-10-06"), "- [ ] Pay the loan due:2026-11-06 rec:6th times:2 last:2026-10-06");
+  assert.equal(tick("2026-11-06"), "- [ ] Pay the loan due:2026-12-06 rec:6th times:1 last:2026-11-06");
+  assert.equal(tick("2026-12-06"), "- [x] Pay the loan due:2026-12-06 rec:6th times:1 last:2026-11-06 done:2026-12-06"); // the last: it stays, ticked
 });
 
 test("until: keeps an occurrence on that day and none after it; with times: too, whichever ends first wins", () => {
@@ -210,13 +210,13 @@ test("until: keeps an occurrence on that day and none after it; with times: too,
     const after = editTaskLine(line, { checked: true }, day);
     return parseTask(after)!.done ? null : after;
   };
-  assert.equal(next("- [ ] Class due:2026-10-06 rec:6th until:2026-11-06"), "- [ ] Class due:2026-11-06 rec:6th until:2026-11-06");
+  assert.equal(next("- [ ] Class due:2026-10-06 rec:6th until:2026-11-06"), "- [ ] Class due:2026-11-06 rec:6th until:2026-11-06 last:2026-10-06");
   assert.equal(next("- [ ] Class due:2026-11-06 rec:6th until:2026-11-06", "2026-11-06"), null);
   assert.equal(next("- [ ] Class due:2026-10-06 rec:6th until:2026-11-05"), null);
-  assert.equal(next("- [ ] Class due:2026-10-06 rec:6th times:5 until:2026-11-06"), "- [ ] Class due:2026-11-06 rec:6th times:4 until:2026-11-06");
+  assert.equal(next("- [ ] Class due:2026-10-06 rec:6th times:5 until:2026-11-06"), "- [ ] Class due:2026-11-06 rec:6th times:4 until:2026-11-06 last:2026-10-06");
   assert.equal(next("- [ ] Class due:2026-10-06 rec:6th times:1 until:2027-01-01"), null);
   // Month ends: monthly from Jan 31 skips February, and Mar 31 is still in.
-  assert.equal(next("- [ ] Rent due:2026-01-31 rec:monthly until:2026-03-31", "2026-01-31"), "- [ ] Rent due:2026-03-31 rec:monthly until:2026-03-31");
+  assert.equal(next("- [ ] Rent due:2026-01-31 rec:monthly until:2026-03-31", "2026-01-31"), "- [ ] Rent due:2026-03-31 rec:monthly until:2026-03-31 last:2026-01-31");
   // after- repeats end too.
   assert.equal(next("- [ ] Pill due:2026-10-06 rec:after-1m until:2026-11-01", "2026-10-06"), null);
 });
@@ -226,9 +226,9 @@ test("an RRULE's COUNT and UNTIL end it the same way; COUNT counts down in the r
     const after = editTaskLine(line, { checked: true }, day);
     return parseTask(after)!.done ? null : after;
   };
-  assert.equal(next("- [ ] Sync due:2026-10-01 rec:RRULE:FREQ=WEEKLY;COUNT=2", "2026-10-01"), "- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;COUNT=1");
-  assert.equal(next("- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;COUNT=1", "2026-10-08"), null);
-  assert.equal(next("- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;UNTIL=20261015", "2026-10-08"), "- [ ] Sync due:2026-10-15 rec:RRULE:FREQ=WEEKLY;UNTIL=20261015");
+  assert.equal(next("- [ ] Sync due:2026-10-01 rec:RRULE:FREQ=WEEKLY;COUNT=2", "2026-10-01"), "- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;COUNT=1 last:2026-10-01");
+  assert.equal(next("- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;COUNT=1 last:2026-10-01", "2026-10-08"), null);
+  assert.equal(next("- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;UNTIL=20261015", "2026-10-08"), "- [ ] Sync due:2026-10-15 rec:RRULE:FREQ=WEEKLY;UNTIL=20261015 last:2026-10-08");
   assert.equal(next("- [ ] Sync due:2026-10-15 rec:RRULE:FREQ=WEEKLY;UNTIL=20261015T235959Z", "2026-10-15"), null);
 });
 

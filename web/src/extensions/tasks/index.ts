@@ -11,16 +11,17 @@ import { formatKeys } from "common-ink/keys";
 import type { Change, FilePath } from "../../../../worker/src/files.ts";
 import type { Embed, ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import { openQuickAdd, type Inbox, type QuickAddOptions } from "./bar.ts";
-import { today } from "./chips.ts";
+import { doneWords, today } from "./chips.ts";
 import { taskCompletions } from "./complete.ts";
 import { mountTaskList, type ListArgs } from "./list.ts";
 import type { RowEnv } from "./rows.ts";
 import type { DailyNotes } from "../daily/daily.ts";
 import { TaskStore, type LogSettings } from "./store.ts";
 import { taskInputPrefs } from "./input.ts";
-import { describeTaskEdit, parseLogLine } from "./tasks.ts";
+import { describeTaskEdit, parseLogLine, parseTask } from "./tasks.ts";
+import { toast } from "./toasts.ts";
 import { TasksView } from "./view.ts";
-import { openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
+import { chipsChanged, openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
 
 const extension: ExtensionModule = {
   async activate(ctx) {
@@ -36,6 +37,7 @@ const extension: ExtensionModule = {
       store,
       open: (path, line, side) => void open(ctx, path as FilePath, line, side),
       notice: (message, actions) => ctx.workbench.notice(message, actions),
+      toast,
     };
     taskInputPrefs.sources = { tags: () => store.tags(), people: () => store.people(), notes: async () => store.noteList().map((n) => n.title) };
     /** Where quick-add puts a task: the "tasks.inbox" note, or today's daily note (an Inbox note while Daily notes is off). */
@@ -73,9 +75,26 @@ const extension: ExtensionModule = {
         const path = view.state.facet(editorFile) ?? ctx.workbench.focusedPath() ?? "";
         return { ...store.logSettings(), path, note: path ? ctx.util.label(path as FilePath) : "" };
       },
-      log: (c) => void store.log(c.line, c).catch((e) => ctx.workbench.notice(`Couldn't log it in today's note: ${e instanceof Error ? e.message : e}`)),
+      log: (c) => {
+        const where = store.log(c.line, c);
+        logs.set(c.line, where);
+        void where.catch((e) => ctx.workbench.notice(`Couldn't log it in today's note: ${e instanceof Error ? e.message : e}`));
+      },
       unlog: (c) => void store.unlog(c.line).catch(() => {}),
       putBack: (line) => store.putBack(line),
+      ticked: ({ after, log, undo }) => announce(after, log, undo),
+      completions: (path, summary) => store.completionsOf({ path, summary }),
+      openAt: (path, line) => void open(ctx, path as FilePath, line),
+    };
+    /** Where each completion this session went in its daily note, by its log line, for Open log. */
+    const logs = new Map<string, Promise<{ path: FilePath; line: number } | null>>();
+    /** Say what a tick did, with Undo, and Open log when it was logged. */
+    const announce = (after: string, log: string | null, undo: () => unknown) => {
+      const openLog = async () => {
+        const where = await (logs.get(log!) ?? Promise.resolve(null));
+        if (where) await open(ctx, where.path, where.line);
+      };
+      toast(doneWords(parseTask(after), !!log), [{ label: "Undo", run: undo }, ...(log ? [{ label: "Open log", run: openLog }] : [])]);
     };
 
     ctx.commands.register("tasks.toggle", () => {
@@ -103,6 +122,8 @@ const extension: ExtensionModule = {
     ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);
     await dailyReady;
+    // The completions logged so far, for the chips' counts as notes first draw.
+    void store.all().then(() => ctx.editor.focused()?.dispatch({ effects: chipsChanged.of(null) }));
 
     // ::tasks{folder=Projects tag=work due<=today}: a list of tasks in a note, redrawn as notes change.
     const lists = new Map<HTMLElement, { load(): Promise<void>; set(args: ListArgs): void }>();
@@ -127,6 +148,8 @@ const extension: ExtensionModule = {
       timer = window.setTimeout(() => {
         ctx.views.refresh("tasks");
         for (const [el, list] of lists) el.isConnected ? void list.load() : lists.delete(el);
+        // The log may have changed: read it again, and redraw the note's completion chips with their counts.
+        void store.all().then(() => ctx.editor.focused()?.dispatch({ effects: chipsChanged.of(null) }));
       }, 150);
     });
   },

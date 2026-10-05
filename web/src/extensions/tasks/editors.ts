@@ -23,6 +23,9 @@ export interface ChipContext {
   /** Move the task to another note (task lists offer "Move to…"), from these. */
   move?(to: string): Promise<void>;
   notes?(): Array<{ path: string; title: string }>;
+  /** A repeating task's logged completions, newest first, and opening one where it's logged. */
+  completions?(): Array<{ day: string; path: string; line: number }>;
+  openAt?(path: string, line: number): void;
 }
 
 /** A field's editor under `anchor`. `more` opens the repeat editor straight on its full form. */
@@ -461,8 +464,20 @@ const tags: Editor = (anchor, _value, ctx) => {
   input.focus();
 };
 
+/** A repeating task's completions, newest first: each opens its daily note at its line. */
+const history: Editor = (anchor, value, ctx) => {
+  const list = el("div", { class: "fp-list" });
+  const done = ctx.completions?.() ?? [];
+  const { close } = popover(anchor, ctx, "Completions", el("div", { class: "fp-head chip-choose-head" }, el("span", {}, `Last done ${dayLabel(value)}`)), list);
+  list.append(
+    ...done.map((c) => item(`${dayLabel(c.day)} · ${c.path.replace(/\.md$/, "")}`, "check", () => (close(), ctx.openAt?.(c.path, c.line)))),
+    ...(done.length ? [] : [el("div", { class: "fp-empty" }, "No completions logged in daily notes yet")]),
+  );
+  list.querySelector<HTMLElement>(".fp-item")?.focus();
+};
+
 /** Which chips open an editor. Tag chips filter instead (the ⚙ menu edits tags), and a done date has nothing to edit. */
-const EDITORS: Partial<Record<ChipField, Editor>> = { priority, due: date("due"), start: date("start"), rec: repeat, assignees: person };
+const EDITORS: Partial<Record<ChipField, Editor>> = { priority, due: date("due"), start: date("start"), rec: repeat, assignees: person, last: history };
 
 /** Open the editor for the chip that was clicked; false if that chip has none. */
 export function openChipEditor(chip: HTMLElement, ctx: ChipContext): boolean {

@@ -9,7 +9,7 @@ const opts = (mode: "daily" | "inline" | "none", logPlain = false) => ({ mode, l
 
 test('"daily": a repeating task moves on in place, and its completion is a line for the daily note, without its dates', () => {
   assert.deepEqual(completeTask(PLANTS, undefined, { checked: true }, "2026-10-05", opts("daily")), {
-    lines: ["- [ ] Water the plants due:2026-10-08 rec:3d @sam #home"],
+    lines: ["- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05 @sam #home"],
     replaced: 1,
     log: "- [x] Water the plants @sam #home done:2026-10-05 ([[Chores]])",
   });
@@ -26,7 +26,7 @@ test('"inline" is v1\'s: ticked where it is with done:, the next one right below
 });
 
 test('"none": it moves on in place, recorded only in history', () => {
-  assert.deepEqual(completeTask(PLANTS, undefined, { checked: true }, "2026-10-05", opts("none")), { lines: ["- [ ] Water the plants due:2026-10-08 rec:3d @sam #home"], replaced: 1, log: null });
+  assert.deepEqual(completeTask(PLANTS, undefined, { checked: true }, "2026-10-05", opts("none")), { lines: ["- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05 @sam #home"], replaced: 1, log: null });
 });
 
 test("a plain task is ticked with done: in its note, and logged too only with logPlainTasks; so is a repeat's last time", () => {
@@ -53,8 +53,47 @@ test("## Done: made under the daily note's title if it's missing, appended to in
 });
 
 test("taking a completion back from the log puts a repeating task back to the day it was done", () => {
-  assert.equal(backTo("- [ ] Water the plants due:2026-10-08 start:2026-10-07 rec:3d", "2026-10-05"), "- [ ] Water the plants due:2026-10-05 start:2026-10-04 rec:3d");
+  assert.equal(backTo("- [ ] Water the plants due:2026-10-08 start:2026-10-07 rec:3d last:2026-10-05", "2026-10-05"), "- [ ] Water the plants due:2026-10-05 start:2026-10-04 rec:3d");
+  assert.equal(backTo("- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05", "2026-10-05", "2026-10-02"), "- [ ] Water the plants due:2026-10-05 rec:3d last:2026-10-02", "last: goes back to the completion before");
   assert.equal(backTo("- [ ] Physio due:2026-10-06 rec:daily times:4", "2026-10-05"), "- [ ] Physio due:2026-10-05 rec:daily times:5");
   assert.equal(backTo("- [ ] Sync due:2026-10-08 rec:RRULE:FREQ=WEEKLY;COUNT=1", "2026-10-01"), "- [ ] Sync due:2026-10-01 rec:RRULE:FREQ=WEEKLY;COUNT=2");
   assert.equal(backTo("- [ ] Plain", "2026-10-05"), null);
+});
+
+test("last: is a token: read, written at its place, and rewritten in place; a tick sets it as it moves the task on", async () => {
+  const { editTask } = await import("../web/src/extensions/tasks/tasks.ts");
+  assert.equal(parseTask("- [ ] Water due:2026-10-08 rec:3d last:2026-10-05 #home")!.meta.last, "2026-10-05");
+  assert.equal(parseTask("- [ ] Water last:someday")!.meta.last, null, "only a date");
+  assert.equal(editTask("- [ ] Water due:2026-10-08 rec:3d @sam #home", { last: "2026-10-05" }), "- [ ] Water due:2026-10-08 rec:3d last:2026-10-05 @sam #home", "after the repeat, before people and tags");
+  assert.equal(editTask("- [ ] Water last:2026-10-01 due:2026-10-08 rec:3d", { last: "2026-10-05" }), "- [ ] Water last:2026-10-05 due:2026-10-08 rec:3d", "rewritten where it is");
+  const once = completeTask("- [ ] Water due:2026-10-05 rec:3d", undefined, { checked: true }, "2026-10-05", opts("none")).lines[0];
+  const twice = completeTask(once, undefined, { checked: true }, "2026-10-08", opts("none")).lines[0];
+  assert.deepEqual([once, twice], ["- [ ] Water due:2026-10-08 rec:3d last:2026-10-05", "- [ ] Water due:2026-10-11 rec:3d last:2026-10-08"]);
+  assert.equal(completeTask("- [ ] Call mum", undefined, { checked: true }, "2026-10-05", opts("none")).lines[0], "- [x] Call mum done:2026-10-05", "a plain task keeps done:");
+});
+
+test("a task's logged completions are the ## Done lines that link to its note and say its words, or, edited since, its note's only repeating task's", async () => {
+  const { TaskStore } = await import("../web/src/extensions/tasks/store.ts");
+  const files: Record<string, string> = {
+    "Chores.md": "# Chores\n\n- [ ] Water the plants due:2026-10-11 rec:3d last:2026-10-08\n- [ ] Call mum\n",
+    "Bills.md": "# Bills\n\n- [ ] Pay the rent bill due:2026-11-01 rec:monthly\n",
+    "Journal/2026-10-05.md": "# 2026-10-05\n\n## Done\n\n- [x] Water the plants done:2026-10-05 ([[Chores]])\n- [x] Pay rent done:2026-10-05 ([[Bills]])\n",
+    "Journal/2026-10-08.md": "# 2026-10-08\n\n## Done\n\n- [x] Water the plants done:2026-10-08 ([[Chores]])\n- [x] Call mum done:2026-10-08 ([[Chores]])\n",
+  };
+  const ctx = {
+    files: {
+      fetchList: async () => Object.keys(files).map((path, i) => ({ path, revision: i + 1 })),
+      read: async (path: string) => ({ path, text: files[path] ?? "", revision: 1 }),
+    },
+    util: { label: (p: string) => p.replace(/\.md$/, ""), notePathFor: (name: string) => `${name}.md` },
+  };
+  const store = new TaskStore(ctx as never);
+  await store.all();
+  assert.deepEqual(store.completionsOf({ path: "Chores.md", summary: "Water the plants" }).map((c) => [c.day, c.path, c.line]), [
+    ["2026-10-08", "Journal/2026-10-08.md", 5],
+    ["2026-10-05", "Journal/2026-10-05.md", 5],
+  ]);
+  // Bills' only repeating task was renamed: its note's log lines are still its own.
+  assert.deepEqual(store.completionsOf({ path: "Bills.md", summary: "Pay the rent bill" }).map((c) => c.day), ["2026-10-05"]);
+  assert.deepEqual(store.completionsOf({ path: "Chores.md", summary: "Nothing like it" }), [], "not when its note has other tasks to match");
 });

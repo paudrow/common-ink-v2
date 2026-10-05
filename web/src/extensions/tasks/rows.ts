@@ -3,7 +3,7 @@
 // token, ⌘-click (Ctrl-click off a Mac) to open the note at the line to the side. Every change goes to
 // the note the task lives in.
 import { IS_MAC } from "common-ink/keys";
-import { dayLabel, endTags, metaChips, today } from "./chips.ts";
+import { doneWords, endTags, metaChips, today } from "./chips.ts";
 import { el, icon } from "./dom.ts";
 import { openChipEditor, openTaskMenu, type ChipContext } from "./editors.ts";
 import { taskInput } from "./input.ts";
@@ -13,7 +13,7 @@ import { tagsInLine } from "./tags.ts";
 import type { Task, TaskPatch } from "./tasks.ts";
 
 export interface RowEnv {
-  store: Pick<TaskStore, "update" | "revert" | "move" | "people" | "tags" | "noteList" | "loggedToday" | "putBack" | "unlog">;
+  store: Pick<TaskStore, "update" | "revert" | "move" | "people" | "tags" | "noteList" | "loggedToday" | "putBack" | "unlog" | "completionsOf">;
   /** `side`: in a new window to the right (⌘-click). */
   open(path: string, line: number, side?: boolean): void;
   openTag(tag: string): void;
@@ -22,6 +22,8 @@ export interface RowEnv {
   reload(): void;
   /** A short message, with buttons. */
   notice(message: string, actions?: Array<{ label: string; run(): unknown }>): void;
+  /** What a tick did, said out of the way, with its actions. */
+  toast(message: string, actions?: Array<{ label: string; run(): unknown }>): unknown;
 }
 
 const prevent = (e: Event) => e.preventDefault();
@@ -36,7 +38,8 @@ const sideClick = (e: MouseEvent) => (IS_MAC ? e.metaKey : e.ctrlKey);
 export function taskRow(t: Task, env: RowEnv, where: string | null, logged?: { onBox(anchor: HTMLElement): void }): HTMLElement {
   const box = el("span", { class: `cm-checkbox${t.done ? " is-checked" : ""}`, role: "checkbox", tabindex: "0", "aria-checked": String(t.done), "aria-label": t.summary, title: t.done ? "Mark open" : "Mark done" });
   const words = el("span", { class: "qt-words" }, ...inline(t.summary));
-  const text = el("span", { class: "qt-text", title: `${t.title}, line ${t.line}` }, words, ...metaChips(t.meta, t.done, endTags(t.summary, t.meta.tags))); // tags mid-sentence stay there
+  const text = el("span", { class: "qt-text", title: `${t.title}, line ${t.line}` }, words, ...metaChips(t.meta, t.done, endTags(t.summary, t.meta.tags), today(), env.store.completionsOf(t).length)); // tags mid-sentence stay there
+  if ((fresh.get(`${t.path}|${t.summary}`) ?? 0) > Date.now()) text.querySelector('.tk[data-field="due"]')?.classList.add("is-fresh");
   const save = async (patch: TaskPatch) => {
     Object.assign(t, await env.store.update(t, patch)); // its new text, for the next change
     env.reload();
@@ -54,6 +57,8 @@ export function taskRow(t: Task, env: RowEnv, where: string | null, logged?: { o
     say: (message) => env.notice(message),
     move,
     notes: () => env.store.noteList(),
+    completions: () => env.store.completionsOf(t),
+    openAt: (path, line) => env.open(path, line),
   };
   text.addEventListener("mousedown", (e) => {
     // A click on the words edits them, so let that one place the caret; chips and tags keep focus where it is.
@@ -87,6 +92,9 @@ export function taskRow(t: Task, env: RowEnv, where: string | null, logged?: { o
   });
   return row;
 }
+
+/** Tasks just moved on to their next date, by note and words: their new due chip stands out until then (ms). */
+const fresh = new Map<string, number>();
 
 /** How long a task just ticked stays in its list, struck through, before a list that hides it lets it go. */
 export const LINGER = 1500;
@@ -129,9 +137,10 @@ async function toggle(t: Task, row: HTMLElement, box: HTMLElement, env: RowEnv) 
     const was = { ...t };
     const now = await env.store.update(t, { checked: next });
     Object.assign(t, now);
-    // A repeating task stays open, moved on: the message says when it's next.
-    const then = !now.done && now.meta.due ? `. Next: ${dayLabel(now.meta.due)}` : "";
-    if (next) env.notice(`Done: ${clip(was.summary)}${then}`, [{ label: "Undo", run: () => void undo(now, was, env) }]);
+    // A repeating task stays open, moved on: its new due date stands out when the list redraws, and the notice says when it's next.
+    if (next && !now.done) fresh.set(`${now.path}|${now.summary}`, Date.now() + LINGER + 1600);
+    const openLog = now.logged ? [{ label: "Open log", run: () => env.open(now.logged!.path, now.logged!.line) }] : [];
+    if (next) env.toast(doneWords(now, !!now.log), [{ label: "Undo", run: () => void undo(now, was, env) }, ...openLog]);
   } catch (e) {
     // The note changed underneath: the reload shows what's there now.
     env.notice(e instanceof Error ? e.message : "Couldn't change the task");
