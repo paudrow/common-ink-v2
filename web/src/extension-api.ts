@@ -5,7 +5,7 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { MarkdownExtension } from "@lezer/markdown";
-import type { EditResult, SourceStatus } from "../../worker/src/data-sources.ts";
+import type { EditResult, SourceState, SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Calendar, Occurrence, Scope } from "../../worker/src/calendar.ts";
 import type { EventFound } from "../../worker/src/operations.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
@@ -213,6 +213,8 @@ export interface ExtensionContext {
     status(): Promise<SourceStatus>;
     /** Go to Google to connect calendar and contacts, then come back here. */
     connect(): void;
+    /** Bring the calendar's own changes in now (at most twice a minute), after sending edits waiting for it; how it stands after. */
+    sync(force?: boolean): Promise<SourceState>;
     calendar: {
       calendars(): Promise<Calendar[]>;
       /** Every time events happen between two times, in your time zone; a series comes once per occurrence. */

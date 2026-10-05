@@ -1,7 +1,7 @@
 // The Worker's files API, as the web app calls it.
 import type { CatalogEntry } from "../../worker/src/catalog.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
-import type { EditResult, SourceStatus } from "../../worker/src/data-sources.ts";
+import type { EditResult, SourceState, SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Calendar, Occurrence } from "../../worker/src/calendar.ts";
 import type { EventFound } from "../../worker/src/operations.ts";
 import type { Contact } from "../../worker/src/sources.ts";
@@ -101,6 +101,10 @@ export const api = {
   async event(address: string): Promise<EventFound | null> {
     const res = await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`);
     return res.status === 404 ? null : answer(res);
+  },
+  /** Bring the calendar's own changes in, unless it synced just now: how its source stands after. */
+  async sync(force = false): Promise<SourceState> {
+    return answer(await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }) }));
   },
   /** Add, change or delete an event. An extension other than a built-in is named as the change's author, acting for you. */
   async editEvent(method: "POST" | "PATCH" | "DELETE", body: Record<string, unknown>, extension?: string): Promise<EditResult> {

@@ -1,6 +1,6 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
-import { timingFrom, type EditResult, type EventEdit, type Refused, type SourceStatus } from "./data-sources.ts";
+import { timingFrom, type EditResult, type EventEdit, type Refused, type SourceState, type SourceStatus } from "./data-sources.ts";
 import { isTimeZone, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type Scope } from "./calendar.ts";
 import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
@@ -24,6 +24,7 @@ export interface Store {
   events(from: number, to: number, zone: string, calendars?: string[]): Promise<Occurrence[]> | Occurrence[];
   event(address: string, zone?: string): Promise<EventFound | null> | EventFound | null;
   editEvent(edit: EventEdit, author: Author, zone?: string): Promise<EditResult | Refused>;
+  syncSources(force?: boolean): Promise<SourceState | undefined>;
   contacts(email: string, query: string): Promise<Contact[]>;
   combined(revisions: Revision[]): Promise<FileDiff[]> | FileDiff[];
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
@@ -238,6 +239,13 @@ export const OPERATIONS = {
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store, _args, author) => store.sourceStatus(personOf(author)),
+  }),
+  sync_calendar: op<{ force: boolean }>({
+    description:
+      "Bring the calendar's own changes in now (Google's), after sending edits waiting for it, unless it synced in the last 30 seconds (`force` syncs anyway). It also syncs on its own every 10 minutes. Says how the source stands: its state, last sync, errors, and edits still waiting.",
+    input: { type: "object", properties: { force: { type: "boolean" } } },
+    parse: (a) => ok({ force: a.force === true || a.force === "true" }),
+    run: async (store, { force }) => store.syncSources(force),
   }),
   list_calendars: op<Record<string, never>>({
     description: "Your calendars: each one's id (what events name as their calendar), title, colour, whether it's your primary one, and whether events can be added and changed in it.",

@@ -674,6 +674,11 @@ button.status-item:hover {
   border-top: 1px solid var(--line);
 }
 
+:is(#panel, .tab-view) .event {
+  padding-left: 0.5rem;
+  box-shadow: inset 3px 0 var(--calendar, transparent);
+}
+
 :is(#panel, .tab-view) .event .when,
 :is(#panel, .tab-view) .where {
   color: var(--muted);
@@ -703,6 +708,27 @@ button.status-item:hover {
   border-radius: 4px;
   padding: 0.375rem 0.75rem;
   color: var(--accent);
+}
+
+/* Google needs you to sign in again: said once, above what it affects, with the one thing to do. */
+:is(#panel, .tab-view) .reconnect {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+
+:is(#panel, .tab-view) .reconnect p {
+  margin: 0 0 0.5rem;
+}
+
+:is(#panel, .tab-view) .data-source p {
+  margin: 0.25rem 0;
+}
+
+:is(#panel, .tab-view) .data-source .conflict {
+  color: var(--muted);
 }
 
 #unsent {

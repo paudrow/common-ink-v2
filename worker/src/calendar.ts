@@ -48,6 +48,8 @@ export interface Calendar {
   writable: boolean;
   /** Its own time zone, for events made in it. */
   timeZone?: string;
+  /** Hidden by default, as its source shows it (Google's unticked calendars). */
+  selected?: false;
 }
 
 /** One time an event happens, in the days asked for: what a calendar draws and what agents list. */
@@ -602,4 +604,46 @@ export function planDelete(events: readonly CalendarEvent[], target: Target, sco
 export function newEventId(random: () => number = Math.random): string {
   const digits = "0123456789abcdefghijklmnopqrstuv";
   return Array.from({ length: 26 }, () => digits[Math.floor(random() * 32)]).join("");
+}
+
+/** What an edit can change, compared field by field when two edits meet. */
+const MERGED: Record<string, (e: CalendarEvent) => unknown> = {
+  title: (e) => e.title,
+  location: (e) => e.location ?? "",
+  description: (e) => e.description ?? "",
+  status: (e) => e.status,
+  colour: (e) => e.colorId ?? "",
+  time: (e) => timingOf(e),
+  repeat: (e) => e.recurrence ?? [],
+};
+
+/**
+ * Two edits of one event, from what both started from: each field takes the side that changed it.
+ * Where both changed a field differently, `theirs` (the source's) wins and the field is named in
+ * `lost`; the record's history still has ours.
+ */
+export function mergeEvents(base: CalendarEvent | null, mine: CalendarEvent, theirs: CalendarEvent): { event: CalendarEvent; lost: string[] } {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const lost: string[] = [];
+  const take = (field: string) => {
+    const read = MERGED[field];
+    const changedMine = !base || !same(read(base), read(mine));
+    const changedTheirs = !base || !same(read(base), read(theirs));
+    if (changedMine && changedTheirs && !same(read(mine), read(theirs))) lost.push(field);
+    return changedMine && !changedTheirs ? "mine" : "theirs";
+  };
+  const pick = Object.fromEntries(Object.keys(MERGED).map((f) => [f, take(f)]));
+  const from = (field: string) => (pick[field] === "mine" ? mine : theirs);
+  const change: EventChange = {
+    title: from("title").title,
+    location: from("location").location ?? null,
+    description: from("description").description ?? null,
+    status: from("status").status === "tentative" ? "tentative" : "confirmed",
+    colorId: from("colour").colorId ?? null,
+    timing: timingOf(from("time")),
+    recurrence: from("repeat").recurrence ?? null,
+  };
+  const event = applied(theirs, change);
+  // Cancelled isn't a choice an edit's fields can make; it comes as it is from whichever side cancelled.
+  return { event: from("status").status === "cancelled" ? { ...event, status: "cancelled" } : event, lost };
 }

@@ -144,6 +144,11 @@ export class Records {
     return [...out] as FilePath[];
   }
 
+  /** A calendar's events, as paths. */
+  inCalendar(source: SourceId, calendar: string): FilePath[] {
+    return this.db.all<Row>("SELECT path FROM records WHERE source = ? AND kind = 'event' AND collection = ?", source, calendar).map((r) => r.path as FilePath);
+  }
+
   /** A source's records of a kind, as paths. */
   all(source: SourceId, kind: RecordKind): FilePath[] {
     return this.db.all<Row>("SELECT path FROM records WHERE source = ? AND kind = ? ORDER BY path", source, kind).map((r) => r.path as FilePath);
@@ -171,7 +176,7 @@ export function readEvent(text: string): CalendarEvent | null {
   }
 }
 
-const ORDER = ["id", "calendar", "title", "status", "allDay", "start", "end", "timeZone", "recurrence", "series", "originalStart", "location", "description", "colorId", "link"];
+const ORDER = ["id", "calendar", "title", "status", "allDay", "start", "end", "timeZone", "recurrence", "series", "originalStart", "location", "description", "colorId", "link", "color", "primary", "writable", "selected"];
 const rank = (k: string) => (ORDER.includes(k) ? ORDER.indexOf(k) : ORDER.length);
 
 /** A record as its file's text: indented JSON, keys in one order, so a diff shows only what changed. */

@@ -140,6 +140,7 @@
       notifications: { show: (title, body) => call("notifications.show", title, body) },
       data: {
         status: () => call("data.status"),
+        sync: (force) => call("data.sync", force ? "force" : null),
         calendar: {
           calendars: () => call("data.calendars"),
           events: (from, to, calendars) => call("data.events", from.toISOString(), to.toISOString(), calendars || null),

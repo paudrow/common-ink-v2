@@ -164,6 +164,7 @@ const ROUTES: Record<string, OperationName> = {
   "POST /api/undo": "undo",
   "GET /api/sources": "data_sources",
   "GET /api/calendars": "list_calendars",
+  "POST /api/sync": "sync_calendar",
   "GET /api/events": "list_events",
   "GET /api/event": "read_event",
   "POST /api/events": "create_event",

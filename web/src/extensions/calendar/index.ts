@@ -1,6 +1,7 @@
 // Calendar, a built-in extension on the data source API (ADR 0007): the coming days' events in the
 // side panel, kept up to date as records change, and a command to connect Google.
 import type { Occurrence } from "../../../../worker/src/calendar.ts";
+import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
@@ -28,17 +29,38 @@ function dayName(day: string, today: string, tomorrow: string): string {
   return new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 }
 
+/** "Reconnect Google Calendar", above the events, while Google needs you to sign in again. */
+function reconnect(ctx: ExtensionContext, state: SourceState | undefined): HTMLElement | "" {
+  if (state?.state !== "needs-reconnect") return "";
+  const waiting = state.pending ? ` ${state.pending === 1 ? "One edit is" : `${state.pending} edits are`} waiting to go to Google.` : "";
+  return el(
+    "div",
+    { className: "reconnect", role: "alert" },
+    el("p", { textContent: `Google ended Common Ink's access to your calendar.${waiting}` }),
+    el("button", { className: "connect", textContent: "Reconnect Google Calendar", onclick: () => ctx.data.connect() }),
+  );
+}
+
 const calendar: ExtensionModule = {
   activate(ctx) {
+    // Showing the calendar brings Google's changes in, at most twice a minute; they draw as they arrive.
+    let synced = 0;
+    const sync = () => {
+      if (Date.now() - synced < 30_000) return;
+      synced = Date.now();
+      void ctx.data.sync().catch(() => {});
+    };
     ctx.views.register("calendar", {
       async render(root) {
+        sync();
         const DAYS = ctx.settings.get<number>("calendar.days");
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date(start.getTime() + DAYS * 86_400_000);
         let events: Occurrence[];
+        let colors: Map<string, string>;
         try {
-          events = await ctx.data.calendar.events(start, end);
+          [events, colors] = await Promise.all([ctx.data.calendar.events(start, end), ctx.data.calendar.calendars().then((cs) => new Map(cs.map((c) => [c.id, c.color])))]);
         } catch (err) {
           return trouble(ctx, root, err);
         }
@@ -53,8 +75,10 @@ const calendar: ExtensionModule = {
         }
         const status = await ctx.data.status();
         const note = status.using === "fixtures" ? el("p", { className: "message", textContent: "The Sample calendar: this Preview has no Google account." }) : "";
-        if (!events.length) return root.replaceChildren(note, el("p", { className: "empty", textContent: `Nothing in the next ${DAYS} days.` }));
+        const banner = reconnect(ctx, status.sources.find((s) => s.source === "google"));
+        if (!events.length) return root.replaceChildren(banner, note, el("p", { className: "empty", textContent: `Nothing in the next ${DAYS} days.` }));
         root.replaceChildren(
+          banner,
           note,
           ...[...days].map(([day, list]) =>
             el(
@@ -67,7 +91,7 @@ const calendar: ExtensionModule = {
                 ...list.map((e) =>
                   el(
                     "li",
-                    { className: "event", title: e.address },
+                    { className: "event", title: e.address, style: `--calendar: ${colors.get(e.calendar) ?? "var(--accent)"}` },
                     el("span", { className: "when", textContent: e.allDay ? "All day" : `${time(e.start)}–${time(e.end)}` }),
                     el("span", { className: "what", textContent: `${e.title}${e.series ? " ↻" : ""}`, title: e.series ? "Repeats" : "" }),
                     e.location ? el("span", { className: "where", textContent: e.location }) : "",
