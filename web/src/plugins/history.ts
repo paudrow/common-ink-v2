@@ -1,21 +1,41 @@
-// The history panel: the changes to the note on show (or to everything), who made each and what it
-// changed. Select changes to see what they did together; revert just those, or restore a note to how
-// it was. Labels name a note's state at one revision. Filtering to one author and undoing everything
-// shown is "undo what the agent did".
-import { diffPatch } from "node-diff3";
-import { authorKey, type Change, type FileDiff, type FilePath, type Revision, type UndoResult, type WriteResult } from "../../worker/src/files.ts";
-import type { Label } from "../../worker/src/labels.ts";
-import { ago, describeAuthor, diffStat } from "./describe.ts";
-import { matchKeys } from "./keys.ts";
+// The history panel, a built-in plugin: the changes to the note on show (or to everything), who made
+// each and what it changed. Select changes to see what they did together; revert just those, or
+// restore a note to how it was. Labels name a note's state at one revision. Filtering to one author and
+// undoing everything shown is "undo what the agent did".
+import { authorKey, type Change, type FileDiff, type FilePath, type Revision, type UndoResult, type WriteResult } from "../../../worker/src/files.ts";
+import type { Label } from "../../../worker/src/labels.ts";
+import { ago, describeAuthor, diffStat, runLines } from "../describe.ts";
+import { matchKeys } from "../keys.ts";
+import type { PluginContext, PluginModule } from "../plugins.ts";
+import { VERSION_PREFIX, versionView, versionViewId } from "../version.ts";
 
-export interface HistoryDeps {
-  me: string | undefined;
-  focusedPath(): FilePath | null;
-  /** These files changed on the server (undo, revert, restore). */
-  undone(paths: FilePath[]): void;
-  /** Open a file as it was at a revision, read-only. */
-  openVersion(path: FilePath, revision: Revision, label?: string): void;
-}
+export const historyPlugin: PluginModule = {
+  activate(ctx) {
+    const panel = new HistoryPanel(ctx);
+    ctx.panels.register({ id: "history", title: "History", render: (root) => panel.render(root) });
+    ctx.workbench.provideViews(VERSION_PREFIX, (id) => versionView(id, (path) => void ctx.workbench.refreshFromServer([path]).then(() => ctx.panels.refresh("history"))));
+    const show = (scope: "file" | "all") => {
+      if (ctx.panels.shown() === "history" && panel.scope === scope) return ctx.panels.toggle("history");
+      panel.scope = scope;
+      ctx.panels.show("history");
+    };
+    ctx.commands.register(
+      { id: "history.note", title: "Show history of this note", run: () => show("file") },
+      { id: "history.all", title: "Show history of everything", run: () => show("all") },
+      {
+        id: "history.addLabel",
+        title: "Add label to this note…",
+        run: () => {
+          panel.scope = "file";
+          panel.labelling = true;
+          ctx.panels.show("history");
+        },
+      },
+    );
+    ctx.events.onSaved(() => ctx.panels.refresh("history"));
+    ctx.events.onFocus(() => ctx.panels.refresh("history"));
+  },
+};
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -26,14 +46,6 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<stri
 async function post<T>(route: string, body: unknown): Promise<T | null> {
   const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   return res.ok ? res.json() : null;
-}
-
-/** A before and after, as the lines that changed. */
-export function runLines(before: string, after: string): Array<{ kind: "-" | "+"; text: string }> {
-  return diffPatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
-    ...buffer1.chunk.map((text) => ({ kind: "-" as const, text })),
-    ...buffer2.chunk.map((text) => ({ kind: "+" as const, text })),
-  ]);
 }
 
 /** A selection of history rows: plain, ⌘- and Shift-clicks, as in a file manager. */
@@ -59,8 +71,11 @@ export class Selection {
   }
 }
 
-export class HistoryPanel {
-  private scope: "file" | "all" = "file";
+class HistoryPanel {
+  scope: "file" | "all" = "file";
+  labelling = false;
+  private root: HTMLElement | null = null;
+  private listening = new WeakSet<HTMLElement>();
   private author = "";
   private changes: Change[] = [];
   private labels: Label[] = [];
@@ -68,41 +83,30 @@ export class HistoryPanel {
   private focus = 0;
   private diff: FileDiff[] = [];
   private message = "";
-  private labelling = false;
 
-  constructor(
-    private root: HTMLElement,
-    private deps: HistoryDeps,
-  ) {
-    root.tabIndex = -1;
-    root.addEventListener("keydown", (e) => this.key(e));
-  }
+  constructor(private ctx: PluginContext) {}
 
-  get shown(): boolean {
-    return !this.root.hidden;
-  }
-
-  toggle(scope?: "file" | "all"): void {
-    if (this.shown && (!scope || scope === this.scope)) {
-      this.root.hidden = true;
-      return;
+  /** Draw into the panel or window it shows in. */
+  async render(root: HTMLElement): Promise<void> {
+    this.root = root;
+    if (!this.listening.has(root)) {
+      this.listening.add(root);
+      root.tabIndex = -1;
+      root.addEventListener("keydown", (e) => this.key(e));
     }
-    if (scope) this.scope = scope;
-    this.root.hidden = false;
-    void this.refresh();
+    await this.refresh();
+    if (this.labelling) root.querySelector<HTMLInputElement>("input.label-name")?.focus();
   }
 
-  /** Show the panel with its label box open, for "Add label". */
-  addLabel(): void {
-    this.scope = "file";
+  private addLabel() {
     this.labelling = true;
-    this.root.hidden = false;
-    void this.refresh().then(() => this.root.querySelector<HTMLInputElement>("input.label-name")?.focus());
+    this.draw();
+    this.root?.querySelector<HTMLInputElement>("input.label-name")?.focus();
   }
 
-  async refresh(): Promise<void> {
-    if (!this.shown) return;
-    const path = this.scope === "file" ? this.deps.focusedPath() : null;
+  private async refresh(): Promise<void> {
+    if (!this.root) return;
+    const path = this.scope === "file" ? this.ctx.workbench.focusedPath() : null;
     const params = new URLSearchParams({ limit: "200" });
     if (path) params.set("path", path);
     if (this.author) params.set("author", this.author);
@@ -120,11 +124,11 @@ export class HistoryPanel {
   private async loadDiff() {
     const picked = [...this.selection.picked];
     this.diff = picked.length ? ((await post<FileDiff[]>("/api/diff", { revisions: picked })) ?? []) : [];
-    this.render();
+    this.draw();
   }
 
   private changed(paths: FilePath[]) {
-    this.deps.undone([...new Set(paths)]);
+    void this.ctx.workbench.refreshFromServer([...new Set(paths)]);
     void this.refresh();
   }
 
@@ -146,7 +150,7 @@ export class HistoryPanel {
   }
 
   private async saveLabel(name: string) {
-    const path = this.deps.focusedPath();
+    const path = this.ctx.workbench.focusedPath();
     if (!path || !name.trim()) return;
     const res = await fetch("/api/labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, name }) });
     const body = await res.json().catch(() => null);
@@ -196,8 +200,9 @@ export class HistoryPanel {
     act();
   }
 
-  private render() {
-    const path = this.deps.focusedPath();
+  private draw() {
+    if (!this.root) return;
+    const path = this.ctx.workbench.focusedPath();
     const scope = el<HTMLSelectElement>("select", { title: "Which changes" }, el("option", { value: "file", textContent: path ? `This note` : "This note (none open)" }), el("option", { value: "all", textContent: "Everything" }));
     scope.value = this.scope;
     scope.addEventListener("change", () => {
@@ -205,7 +210,7 @@ export class HistoryPanel {
       this.selection.picked.clear();
       void this.refresh();
     });
-    const authors = new Map(this.changes.map((c) => [authorKey(c.author), describeAuthor(c.author, this.deps.me)]));
+    const authors = new Map(this.changes.map((c) => [authorKey(c.author), describeAuthor(c.author, this.ctx.me)]));
     if (this.author && !authors.has(this.author)) authors.set(this.author, this.author);
     const who = el<HTMLSelectElement>("select", { title: "By whom" }, el("option", { value: "", textContent: "Anyone" }), ...[...authors].map(([value, textContent]) => el("option", { value, textContent })));
     who.value = this.author;
@@ -219,9 +224,7 @@ export class HistoryPanel {
       this.author && undoable.length
         ? el("button", { className: "undo-all", textContent: `Undo all ${undoable.length} by ${authors.get(this.author)}`, onclick: () => void this.undo(undoable.map((c) => c.revision)) })
         : "";
-    const close = el("button", { className: "close", textContent: "×", title: "Close history", onclick: () => this.toggle() });
     this.root.replaceChildren(
-      el("header", {}, el("h2", { textContent: "History" }), close),
       el("div", { className: "filters" }, scope, who),
       this.labelForm(path),
       undoAll,
@@ -241,7 +244,7 @@ export class HistoryPanel {
       if (matchKeys(e, "Enter")) void this.saveLabel(input.value);
       if (matchKeys(e, "Escape")) {
         this.labelling = false;
-        this.render();
+        this.draw();
       }
     });
     return el("div", { className: "label-form" }, input, el("button", { textContent: "Add", onclick: () => void this.saveLabel(input.value) }));
@@ -262,9 +265,9 @@ export class HistoryPanel {
         "div",
         { className: "summary" },
         box,
-        el("span", { className: "who", textContent: describeAuthor(c.author, this.deps.me) }),
+        el("span", { className: "who", textContent: describeAuthor(c.author, this.ctx.me) }),
         el("span", { className: "when", textContent: ago(c.time), title: new Date(c.time).toLocaleString() }),
-        el("span", { className: "stat", textContent: diffStat(c) }),
+        el("span", { className: "stat", textContent: c.deleted ? "Deleted" : diffStat(c) }),
       ),
       el(
         "div",
@@ -278,7 +281,7 @@ export class HistoryPanel {
           "div",
           { className: "label" },
           el("span", { className: "label-tag", textContent: l.name, title: `Label at #${l.revision}` }),
-          el("button", { textContent: "Open", title: "Open the note as it was at this label, read-only", onclick: stop(() => this.deps.openVersion(l.path, l.revision, l.name)) }),
+          el("button", { textContent: "Open", title: "Open the note as it was at this label, read-only", onclick: stop(() => this.ctx.workbench.openView(versionViewId(l.path, l.revision), { newTab: true })) }),
           el("button", { textContent: "Restore", title: "Put the note back as it was at this label, as a new change", onclick: stop(() => this.restore(l.path, { revision: l.revision }, `“${l.name}”`)) }),
         ),
       ),

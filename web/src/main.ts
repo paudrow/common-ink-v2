@@ -3,16 +3,13 @@
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
-import { CommandBar, type Provider } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, type Level } from "./settings-ui.ts";
+import { CommandBar } from "./commandbar.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
+import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
-import { fuzzyFilter } from "./fuzzy.ts";
 import { describeAuthor, docLabel } from "./describe.ts";
-import { HistoryPanel } from "./history.ts";
 import { connectLive } from "./live.ts";
-import { VERSION_PREFIX, versionView, versionViewId } from "./version.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
@@ -20,14 +17,27 @@ import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import * as L from "./layout.ts";
 import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
+import { Panels } from "./panels.ts";
+import type { PluginContext } from "./plugins.ts";
+import { changedPlugins, manifestText, pluginPaths, pluginStates, startPlugins, type BuiltIn, type PluginEntry } from "./plugin-host.ts";
+import { builtInSourceView, pluginsView } from "./plugins-view.ts";
+import { BUILT_IN } from "./plugins/index.ts";
+import { fuzzyFilter } from "./fuzzy.ts";
+import { createState } from "./editor.ts";
+import { EditorView } from "@codemirror/view";
 import { Workbench } from "./workbench.ts";
 
+/** Safe mode (?safe=1): only built-in plugins start, for when a workspace plugin breaks the app. */
+const SAFE = new URLSearchParams(location.search).get("safe") === "1";
+/** This page's address in or out of safe mode. */
+const addressFor = (path: FilePath | null, safe = SAFE) => `${path ? urlForFile(path) : "?"}${safe ? `${path ? "&" : ""}safe=1` : ""}`;
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
+const reloadLine = $("#reload");
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -39,6 +49,9 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
+let lastFile: FilePath | null = null;
+const savedListeners: Array<(path: FilePath) => void> = [];
+const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const me = await fetch("/api/me")
   .then((r) => r.json())
@@ -54,14 +67,15 @@ const workbench = new Workbench($("#workbench"), {
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
-    if (path) window.history.replaceState(null, "", urlForFile(path));
-    void history.refresh();
+    if (path) window.history.replaceState(null, "", addressFor(path));
+    if (path) lastFile = path;
+    for (const fn of focusListeners) fn(path);
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
   },
   created: () => void refreshList(),
   saved(path) {
-    void history.refresh();
+    for (const fn of savedListeners) fn(path);
     if (isSettingsFile(path)) void loadSettings();
   },
   shortcut: (command) => {
@@ -112,6 +126,7 @@ async function loadSettings() {
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
   problemsLine.title = problems.join("\n");
+  pluginsChanged();
   workbench.refreshView(SETTINGS_VIEW);
 }
 
@@ -149,6 +164,7 @@ async function openSettings(path: FilePath | null) {
 async function refreshList() {
   files = await api.list();
   renderList();
+  pluginsChanged();
 }
 
 function renderList() {
@@ -267,14 +283,11 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
-  { id: "history.note", title: "Show history of this note", run: () => history.toggle("file") },
-  { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
   { id: "settings.workspaceJson", title: "Open workspace settings (JSON)", run: () => openSettings(WORKSPACE_SETTINGS) },
   { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
-  { id: "history.addLabel", title: "Add label to this note…", run: () => history.addLabel() },
   { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
   { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
   { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
@@ -288,28 +301,147 @@ commands.register(
   { id: "window.equalize", title: "Make windows the same size", run: () => workbench.change(L.equalize) },
 );
 
-const notesProvider: Provider = {
-  prefix: "",
-  placeholder: "Open a note by name, or type > for commands",
-  items(query) {
-    const matches = fuzzyFilter(query, files, (d) => name(d.path)).map((d) => ({ label: name(d.path), run: () => openFromBar(d.path) }));
-    const path = notePathFor(query);
-    if (path && !files.some((d) => d.path === path)) matches.push({ label: `New note: ${name(path)}`, run: () => openFromBar(path) });
-    return matches;
+const bar = new CommandBar();
+const panels = new Panels($("#panel"));
+
+const plugins: PluginContext = {
+  me,
+  settings: () => settings,
+  commands: {
+    register: (...c) => commands.register(...c),
+    run: (id) => commands.run(id),
+    all: () => commands.all(),
+    shortcut: (id) => {
+      const key = keyFor(id, settings.keybindings);
+      return key && formatKeys(key);
+    },
   },
+  util: { fuzzyFilter, notePathFor: (name) => notePathFor(name) },
+  commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
+  panels: {
+    // A panel is also a view that opens in a window: drag its title there, or use its command.
+    register: (p) => {
+      panels.register(p);
+      workbench.registerView(p);
+      commands.register({ id: `${p.id}.openInWindow`, title: `Open ${p.title} in a window`, run: () => workbench.openView(p.id, { newTab: true }) });
+    },
+    toggle: (id) => panels.toggle(id),
+    show: (id) => panels.show(id),
+    shown: () => panels.shown(),
+    refresh: (id) => {
+      panels.refresh(id);
+      workbench.refreshView(id);
+    },
+  },
+  files: { list: () => files, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  workbench: {
+    open: (path, how) => workbench.open(path, how),
+    openPicked: openFromBar,
+    // With a view focused (History in a window, say), the file is the one focused last.
+    focusedPath: () => workbench.focusedPath ?? lastFile,
+    focusedView: () => workbench.focusedView,
+    openView: (id, how) => workbench.openView(id, how),
+    provideViews: (prefix, make) => workbench.provideViews(prefix, make),
+    refreshFromServer: (paths) => workbench.refreshFromServer(paths),
+    label: docLabel,
+  },
+  events: { onSaved: (fn) => void savedListeners.push(fn), onFocus: (fn) => void focusListeners.push(fn) },
 };
 
-const commandsProvider: Provider = {
-  prefix: ">",
-  placeholder: "Run a command",
-  items: (query) =>
-    fuzzyFilter(query, commands.all(), (c) => c.title).map((c) => {
-      const key = keyFor(c.id, settings.keybindings);
-      return { label: c.title, detail: key && formatKeys(key), run: () => commands.run(c.id) };
-    }),
-};
+// Plugins start once, as the app loads. Turning one on or off, or changing its files, applies after a
+// reload (ADR 0005 says why), and until then the status bar and the Plugins view say so.
+let pluginEntries: PluginEntry[] = [];
+let statesAtStart = new Map<string, string>();
+/** The settings that apply after a reload, as they were at start. */
+let reloadSettingsAtStart: string | null = null;
+const RELOAD_SETTINGS = Object.entries(schema.properties as Record<string, { appliesAfterReload?: boolean }>).filter(([, p]) => p.appliesAfterReload).map(([k]) => k);
+const reloadSettingsNow = () => JSON.stringify(RELOAD_SETTINGS.map((k) => (settings as unknown as Record<string, unknown>)[k]));
+const pluginsNeedReload = () => changedPlugins(statesAtStart, pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE));
 
-const bar = new CommandBar([notesProvider, commandsProvider]);
+function updateReloadLine() {
+  if (reloadSettingsAtStart === null) return;
+  const plugins = pluginsNeedReload().size > 0;
+  const settingsChanged = reloadSettingsNow() !== reloadSettingsAtStart;
+  reloadLine.hidden = !plugins && !settingsChanged;
+  const button = document.createElement("button");
+  button.textContent = "Reload";
+  button.addEventListener("click", () => reloadWindow());
+  reloadLine.replaceChildren(`${plugins ? "Plugin" : "Settings"} changes apply after reload · `, button);
+}
+
+function pluginsChanged() {
+  plugins.panels.refresh("plugins");
+  updateReloadLine();
+}
+
+/** Load the page again, where it is, in or out of safe mode. */
+function reloadWindow(safe = SAFE) {
+  location.assign(addressFor(workbench.focusedPath ?? lastFile, safe));
+}
+
+function openPluginSource(e: PluginEntry) {
+  if (e.workspace) void workbench.open(e.workspace.scriptPath, { newTab: true });
+  else workbench.openView(`plugin-source:${e.manifest.id}`, { newTab: true });
+}
+
+/** Copy a built-in into the workspace, where it runs in its place after a reload, and open the copy. */
+async function customize(b: BuiltIn) {
+  const { manifestPath, scriptPath } = pluginPaths(b.id);
+  await api.write(manifestPath, manifestText(b), 0);
+  await api.write(scriptPath, b.source, 0);
+  await refreshList();
+  await workbench.open(scriptPath, { newTab: true });
+}
+
+/** Delete a workspace plugin's files, as changes that undo can take back. */
+async function revertPlugin(e: PluginEntry) {
+  if (!e.workspace) return;
+  const paths = [e.workspace.scriptPath, e.workspace.manifestPath];
+  workbench.forget(paths);
+  for (const path of paths) {
+    const file = await api.read(path);
+    if (file.revision) await api.delete(path, file.revision);
+  }
+  await refreshList();
+}
+
+plugins.panels.register(
+  pluginsView({
+    entries: () => pluginEntries,
+    needsReload: pluginsNeedReload,
+    isOn: (id) => !settings["plugins.disabled"].includes(id),
+    async setOn(id, on) {
+      const others = settings["plugins.disabled"].filter((x) => x !== id);
+      await writeSetting(api, WORKSPACE_SETTINGS, "plugins.disabled", on ? others : [...others, id]);
+      await loadSettings();
+    },
+    safe: SAFE,
+    openSource: openPluginSource,
+    customize,
+    revert: revertPlugin,
+    reload: reloadWindow,
+  }),
+);
+workbench.provideViews("plugin-source:", (id) => {
+  const b = BUILT_IN.find((x) => `plugin-source:${x.id}` === id);
+  if (!b) return null;
+  const editor = (text: string) =>
+    new EditorView({ state: createState(text, { json: false, code: true, readOnly: true, settings, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
+  return builtInSourceView(b, { editor, customize: (x) => void customize(x) });
+});
+commands.register(
+  { id: "plugins.show", title: "Show plugins", run: () => plugins.panels.toggle("plugins") },
+  {
+    id: "plugins.openSource",
+    title: "Open plugin source…",
+    run: () =>
+      bar.pick(
+        "Open a plugin's source",
+        pluginEntries.map((e) => ({ label: e.manifest.name, detail: e.manifest.id, run: () => openPluginSource(e) })),
+      ),
+  },
+  { id: "window.reload", title: "Reload window", run: () => reloadWindow() },
+);
 
 window.addEventListener(
   "keydown",
@@ -407,12 +539,6 @@ window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
-const history = new HistoryPanel($("#history"), {
-  me,
-  focusedPath: () => workbench.focusedPath,
-  undone: (paths) => void workbench.refreshFromServer(paths),
-  openVersion: (path, revision) => workbench.openView(versionViewId(path, revision), { newTab: true }),
-});
 // Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
 let historyTimer2 = 0;
 connectLive({
@@ -423,10 +549,12 @@ connectLive({
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
     }
-    if (!files.some((f) => f.path === notice.path)) void refreshList();
+    // A new file, or a plugin's (which may have been deleted): list them again.
+    if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/plugins/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
+    // Plugins hear of it as of any change to a file (the history panel redraws, say).
     clearTimeout(historyTimer2);
-    historyTimer2 = window.setTimeout(() => void history.refresh(), 400);
+    historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
   },
   // Back after a gap: catch up on files that changed meanwhile.
   async open() {
@@ -438,14 +566,33 @@ connectLive({
   },
 });
 
-workbench.provideViews(VERSION_PREFIX, (id) => versionView(id, (path) => void workbench.refreshFromServer([path]).then(() => history.refresh())));
 
 try {
   files = await api.list();
   const asked = fileFromUrl(location.search);
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
   await loadSettings();
+  pluginEntries = await startPlugins({
+    builtIns: BUILT_IN,
+    files,
+    read: api.read,
+    // From the Worker, so `script-src 'self'` allows it; the version makes each change a new address.
+    load: (w) => import(/* @vite-ignore */ `/plugins/${w.id}/index.js?v=${encodeURIComponent(w.version)}`),
+    ctx: plugins,
+    disabled: settings["plugins.disabled"],
+    safe: SAFE,
+    changed: pluginsChanged,
+  });
+  statesAtStart = pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE);
+  reloadSettingsAtStart = reloadSettingsNow();
   const { missing } = await workbench.start(asked);
+  const failed = pluginEntries.find((e) => e.state === "failed");
+  if (failed) {
+    workbench.notice(`Plugin ${failed.manifest.name} didn't start: ${failed.error}`, [
+      { label: "Show plugins", run: () => plugins.panels.show("plugins") },
+      ...(failed.workspace ? [{ label: "Open in safe mode", run: () => reloadWindow(true) }] : []),
+    ]);
+  }
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);

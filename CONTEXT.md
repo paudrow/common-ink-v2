@@ -55,5 +55,8 @@ JSON that configures behavior, at either user or workspace level. Workspace sett
 _Avoid_: Preferences, config
 
 **Plugin**:
-A unit of functionality that adds commands, views, data sources or settings through the public plugin API. Built-in features are plugins.
+A unit of functionality that adds commands, views, data sources or settings through the public plugin API. Built-in features are plugins. A workspace plugin is files in the workspace (`.common-ink/plugins/<id>/`), and one with a built-in's id runs in its place: that's a customized built-in.
 _Avoid_: Extension, add-on
+
+**Safe mode**:
+The app with only built-in plugins running, for when a workspace plugin breaks it. Open the app with `?safe=1`.

@@ -2,7 +2,7 @@
 // to put the file back that way. The view's id says which: version:<revision>:<path>.
 import { parseFilePath, type FilePath, type Revision } from "../../worker/src/files.ts";
 import type { Label } from "../../worker/src/labels.ts";
-import { runLines } from "./history.ts";
+import { runLines } from "./describe.ts";
 import type { View } from "./workbench.ts";
 
 export const VERSION_PREFIX = "version:";

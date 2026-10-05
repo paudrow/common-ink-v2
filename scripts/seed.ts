@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { Seed } from "../worker/src/files.ts";
+import { parseFilePath, type Seed } from "../worker/src/files.ts";
 
 export interface Section {
   slug: string;
@@ -38,10 +38,12 @@ export function readSections(dir: string): Section[] {
       const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
       if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}`);
       const notesDir = path.join(dir, slug);
+      // Notes at the top, and other workspace files (a sample plugin, say) in folders below, such as .common-ink/plugins/.
       const notes = fs.existsSync(notesDir)
-        ? fs
-            .readdirSync(notesDir)
-            .filter((f) => f.endsWith(".md"))
+        ? (fs.readdirSync(notesDir, { recursive: true }) as string[])
+            .map((f) => f.split(path.sep).join("/"))
+            .filter((f) => parseFilePath(f) && fs.statSync(path.join(notesDir, f)).isFile())
+            .sort()
             .map((f) => ({ path: f, text: fs.readFileSync(path.join(notesDir, f), "utf8") }))
         : [];
       return { slug, pr, title, steps, notes, edits };

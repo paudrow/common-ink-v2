@@ -42,6 +42,8 @@ const highlight = HighlightStyle.define([
   { tag: [t.processingInstruction, t.contentSeparator, t.quote], color: "var(--muted)" },
 ]);
 
+const mono = EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } });
+
 /** Marks a change copied over from another view of the same file. */
 export const synced = Annotation.define<boolean>();
 
@@ -65,7 +67,7 @@ export function reconfigure(view: EditorView, settings: EditorSettings) {
 
 export function createState(
   doc: string,
-  opts: { json: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
+  opts: { json: boolean; code?: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
 ): EditorState {
   const s = extensionsFor(opts.settings);
   return EditorState.create({
@@ -78,14 +80,15 @@ export function createState(
       history(),
       drawSelection(),
       remoteFlash,
-      keymap.of([...(opts.json ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
+      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
-      opts.json ? [json(), EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })] : new LanguageSupport(markdownLanguage),
+      // Code (a plugin's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
+      opts.json ? [json(), mono] : opts.code ? mono : new LanguageSupport(markdownLanguage),
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),
       opts.extensions,
-      EditorView.contentAttributes.of(opts.json ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
+      EditorView.contentAttributes.of(opts.json || opts.code ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
       EditorView.updateListener.of(opts.onUpdate),
       EditorView.domEventHandlers({ blur: () => void opts.onBlur() }),
     ],

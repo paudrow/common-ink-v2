@@ -1,0 +1,18 @@
+// ⌘⇧P, or > in the command bar: run any command, with its shortcut. A built-in plugin; "Customize" in
+// the Plugins view copies this file into the workspace as it is, where it runs in place of this one.
+
+/** @type {import("../plugins.ts").PluginModule} */
+export default {
+  activate(ctx) {
+    ctx.commandBar.provide({
+      prefix: ">",
+      placeholder: "Run a command",
+      items: (query) =>
+        ctx.util.fuzzyFilter(query, ctx.commands.all(), (c) => c.title).map((c) => ({
+          label: c.title,
+          detail: ctx.commands.shortcut(c.id),
+          run: () => ctx.commands.run(c.id),
+        })),
+    });
+  },
+};

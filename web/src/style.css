@@ -32,7 +32,7 @@ body {
 
 body {
   display: grid;
-  grid-template: "notes editor history" 1fr "notes status status" auto / 14rem 1fr auto;
+  grid-template: "notes editor panel" 1fr "notes status status" auto / 14rem 1fr auto;
   background: var(--bg);
   color: var(--ink);
 }
@@ -294,7 +294,7 @@ body {
 
 @media (max-width: 40rem) {
   body {
-    grid-template: "editor" 1fr "history" auto "status" auto / 1fr;
+    grid-template: "editor" 1fr "panel" auto "status" auto / 1fr;
   }
   #notes {
     display: none;
@@ -358,8 +358,8 @@ body {
   align-self: center;
 }
 
-#history {
-  grid-area: history;
+#panel {
+  grid-area: panel;
   width: 22rem;
   max-width: 100vw;
   overflow: auto;
@@ -369,22 +369,22 @@ body {
   box-sizing: border-box;
 }
 
-#history[hidden] {
+#panel[hidden] {
   display: none;
 }
 
-#history header {
+#panel header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-#history h2 {
+#panel h2 {
   font-size: 0.875rem;
   margin: 0;
 }
 
-#history button {
+:is(#panel, .tab-view) button {
   font: inherit;
   color: inherit;
   background: none;
@@ -392,13 +392,13 @@ body {
   cursor: pointer;
 }
 
-#history .filters {
+:is(#panel, .tab-view) .filters {
   display: flex;
   gap: 0.5rem;
   margin: 0.75rem 0;
 }
 
-#history select {
+:is(#panel, .tab-view) select {
   font: inherit;
   color: var(--ink);
   background: var(--bg);
@@ -407,7 +407,7 @@ body {
   padding: 0.125rem 0.25rem;
 }
 
-#history .undo-all {
+:is(#panel, .tab-view) .undo-all {
   width: 100%;
   border: 1px solid var(--line) !important;
   border-radius: 4px;
@@ -415,18 +415,18 @@ body {
   margin-bottom: 0.75rem;
 }
 
-#history ol {
+:is(#panel, .tab-view) ol {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-#history li {
+:is(#panel, .tab-view) li {
   border-top: 1px solid var(--line);
   padding: 0.5rem 0;
 }
 
-#history .summary {
+:is(#panel, .tab-view) .summary {
   display: flex;
   gap: 0.5rem;
   width: 100%;
@@ -434,52 +434,52 @@ body {
   padding: 0;
 }
 
-#history .who {
+:is(#panel, .tab-view) .who {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#history .when,
-#history .stat,
-#history .meta {
+:is(#panel, .tab-view) .when,
+:is(#panel, .tab-view) .stat,
+:is(#panel, .tab-view) .meta {
   color: var(--muted);
 }
 
-#history .stat {
+:is(#panel, .tab-view) .stat {
   font-family: var(--mono);
 }
 
-#history .meta {
+:is(#panel, .tab-view) .meta {
   display: flex;
   justify-content: space-between;
   margin-top: 0.125rem;
 }
 
-#history .undo {
+:is(#panel, .tab-view) .undo {
   color: var(--accent) !important;
   padding: 0;
 }
 
-#history .diff {
+:is(#panel, .tab-view) .diff {
   font: 0.75rem/1.5 var(--mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0.5rem 0 0;
 }
 
-#history .diff .add {
+:is(#panel, .tab-view) .diff .add {
   color: #15803d;
 }
 
-#history .diff .del {
+:is(#panel, .tab-view) .diff .del {
   color: #b91c1c;
   text-decoration: line-through;
   text-decoration-color: rgb(185 28 28 / 0.4);
 }
 
-#history .message {
+:is(#panel, .tab-view) .message {
   color: #c2410c;
 }
 
@@ -543,6 +543,8 @@ body {
   top: 1rem;
   left: 50%;
   translate: -50% 0;
+  width: max-content;
+  max-width: calc(100% - 2rem);
   z-index: 6;
   display: flex;
   align-items: center;
@@ -568,31 +570,31 @@ body {
   cursor: pointer;
 }
 
-#history:focus {
+:is(#panel, .tab-view):focus {
   outline: none;
 }
 
-#history .changes li {
+:is(#panel, .tab-view) .changes li {
   cursor: default;
   user-select: none;
   border-radius: 4px;
   padding: 0.375rem 0.25rem;
 }
 
-#history .changes li.picked {
+:is(#panel, .tab-view) .changes li.picked {
   background: var(--accent-soft);
 }
 
-#history .changes li.focused {
+:is(#panel, .tab-view) .changes li.focused {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-#history .summary .pick {
+:is(#panel, .tab-view) .summary .pick {
   margin: 0 0.25rem 0 0;
   accent-color: var(--accent);
 }
 
-#history .label {
+:is(#panel, .tab-view) .label {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -607,22 +609,22 @@ body {
   color: var(--accent);
 }
 
-#history .label button,
-#history .run-head button,
-#history .actions button,
-#history .add-label,
-#history .label-form button {
+:is(#panel, .tab-view) .label button,
+:is(#panel, .tab-view) .run-head button,
+:is(#panel, .tab-view) .actions button,
+:is(#panel, .tab-view) .add-label,
+:is(#panel, .tab-view) .label-form button {
   color: var(--accent) !important;
   padding: 0;
 }
 
-#history .label-form {
+:is(#panel, .tab-view) .label-form {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 
-#history .label-form input {
+:is(#panel, .tab-view) .label-form input {
   flex: 1;
   font: inherit;
   color: var(--ink);
@@ -632,18 +634,18 @@ body {
   padding: 0.125rem 0.375rem;
 }
 
-#history .add-label {
+:is(#panel, .tab-view) .add-label {
   margin-bottom: 0.75rem;
 }
 
-#history .selected {
+:is(#panel, .tab-view) .selected {
   border-top: 1px solid var(--line);
   margin-top: 0.75rem;
   padding-top: 0.5rem;
 }
 
-#history .actions,
-#history .run-head {
+:is(#panel, .tab-view) .actions,
+:is(#panel, .tab-view) .run-head {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
@@ -651,11 +653,11 @@ body {
   margin: 0.25rem 0;
 }
 
-#history .hint {
+:is(#panel, .tab-view) .hint {
   color: var(--muted);
 }
 
-#history h3 {
+:is(#panel, .tab-view) h3 {
   font-size: 0.75rem;
   margin: 0.75rem 0 0.25rem;
 }
@@ -853,4 +855,145 @@ body {
   margin: 0.25rem 0 0;
   font-size: 0.8125rem;
   color: #c2410c;
+}
+
+/* The status bar's reload notice. */
+#reload button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* The Plugins view (plugins-view.ts), in the side panel or a window. */
+.plugins-view {
+  font-family: var(--prose);
+  font-size: 0.875rem;
+}
+
+.plugins-view .banner {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.plugins-view button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.125rem 0.5rem;
+  cursor: pointer;
+}
+
+.plugins-view button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.plugins-view :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.plugin {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.plugin-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.plugin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.plugin-toggle input {
+  accent-color: var(--accent);
+}
+
+.plugin-name {
+  font-weight: 600;
+}
+
+.plugin-id {
+  font: 0.75rem var(--mono);
+  color: var(--muted);
+}
+
+.plugins-view .badge,
+.settings-editor .badge.reload {
+  font-size: 0.75rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.plugins-view .badge.reload {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.plugin-state {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.plugin.state-off .plugin-name,
+.plugin.state-safe .plugin-name {
+  color: var(--muted);
+}
+
+.plugin.state-failed .plugin-state,
+.plugin-error {
+  color: #c2410c;
+}
+
+.plugin-desc,
+.plugin-error {
+  margin: 0.25rem 0;
+}
+
+.plugin-adds {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.125rem 0.75rem;
+  margin: 0.375rem 0;
+  font-size: 0.8125rem;
+}
+
+.plugin-adds dt {
+  color: var(--muted);
+}
+
+.plugin-adds dd {
+  margin: 0;
+}
+
+p.plugin-adds.muted {
+  display: block;
+  color: var(--muted);
+}
+
+.plugin-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.375rem;
+}
+
+.plugin-source {
+  display: flex;
+  flex-direction: column;
 }
