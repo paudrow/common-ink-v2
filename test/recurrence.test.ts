@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { endsLabel, formatRule, nextDue, occurrences, parseRule, ruleLabel, ruleProblem } from "../worker/src/recurrence.ts";
+import { endsLabel, formatRule, nextDue, occurrences, parseRule, ruleDays, ruleLabel, ruleProblem } from "../worker/src/recurrence.ts";
 
 const next = (token: string, due: string | null, done = "2026-01-01") => nextDue(parseRule(token)!, due, done);
 const three = (token: string, from: string) => occurrences(parseRule(token)!, from, 3);
@@ -93,4 +93,17 @@ test("a rule says what it does, short for a chip and long for the editor", () =>
   assert.deepEqual(both("6th"), ["6th", "Every month on the 6th"]);
   assert.deepEqual(both("2w"), ["Every 2 weeks", "Every 2 weeks"]);
   assert.deepEqual(both("RRULE:FREQ=MONTHLY;INTERVAL=2;BYDAY=2WE"), ["Every 2 mos: 2nd Wed", "Every 2 months on the 2nd Wednesday"]);
+});
+
+test("an RRULE's week start and set positions are kept and followed, as calendar invites write them", () => {
+  const days = (rule: string, first: string, last: string) => ruleDays(parseRule(rule)!, first, last);
+  assert.deepEqual(days("RRULE:FREQ=WEEKLY;WKST=SU;BYDAY=MO,WE", "2026-10-05", "2026-10-18"), ["2026-10-05", "2026-10-07", "2026-10-12", "2026-10-14"]);
+  // Every other week: which Sunday goes with which Tuesday depends on the day weeks start.
+  assert.deepEqual(days("RRULE:FREQ=WEEKLY;INTERVAL=2;WKST=SU;BYDAY=SU,TU", "2026-10-06", "2026-10-21"), ["2026-10-06", "2026-10-18", "2026-10-20"]);
+  assert.deepEqual(days("RRULE:FREQ=WEEKLY;INTERVAL=2;WKST=MO;BYDAY=SU,TU", "2026-10-06", "2026-10-21"), ["2026-10-06", "2026-10-11", "2026-10-20"]);
+  const lastWeekday = "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1";
+  assert.deepEqual(days(lastWeekday, "2026-10-30", "2026-12-31"), ["2026-10-30", "2026-11-30", "2026-12-31"]);
+  assert.equal(formatRule(parseRule(lastWeekday)!), lastWeekday);
+  assert.equal(formatRule(parseRule("RRULE:FREQ=WEEKLY;WKST=SU;BYDAY=MO,WE")!), "RRULE:FREQ=WEEKLY;BYDAY=MO,WE;WKST=SU");
+  assert.equal(ruleLabel(parseRule(lastWeekday)!, true), "Every month on Monday, Tuesday, Wednesday, Thursday and Friday, the last of them");
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findTarget, instantOf, occurrences, parseEvent, planDelete, planUpdate, wallTimeAt, type CalendarEvent, type Range } from "../worker/src/calendar.ts";
+import { findTarget, instantOf, occurrences, parseEvent, planDelete, planUpdate, wallTimeAt, type CalendarEvent, type Range, type RecordOp } from "../worker/src/calendar.ts";
 
 const LA = "America/Los_Angeles";
 const at = (calendar: string, id: string) => `event:sample/${calendar}/${id}`;
@@ -11,6 +11,16 @@ const ev = (e: Record<string, unknown>) => {
   return parsed;
 };
 const brief = (os: ReturnType<typeof occurrences>) => os.map((o) => `${o.id} ${o.start}`);
+const titled = (os: ReturnType<typeof occurrences>) => os.map((o) => `${o.start.slice(0, 16)} ${o.title}`);
+/** Events after an edit's ops are written, as the record files would be. */
+const applyOps = (events: CalendarEvent[], ops: RecordOp[]) => {
+  const out = new Map(events.map((e) => [e.id, e]));
+  for (const o of ops) {
+    if (o.op === "delete") out.delete(o.event.id);
+    else out.set(o.event.id, o.event);
+  }
+  return [...out.values()];
+};
 
 test("wall times turn into instants in their zone, across a daylight-saving change", () => {
   assert.equal(new Date(instantOf("2026-10-26T09:00:00", LA)).toISOString(), "2026-10-26T16:00:00.000Z");
@@ -85,23 +95,30 @@ test("editing all occurrences moves the series by as much as this one moved", ()
   assert.deepEqual([ops[0].event.start, ops[0].event.end, ops[0].event.recurrence], ["2026-10-05T09:30:00", "2026-10-05T10:00:00", ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]]);
 });
 
-test("editing this and following splits the series where it is, and drops changed occurrences after it", () => {
+test("editing this and following splits the series where it is, and changed occurrences after it move to the new part", () => {
   const later = ev({ id: "s_20261021T090000Z", title: "Standup", start: "2026-10-21T11:00", end: "2026-10-21T11:15", timeZone: "UTC", series: "s", originalStart: "2026-10-21T09:00" });
   const events = [series(), later];
   ids.splice(0, ids.length, "s2");
   const ops = planUpdate(events, findTarget(events, "s_20261014T090000Z")!, { title: "Sync" }, "following", newId);
   assert.deepEqual(
-    ops.map((o) => [o.op, o.event.id, o.event.title, o.event.start, o.event.recurrence]),
+    ops.map((o) => [o.op, o.event.id, o.event.title, o.event.start, o.event.recurrence ?? o.event.series]),
     [
       ["put", "s", "Standup", "2026-10-05T09:00:00", ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261014T085959Z"]],
       ["put", "s2", "Sync", "2026-10-14T09:00:00", ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]],
-      ["delete", "s_20261021T090000Z", "Standup", "2026-10-21T11:00:00", undefined],
+      ["delete", "s_20261021T090000Z", "Standup", "2026-10-21T11:00:00", "s"],
+      ["put", "s2_20261021T090000Z", "Standup", "2026-10-21T11:00:00", "s2"],
     ],
   );
-  const after = [ops[0].event, ops[1].event];
   assert.deepEqual(
-    brief(occurrences(after, range("2026-10-05T00:00Z", "2026-10-20T00:00Z"), at)),
-    ["s_20261005T090000Z 2026-10-05T09:00:00.000Z", "s_20261007T090000Z 2026-10-07T09:00:00.000Z", "s_20261012T090000Z 2026-10-12T09:00:00.000Z", "s2_20261014T090000Z 2026-10-14T09:00:00.000Z", "s2_20261019T090000Z 2026-10-19T09:00:00.000Z"],
+    brief(occurrences(applyOps(events, ops), range("2026-10-05T00:00Z", "2026-10-22T00:00Z"), at)),
+    [
+      "s_20261005T090000Z 2026-10-05T09:00:00.000Z",
+      "s_20261007T090000Z 2026-10-07T09:00:00.000Z",
+      "s_20261012T090000Z 2026-10-12T09:00:00.000Z",
+      "s2_20261014T090000Z 2026-10-14T09:00:00.000Z",
+      "s2_20261019T090000Z 2026-10-19T09:00:00.000Z",
+      "s2_20261021T090000Z 2026-10-21T11:00:00.000Z",
+    ],
   );
 });
 
@@ -145,3 +162,64 @@ test("events are read at the boundary: bad ones say what's wrong", () => {
 });
 
 export type { CalendarEvent };
+
+test("saving a series with its times as they were, or only a new length, leaves its changed occurrences be", () => {
+  const demo = ev({ id: "s_20261007T090000Z", title: "Standup: demo day", start: "2026-10-07T09:00", end: "2026-10-07T09:15", timeZone: "UTC", series: "s", originalStart: "2026-10-07T09:00" });
+  const events = [series(), demo];
+  const asItWas = { title: "Sync", timing: { allDay: false as const, start: "2026-10-12T09:00:00", end: "2026-10-12T09:15:00", timeZone: "UTC" }, recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"] };
+  assert.deepEqual(
+    planUpdate(events, findTarget(events, "s_20261012T090000Z")!, asItWas, "all", newId).map((o) => [o.op, o.event.id, o.event.title, o.event.start, o.event.end]),
+    [["put", "s", "Sync", "2026-10-05T09:00:00", "2026-10-05T09:15:00"]],
+  );
+  const longer = { timing: { allDay: false as const, start: "2026-10-12T09:00:00", end: "2026-10-12T09:30:00", timeZone: "UTC" } };
+  assert.deepEqual(
+    planUpdate(events, findTarget(events, "s_20261012T090000Z")!, longer, "all", newId).map((o) => [o.op, o.event.id, o.event.start, o.event.end]),
+    [["put", "s", "2026-10-05T09:00:00", "2026-10-05T09:30:00"]],
+  );
+});
+
+test("moving all occurrences to another day moves the days the series repeats on, and changed and cancelled occurrences go with them", () => {
+  const demo = ev({ id: "s_20261007T090000Z", title: "Standup: demo day", start: "2026-10-07T09:00", end: "2026-10-07T09:15", timeZone: "UTC", series: "s", originalStart: "2026-10-07T09:00" });
+  const off = ev({ id: "s_20261012T090000Z", title: "Standup", start: "2026-10-12T09:00", end: "2026-10-12T09:15", timeZone: "UTC", series: "s", originalStart: "2026-10-12T09:00", status: "cancelled" });
+  const events = [series(), demo, off];
+  const ops = planUpdate(events, findTarget(events, "s_20261007T090000Z")!, { timing: { allDay: false, start: "2026-10-08T09:00:00", end: "2026-10-08T09:15:00", timeZone: "UTC" } }, "all", newId);
+  assert.deepEqual(ops[0].event.recurrence, ["RRULE:FREQ=WEEKLY;BYDAY=TU,TH"]);
+  assert.deepEqual(titled(occurrences(applyOps(events, ops), range("2026-10-05T00:00Z", "2026-10-17T00:00Z"), at)), [
+    "2026-10-06T09:00 Standup",
+    "2026-10-08T09:00 Standup: demo day",
+    "2026-10-15T09:00 Standup",
+  ]);
+});
+
+test("this and following keeps the count that was left, the days skipped, and occurrences changed after the split", () => {
+  const daily = ev({ id: "d", title: "Standup", start: "2026-10-05T09:00", end: "2026-10-05T09:15", timeZone: "UTC", recurrence: ["RRULE:FREQ=DAILY;COUNT=6", "EXDATE:20261006T090000Z"] });
+  const demo = ev({ id: "d_20261008T090000Z", title: "Demo", start: "2026-10-08T09:00", end: "2026-10-08T09:15", timeZone: "UTC", series: "d", originalStart: "2026-10-08T09:00" });
+  const off = ev({ id: "d_20261009T090000Z", title: "Standup", start: "2026-10-09T09:00", end: "2026-10-09T09:15", timeZone: "UTC", series: "d", originalStart: "2026-10-09T09:00", status: "cancelled" });
+  const events = [daily, demo, off];
+  ids.splice(0, ids.length, "d2");
+  // What the editor sends: every field, the series' own recurrence among them.
+  const change = { title: "Sync", timing: { allDay: false as const, start: "2026-10-07T09:00:00", end: "2026-10-07T09:15:00", timeZone: "UTC" }, recurrence: daily.recurrence! };
+  const ops = planUpdate(events, findTarget(events, "d_20261007T090000Z")!, change, "following", newId);
+  assert.deepEqual(titled(occurrences(applyOps(events, ops), range("2026-10-01T00:00Z", "2026-11-01T00:00Z"), at)), [
+    "2026-10-05T09:00 Standup",
+    "2026-10-07T09:00 Sync",
+    "2026-10-08T09:00 Demo",
+    "2026-10-10T09:00 Sync",
+  ]);
+});
+
+test("ending a series before an occurrence counts only the days its rule makes, not ones added to it", () => {
+  const weekly = ev({ id: "w", title: "Class", start: "2026-10-05T09:00", end: "2026-10-05T10:00", timeZone: "UTC", recurrence: ["RRULE:FREQ=WEEKLY;COUNT=4", "RDATE:20261007T090000Z"] });
+  const ops = planDelete([weekly], findTarget([weekly], "w_20261019T090000Z")!, "following");
+  assert.deepEqual(titled(occurrences(applyOps([weekly], ops), range("2026-10-01T00:00Z", "2026-12-01T00:00Z"), at)), ["2026-10-05T09:00 Class", "2026-10-07T09:00 Class", "2026-10-12T09:00 Class"]);
+});
+
+test("an occurrence moved to another time zone takes the place of the one it was", () => {
+  const s = ev({ id: "s", title: "Standup", start: "2026-10-05T09:00", end: "2026-10-05T09:15", timeZone: LA, recurrence: ["RRULE:FREQ=DAILY;COUNT=3"] });
+  const ny = ev({ id: "s_20261006T160000Z", title: "Standup (NY)", start: "2026-10-06T13:00", end: "2026-10-06T13:15", timeZone: "America/New_York", series: "s", originalStart: "2026-10-06T09:00" });
+  assert.deepEqual(brief(occurrences([s, ny], range("2026-10-01T00:00Z", "2026-10-31T00:00Z"), at)), [
+    "s_20261005T160000Z 2026-10-05T16:00:00.000Z",
+    "s_20261006T160000Z 2026-10-06T17:00:00.000Z",
+    "s_20261007T160000Z 2026-10-07T16:00:00.000Z",
+  ]);
+});
