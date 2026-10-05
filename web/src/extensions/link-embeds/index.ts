@@ -8,9 +8,11 @@ import type { ExtensionContext } from "../../extension-api.ts";
 type Card = Awaited<ReturnType<ExtensionContext["net"]["card"]>>;
 
 const theme = EditorView.theme({
-  ".cm-url-embed iframe": { display: "block", width: "100%", border: "0", borderRadius: "10px", background: "transparent" },
-  ".cm-url-embed .video": { aspectRatio: "16 / 9", height: "auto" },
-  ".cm-url-embed .post": { maxWidth: "34rem", minHeight: "8rem" },
+  // A site's card brings its own edge and corners, so its box adds none: it only cuts the frame to them.
+  ".cm-url-embed .site-frame": { overflow: "hidden", background: "transparent" },
+  ".cm-url-embed .site-frame.post": { maxWidth: "34rem" },
+  ".cm-url-embed iframe": { display: "block", width: "100%", border: "0", background: "transparent", colorScheme: "normal" },
+  ".cm-url-embed .video iframe": { aspectRatio: "16 / 9", height: "auto" },
   ".link-card": {
     display: "flex",
     gap: "0.75rem",
@@ -32,26 +34,64 @@ const theme = EditorView.theme({
   ".link-card.loading": { padding: "0.55rem 0.75rem", color: "var(--muted)" },
 });
 
-/** A frame for another site's embed page: scripts and its own origin, nothing that reaches the app. */
-function frame(src: string, title: string, className: string, height?: number): HTMLIFrameElement {
+/**
+ * How a site's embed page sits in a note: as a video (16:9) or a post (narrower, as tall as it says),
+ * how tall it starts, and the corner radius of the site's own card, measured on the site (a video
+ * has none; 12px is YouTube's own player's).
+ */
+interface Look {
+  kind: "video" | "post" | "player";
+  radius: number;
+  height?: number;
+}
+
+/**
+ * Another site's embed page: a frame with scripts and its own origin, nothing that reaches the app,
+ * in a box cut to the site's corners. The frame's color-scheme is "normal", as each site's page says:
+ * when they differ (the app in dark mode), Chrome paints an opaque canvas behind the frame, which
+ * shows as white wedges outside the card's rounded corners.
+ */
+function siteFrame(src: string, title: string, look: Look): { box: HTMLElement; frame: HTMLIFrameElement } {
   const f = document.createElement("iframe");
   f.src = src;
   f.title = title;
-  f.className = className;
   f.loading = "lazy";
   f.referrerPolicy = "strict-origin-when-cross-origin";
   f.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox");
   f.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
   f.allowFullscreen = true;
-  if (height) f.style.height = `${height}px`;
-  return f;
+  if (look.height) f.style.height = `${look.height}px`;
+  const box = document.createElement("div");
+  box.className = `site-frame ${look.kind}`;
+  box.style.borderRadius = `${look.radius}px`;
+  box.append(f);
+  return { box, frame: f };
 }
 
-const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+const darkMode = matchMedia("(prefers-color-scheme: dark)");
 
 export default {
   activate(ctx: ExtensionContext) {
     ctx.editor.extend(theme);
+
+    // Posts and players asked for in the app's theme, with how to ask in each: when it changes, they
+    // load again in the new one. Frames that have gone from the page are let go then, and as others come.
+    const themed = new Map<HTMLIFrameElement, { page: (dark: boolean) => string; shown: boolean }>();
+    const letGo = (all: boolean) => {
+      for (const [f, t] of themed) if (!f.isConnected && (all || t.shown)) themed.delete(f);
+    };
+    darkMode.addEventListener("change", () => {
+      letGo(true);
+      for (const [f, t] of themed) f.src = t.page(darkMode.matches);
+    });
+    const inTheme = (page: (dark: boolean) => string, title: string, look: Look) => {
+      letGo(false);
+      const { box, frame } = siteFrame(page(darkMode.matches), title, look);
+      const t = { page, shown: false };
+      themed.set(frame, t);
+      frame.addEventListener("load", () => (t.shown = true), { once: true });
+      return { box, frame };
+    };
 
     // Posts say how tall they are by message; each goes to its own frame.
     const sizes = new Map<Window, (height: number) => void>();
@@ -70,16 +110,17 @@ export default {
       const height = d["twttr.embed"]?.method === "twttr.private.resize" ? d["twttr.embed"].params?.[0]?.height : d.height;
       if (typeof height === "number" && height > 0) resize(Math.min(height, 2000));
     });
-    const sized = (f: HTMLIFrameElement) => {
-      f.addEventListener("load", () => f.contentWindow && sizes.set(f.contentWindow, (h) => (f.style.height = `${h}px`)), { once: true });
-      return f;
+    const sized = ({ box, frame }: { box: HTMLElement; frame: HTMLIFrameElement }) => {
+      frame.addEventListener("load", () => frame.contentWindow && sizes.set(frame.contentWindow, (h) => (frame.style.height = `${h}px`)), { once: true });
+      return box;
     };
 
     ctx.urlEmbeds.register("youtube", {
-      render: (el, { match }) => el.replaceChildren(frame(`https://www.youtube-nocookie.com/embed/${match[1]}`, "YouTube video", "video")),
+      render: (el, { match }) => el.replaceChildren(siteFrame(`https://www.youtube-nocookie.com/embed/${match[1]}`, "YouTube video", { kind: "video", radius: 12 }).box),
     });
     ctx.urlEmbeds.register("x", {
-      render: (el, { match }) => el.replaceChildren(sized(frame(`https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&dnt=true&theme=${dark() ? "dark" : "light"}`, "Post on X", "post", 320))),
+      render: (el, { match }) =>
+        el.replaceChildren(sized(inTheme((dark) => `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&dnt=true&theme=${dark ? "dark" : "light"}`, "Post on X", { kind: "post", radius: 12, height: 320 }))),
     });
     let posts = 0;
     ctx.urlEmbeds.register("bluesky", {
@@ -93,12 +134,15 @@ export default {
             did = (JSON.parse(res.body) as { did?: string }).did ?? "";
           }
           if (!did.startsWith("did:")) return;
-          el.replaceChildren(sized(frame(`https://embed.bsky.app/embed/${did}/app.bsky.feed.post/${match[2]}?id=${++posts}&colorMode=${dark() ? "dark" : "light"}`, "Bluesky post", "post", 260)));
+          const id = ++posts;
+          el.replaceChildren(sized(inTheme((dark) => `https://embed.bsky.app/embed/${did}/app.bsky.feed.post/${match[2]}?id=${id}&colorMode=${dark ? "dark" : "light"}`, "Bluesky post", { kind: "post", radius: 32, height: 260 })));
         })().catch(() => {});
       },
     });
     ctx.urlEmbeds.register("spotify", {
-      render: (el, { match }) => el.replaceChildren(frame(`https://open.spotify.com/embed/${match[1]}/${match[2]}`, "Spotify", "", match[1] === "track" || match[1] === "episode" ? 152 : 352)),
+      // Spotify's dark card is theme=0; without it, the card takes its cover's color.
+      render: (el, { match }) =>
+        el.replaceChildren(inTheme((dark) => `https://open.spotify.com/embed/${match[1]}/${match[2]}${dark ? "?theme=0" : ""}`, "Spotify", { kind: "player", radius: 12, height: match[1] === "track" || match[1] === "episode" ? 152 : 352 }).box),
     });
 
     // Cards are kept for the session, so a note drawn again doesn't fetch again.
