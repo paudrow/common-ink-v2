@@ -70,3 +70,55 @@ test("Catalog embeds run sandboxed: a uPlot chart and a three.js scene, in a fra
   assert.deepEqual(problems, []);
   await page.close();
 });
+
+test("an embed's Settings write its line for you, and its frame isn't reloaded by that or by edits elsewhere", async () => {
+  const page = await h.browser.newPage({ viewport: { width: 1200, height: 900 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`${h.base}/?file=${encodeURIComponent("Embeds tour.md")}`);
+  await page.waitForSelector(".timer-embed");
+  const doc = () => page.evaluate(() => fetch(`/api/file?path=${encodeURIComponent("Embeds tour.md")}`).then((r) => r.json()).then((f) => f.text as string));
+
+  // The timer's Settings: a preset, then Save.
+  const timer = page.locator('.cm-embed[data-embed="timer"]').first();
+  await timer.hover();
+  await timer.locator(".cm-embed-tools button", { hasText: "Settings" }).click();
+  const form = timer.locator(".cm-embed-form");
+  await form.locator(".presets").getByRole("button", { name: "5m", exact: true }).click();
+  assert.equal(await form.locator(".actions code").textContent(), '::timer{duration=5m label="Focus"}');
+  await form.locator("button[type=submit]").click();
+  // It takes the new duration in place, keeping the time it's at (it may be running from the test above).
+  await page.waitForFunction(() => /^[0-5]:\d\d$/.test(document.querySelector('.cm-embed[data-embed="timer"] .timer-time')?.textContent ?? ""));
+  await page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  assert.match(await doc(), /^::timer\{duration=5m label="Focus"\}$/m, "the line it wrote, saved");
+
+  // The chart's frame: marked, then edited around and given a new height. It's the same frame, never reloaded.
+  await page.evaluate(() => {
+    const s = document.querySelector(".cm-scroller")!;
+    s.scrollTop = s.scrollHeight;
+  });
+  const chart = await page.waitForSelector('.cm-embed[data-embed="html-app"] iframe.webview');
+  await page.frameLocator('.cm-embed[data-embed="html-app"] iframe').locator(".uplot canvas").waitFor();
+  await (await chart.contentFrame())!.evaluate(() => ((window as unknown as { mark: number }).mark = 1));
+  await page.evaluate(() => ((window as unknown as { chart: Element }).chart = document.querySelector('.cm-embed[data-embed="html-app"] iframe')!));
+  const same = () => page.evaluate(() => document.querySelector('.cm-embed[data-embed="html-app"] iframe') === (window as unknown as { chart: Element }).chart);
+  const unreloaded = async () => (await (await page.$('.cm-embed[data-embed="html-app"] iframe'))!.contentFrame())!.evaluate(() => (window as unknown as { mark?: number }).mark === 1);
+  await page.locator(".cm-line", { hasText: "See also" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" And more.");
+  await page.waitForTimeout(300);
+  assert.equal(await same(), true, "an edit elsewhere keeps the frame");
+  assert.equal(await unreloaded(), true);
+  const app = page.locator('.cm-embed[data-embed="html-app"]');
+  await app.hover();
+  await app.locator(".cm-embed-tools button", { hasText: "Settings" }).click();
+  await app.locator(".cm-embed-form .presets").getByRole("button", { name: "360", exact: true }).click();
+  await app.locator(".cm-embed-form button[type=submit]").click();
+  await page.waitForFunction(() => document.querySelector<HTMLElement>('.cm-embed[data-embed="html-app"] .cm-embed-frame > div')?.style.height === "360px");
+  assert.equal(await same(), true, "new arguments keep the frame");
+  assert.equal(await unreloaded(), true, "and it isn't reloaded");
+  await page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  assert.match(await doc(), /^```html-app height=360 title="Words this week"$/m, "its fence says the new height");
+  assert.deepEqual(errors, []);
+  await page.close();
+});
