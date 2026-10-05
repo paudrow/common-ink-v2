@@ -158,7 +158,7 @@ test("new arguments go to the drawn embed in place: its element stays, unless it
   refusing.destroy();
 });
 
-test("Settings writes the arguments into the markdown as your edit, keeping their order and quotes and leaving defaults out", () => {
+test("Settings writes the arguments into the markdown as your edit, keeping their order and quotes and leaving defaults out", async () => {
   const view = new EditorView({ state: state('# Plan\n\n::timer{label="Deep work" id=tea}\n\nEnd', [embeds(host([]))]), parent: document.body });
   view.dispatch({ selection: { anchor: view.state.doc.length } });
   const events: string[] = [];
@@ -182,6 +182,20 @@ test("Settings writes the arguments into the markdown as your edit, keeping thei
   form.dispatchEvent(new window.Event("submit", { cancelable: true }));
   assert.equal(view.state.doc.line(3).text, '::timer{label="Tea, then work" duration=5m id=tea}');
   assert.deepEqual(events, ["input.embed"], "one edit, yours");
+  const { embedForm } = await import("../web/src/embed-form.ts");
+  const choice = embedForm(
+    { language: "tasks", title: "Task list", description: "", syntax: "leaf", arguments: { due: { type: "string", description: "", enum: ["today", "week"] }, sort: { type: "string", description: "", default: "due", enum: ["due", "title"] } } },
+    [],
+    { preview: () => "", save: () => {}, cancel: () => {} },
+  );
+  assert.deepEqual(
+    [...choice.querySelectorAll("select")].map((sel) => [...sel.options].map((o) => o.value)),
+    [
+      ["", "today", "week"],
+      ["due", "title"],
+    ],
+    "a choice without a default can be left out; one with a default can't",
+  );
   assert.equal(view.dom.querySelector(".cm-embed-form"), null);
   view.destroy();
 });
