@@ -39,8 +39,9 @@ function build(view: EditorView, source: PreviewSource): DecorationSet {
     for (let pos = from; pos <= to; ) {
       const line = view.state.doc.lineAt(pos);
       for (const p of source(line, view)) {
-        // A widget (a "point" decoration) stands in for text, so it's left out where the text shows.
-        if (p.decoration.point && revealed.has(line.number)) continue;
+        // What stands in for text (a widget, or hidden markers) is left out where the text shows. A
+        // line's own style (a code block's, a quote's) stays, so the line doesn't jump as the cursor comes.
+        if (revealed.has(line.number) && (p.from < p.to || p.decoration.spec.widget)) continue;
         ranges.push(p.decoration.range(p.from, p.to));
       }
       pos = line.to + 1;
