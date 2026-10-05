@@ -1,18 +1,20 @@
 // The app on this machine: the Worker, its Durable Object and the web app, signed in as a dev user, with
 // test levers on and the workspace seeded from a scenario (docs/TESTING.md).
 //
-//   npm run dev -- [--scenario lists] [--port 8787] [--fresh]
+//   npm run dev -- [--scenario lists] [--port 8787] [--fresh] [--fake-google]
 //
 // Each scenario keeps its own workspace on disk (.wrangler/scenarios/<name>), so switching between them
 // keeps what you did in each; without --scenario it's the Preview's notes, kept where they always were.
-// --fresh resets the workspace to its scenario once the server is up.
+// --fresh resets the workspace to its scenario once the server is up. --fake-google puts a fake Google
+// Calendar (worker/src/fake-google.ts) in place of the Sample calendar, connected, so sync, conflicts
+// and reconnecting can be tried: POST /api/levers/google {"revoked": true} ends its grant.
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
 const root = path.resolve(import.meta.dirname, "..");
 const { values } = parseArgs({
-  options: { scenario: { type: "string" }, port: { type: "string", default: "8787" }, fresh: { type: "boolean", default: false } },
+  options: { scenario: { type: "string" }, port: { type: "string", default: "8787" }, fresh: { type: "boolean", default: false }, "fake-google": { type: "boolean", default: false } },
 });
 const port = Number(values.port);
 if (!Number.isInteger(port) || port <= 0) throw new Error(`--port takes a number, not ${values.port}`);
@@ -25,7 +27,7 @@ const bin = (name: string) => path.join(root, "node_modules/.bin", name);
 run(bin("vite"), ["build", "web", "--outDir", "../dist", "--emptyOutDir", "--logLevel", "warn"]);
 run("node", ["--import", "tsx", "scripts/write-seed.ts", ...(values.scenario ? ["--scenario", values.scenario] : [])]);
 
-const vars = { DEV_USER: "dev@localhost", SEED: "1", DATA_FIXTURES: "1", LEVERS: "1" };
+const vars: Record<string, string> = values["fake-google"] ? { DEV_USER: "dev@localhost", SEED: "1", FAKE_GOOGLE: "1", LEVERS: "1" } : { DEV_USER: "dev@localhost", SEED: "1", DATA_FIXTURES: "1", LEVERS: "1" };
 const wrangler = spawn(
   bin("wrangler"),
   [

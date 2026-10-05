@@ -52,4 +52,6 @@ People sign in with Google, and only addresses in `ALLOWED_EMAILS` get in. Commo
 2. In the repository's settings, set the variables `GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` (addresses separated by commas), and the secrets `GOOGLE_CLIENT_SECRET` and `SESSION_SECRET` (any long random string, such as the output of `openssl rand -base64 32`). The next deploy sends them to the Worker.
 3. In the app, run "Connect Google calendar and contacts" (⌘⇧P).
 
+The calendar syncs every 10 minutes and whenever it's shown, one sync token per calendar. Edits go to Google straight away; one Google can't take yet waits, and the Data sources view says why. When Google ends the grant, the status bar and the calendar say "Reconnect Google Calendar", one click goes to Google and back to where you were, and what waited goes out then.
+
 Previews and `npm run dev` use recorded sample data (`worker/src/fixtures/`) instead of Google, and open signed in as a dev user.

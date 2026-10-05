@@ -13,6 +13,7 @@ interface Assets {
 export interface LeversWorkspace {
   scenario(): Promise<SeededScenario | null> | SeededScenario | null;
   reset(seed: Seed, pinned: boolean): Promise<void> | void;
+  fakeGoogle(change: { revoked: boolean }): Promise<{ revoked: boolean } | null>;
 }
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -37,6 +38,12 @@ export async function leversApi(req: Request, url: URL, assets: Assets, workspac
     // Reset to a scenario by name, and it stays; reset to the deploy's own seed, and later deploys refresh it.
     await workspace.reset(seed, !!scenario);
     return json({ scenario: await workspace.scenario() });
+  }
+  if (route === "POST /api/levers/google") {
+    // A Worker with the fake Google (FAKE_GOOGLE): end its grant, or give it again as reconnecting does.
+    const { revoked } = ((await req.json().catch(() => ({}))) ?? {}) as { revoked?: unknown };
+    const answer = await workspace.fakeGoogle({ revoked: revoked === true });
+    return answer ? json(answer) : json({ error: "This Worker has no fake Google (FAKE_GOOGLE)" }, 404);
   }
   return null;
 }

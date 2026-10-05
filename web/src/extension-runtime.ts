@@ -68,6 +68,7 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined)
   const write = async <T>(run: () => Promise<T>) => (await check({ kind: "data:calendar:write" }), run());
   return {
     status: api.sources,
+    sync: (force) => read("data:calendar:read", () => api.sync(force)),
     calendar: {
       calendars: () => read("data:calendar:read", api.calendars),
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
@@ -796,6 +797,8 @@ export class ExtensionRuntime {
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
             return data.status();
+          case "data.sync":
+            return data.sync(a === "force");
           case "data.calendars":
             return data.calendar.calendars();
           case "data.events":

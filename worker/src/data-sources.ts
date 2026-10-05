@@ -4,9 +4,11 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
-import { findTarget, newEventId, occurrences, parseTiming, planDelete, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
+import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
+import { Conflict, ReconnectNeeded, type Adapter, type SyncIO } from "./adapter.ts";
+import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
 
@@ -23,6 +25,8 @@ export interface SourceState {
   events: number;
   /** Edits made here that the source hasn't taken yet. */
   pending: number;
+  /** The last time an edit here and one in the source changed the same thing, and which side won. */
+  conflict?: string;
 }
 
 export interface SourceStatus {
@@ -37,23 +41,6 @@ export interface SourceSettings {
   /** Previews and local development: the Sample calendar and recorded contacts stand in for Google. */
   fixtures: boolean;
   google: GoogleConfig | null;
-}
-
-/** An adapter couldn't push or sync because the source wants you to sign in again. */
-export class ReconnectNeeded extends Error {}
-
-/** What a source says about one pushed edit. */
-export interface Pushed {
-  /** The source's version tag for the record, for its next edit. */
-  etag?: string;
-}
-
-/** How a source's records reach it and come back. Built-in adapters run in the Worker; this is the seam for others. */
-export interface Adapter {
-  source: SourceId;
-  title: string;
-  /** Send one record's change to the source. Throws ReconnectNeeded, or any error to keep it queued. */
-  push(op: RecordOp, etag: string | null): Promise<Pushed>;
 }
 
 /** The Sample calendar: nothing behind it, so every push is taken as it is. */
@@ -84,10 +71,17 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** Who a source's sync is, as the author of what it brings in. */
+const SYNC_AUTHOR: Record<SourceId, Author> = { google: { kind: "sync", source: "google-calendar" }, sample: { kind: "sync", source: "sample-calendar" } };
+
 interface StateRow {
   lastSync?: number;
   error?: string;
   reconnect?: boolean;
+  /** The last time an edit here and one in the source changed the same thing, in words. */
+  conflict?: string;
+  /** Sync tokens, by calendar. */
+  tokens?: Record<string, string>;
 }
 
 export class DataSources {
@@ -102,10 +96,12 @@ export class DataSources {
     private now: () => number = Date.now,
     adapters: Adapter[] = [],
   ) {
-    db.run("CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, path TEXT NOT NULL, op TEXT NOT NULL, author TEXT NOT NULL, time INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT)");
+    // `base` is the record as it was before the edit, for merging if the source changed it meanwhile.
+    db.run("CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, path TEXT NOT NULL, op TEXT NOT NULL, author TEXT NOT NULL, time INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, base TEXT)");
     db.run("CREATE TABLE IF NOT EXISTS etags(path TEXT PRIMARY KEY, etag TEXT NOT NULL)");
     db.run("CREATE TABLE IF NOT EXISTS source_state(source TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    this.adapters = Object.fromEntries([sample, ...adapters].map((a) => [a.source, a]));
+    const google = settings.google ? [new GoogleCalendar(settings.google, () => this.connectedToken(), fetcher, now)] : [];
+    this.adapters = Object.fromEntries([sample, ...google, ...adapters].map((a) => [a.source, a]));
   }
 
   /** The calendar source in use: the Sample calendar in Previews and local development, else Google. */
@@ -135,7 +131,7 @@ export class DataSources {
 
   status(email: string): SourceStatus {
     const googleAvailable = !!this.settings.google;
-    const using = this.settings.fixtures ? "fixtures" : this.token(email) ? "google" : "none";
+    const using = this.settings.fixtures ? "fixtures" : this.token(email) || this.connectedToken() ? "google" : "none";
     return { using, googleAvailable, sources: [this.sourceState(this.calendarSource, using !== "none")] };
   }
 
@@ -151,6 +147,7 @@ export class DataSources {
       state: !connected ? "not-connected" : st.reconnect ? "needs-reconnect" : st.error ? "error" : "ok",
       lastSync: st.lastSync ?? null,
       ...(st.error ? { error: st.error } : {}),
+      ...(st.conflict ? { conflict: st.conflict } : {}),
       calendars: count("calendar"),
       events: count("event"),
       pending,
@@ -166,6 +163,11 @@ export class DataSources {
     const next: StateRow = { ...this.state(source), ...change };
     for (const k of Object.keys(next) as Array<keyof StateRow>) if (next[k] === undefined) delete next[k];
     this.db.run("INSERT INTO source_state(source, value) VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET value = excluded.value", source, JSON.stringify(next));
+  }
+
+  /** The refresh token sync uses: the workspace's latest Google connection. */
+  private connectedToken(): string | null {
+    return this.db.all<{ refresh_token: string }>("SELECT refresh_token FROM connections WHERE provider = 'google' ORDER BY time DESC LIMIT 1")[0]?.refresh_token ?? null;
   }
 
   private token(email: string): string | null {
@@ -190,8 +192,8 @@ export class DataSources {
   }
 
   /** The calendars of the source in use, the primary one first. */
-  calendars(): Calendar[] {
-    return this.readAll(this.records.all(this.calendarSource, "calendar"), readCalendar).sort((a, b) => Number(!!b.primary) - Number(!!a.primary) || a.title.localeCompare(b.title));
+  calendars(source: SourceId = this.calendarSource): Calendar[] {
+    return this.readAll(this.records.all(source, "calendar"), readCalendar).sort((a, b) => Number(!!b.primary) - Number(!!a.primary) || a.title.localeCompare(b.title));
   }
 
   /** Every time events happen between two instants, seen from a time zone, in the calendars named (all, by default). */
@@ -265,19 +267,22 @@ export class DataSources {
 
   /** Write ops as `author`'s changes and queue them for the source, in one transaction; then push what's queued. */
   private async apply(source: SourceId, ops: RecordOp[], author: Author, address: string, undoes?: Revision): Promise<EditResult> {
-    const writes: Array<{ op: RecordOp; write: Write }> = [];
+    const writes: Array<{ op: RecordOp; write: Write; before: string | null }> = [];
     for (const op of ops) {
       const path = recordPath({ source, kind: "event", collection: op.event.calendar, id: op.event.id });
-      const base = this.files.read(path)?.revision ?? 0;
+      const current = this.files.read(path);
+      const base = current?.revision ?? 0;
       // Deleting a record that was never written (an occurrence nobody changed) has nothing to do.
       if (op.op === "delete" && !base) continue;
       const write: Write = op.op === "put" ? { path, text: recordText(op.event), base, author } : { path, text: "", base, author, delete: true };
-      writes.push({ op, write: undoes !== undefined && ops.length === 1 ? { ...write, undoes } : write });
+      writes.push({ op, write: undoes !== undefined && ops.length === 1 ? { ...write, undoes } : write, before: current?.text ?? null });
     }
     this.files.writeAll(
       writes.map((w) => w.write),
       () => {
-        for (const { op, write } of writes) this.db.run("INSERT INTO outbox(source, path, op, author, time) VALUES (?, ?, ?, ?, ?)", source, write.path, JSON.stringify(op), authorKey(author), this.now());
+        for (const { op, write, before } of writes) {
+          this.db.run("INSERT INTO outbox(source, path, op, author, time, base) VALUES (?, ?, ?, ?, ?, ?)", source, write.path, JSON.stringify(op), authorKey(author), this.now(), before);
+        }
       },
     );
     const error = await this.flush(source);
@@ -299,26 +304,141 @@ export class DataSources {
   async flush(source: SourceId): Promise<string | null> {
     const adapter = this.adapters[source];
     for (;;) {
-      const [row] = this.db.all<{ seq: number; path: string; op: string }>("SELECT seq, path, op FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
+      const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
       const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
       try {
-        const pushed = await adapter.push(op, etag);
+        const pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
           if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
-          else if (pushed.etag) this.db.run("INSERT INTO etags(path, etag) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET etag = excluded.etag", row.path, pushed.etag);
+          else if (pushed.etag) this.setEtag(row.path, pushed.etag);
         });
         this.setState(source, { error: undefined });
       } catch (err) {
+        if (err instanceof Conflict && row.attempts < 3) {
+          this.resolve(source, row, op, err);
+          continue;
+        }
         const message = (err as Error).message;
         this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ? WHERE seq = ?", message, row.seq);
         this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: message });
         return message;
       }
     }
+  }
+
+  /**
+   * The source changed a record while our edit of it waited. Merge the two, field by field from what
+   * the edit started from (the source's side wins where both changed one thing), write the merge as
+   * the sync's change, and send it again against the source's version.
+   */
+  private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
+    const bookkeeping = () => {
+      this.db.run("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", row.seq);
+      if (conflict.etag) this.setEtag(row.path, conflict.etag);
+      else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
+    };
+    if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
+    const { event, lost } = mergeEvents(row.base ? readEvent(row.base) : null, op.event, conflict.remote);
+    const current = this.files.read(row.path as FilePath);
+    this.files.writeAll([{ path: row.path as FilePath, text: recordText(event), base: current?.revision ?? 0, author: SYNC_AUTHOR[source] }], () => {
+      bookkeeping();
+      this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify({ ...op, event, created: false }), recordText(conflict.remote!), row.seq);
+    });
+    if (lost.length) this.setState(source, { conflict: `${event.title || "An event"}: Google's ${lost.join(" and ")} replaced yours, which is still in its history` });
+  }
+
+  private setEtag(path: string, etag: string) {
+    this.db.run("INSERT INTO etags(path, etag) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET etag = excluded.etag", path, etag);
+  }
+
+  /**
+   * Bring the calendar source's own changes in, after sending what's waiting. Each record it changes
+   * is a change by its sync. Safe to run again at any point: it picks up from its sync tokens.
+   */
+  async sync(): Promise<SourceState> {
+    const source = this.calendarSource;
+    const adapter = this.adapters[source];
+    if (!adapter?.sync || !this.syncs) return this.sourceState(source, this.connected(source));
+    await this.flush(source);
+    try {
+      await adapter.sync(this.syncIO(source));
+      this.setState(source, { lastSync: this.now(), error: undefined, reconnect: false });
+    } catch (err) {
+      this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: (err as Error).message });
+    }
+    return this.sourceState(source, this.connected(source));
+  }
+
+  private connected(source: SourceId): boolean {
+    return source !== "google" || !!this.connectedToken();
+  }
+
+  /** Whether the calendar source has a sync to run: one with something behind it, connected. */
+  get syncs(): boolean {
+    const source = this.calendarSource;
+    return !!this.adapters[source]?.sync && (source !== "google" || !!this.connectedToken());
+  }
+
+  /** Whether the calendar source should sync now: it syncs, and hasn't within `ms`. */
+  due(ms: number): boolean {
+    if (!this.syncs) return false;
+    const st = this.state(this.calendarSource);
+    return !st.reconnect && (st.lastSync ?? 0) + ms <= this.now();
+  }
+
+  private syncIO(source: SourceId): SyncIO {
+    const author = SYNC_AUTHOR[source];
+    const pending = (path: string) => this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+    const write = (path: FilePath, text: string | null) => {
+      const current = this.files.read(path);
+      if (text === null) {
+        if (current) this.files.write({ path, text: "", base: current.revision, author, delete: true });
+        this.db.run("DELETE FROM etags WHERE path = ?", path);
+      } else if (current?.text !== text) this.files.write({ path, text, base: current?.revision ?? 0, author });
+    };
+    const eventPath = (calendar: string, id: string) => recordPath({ source, kind: "event", collection: calendar, id });
+    const dropEvent = (path: FilePath) => {
+      if (!pending(path)) write(path, null);
+    };
+    return {
+      calendars: (list) => {
+        const keep = new Set(list.map((c) => c.id));
+        for (const c of list) write(recordPath({ source, kind: "calendar", collection: "", id: c.id }), recordText(c));
+        for (const path of this.records.all(source, "calendar")) {
+          const id = keyOfPath(path)?.id;
+          if (!id || keep.has(id)) continue;
+          for (const p of this.records.inCalendar(source, id)) dropEvent(p);
+          write(path, null);
+          this.setToken(source, id, null);
+        }
+      },
+      token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
+      setToken: (calendar, token) => this.setToken(source, calendar, token),
+      put: (event, etag) => {
+        const path = eventPath(event.calendar, event.id);
+        if (pending(path)) return;
+        write(path, recordText(event));
+        if (etag) this.setEtag(path, etag);
+      },
+      remove: (calendar, id) => {
+        dropEvent(eventPath(calendar, id));
+        for (const p of this.records.family(source, calendar, [id])) if (keyOfPath(p)?.id !== id) dropEvent(p);
+      },
+      prune: (calendar, keep) => {
+        for (const p of this.records.inCalendar(source, calendar)) if (!keep.has(keyOfPath(p)?.id ?? "")) dropEvent(p);
+      },
+    };
+  }
+
+  private setToken(source: SourceId, calendar: string, token: string | null) {
+    const tokens = { ...this.state(source).tokens };
+    if (token) tokens[calendar] = token;
+    else delete tokens[calendar];
+    this.setState(source, { tokens });
   }
 
   /** A source's queued edits, oldest first: what's waiting, and why. */
@@ -347,11 +467,11 @@ export class DataSources {
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
-export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = []): { files: Files; sources: DataSources } {
+export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = [], now: () => number = Date.now): { files: Files; sources: DataSources } {
   const records = new Records(db);
   const files = new Files(db, Date.now, announce, (path, text) => records.observe(path, text));
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  return { files, sources: new DataSources(db, files, records, settings, fetcher, Date.now, adapters) };
+  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters) };
 }
 
 /** A record file's calendar, or null if its text isn't one. */
@@ -366,6 +486,7 @@ export function readCalendar(text: string): Calendar | null {
       ...(c.primary === true ? { primary: true } : {}),
       writable: c.writable !== false,
       ...(typeof c.timeZone === "string" ? { timeZone: c.timeZone } : {}),
+      ...(c.selected === false ? { selected: false as const } : {}),
     };
   } catch {
     return null;

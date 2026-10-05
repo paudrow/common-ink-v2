@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ReconnectNeeded, type Adapter } from "../worker/src/data-sources.ts";
+import { ReconnectNeeded, type Adapter } from "../worker/src/adapter.ts";
 import { authorKey, type Author, type FilePath } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { addressOf, keyOfPath, parseAddress, recordPath, recordText } from "../worker/src/records.ts";
