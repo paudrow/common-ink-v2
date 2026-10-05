@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Page } from "playwright-core";
-import { harness, runCommand } from "./harness.ts";
+import { harness } from "./harness.ts";
 
 const h = harness();
 
@@ -32,17 +32,13 @@ test("a timer runs from its note, shows in the status bar, and keeps going acros
   await page.close();
 });
 
-test("Catalog embeds run sandboxed: a uPlot chart and a three.js scene, in a frame with Stop", async () => {
+test("Catalog embeds run sandboxed: a uPlot chart and a three.js scene, in a frame with Stop; one not installed offers to install, and draws at once", async () => {
   const page = await h.browser.newPage({ viewport: { width: 1200, height: 900 } });
   const problems: string[] = [];
   page.on("pageerror", (e) => problems.push(e.message));
   page.on("console", (m) => /Content Security Policy|Refused|Error creating WebGL|WebGL context lost/.test(m.text()) && problems.push(m.text()));
+  // The Preview comes with HTML app installed, for its demos; Pomodoro isn't.
   await page.goto(`${h.base}/?file=${encodeURIComponent("Embeds tour.md")}`);
-  await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show extensions");
-  await page.locator(".catalog-entry", { hasText: "HTML app" }).getByRole("button", { name: "Install" }).click();
-  await page.waitForFunction(() => [...document.querySelectorAll(".notice p")].some((p) => p.textContent?.includes("Installed HTML app")));
-  await page.reload();
   await page.waitForSelector(".cm-content");
   // It's at the end of the note: the editor draws only what's in view.
   await page.waitForFunction(() => {
@@ -52,6 +48,13 @@ test("Catalog embeds run sandboxed: a uPlot chart and a three.js scene, in a fra
   });
   const chart = page.frameLocator('.cm-embed[data-embed="html-app"] iframe');
   await chart.locator(".uplot canvas").waitFor();
+  // Pomodoro's block offers to install it, and draws once it's installed, with no reload.
+  const needs = page.locator(".cm-embed-needs", { hasText: "This needs Pomodoro from the Catalog" });
+  await needs.waitFor();
+  await needs.getByRole("button", { name: "Install" }).click();
+  await page.waitForSelector('.cm-embed[data-embed="pomodoro"] iframe.webview');
+  await page.frameLocator('.cm-embed[data-embed="pomodoro"] iframe').locator("#go").waitFor();
+  assert.equal(await page.locator(".cm-embed-needs").count(), 0);
   await page.goto(`${h.base}/?file=${encodeURIComponent("Three.js scene.md")}`);
   await page.waitForSelector('.cm-embed[data-embed="html-app"] iframe.webview');
   const scene = page.frameLocator('.cm-embed[data-embed="html-app"] iframe');

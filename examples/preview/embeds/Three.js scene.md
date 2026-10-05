@@ -1,6 +1,6 @@
 # Three.js scene
 
-An interactive scene in a note, written the way an agent would write one: an `html-app` block with a three.js scene. Drag to orbit, scroll to zoom. It needs HTML app, from the Catalog at the bottom of the Extensions view.
+An interactive scene in a note, written the way an agent would write one: an `html-app` block with a three.js scene. Drag to orbit, scroll to zoom. It's drawn by HTML app, an extension from the Catalog, which this Preview comes with.
 
 ```html-app height=420 title="Orbiting shapes"
 <style>

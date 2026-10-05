@@ -2,7 +2,7 @@
   "pr": 17,
   "title": "Extensions",
   "steps": [
-    "⌘⇧P, Show extensions. Every extension is listed from its manifest (extension.json): the built-ins (Open by name, Command list, Vim, Live preview, History, Todos, Calendar, Contacts, Uploads) and, once you install it from the Catalog at the bottom, Word count, a workspace extension. Each shows its version, what it adds (commands, keybindings, menus, views, settings) and what it may ask for, with why.",
+    "⌘⇧P, Show extensions. Every extension is listed from its manifest (extension.json): the built-ins (Open by name, Command list, Vim, Live preview, History, Todos, Calendar, Contacts, Uploads) and, once you install it from the Catalog at the bottom, Word count, a workspace extension. Click one for its details: its version, what it adds (commands, keybindings, menus, views, settings) and what it may ask for, with why.",
     "History says \"On, starts when used\": its code hasn't run yet. ⌘⇧P lists Show history of this note all the same. Run it: History starts, the view shows, and it now says On.",
     "Open settings (⌘,): History, Todos and Calendar each have a section of their own. Set Calendar's Days to 3 and Show calendar: three days. Turn off Todos' Chips: due dates and repeats show as text at once.",
     "In the Extensions view, press Settings on History: the settings editor opens at its section.",

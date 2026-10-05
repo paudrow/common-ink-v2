@@ -13,14 +13,20 @@
       "name": "Pomodoro",
       "version": "1.0.0",
       "description": "Work in focused rounds with breaks between: ```pomodoro work=25m break=5m```. It shows in the status bar and notifies at each change. It runs sandboxed.",
-      "path": "pomodoro/"
+      "path": "pomodoro/",
+      "embeds": [
+        "pomodoro"
+      ]
     },
     {
       "id": "html-app",
       "name": "HTML app",
       "version": "1.0.0",
       "description": "Small apps in notes: an ```html-app block's HTML runs in a sandboxed frame, with three.js and uPlot to import by name. It can't reach the network or your notes.",
-      "path": "html-app/"
+      "path": "html-app/",
+      "embeds": [
+        "html-app"
+      ]
     }
   ]
 }

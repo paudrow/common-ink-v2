@@ -22,6 +22,8 @@
         document.close();
         size.disconnect();
         size.observe(document.documentElement);
+        // Its scripts (modules included) have run once the page loads: it's drawn, or about to be.
+        addEventListener("load", () => port.postMessage({ type: "loaded" }), { once: true });
       } else if (m.type === "message") for (const fn of listeners) fn(m.data);
       else if (m.type === "ping") port.postMessage({ type: "pong", id: m.id });
     };

@@ -84,7 +84,7 @@ test("a sandboxed extension can't read the app's cookies, storage, page or notes
   await page.close();
 });
 
-test("Word count installs from the catalog; its sandboxed view asks before reading a note, and Don't allow is kept", async () => {
+test("Word count installs from the catalog and runs at once; its sandboxed view asks before reading a note, and Don't allow is kept", async () => {
   const page = await h.browser.newPage();
   await page.goto(`${h.base}/?file=Welcome.md`);
   await page.waitForSelector(".cm-content");
@@ -95,11 +95,11 @@ test("Word count installs from the catalog; its sandboxed view asks before readi
     [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js"],
     "its files are in the workspace",
   );
-  await page.reload();
-  await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show extensions");
-  await page.waitForSelector(".catalog-entry");
-  assert.equal(await page.locator(".catalog-entry", { hasText: "Word count" }).locator(".extension-state").textContent(), "Installed");
+  // Installed, and listed so, with no reload: a sandboxed extension goes in at once.
+  await page.waitForSelector('.extension-section .extension-row[data-extension="word-count"]');
+  assert.equal(await page.locator('.extension-row[data-extension="word-count"] .badge').last().textContent(), "Catalog");
+  assert.equal(await page.locator(".catalog-entry", { hasText: "Word count" }).count(), 0, "it's no longer offered");
+  assert.equal(await page.locator(".banner", { hasText: "apply after reload" }).count(), 0);
   await runCommand(page, "Show extensions");
   await runCommand(page, "Show word count");
   await page.waitForSelector(".dialog");

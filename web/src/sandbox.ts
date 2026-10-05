@@ -137,6 +137,8 @@ export class Webview {
     onMessage: (message: unknown) => void,
     /** Its page's height, as it changes, for a frame that sizes to its content. */
     onHeight?: (height: number) => void,
+    /** Its page has loaded, scripts and all. */
+    onLoaded?: () => void,
   ) {
     this.frame.setAttribute("sandbox", "allow-scripts");
     this.frame.className = "webview";
@@ -162,6 +164,7 @@ export class Webview {
         const m = e.data as { type: string; data?: unknown; id?: number; height?: number };
         if (m.type === "message") onMessage(m.data);
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
+        if (m.type === "loaded") onLoaded?.();
         if (m.type === "pong" && m.id === alive) alive += 0.5;
       };
       return port;

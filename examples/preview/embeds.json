@@ -1,14 +1,18 @@
 {
   "pr": 22,
   "title": "Embeds: timers, background noise, Pomodoro and HTML apps",
+  "install": [
+    "html-app"
+  ],
   "steps": [
+    "Open Three.js scene: an interactive three.js scene (drag to orbit, scroll to zoom) in a sandboxed frame, written the way an agent would write it. It says Loading… until it's running, and Stop (top right) stops it; Run starts it again. The Preview comes with HTML app, the Catalog extension that draws it; the uPlot chart in Embeds tour is one too.",
     "Open Embeds tour. Each fenced block whose language an extension knows is drawn in place: a timer, a stopwatch, an alarm and background noise. Put the cursor in one (click its edge, or move onto it with j and k) and its markdown shows.",
     "Start the timer. The status bar shows it counting down (click it to come back to its note). Open another note, or reload: it's still going. When it's done, it rings and notifies.",
     "Turn the alarm on. It rings and notifies at its time each day while Common Ink is open; the status bar shows it while no timer runs.",
     "Play the background noise. A mini player appears in the corner, with pause, volume and stop; the status bar names what's playing, and the keyboard's media keys pause and play it. It's made in the browser: nothing is fetched.",
     "History shows the timers' state as changes by the Timers extension, in `.common-ink/extensions/timers/state.json`.",
-    "At the bottom of the Extensions view, install Pomodoro and HTML app from the Catalog, and reload. The Pomodoro embed runs sandboxed: start it and the status bar shows its phase; the first time it changes phase, it asks to show notifications.",
-    "The HTML app block draws a uPlot chart in a sandboxed frame, with a quiet border and Stop. Open Three.js scene: an interactive scene (drag to orbit, scroll to zoom), written the way an agent would write it. Stop stops it; Run starts it again.",
+    "In Embeds tour, the Pomodoro block says \"This needs Pomodoro from the Catalog · Install\". Install: it draws at once, with no reload, and runs sandboxed. Start it and the status bar shows its phase; the first time it changes phase, it asks to show notifications.",
+    "⌘⇧P, Show extensions: a row each, under Installed, Built-in and Catalog, with a search box. Click one for its details (in a tab): what it adds, what it may ask for, Source and Customize. Installing from the Catalog keeps your place in the list, and a sandboxed extension starts at once.",
     "Agents: the list_embeds tool lists every embed type with its arguments and an example, and docs/embeds.md is the guide."
   ]
 }

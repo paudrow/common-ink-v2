@@ -65,7 +65,7 @@ test("without Workbench, each window shows its tab on show, and commands, settin
   await page.waitForSelector(".settings-editor");
   await runCommand(page, "Show extensions");
   await page.waitForSelector("#panel .extensions-view");
-  assert.match((await page.locator(".extension", { hasText: "Workbench" }).textContent())!, /Off/);
+  assert.equal(await page.locator('.extension-row[data-extension="workbench"] input[type=checkbox]').isChecked(), false, "it's off");
   // Its commands aren't there, and saying so is all that happens.
   await runCommand(page, "Split right");
   assert.equal(await windows(page), 1);
@@ -84,7 +84,11 @@ test("a Workbench that throws while drawing leaves the plain windows, and says i
   assert.equal(await page.locator(".tabs").count(), 0);
   await runCommand(page, "Show extensions");
   await page.waitForSelector("#panel .extensions-view");
-  assert.match((await page.locator(".extension", { hasText: "Workbench" }).textContent())!, /broken tab bar/);
+  assert.match((await page.locator('.extension-row[data-extension="workbench"]').textContent())!, /Failed|Error/);
+  // Its details say why.
+  await page.locator('.extension-row[data-extension="workbench"] .extension-open').click();
+  await page.waitForSelector(".extension-details .extension-error");
+  assert.match((await page.locator(".extension-details .extension-error").textContent())!, /broken tab bar/);
   await runCommand(page, "Open note…");
   await page.waitForSelector("#command-bar:not([hidden])");
   await page.close();

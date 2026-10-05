@@ -139,7 +139,7 @@ test("another catalog's index is read through the safe fetch, and only its compl
         return extensionApi(new Request(url), url, you.email, you, s);
       };
       assert.deepEqual(await (await read("https://friends.example/catalog/index.json"))!.json(), {
-        entries: [{ id: "weather", name: "Weather", version: "2.0.0", description: "Forecasts.", folder: "https://friends.example/catalog/weather/", catalog: "Friends", firstParty: false }],
+        entries: [{ id: "weather", name: "Weather", version: "2.0.0", description: "Forecasts.", folder: "https://friends.example/catalog/weather/", catalog: "Friends", firstParty: false, embeds: [] }],
       });
       assert.equal((await read("https://friends.example/missing.json"))!.status, 400);
       assert.deepEqual(await (await read("http://localhost:8787/catalog/index.json"))!.json(), { error: "Local names can't be fetched" });

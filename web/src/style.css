@@ -1103,11 +1103,88 @@ button.status-item:hover {
   border-bottom: 1px solid var(--line);
 }
 
-/* The Catalog, below the installed extensions. */
-.extensions-view .catalog h2 {
-  margin: 1.5rem 0 0.25rem;
-  font-size: 0.95rem;
+/* The list: a search box, then a row each, in sections (Installed, Built-in, Catalog). */
+.extensions-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.extensions-search {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+}
+
+.extension-section h2 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.75rem;
   font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.extension-section[hidden],
+.extension-row[hidden] {
+  display: none;
+}
+
+.extension-about {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.extension-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.extension-row input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.extensions-view .extension-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--ink);
+}
+
+.extension-open .extension-desc {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+}
+
+.extension-row.state-off .extension-name,
+.extension-row.state-failed .extension-name {
+  color: var(--muted);
+}
+
+.extension-row.state-failed .extension-state,
+.extension-row.has-error .extension-state {
+  color: #c2410c;
 }
 
 .extension-head {

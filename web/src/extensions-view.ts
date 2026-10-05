@@ -38,10 +38,14 @@ export interface ExtensionsViewDeps {
   /** A command's title, for keybindings an extension adds to other extensions' or the app's commands. */
   commandTitle(command: string): string | undefined;
   installFromCatalog(entry: CatalogEntry): Promise<void>;
+  /** Open an extension's details, in a tab. */
+  openDetails(record: ExtensionRecord): void;
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string | false | null | undefined)[]): T {
-  const node = Object.assign(document.createElement(tag), props) as T;
+  const { dataset, ...rest } = props as { dataset?: Record<string, string> };
+  const node = Object.assign(document.createElement(tag), rest) as T;
+  Object.assign(node.dataset, dataset ?? {});
   node.append(...(children.filter((c) => c !== false && c !== null && c !== undefined) as (Node | string)[]));
   return node;
 }
@@ -99,43 +103,142 @@ export function permissionKeys(m: ExtensionManifest): Array<{ key: string; why: 
   });
 }
 
+/** The element that scrolls a view: its own box, or the panel or tab around it. */
+const scroller = (root: HTMLElement) => (root.scrollHeight > root.clientHeight ? root : (root.parentElement ?? root));
+
+/** Draw again without losing your place: the scroll position and the focused control come back. */
+function keepingPlace(root: HTMLElement, draw: () => void) {
+  const box = scroller(root);
+  const top = box.scrollTop;
+  const active = document.activeElement as HTMLElement | null;
+  const focusId = active && root.contains(active) ? active.dataset.focus : undefined;
+  draw();
+  scroller(root).scrollTop = top;
+  const back = focusId && root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focusId)}"]`);
+  if (back) back.focus({ preventScroll: true });
+}
+
+/**
+ * The Extensions view, as VS Code lists them: a row each, with its name, what it does, whether it's on,
+ * and where it's from, in sections (Installed, Built-in, Catalog), with a search box. A row opens the
+ * extension's details: what it adds and may ask for, and what you can do with it.
+ */
 export function extensionsView(deps: ExtensionsViewDeps) {
+  let query = "";
   const view = {
     id: "extensions",
     title: "Extensions",
     render(root: HTMLElement) {
-      const active = document.activeElement as HTMLElement | null;
-      const focusId = active && root.contains(active) ? active.dataset.focus : undefined;
-      const reload = deps.needsReload();
       root.classList.add("extensions-view");
-      root.replaceChildren(
-        deps.safe
-          ? el(
-              "p",
-              { className: "banner" },
-              "Safe mode: only built-in extensions are running. ",
-              focusable(el("button", { textContent: "Leave safe mode", onclick: () => deps.reload(false) }), "leave-safe"),
-            )
-          : "",
-        reload.size
-          ? el("p", { className: "banner" }, "Extension changes apply after reload. ", focusable(el("button", { textContent: "Reload", onclick: () => deps.reload() }), "reload"))
-          : "",
-        el(
-          "div",
-          { className: "extension-actions top" },
-          focusable(el("button", { textContent: "Install from URL…", onclick: () => void deps.install() }), "install"),
-          focusable(el("button", { textContent: "Activity", title: "What extensions have reached and asked for this session", onclick: () => deps.showActivity() }), "activity"),
-        ),
-        ...deps.records().map((r) => row(r, reload.has(r.id))),
-        catalogSection(),
-      );
-      const back = focusId && root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focusId)}"]`);
-      if (back) back.focus();
+      keepingPlace(root, () => draw(root));
     },
   };
 
-  function row(r: ExtensionRecord, reloadNeeded: boolean): HTMLElement {
-    const { id, name, description, version } = r.manifest;
+  function draw(root: HTMLElement) {
+    const reload = deps.needsReload();
+    const records = deps.records();
+    const catalog = deps.catalog();
+    const fromCatalog = new Set(catalog?.entries.map((e) => e.id) ?? []);
+    const search = focusable(el<HTMLInputElement>("input", { type: "search", className: "extensions-search", placeholder: "Search extensions", ariaLabel: "Search extensions", value: query }), "search");
+    search.addEventListener("input", () => {
+      query = search.value;
+      filter(root);
+    });
+    const installed = records.filter((r) => r.workspace && !r.builtIn);
+    const notInstalled = (catalog?.entries ?? []).filter((e) => !records.some((r) => r.id === e.id));
+    root.replaceChildren(
+      deps.safe
+        ? el("p", { className: "banner" }, "Safe mode: only built-in extensions are running. ", focusable(el("button", { textContent: "Leave safe mode", onclick: () => deps.reload(false) }), "leave-safe"))
+        : "",
+      reload.size ? el("p", { className: "banner" }, "Extension changes apply after reload. ", focusable(el("button", { textContent: "Reload", onclick: () => deps.reload() }), "reload")) : "",
+      el(
+        "div",
+        { className: "extensions-top" },
+        search,
+        focusable(el("button", { textContent: "Install from URL…", onclick: () => void deps.install() }), "install"),
+        focusable(el("button", { textContent: "Activity", title: "What extensions have reached and asked for this session", onclick: () => deps.showActivity() }), "activity"),
+      ),
+      section("Installed", installed.map((r) => row(r, reload.has(r.id), fromCatalog.has(r.id) ? "Catalog" : "Workspace"))),
+      section("Built-in", records.filter((r) => r.builtIn).map((r) => row(r, reload.has(r.id), originOf(r)))),
+      section(
+        "Catalog",
+        [
+          ...(!catalog ? [el("p", { className: "extension-desc", textContent: "Reading the catalog…" })] : []),
+          ...(catalog?.problems ?? []).map((p) => el("p", { className: "extension-error", role: "alert", textContent: p })),
+          ...notInstalled.map(catalogRow),
+        ],
+        "First-party extensions that aren't on by default. Installing one copies it into this workspace, where it runs sandboxed. Catalogs you add (extensions.catalogs) list other people's: they run sandboxed too, but you install them at your own risk.",
+      ),
+    );
+    filter(root);
+  }
+
+  /** Rows that match the search show; sections with none don't. */
+  function filter(root: HTMLElement) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    for (const r of root.querySelectorAll<HTMLElement>(".extension-row")) r.hidden = !words.every((w) => (r.dataset.search ?? "").includes(w));
+    for (const s of root.querySelectorAll<HTMLElement>(".extension-section")) s.hidden = !!words.length && !s.querySelector(".extension-row:not([hidden])");
+  }
+
+  function section(title: string, rows: HTMLElement[], about?: string): HTMLElement {
+    return el("section", { className: `extension-section ${title === "Catalog" ? "catalog" : ""}` }, el("h2", { textContent: title }), about ? el("p", { className: "extension-about", textContent: about }) : null, ...rows);
+  }
+
+  function row(r: ExtensionRecord, reloadNeeded: boolean, origin: string): HTMLElement {
+    const { id, name, description } = r.manifest;
+    const toggle = focusable(el<HTMLInputElement>("input", { type: "checkbox", checked: deps.isOn(id), ariaLabel: `${name} on`, title: deps.isOn(id) ? "On: turn it off" : "Off: turn it on" }), `on:${id}`);
+    toggle.disabled = deps.safe && !r.builtIn;
+    toggle.addEventListener("change", () => void deps.setOn(id, toggle.checked));
+    const open = focusable(
+      el("button", { className: "extension-open", title: `${name}: what it adds and may ask for`, onclick: () => deps.openDetails(r) }, el("span", { className: "extension-name", textContent: name }), el("span", { className: "extension-desc", textContent: description })),
+      `open:${id}`,
+    );
+    // Failed to start, or started and then threw: its details say what happened.
+    const state = r.state === "failed" ? "Failed" : r.error ? "Error" : r.state === "safe" ? "Not loaded" : "";
+    return el(
+      "div",
+      { className: `extension-row state-${r.state}${r.error ? " has-error" : ""}`, dataset: { search: `${name} ${id} ${description}`.toLowerCase(), extension: id } },
+      toggle,
+      open,
+      reloadNeeded && el("span", { className: "badge reload", textContent: "Reload needed" }),
+      state && el("span", { className: "extension-state", textContent: state }),
+      el("span", { className: "badge", textContent: origin }),
+    );
+  }
+
+  function catalogRow(entry: CatalogEntry): HTMLElement {
+    const install = focusable(el("button", { textContent: "Install", onclick: () => void deps.installFromCatalog(entry) }), `catalog:${entry.catalog}:${entry.id}`);
+    return el(
+      "div",
+      { className: "extension-row catalog-entry", dataset: { search: `${entry.name} ${entry.id} ${entry.description}`.toLowerCase(), extension: entry.id } },
+      el("span", { className: "extension-open static" }, el("span", { className: "extension-name", textContent: entry.name }), el("span", { className: "extension-desc", textContent: entry.description })),
+      install,
+      el("span", { className: "badge", textContent: entry.firstParty ? "Catalog" : `${entry.catalog} · at your own risk` }),
+    );
+  }
+
+  return view;
+}
+
+/** One extension's details: what it is, what it adds and may ask for (with your answers), what went wrong, and what you can do with it. */
+export function extensionDetailsView(id: string, deps: ExtensionsViewDeps) {
+  const record = () => deps.records().find((r) => r.id === id);
+  const view = {
+    id: `extension:${id}`,
+    get title() {
+      return record()?.manifest.name ?? id;
+    },
+    render(root: HTMLElement) {
+      root.classList.add("extensions-view", "extension-details");
+      keepingPlace(root, () => {
+        const r = record();
+        root.replaceChildren(r ? details(r, deps.needsReload().has(r.id)) : el("p", { className: "extension-desc", textContent: `There's no extension "${id}" any more.` }));
+      });
+    },
+  };
+
+  function details(r: ExtensionRecord, reloadNeeded: boolean): HTMLElement {
+    const { name, description, version } = r.manifest;
     const toggle = focusable(el<HTMLInputElement>("input", { type: "checkbox", checked: deps.isOn(id), ariaLabel: `${name} on` }), `on:${id}`);
     toggle.disabled = deps.safe && !r.builtIn;
     toggle.addEventListener("change", () => void deps.setOn(id, toggle.checked));
@@ -172,6 +275,15 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         reloadNeeded && el("span", { className: "badge reload", textContent: "Reload needed" }),
       ),
       description && el("p", { className: "extension-desc", textContent: description }),
+      el("div", { className: "extension-actions" }, ...actions),
+      r.error &&
+        el(
+          "p",
+          { className: "extension-error", role: "alert" },
+          r.error,
+          " ",
+          !deps.safe && r.workspace ? focusable(el("button", { textContent: "Open in safe mode", onclick: () => deps.reload(true) }), `safe:${id}`) : null,
+        ),
       adds.length ? el("dl", { className: "extension-adds" }, ...adds.flatMap(([label, text]) => [el("dt", { textContent: label }), el("dd", { textContent: text })])) : null,
       asks.length
         ? el(
@@ -181,54 +293,6 @@ export function extensionsView(deps: ExtensionsViewDeps) {
             ...asks.flatMap(({ key, why }) => [el("dt", { textContent: key }), el("dd", {}, why, " ", answerPicker(r, key, builtIn))]),
           )
         : null,
-      r.error &&
-        el(
-          "p",
-          { className: "extension-error", role: "alert" },
-          r.error,
-          " ",
-          !deps.safe && r.workspace ? focusable(el("button", { textContent: "Open in safe mode", onclick: () => deps.reload(true) }), `safe:${id}`) : null,
-        ),
-      el("div", { className: "extension-actions" }, ...actions),
-    );
-  }
-
-  /** Extensions the catalogs list: the app's own first-party ones that aren't on by default, then any others you've added. */
-  function catalogSection(): HTMLElement {
-    const catalog = deps.catalog();
-    const installed = new Map(deps.records().map((r) => [r.id, r]));
-    return el(
-      "section",
-      { className: "catalog" },
-      el("h2", { textContent: "Catalog" }),
-      el(
-        "p",
-        { className: "extension-desc" },
-        "Extensions made with Common Ink that aren't on by default. Installing one copies its files into this workspace, where it runs sandboxed. Catalogs you add (the extensions.catalogs setting) list other people's extensions: they run sandboxed too, but you install them at your own risk.",
-      ),
-      !catalog ? el("p", { className: "extension-desc", textContent: "Reading the catalog…" }) : null,
-      ...(catalog?.problems ?? []).map((p) => el("p", { className: "extension-error", role: "alert", textContent: p })),
-      ...(catalog?.entries ?? []).map((entry) => {
-        const record = installed.get(entry.id);
-        const action = !record
-          ? focusable(el("button", { textContent: "Install", onclick: () => void deps.installFromCatalog(entry) }), `catalog:${entry.catalog}:${entry.id}`)
-          : !deps.isOn(entry.id)
-            ? focusable(el("button", { textContent: "Turn on", onclick: () => void deps.setOn(entry.id, true) }), `catalog:${entry.catalog}:${entry.id}`)
-            : el("span", { className: "extension-state", textContent: "Installed" });
-        return el(
-          "div",
-          { className: "extension catalog-entry" },
-          el(
-            "div",
-            { className: "extension-head" },
-            el("span", { className: "extension-name", textContent: entry.name }),
-            el("code", { className: "extension-id", textContent: entry.version ? `${entry.id} ${entry.version}` : entry.id }),
-            el("span", { className: "badge", textContent: entry.firstParty ? entry.catalog : `${entry.catalog} · at your own risk` }),
-          ),
-          entry.description && el("p", { className: "extension-desc", textContent: entry.description }),
-          el("div", { className: "extension-actions" }, action),
-        );
-      }),
     );
   }
 

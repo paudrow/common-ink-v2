@@ -24,15 +24,21 @@ export interface PullRequest {
 
 export const TRY_THIS_PR = "Try this PR.md";
 
-/** Every examples/preview/<slug>.json with the notes in examples/preview/<slug>/. Throws on a malformed file. */
-export function readSections(dir: string): Section[] {
+/**
+ * Every examples/preview/<slug>.json with the notes in examples/preview/<slug>/, and the files of the
+ * Catalog extensions it installs ("install": ["html-app"]) from `catalog`, so a demo that needs one
+ * works as the Preview opens. Throws on a malformed file.
+ */
+export function readSections(dir: string, catalog = path.join(dir, "../../web/public/catalog")): Section[] {
   return fs
     .readdirSync(dir)
     .filter((f) => f.endsWith(".json"))
     .map((file) => {
       const slug = file.slice(0, -".json".length);
       const data = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
-      const { pr, title, steps, edits = [] } = data ?? {};
+      const { pr, title, steps, edits = [], install = [] } = data ?? {};
+      if (!Array.isArray(install) || !install.every((id) => typeof id === "string" && fs.existsSync(path.join(catalog, id, "extension.json"))))
+        throw new Error(`${file}: "install" must be a list of the Catalog's extension ids`);
       const valid = Number.isInteger(pr) && typeof title === "string" && Array.isArray(steps) && steps.every((s) => typeof s === "string");
       if (!valid) throw new Error(`${file} must look like {"pr": 1, "title": "...", "steps": ["..."]}`);
       const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
@@ -46,7 +52,11 @@ export function readSections(dir: string): Section[] {
             .sort()
             .map((f) => ({ path: f, text: fs.readFileSync(path.join(notesDir, f), "utf8") }))
         : [];
-      return { slug, pr, title, steps, notes, edits };
+      const installed = (install as string[]).flatMap((id) => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(catalog, id, "extension.json"), "utf8")) as { main?: string; files?: string[] };
+        return ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+      });
+      return { slug, pr, title, steps, notes: [...notes, ...installed], edits };
     });
 }
 

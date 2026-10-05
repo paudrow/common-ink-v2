@@ -49,7 +49,7 @@ test("embeds are the fenced blocks of declared languages, each with a key that s
 
 test("an embed is drawn in place of its block until the cursor is in it", () => {
   const drawn: Embed[] = [];
-  const host = { languages: () => new Set(["timer"]), draw: (el: HTMLElement, e: Embed) => void (drawn.push(e), (el.textContent = `drawn ${e.args.duration}`)) };
+  const host = { languages: () => new Set(["timer"]), draw: (el: HTMLElement, e: Embed) => void (drawn.push(e), (el.textContent = `drawn ${e.args.duration}`)), needs: () => null };
   const view = new EditorView({
     state: createState(NOTE, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions: [embeds(host)], onUpdate: () => {}, onBlur: () => {} }),
     parent: document.body,

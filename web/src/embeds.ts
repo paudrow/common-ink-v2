@@ -2,10 +2,11 @@
 // in contributes.embeds, drawn by that extension where the block is, until the cursor is in it. The
 // info string's key=value words are the embed's arguments (```timer duration=25m label="Focus"), and
 // the body is whatever the embed takes (an html-app's HTML). Webviews (code an extension runs) sit in
-// a quiet frame with a Stop button.
+// a quiet frame with a Stop button. A block for an embed a Catalog extension draws, when it isn't
+// installed, stays code, with a line above it offering to install it.
 import { syntaxTree } from "@codemirror/language";
-import { Facet, type EditorState } from "@codemirror/state";
-import { EditorView, WidgetType } from "@codemirror/view";
+import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
+import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import type { FilePath } from "../../worker/src/files.ts";
 import { blockPreview, type BlockPreview } from "./live-preview.ts";
 
@@ -29,6 +30,8 @@ export interface Embed {
 export interface EmbedHost {
   languages(): ReadonlySet<string>;
   draw(el: HTMLElement, embed: Embed): void;
+  /** The Catalog extension that would draw a language no installed extension does, and installing it. */
+  needs(language: string): { name: string; install(): Promise<void> } | null;
 }
 
 /** The file an editor shows, for what's drawn in it to know. */
@@ -40,6 +43,12 @@ export function parseInfo(info: string): { language: string; args: Record<string
   const args: Record<string, string> = {};
   for (const m of info.slice(info.indexOf(language) + language.length).matchAll(/([\w-]+)=(?:"([^"]*)"|'([^']*)'|(\S+))/g)) args[m[1]] = m[2] ?? m[3] ?? m[4];
   return { language, args };
+}
+
+/** The language a fenced block names, if it names one. */
+function languageOf(state: EditorState, node: { node: { getChild(name: string): { from: number } | null } }): string | null {
+  const info = node.node.getChild("CodeInfo");
+  return info ? parseInfo(state.doc.sliceString(info.from, state.doc.lineAt(info.from).to)).language : null;
 }
 
 /** Every embed in a note, with where its block is. */
@@ -96,9 +105,67 @@ class EmbedWidget extends WidgetType {
   }
 }
 
+/** A line over a block an uninstalled Catalog extension would draw, offering to install it. */
+class NeedsWidget extends WidgetType {
+  constructor(
+    readonly language: string,
+    readonly name: string,
+    readonly host: EmbedHost,
+  ) {
+    super();
+  }
+  eq(other: NeedsWidget) {
+    return other.language === this.language && other.name === this.name;
+  }
+  toDOM() {
+    const bar = document.createElement("div");
+    bar.className = "cm-embed-needs";
+    const install = document.createElement("button");
+    install.type = "button";
+    install.textContent = "Install";
+    install.addEventListener("mousedown", (e) => e.preventDefault());
+    install.addEventListener("click", () => {
+      install.disabled = true;
+      install.textContent = "Installing…";
+      void this.host
+        .needs(this.language)
+        ?.install()
+        .catch(() => {
+          install.disabled = false;
+          install.textContent = "Install";
+        });
+    });
+    bar.append(`This needs ${this.name} from the Catalog · `, install);
+    return bar;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+function needBars(state: EditorState, host: EmbedHost): DecorationSet {
+  const bars: Range<Decoration>[] = [];
+  const drawn = host.languages();
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "FencedCode") return;
+      const language = languageOf(state, node);
+      const needs = language && !drawn.has(language) ? host.needs(language) : null;
+      if (needs) bars.push(Decoration.widget({ widget: new NeedsWidget(language!, needs.name, host), block: true, side: -1 }).range(state.doc.lineAt(node.from).from));
+      return false;
+    },
+  });
+  return Decoration.set(bars, true);
+}
+
 /** Embeds drawn in place of their blocks, in a note's editor. */
 export function embeds(host: EmbedHost) {
   return [
+    StateField.define<DecorationSet>({
+      create: (state) => needBars(state, host),
+      update: (bars, tr) => (tr.docChanged || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? needBars(tr.state, host) : bars),
+      provide: (field) => EditorView.decorations.from(field),
+    }),
     blockPreview((state): BlockPreview[] => findEmbeds(state, host.languages()).map(({ from, to, embed }) => ({ from, to, widget: new EmbedWidget(embed, host) }))),
     EditorView.theme({
       ".cm-embed": { padding: "0.25em 0", cursor: "text" },
@@ -120,6 +187,9 @@ export function embeds(host: EmbedHost) {
       ".cm-embed-frame:hover .cm-embed-stop, .cm-embed-stop:focus-visible": { opacity: "1" },
       ".cm-embed-stopped": { display: "flex", gap: "0.5em", alignItems: "center", padding: "0.5em 0.75em", color: "var(--muted)", fontSize: "0.85em" },
       ".cm-embed-missing": { color: "var(--muted)", fontSize: "0.85em" },
+      ".cm-embed-needs": { color: "var(--muted)", fontSize: "0.8em", fontFamily: "var(--prose)", padding: "0.2em 0" },
+      ".cm-embed-needs button": { font: "inherit", color: "var(--accent)", background: "none", border: "none", padding: "0", cursor: "pointer", textDecoration: "underline" },
+      ".cm-embed-loading": { position: "absolute", inset: "0", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: "0.8em", fontFamily: "var(--prose)", pointerEvents: "none" },
     }),
   ];
 }

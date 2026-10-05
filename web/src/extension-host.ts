@@ -152,6 +152,24 @@ export class ExtensionHost {
     this.records = records;
   }
 
+  /**
+   * A sandboxed workspace extension installed or turned on while the app runs: its record, ready to start
+   * on its activation events. Null for one that can't be put in live: a built-in's id, a broken manifest,
+   * or one that's on already.
+   */
+  async add(w: WorkspaceExtension, read: (path: FilePath) => Promise<WorkspaceFile>): Promise<ExtensionRecord | null> {
+    const existing = this.records.find((r) => r.id === w.id);
+    if (existing?.builtIn || (existing && existing.state !== "off")) return null;
+    const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
+    if (typeof manifest === "string") return null;
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest, workspace: w, state: "inactive" };
+    this.records = [...this.records.filter((r) => r.id !== w.id), record];
+    const main = manifest.main;
+    this.modules.set(w.id, async () => (await this.o.load(w, main)) as ExtensionModule);
+    this.activations.delete(w.id);
+    return record;
+  }
+
   /** The manifests of the extensions that are on: what they add is in effect, whether or not their code has started. */
   on(): ExtensionManifest[] {
     return this.records.filter((r) => r.state === "inactive" || r.state === "active").map((r) => r.manifest);

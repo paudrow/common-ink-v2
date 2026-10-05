@@ -24,7 +24,7 @@ Press Play: a mini player appears in the corner, and the keyboard's media keys p
 
 ## From the Catalog
 
-Install Pomodoro and HTML app from the Catalog at the bottom of the Extensions view, then reload. They run sandboxed.
+These come from the Catalog, and run sandboxed. This Preview comes with HTML app; the Pomodoro block below offers to install Pomodoro, and draws as soon as it's in, with no reload.
 
 ```pomodoro work=25m break=5m label="Writing"
 ```
