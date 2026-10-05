@@ -208,3 +208,12 @@ test("a saved layout is read back, and anything malformed is refused or cleaned"
   const noSizes = parseLayout({ root: { kind: "split", dir: "row", children: [{ kind: "group", id: "g1", tabs: [], active: 0 }, { kind: "group", id: "g2", tabs: [], active: 0 }] }, focus: "g2" });
   assert.deepEqual(noSizes && sizes(noSizes), [0.5, 0.5]);
 });
+
+test("sizes that add up to 1 but for a float's rounding are read back as written", async () => {
+  const { parseLayout } = await import("../web/src/layout.ts");
+  // 0.6 + 0.3 + 0.1 is 0.9999999999999999; divided by that, they'd change in their last digits.
+  const sizes = [0.6, 0.3, 0.1];
+  const written = { root: { kind: "split", dir: "row", sizes, children: [0, 1, 2].map((i) => ({ kind: "group", id: `g${i}`, tabs: [], active: 0 })) }, focused: "g0" };
+  const read = parseLayout(JSON.parse(JSON.stringify(written)))!;
+  assert.deepEqual(read.root.kind === "split" ? read.root.sizes : null, sizes);
+});
