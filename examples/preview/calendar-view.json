@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 37,
   "title": "The Calendar view: agenda, 3 days, week, month and year, with drag to make and move events",
   "steps": [
     "⌘P, Calendar (or ⌘⇧P, Open calendar): the week, in a tab. Click an empty half hour to make an event there; drag down a column to make one as long as the drag. Type a title and press Enter.",
