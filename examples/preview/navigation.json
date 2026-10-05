@@ -1,0 +1,13 @@
+{
+  "pr": 27,
+  "title": "Back and forward, app-wide",
+  "steps": [
+    "Open a few notes from the list on the left: Chores, then Shopping, then This week. Press the browser's Back button: Shopping, then Chores, each where the cursor was. Forward goes the other way. The mouse's side buttons and a trackpad swipe do the same.",
+    "⌘[ and ⌘] (Ctrl-[ and Ctrl-] elsewhere), or Go back and Go forward in ⌘⇧P, move through the same places, and the browser's Back and Forward stay in step with them.",
+    "Split the window (⌘\\), open a note on the right, then go back: focus returns to the left window and the note it showed. A window you've closed since: its notes open in the window you're in.",
+    "Open a note from the list, then another: the second takes the first's preview tab. Go back: the first comes back in the preview tab.",
+    "In Vim, G jumps to the end of a note, and Ctrl-O comes back to where you were; Ctrl-I goes forward again. Ctrl-O and Ctrl-I are Go back and Go forward, through notes and windows too, as VSCodeVim does. Moving the cursor a few lines isn't a place of its own: only jumps are.",
+    "Reload the page: you're where you were, and Back still goes back.",
+    "Settings, Workbench, Navigation arrows: ← and → at the start of the top left tab bar. Off by default."
+  ]
+}

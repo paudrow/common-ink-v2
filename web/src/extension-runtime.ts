@@ -640,6 +640,7 @@ export class ExtensionRuntime {
         moveTab: (by) => app.workbench.change((l) => L.shiftTab(l, by)),
         refreshFromServer: (paths) => app.workbench.refreshFromServer(paths),
         notice: (message, actions) => app.workbench.notice(message, actions),
+        canGo: (by) => !!app.workbench.navigation.step(by),
       },
       util: { fuzzyFilter, notePathFor: (name) => notePathFor(name), label: docLabel },
       events: {

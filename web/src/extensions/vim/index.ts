@@ -1,6 +1,7 @@
 // Vim, a built-in extension: Vim keys in every editor (codemirror-vim), its mode in the status bar, ex
-// commands and key sequences that run the app's commands, and Ctrl-O and Ctrl-I through each note's
-// jumps and then on to the notes before and after. Every extension's "vim" keybindings are mapped here.
+// commands and key sequences that run the app's commands, and Ctrl-O and Ctrl-I as the app's Go back
+// and Go forward, as VSCodeVim does: one history of where you've been, jumps within a note included.
+// Every extension's "vim" keybindings are mapped here.
 import { Prec } from "@codemirror/state";
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
@@ -53,22 +54,6 @@ export default {
       freshJumps();
       showMode("NORMAL");
     });
-
-    /** Ctrl-O and Ctrl-I: through Vim's jumps in this note, then on to the note before or after. */
-    const jumpOrStep = (by: "back" | "forward") => {
-      const view = ctx.editor.focused();
-      const cm = view && getCM(view);
-      const jumpList = Vim.getVimGlobalState_().jumpList;
-      const offset = by === "back" ? -1 : 1;
-      const cursor = cm?.getCursor();
-      const pos = cm && jumpList.find(cm, offset);
-      if (cm && pos && cursor && (pos.line !== cursor.line || pos.ch !== cursor.ch)) {
-        jumpList.move(cm, offset);
-        cm.setCursor(pos);
-      } else ctx.commands.run(by === "back" ? "go.back" : "go.forward");
-    };
-    ctx.commands.register("vim.jumpBack", () => jumpOrStep("back"));
-    ctx.commands.register("vim.jumpForward", () => jumpOrStep("forward"));
 
     // Ex commands, each the app's command or the workbench's call.
     const exArg = (params: ExParams) => (params.argString ?? "").trim();

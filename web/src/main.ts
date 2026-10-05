@@ -30,6 +30,7 @@ import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
+import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
@@ -88,6 +89,58 @@ const me = await fetch("/api/me")
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = docLabel;
 
+/** Where you've been, kept for this tab's session, so a reload keeps it (navigation.ts). */
+const NAVIGATION_KEY = "common-ink.navigation";
+function savedNavigation(): ConstructorParameters<typeof Navigation>[0] {
+  try {
+    return JSON.parse(sessionStorage.getItem(NAVIGATION_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The browser's history follows the app's: a new entry for each jump, carrying its place's id, and the
+ * entry you're on brought up to date as the cursor moves (a moment later, so typing doesn't flood it).
+ */
+const browserHistory = (() => {
+  let pending: Visit | null = null;
+  let timer = 0;
+  let saveTimer = 0;
+  const write = () => {
+    if (pending) history.replaceState({ nav: pending.id }, "", addressFor(pending.file));
+    pending = null;
+  };
+  const keep = () => {
+    try {
+      sessionStorage.setItem(NAVIGATION_KEY, JSON.stringify(workbench.navigation));
+    } catch {
+      // No session storage: it starts afresh after a reload.
+    }
+  };
+  addEventListener("pagehide", () => (write(), keep()));
+  return {
+    follow(how: "push" | "replace", visit: Visit) {
+      clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(keep, 500);
+      clearTimeout(timer);
+      if (how === "replace") {
+        pending = visit;
+        timer = window.setTimeout(write, 400);
+        return;
+      }
+      // The entry being left gets its last update first.
+      write();
+      history.pushState({ nav: visit.id }, "", addressFor(visit.file));
+    },
+    /** The browser moved to another entry: an update meant for the one it left is dropped. */
+    moved() {
+      clearTimeout(timer);
+      pending = null;
+    },
+  };
+})();
+
 const workbench = new Workbench(
   $("#workbench"),
   {
@@ -95,8 +148,8 @@ const workbench = new Workbench(
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
     },
+    navigated: (how, visit) => browserHistory.follow(how, visit),
     focus(path) {
-      if (path) window.history.replaceState(null, "", addressFor(path));
       // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
       if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
       if (path) lastFile = path;
@@ -115,7 +168,27 @@ const workbench = new Workbench(
     },
   },
   offline,
+  new Navigation(savedNavigation()),
 );
+// After a reload, the entry the browser is on is where you are.
+if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
+
+/** Back (-1) or forward (1) a place: through the browser's history, so its Back and Forward agree. */
+function navigate(by: -1 | 1) {
+  if (!workbench.navigation.step(by)) return;
+  history.go(by);
+}
+
+// The browser's Back and Forward (its buttons, the mouse's side buttons, a swipe): go to that place.
+// An entry from before the app kept places, or one it no longer keeps, opens the file its address names.
+addEventListener("popstate", (e) => {
+  browserHistory.moved();
+  const id = (e.state as { nav?: unknown } | null)?.nav;
+  void (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then((went) => {
+    const file = went ? null : fileFromUrl(location.search);
+    if (file) void workbench.open(file, { jump: false });
+  });
+});
 
 /** Each settings file's settings the last time it could be read. */
 const lastGood: { user: Partial<Settings>; workspace: Partial<Settings> } = { user: {}, workspace: {} };
@@ -294,8 +367,8 @@ commands.register(
   { id: "note.save", title: "Save note", run: () => workbench.save(true) },
   { id: "note.reload", title: "Reload note from the server, discarding unsaved changes", run: () => workbench.reload() },
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
-  { id: "go.back", title: "Go back", run: () => workbench.step("back") },
-  { id: "go.forward", title: "Go forward", run: () => workbench.step("forward") },
+  { id: "go.back", title: "Go back", run: () => navigate(-1) },
+  { id: "go.forward", title: "Go forward", run: () => navigate(1) },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },

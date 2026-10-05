@@ -117,6 +117,37 @@ export default {
     });
     document.addEventListener("dragend", endDrag);
 
+    /**
+     * Back and forward (Go back, Go forward), at the start of the top left window's tab bar, when the
+     * workbench.navigationArrows setting says: off by default, to keep the bar lean.
+     */
+    const arrows = (el: HTMLElement, bar: HTMLElement, id: L.GroupId) => {
+      const on = ctx.settings.get<boolean>("workbench.navigationArrows") && L.groups(layout.get())[0]?.id === id;
+      let nav = el.querySelector<HTMLElement>(":scope > .nav-arrows");
+      bar.classList.toggle("with-nav", !!on);
+      if (!on) return nav?.remove();
+      if (!nav) {
+        nav = document.createElement("div");
+        nav.className = "nav-arrows chrome";
+        for (const [text, by, command, title] of [
+          ["←", -1, "go.back", "Go back"],
+          ["→", 1, "go.forward", "Go forward"],
+        ] as const) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = text;
+          b.title = title;
+          b.setAttribute("aria-label", title);
+          b.dataset.by = String(by);
+          b.addEventListener("mousedown", (e) => e.preventDefault());
+          b.addEventListener("click", () => void ctx.commands.run(command));
+          nav.append(b);
+        }
+        el.prepend(nav);
+      }
+      for (const b of nav.querySelectorAll<HTMLButtonElement>("button")) b.disabled = !ctx.workbench.canGo(Number(b.dataset.by) as -1 | 1);
+    };
+
     layout.chrome({
       /** A window's tab bar, the marker where a dragged tab will go, and the overlay that shows where a drop will land. */
       window(el, id) {
@@ -174,7 +205,9 @@ export default {
       },
 
       tabs(el, id, tabs) {
-        syncTabs(el.querySelector<HTMLElement>(".tabs")!, tabs, tabActions(id));
+        const bar = el.querySelector<HTMLElement>(".tabs")!;
+        syncTabs(bar, tabs, tabActions(id));
+        arrows(el, bar, id);
       },
 
       /** The border between two windows: drag it to share their space differently. */
