@@ -412,11 +412,12 @@ export function parseLayout(value: unknown): Layout | null {
       const active = Number.isInteger(o.active) ? Math.min(Math.max(0, o.active as number), Math.max(0, tabs.length - 1)) : 0;
       return { kind: "group", id: o.id, tabs, active };
     }
-    if (o.kind === "split" && (o.dir === "row" || o.dir === "column") && Array.isArray(o.children) && o.children.length >= 2) {
+    if (o.kind === "split" && (o.dir === "row" || o.dir === "column") && Array.isArray(o.children) && o.children.length >= 1) {
       const children = o.children.map(node);
       if (!children.every((c) => c !== null)) return null;
-      const sizes = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && s > 0) ? normalize(o.sizes as number[]) : even(children.length);
-      return { kind: "split", dir: o.dir, children: children as Node[], sizes };
+      const sizes = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && s > 0) ? (o.sizes as number[]) : even(children.length);
+      // Tidied as any split is: one child stands alone, a split the same way joins its parent, sizes add up to 1.
+      return makeSplit(o.dir, children.map((c, i) => ({ node: c as Node, size: sizes[i] })));
     }
     return null;
   };
