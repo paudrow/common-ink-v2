@@ -14,7 +14,14 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "allowJs": true,
-    "checkJs": true
+    "checkJs": true,
+    "paths": {
+      "common-ink/live-preview": ["./web/src/live-preview.ts"],
+      "common-ink/describe": ["./web/src/describe.ts"],
+      "common-ink/keys": ["./web/src/keys.ts"],
+      "common-ink/files": ["./worker/src/files.ts"],
+      "common-ink/uploads": ["./worker/src/uploads.ts"]
+    }
   },
   "include": ["web/src", "scripts", "test"]
 }

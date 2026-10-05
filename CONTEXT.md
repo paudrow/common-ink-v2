@@ -58,6 +58,12 @@ _Avoid_: Preferences, config
 A unit of functionality that adds commands, views, settings, embeds and more through the public extension API, declared in its `extension.json`. Built-in features are extensions. A workspace extension is a folder of files in the workspace (`.common-ink/extensions/<id>/`), and one with a built-in's id runs in its place: that's a customized built-in.
 _Avoid_: Plugin, add-on
 
+**Default extension**:
+A built-in extension that's on until you turn it off, such as Vim, Live preview or Todos. With all of them off, the app still has notes, history, windows, commands and settings, and a plain editor.
+
+**Catalog**:
+The list of extensions you can install from the Extensions view: first-party ones that aren't on by default, served by the app, and any other catalogs you add, whose extensions are other people's and installed at your own risk.
+
 **Contribution**:
 Something an extension's manifest declares it adds: a command, keybinding, menu item, settings section, view, status bar item or embed. The app shows contributions before the extension's code runs.
 

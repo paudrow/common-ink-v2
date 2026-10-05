@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Changes with their authors and diffs: revert some, restore a note, label a version, undo and redo.",
   "main": "index.ts",
-  "files": ["index.ts"],
+  "files": ["index.ts", "version.ts"],
   "activationEvents": ["onView:history", "onCommand:history.note", "onCommand:history.all", "onCommand:history.addLabel"],
   "permissions": {
     "history:read": { "why": "Show what changed, who changed it, and when" },

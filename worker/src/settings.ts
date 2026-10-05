@@ -84,7 +84,6 @@ const answers: Declared<Record<string, Record<string, "allow" | "deny">>> = {
 };
 
 export const SETTINGS = {
-  "editor.vim": bool("Vim keys in the editor.", true),
   "editor.lineNumbers": bool("Line numbers beside the text.", false),
   "editor.lineWrapping": bool("Wrap long lines to the window instead of scrolling sideways.", true),
   "editor.fontSize": int("The editor's text size, in pixels.", 16, 10, 32),
@@ -97,6 +96,10 @@ export const SETTINGS = {
     reload: true as const,
   },
   "extensions.permissions": answers,
+  "extensions.catalogs": {
+    ...strings("Other catalogs for the Extensions view to list, by the address of each one's index.json. They list other people's extensions: these run sandboxed, but you install them at your own risk."),
+    reload: true as const,
+  },
 };
 
 export type SettingName = keyof typeof SETTINGS;
@@ -237,11 +240,16 @@ export function defaultsText(): string {
 
 export const SETTINGS_TEMPLATE = `{\n  "$schema": "${SCHEMA_URL}"\n}\n`;
 
+/** Settings that became something else, and where to find it now. */
+const MOVED: Record<string, string> = {
+  "editor.vim": '"editor.vim" is gone: Vim keys are the Vim extension now. Turn it off in the Extensions view, or add "vim" to "extensions.disabled".',
+};
+
 /** What's wrong with one setting in a settings file, or null if it's fine. */
 export function settingProblem(key: string, value: unknown, catalog: SettingsCatalog = CORE_CATALOG): string | null {
   if (key === "$schema") return null;
   const declared = catalog.get(key);
-  if (!declared) return `Unknown setting "${key}"`;
+  if (!declared) return MOVED[key] ?? `Unknown setting "${key}"`;
   return declared.check(value) ? null : `"${key}" must be ${declared.expects}`;
 }
 

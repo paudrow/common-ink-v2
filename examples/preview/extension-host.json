@@ -2,7 +2,7 @@
   "pr": 18,
   "title": "Sandboxed extensions and permissions",
   "steps": [
-    "⌘⇧P, Show word count. Word count is a workspace extension, so it runs sandboxed: a prompt says \"Word count wants to read your notes · Count the words in the note on show\". Choose Allow once: its view (a sandboxed webview) shows the count. Reload and show it again: it asks again, since once lasts the session.",
+    "Install Word count from the Catalog at the bottom of the Extensions view, and reload. ⌘⇧P, Show word count. Word count is a workspace extension, so it runs sandboxed: a prompt says \"Word count wants to read your notes · Count the words in the note on show\". Choose Allow once: its view (a sandboxed webview) shows the count. Reload and show it again: it asks again, since once lasts the session.",
     "This time choose Always allow. Your answer is in your user settings under `extensions.permissions`, and in the Extensions view, where Word count's permission now says Allow. Set it to Deny there: Show word count now says you didn't allow it, without asking.",
     "Escape on a prompt means not now: it's refused for this session only, and asked again after a reload.",
     "⌘⇧P, Show extension activity: every read Word count asked for, allowed or not, with the time.",

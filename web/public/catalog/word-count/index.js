@@ -1,6 +1,7 @@
-// A sample workspace extension: a Word count view for the note on show. It runs sandboxed, as every
-// extension that isn't built in does until you trust it: its view is a webview, and reading your note
-// asks you first. Edit it like a note (history keeps every version), then reload to run the new version.
+// Word count, from the app's catalog: a Word count view for the note on show. Installed, it's a workspace
+// extension, so it runs sandboxed, as every extension that isn't built in does until you trust it: its view
+// is a webview, and reading your note asks you first. Edit it like a note (history keeps every version),
+// then reload to run the new version.
 
 export default {
   activate(ctx) {

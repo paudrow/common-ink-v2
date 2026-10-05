@@ -5,7 +5,8 @@ import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.
 import type { FilePath, FileSummary, WorkspaceFile } from "../worker/src/files.ts";
 import { combine, describeSchema, parseSettings, settingsCatalog } from "../worker/src/settings.ts";
 import type { ExtensionContext, ExtensionModule } from "../web/src/extension-api.ts";
-import { changedExtensions, extensionStates, ExtensionHost, findWorkspaceExtensions, isSelfContained, type BuiltIn } from "../web/src/extension-host.ts";
+import { changedExtensions, extensionStates, ExtensionHost, findWorkspaceExtensions, forbiddenImports, type BuiltIn } from "../web/src/extension-host.ts";
+import { APP_MODULES, LIBRARY_NAMES } from "../web/src/library-names.ts";
 import { contributionLines, permissionLines } from "../web/src/extensions-view.ts";
 
 const manifest = (id: string, more: Record<string, unknown> = {}) => {
@@ -16,8 +17,10 @@ const manifest = (id: string, more: Record<string, unknown> = {}) => {
 
 const builtIn = (id: string, module: ExtensionModule, more: Record<string, unknown> = {}): BuiltIn => ({
   manifest: manifest(id, more),
-  module,
-  sources: { "index.js": "export default { activate() {} };" },
+  load: async () => module,
+  files: ["index.js"],
+  source: async () => "export default { activate() {} };",
+  copy: async () => ({ "index.js": "export default { activate() {} };" }),
   folder: `web/src/extensions/${id}`,
 });
 
@@ -180,12 +183,17 @@ test("turning an extension on or off, or changing any of its files, needs a relo
   assert.deepEqual(changedExtensions(start, extensionStates(b, files.slice(2), [], false)), new Set(["mine"]), "uninstalling");
 });
 
-test("only plain JavaScript that imports nothing outside its folder can run as a copy", () => {
-  const b = (sources: Record<string, string>) => ({ ...builtIn("x", { activate() {} }), sources });
-  assert.ok(isSelfContained(b({ "extension.json": "{}", "index.js": 'import { x } from "./model.js";\nexport default {};' })));
-  assert.ok(!isSelfContained(b({ "index.js": 'import { x } from "../../keys.ts";' })));
-  assert.ok(!isSelfContained(b({ "index.ts": "export default {};" })));
-  assert.ok(isSelfContained({ ...b({}), sources: { "index.js": readFileSync("web/src/extensions/quick-open/index.js", "utf8") } }));
+test("built-ins import only their own files and the libraries, so a copy of any of them runs on its own", async () => {
+  assert.deepEqual(forbiddenImports('import { x } from "./model.js";\nimport type { Y } from "../../app.ts";\nimport { Decoration } from "@codemirror/view";', LIBRARY_NAMES), []);
+  assert.deepEqual(forbiddenImports('import { x } from "../../keys.ts";\nimport "lodash";', LIBRARY_NAMES), ["../../keys.ts", "lodash"]);
+  const root = "web/src/extensions";
+  for (const id of readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) {
+    for (const file of readdirSync(`${root}/${id}`).filter((f) => /\.(ts|js)$/.test(f))) {
+      assert.deepEqual(forbiddenImports(readFileSync(`${root}/${id}/${file}`, "utf8"), LIBRARY_NAMES), [], `${id}/${file}`);
+    }
+  }
+  // The app modules offered as libraries export what library-names.ts says, which the /lib/ modules hand over.
+  for (const [name, { file, exports }] of Object.entries(APP_MODULES)) assert.deepEqual(Object.keys(await import(`../${file}`)).sort(), [...exports].sort(), name);
 });
 
 test("an extension's settings join the catalog in its own section, checked against its schema", () => {
@@ -203,9 +211,9 @@ test("an extension's settings join the catalog in its own section, checked again
   const catalog = settingsCatalog([weather]);
   assert.equal(catalog.get("weather.units")?.section, "Weather");
   assert.equal(catalog.get("weather.units")?.extension, "weather");
-  assert.equal(catalog.get("editor.vim")?.section, "Editor");
-  assert.deepEqual(parseSettings('{"weather.units": "kelvin", "weather.days": 4, "editor.vim": false}', catalog), {
-    settings: { "weather.days": 4, "editor.vim": false },
+  assert.equal(catalog.get("editor.lineNumbers")?.section, "Editor");
+  assert.deepEqual(parseSettings('{"weather.units": "kelvin", "weather.days": 4, "editor.lineNumbers": true}', catalog), {
+    settings: { "weather.days": 4, "editor.lineNumbers": true },
     problems: ['"weather.units" must be one of "metric", "imperial"'],
   });
   assert.deepEqual(parseSettings('{"weather.days": 4}').problems, ['Unknown setting "weather.days"'], "unknown without its extension");
@@ -213,6 +221,7 @@ test("an extension's settings join the catalog in its own section, checked again
   assert.equal(settings["weather.units"], "metric", "defaults come from the manifest");
   assert.equal(settings["weather.days"], 5);
   assert.equal(describeSchema({ type: "integer", minimum: 1 }), "a whole number of at least 1");
+  assert.match(parseSettings('{"editor.vim": false}').problems[0], /Vim keys are the Vim extension now/, "a setting that moved says where it went");
 });
 
 test("in the app, a declared command starts its extension the first time it runs; undeclared ones are refused", async () => {
@@ -235,7 +244,7 @@ test("in the app, a declared command starts its extension the first time it runs
     files: () => [],
     openFromBar() {},
     lastFile: () => null,
-    vimKey: (keys: string, command: string) => ran.push(`vim ${keys} → ${command}`),
+    statusItems: { declare() {}, set() {} } as never,
     onSaved: [],
     onFocus: [],
     saveGrant: async () => {},
@@ -261,13 +270,31 @@ test("in the app, a declared command starts its extension the first time it runs
   await runtime.load([builtIn("greet", greet, m)], [], [], false, []);
   runtime.declare();
   await runtime.start();
-  assert.deepEqual(ran, ["vim gH → greet.hello"], "declared, not started");
+  assert.deepEqual(ran, [], "declared, not started");
+  assert.deepEqual(
+    runtime.allKeybindings().filter((k) => k.command.startsWith("greet.")),
+    [{ command: "greet.hello", vim: "gH" }],
+    "its Vim sequence is there for the Vim extension to map",
+  );
   assert.deepEqual(commands.all().map((c) => c.title), ["Open Greeting in a window", "Say hello"]);
   commands.run("greet.hello");
   await new Promise((r) => setTimeout(r, 0));
   console.error = quiet;
-  assert.deepEqual(ran, ["vim gH → greet.hello", "started", "hello"]);
+  assert.deepEqual(ran, ["started", "hello"]);
   const record = runtime.host.records[0];
   assert.equal(record.state, "failed", "registering an undeclared command fails it");
   assert.equal(record.error, `Command "greet.secret" isn't declared in greet's contributes.commands`);
+});
+
+test("the app's catalog lists folders on the app only", async () => {
+  const { parseCatalog } = await import("../worker/src/catalog.ts");
+  const index = JSON.parse(readFileSync("web/public/catalog/index.json", "utf8"));
+  const entries = parseCatalog(index, "https://app.example/catalog/index.json", true);
+  assert.deepEqual(entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]), [["word-count", "https://app.example/catalog/word-count/", "Common Ink", true]]);
+  for (const e of entries) {
+    const m = parseManifest(JSON.parse(readFileSync(`web/public/catalog/${e.id}/extension.json`, "utf8")), e.id);
+    assert.notEqual(typeof m, "string", `${e.id}'s extension.json is valid`);
+    for (const file of (m as ExtensionManifest).files) assert.ok(readFileSync(`web/public/catalog/${e.id}/${file}`, "utf8"), `${e.id}/${file} is there`);
+  }
+  assert.deepEqual(parseCatalog({ extensions: [{ id: "far", name: "Far", path: "https://elsewhere.example/far/" }] }, "https://app.example/catalog/index.json", true), [], "not another site's");
 });

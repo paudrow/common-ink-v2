@@ -1,0 +1,46 @@
+{
+  "id": "vim",
+  "name": "Vim",
+  "version": "1.0.0",
+  "description": "Vim keys in every editor: modes, motions, registers and searches, :w, :e, :q, :sp, :vs and :tabe, Ctrl-W to move between windows and split them, gt and gT between tabs, gd to follow a link, and Ctrl-O and Ctrl-I back and forward, past each note's jumps to the notes before and after. Turn it off for standard keys. Other extensions' Vim sequences (\"vim\" in their keybindings) work while it's on.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Vim keys in every editor, and the mode in the status bar" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "vim.jumpBack", "title": "Jump back (Vim's Ctrl-O)" },
+      { "command": "vim.jumpForward", "title": "Jump forward (Vim's Ctrl-I)" }
+    ],
+    "keybindings": [
+      { "vim": "gd", "command": "note.followLink" },
+      { "vim": "<C-o>", "command": "vim.jumpBack" },
+      { "vim": "<C-i>", "command": "vim.jumpForward" },
+      { "vim": "gt", "command": "tab.next" },
+      { "vim": "gT", "command": "tab.previous" },
+      { "vim": "<C-w>h", "command": "window.left" },
+      { "vim": "<C-w>j", "command": "window.down" },
+      { "vim": "<C-w>k", "command": "window.up" },
+      { "vim": "<C-w>l", "command": "window.right" },
+      { "vim": "<C-w>w", "command": "window.next" },
+      { "vim": "<C-w><C-w>", "command": "window.next" },
+      { "vim": "<C-w>s", "command": "window.splitDown" },
+      { "vim": "<C-w>v", "command": "window.splitRight" },
+      { "vim": "<C-w>q", "command": "tab.close" },
+      { "vim": "<C-w>c", "command": "window.close" },
+      { "vim": "<C-w>o", "command": "window.only" },
+      { "vim": "<C-w>H", "command": "tab.moveLeft" },
+      { "vim": "<C-w>J", "command": "tab.moveDown" },
+      { "vim": "<C-w>K", "command": "tab.moveUp" },
+      { "vim": "<C-w>L", "command": "tab.moveRight" },
+      { "vim": "<C-w>>", "command": "window.wider" },
+      { "vim": "<C-w><", "command": "window.narrower" },
+      { "vim": "<C-w>+", "command": "window.taller" },
+      { "vim": "<C-w>-", "command": "window.shorter" },
+      { "vim": "<C-w>=", "command": "window.equalize" }
+    ],
+    "statusBarItems": [{ "id": "vim.mode", "alignment": "left", "priority": 100 }]
+  }
+}

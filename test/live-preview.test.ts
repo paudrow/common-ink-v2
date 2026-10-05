@@ -12,8 +12,11 @@ Object.assign(globalThis, {
 });
 
 const { EditorView } = await import("@codemirror/view");
-const { getCM, Vim } = await import("@replit/codemirror-vim");
+const { Prec } = await import("@codemirror/state");
+const { getCM, Vim, vim } = await import("@replit/codemirror-vim");
 const { createState, reconfigure } = await import("../web/src/editor.ts");
+// The two default extensions a note's editor has: Vim keys (first, as the Vim extension adds them) and the live preview.
+const { markdownPreview } = await import("../web/src/extensions/live-preview/markdown.ts");
 const { DEFAULTS } = await import("../worker/src/settings.ts");
 
 const NOTE = [
@@ -31,7 +34,7 @@ const NOTE = [
 
 function editor(settings = DEFAULTS) {
   const view = new EditorView({
-    state: createState(NOTE, { json: false, readOnly: false, settings, extensions: [], onUpdate: () => {}, onBlur: () => {} }),
+    state: createState(NOTE, { json: false, readOnly: false, settings, extensions: [Prec.highest(vim()), markdownPreview], onUpdate: () => {}, onBlur: () => {} }),
     parent: document.body,
   });
   // The cursor on the last, empty line: every other line is drawn.

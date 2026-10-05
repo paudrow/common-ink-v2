@@ -9,29 +9,29 @@ const file = `{
   "keybindings": [
     { "key": "Mod-k", "command": "quickOpen" }
   ],
-  "editor.vim": true
+  "editor.livePreview": true
 }
 `.replace("  // not JSON, so not here\n", "");
 
 test("changing a key's value leaves everything else exactly as it was", () => {
   assert.equal(setTopLevelKey(file, "editor.fontSize", 20), file.replace('"editor.fontSize": 18', '"editor.fontSize": 20'));
-  assert.equal(setTopLevelKey(file, "editor.vim", false), file.replace('"editor.vim": true', '"editor.vim": false'));
+  assert.equal(setTopLevelKey(file, "editor.livePreview", false), file.replace('"editor.livePreview": true', '"editor.livePreview": false'));
 });
 
 test("a new key goes at the end, indented like the others", () => {
-  assert.equal(setTopLevelKey(file, "editor.lineNumbers", true), file.replace('"editor.vim": true', '"editor.vim": true,\n  "editor.lineNumbers": true'));
-  assert.equal(setTopLevelKey("{}\n", "editor.vim", false), '{\n  "editor.vim": false\n}\n');
-  assert.equal(setTopLevelKey("", "editor.vim", false), '{\n  "editor.vim": false\n}\n');
+  assert.equal(setTopLevelKey(file, "editor.lineNumbers", true), file.replace('"editor.livePreview": true', '"editor.livePreview": true,\n  "editor.lineNumbers": true'));
+  assert.equal(setTopLevelKey("{}\n", "editor.livePreview", false), '{\n  "editor.livePreview": false\n}\n');
+  assert.equal(setTopLevelKey("", "editor.livePreview", false), '{\n  "editor.livePreview": false\n}\n');
 });
 
 test("removing a key takes its comma with it, wherever it is", () => {
-  for (const key of ["$schema", "editor.fontSize", "keybindings", "editor.vim"]) {
+  for (const key of ["$schema", "editor.fontSize", "keybindings", "editor.livePreview"]) {
     const out = setTopLevelKey(file, key, undefined)!;
     const parsed = JSON.parse(out);
     assert.equal(key in parsed, false, key);
     assert.equal(Object.keys(parsed).length, 3, key);
   }
-  assert.equal(setTopLevelKey(file, "editor.vim", undefined), file.replace(',\n  "editor.vim": true', ""));
+  assert.equal(setTopLevelKey(file, "editor.livePreview", undefined), file.replace(',\n  "editor.livePreview": true', ""));
   assert.equal(setTopLevelKey(file, "missing", undefined), file);
 });
 

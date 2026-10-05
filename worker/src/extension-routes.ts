@@ -2,6 +2,7 @@
 // makes for them (only to hosts their manifest declares and you've allowed), and installing an
 // extension's files from a URL.
 import { BUILT_IN_MANIFESTS } from "./builtin-extensions.ts";
+import { parseCatalog } from "./catalog.ts";
 import { extensionFilePath, manifestPath, parseManifest, type ExtensionManifest } from "./extensions.ts";
 import { isExtensionScript, parseFilePath, type Author } from "./files.ts";
 import type { Store } from "./operations.ts";
@@ -9,6 +10,17 @@ import { decide, parseGrants } from "./permissions.ts";
 import { FetchRefused, safeFetch } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
 import { userSettingsPath } from "./settings.ts";
+import { LIBRARY_NAMES, libraryUrl } from "../../web/src/library-names.ts";
+
+/**
+ * A workspace extension's module, with its imports of libraries (`@codemirror/view`,
+ * `common-ink/live-preview`, …) pointed at the app's /lib/ modules, which hand over the app's own copy.
+ */
+export function pointAtLibraries(source: string): string {
+  return source.replace(/(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'])([^"']+)\2/g, (whole, lead: string, quote: string, name: string) =>
+    LIBRARY_NAMES.includes(name) ? `${lead}${quote}${libraryUrl(name)}${quote}` : whole,
+  );
+}
 
 export interface SandboxStore extends Store {
   sandboxKey(): Promise<string> | string;
@@ -90,6 +102,19 @@ export async function extensionApi(req: Request, url: URL, email: string, author
       return json(res);
     } catch (err) {
       if (err instanceof FetchRefused) return json({ error: err.message }, 400);
+      throw err;
+    }
+  }
+  if (route === "GET /api/extensions/catalog") {
+    // Another catalog's index, for the Extensions view: fetched safely, like an install, and checked.
+    const target = url.searchParams.get("url") ?? "";
+    try {
+      const res = await safeFetch(target, { maxBytes: 256_000 });
+      if (res.status !== 200 || res.truncated) return json({ error: `${target} answered ${res.truncated ? "with too much" : res.status}` }, 400);
+      return json({ entries: parseCatalog(JSON.parse(res.body), res.url, false) });
+    } catch (err) {
+      if (err instanceof FetchRefused) return json({ error: err.message }, 400);
+      if (err instanceof SyntaxError) return json({ error: `${target} isn't a catalog: its index isn't JSON` }, 400);
       throw err;
     }
   }

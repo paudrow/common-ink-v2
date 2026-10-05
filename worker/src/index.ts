@@ -9,7 +9,7 @@ import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type Si
 import { cookie } from "./session.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
-import { extensionApi, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
+import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -91,7 +91,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     if (code && isExtensionScript(code)) {
       const file = await (workspace as unknown as Store).read(code);
       if (!file) return secure(new Response("No such file\n", { status: 404 }));
-      return secure(new Response(file.text, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
+      return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);

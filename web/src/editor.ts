@@ -1,4 +1,5 @@
-// The CodeMirror 6 editor: vim first, markdown (or JSON) highlighting, and nothing else on screen.
+// The CodeMirror 6 editor, as plain as it comes: markdown (or JSON) highlighting and standard keys.
+// Everything else (Vim keys, live preview, todos) comes from extensions, through `extensions`.
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
@@ -6,11 +7,9 @@ import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import { vim } from "@replit/codemirror-vim";
 import { diffPatch } from "node-diff3";
 import type { Settings } from "../../worker/src/settings.ts";
 import { previewEnabled } from "./live-preview.ts";
-import { markdownPreview } from "./markdown-preview.ts";
 
 /** Marks text that came from the server, so it isn't saved back as an edit. */
 export const fromServer = Annotation.define<boolean>();
@@ -26,8 +25,6 @@ const theme = EditorView.theme({
   "&:not(.cm-focused) .cm-fat-cursor": { background: "none !important", outline: "1px solid var(--accent)" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "var(--selection) !important" },
   ".cm-panels": { backgroundColor: "var(--bg)", color: "var(--ink)", borderTop: "1px solid var(--line)" },
-  ".cm-vim-panel": { padding: "0.25rem 1rem", fontFamily: "var(--mono)" },
-  ".cm-vim-panel input": { color: "var(--ink)", fontFamily: "var(--mono)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--muted)", border: "none", fontFamily: "var(--mono)", fontSize: "0.8em" },
   ".cm-remote-change": { backgroundColor: "var(--accent-soft)", transition: "background-color 600ms" },
 });
@@ -50,12 +47,11 @@ const mono = EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })
 export const synced = Annotation.define<boolean>();
 
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
-const slots = { vim: new Compartment(), lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment() };
+const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment() };
 
-export type EditorSettings = Pick<Settings, "editor.vim" | "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize" | "editor.livePreview">;
+export type EditorSettings = Pick<Settings, "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize" | "editor.livePreview">;
 
 const extensionsFor = (s: EditorSettings) => ({
-  vim: s["editor.vim"] ? vim() : [],
   lineNumbers: s["editor.lineNumbers"] ? lineNumbers() : [],
   wrapping: s["editor.lineWrapping"] ? EditorView.lineWrapping : [],
   fontSize: EditorView.theme({ ".cm-scroller": { fontSize: `${s["editor.fontSize"]}px` } }),
@@ -76,7 +72,6 @@ export function createState(
   return EditorState.create({
     doc,
     extensions: [
-      slots.vim.of(s.vim), // before other keymaps, so vim sees keys first
       slots.lineNumbers.of(s.lineNumbers),
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
@@ -87,7 +82,7 @@ export function createState(
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
-      opts.json ? [json(), mono] : opts.code ? mono : [new LanguageSupport(markdownLanguage), markdownPreview],
+      opts.json ? [json(), mono] : opts.code ? mono : new LanguageSupport(markdownLanguage),
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),

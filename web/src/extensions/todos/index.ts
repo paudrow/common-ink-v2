@@ -1,7 +1,8 @@
 // Todos, a built-in extension: todos drawn as checkboxes with due-date and recurrence chips, checked off
 // with a click, ⌘Enter or gx (recurring ones move to their next due date), and every open todo in the
 // Todos view.
-import { isNote, type Change, type FilePath, type Revision } from "../../../../worker/src/files.ts";
+import { isNote } from "common-ink/files";
+import type { Change, FilePath, Revision } from "../../../../worker/src/files.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import { describeTodoEdit, localToday, parseTodo, todosIn, toggleLine, when, type Todo, type When } from "./model.ts";
 import { checkboxEl, CHECKED_FOR_MS, dueChipEl, everyChipEl, todosPreview, toggleTodoAt } from "./widgets.ts";

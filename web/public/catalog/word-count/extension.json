@@ -2,8 +2,9 @@
   "id": "word-count",
   "name": "Word count",
   "version": "1.0.0",
-  "description": "A sample workspace extension: a Word count view for the note on show.",
+  "description": "A Word count view for the note on show. It runs sandboxed, and asks before reading your notes.",
   "main": "index.js",
+  "files": ["index.js"],
   "activationEvents": ["onView:wordCount", "onCommand:wordCount.show"],
   "permissions": {
     "files:read": { "paths": ["**"], "why": "Count the words in the note on show" }

@@ -1,9 +1,10 @@
 // A file as it was at one revision, in a read-only tab: its text, or what has changed since, with a way
 // to put the file back that way. The view's id says which: version:<revision>:<path>.
-import { parseFilePath, type FilePath, type Revision } from "../../worker/src/files.ts";
-import type { Label } from "../../worker/src/labels.ts";
-import { runLines } from "./describe.ts";
-import type { View } from "./workbench.ts";
+import { parseFilePath } from "common-ink/files";
+import type { FilePath, Revision } from "../../../../worker/src/files.ts";
+import type { Label } from "../../../../worker/src/labels.ts";
+import { runLines } from "common-ink/describe";
+import type { View } from "../../workbench.ts";
 
 export const VERSION_PREFIX = "version:";
 

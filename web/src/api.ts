@@ -1,4 +1,5 @@
 // The Worker's files API, as the web app calls it.
+import type { CatalogEntry } from "../../worker/src/catalog.ts";
 import type { SourceStatus } from "../../worker/src/data-sources.ts";
 import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
@@ -59,6 +60,13 @@ export const api = {
     return data as ExtensionResponse;
   },
   /** Copy an extension's files into the workspace from where it's published. */
+  /** Another catalog's extensions, its index read through the Worker. */
+  async catalog(url: string): Promise<CatalogEntry[]> {
+    const res = await fetch(`/api/extensions/catalog?url=${encodeURIComponent(url)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
+    return (data as { entries: CatalogEntry[] }).entries;
+  },
   async installExtension(url: string): Promise<{ id: string; name: string; files: string[] }> {
     const res = await fetch("/api/extensions/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
     const data = await res.json();

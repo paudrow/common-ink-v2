@@ -289,6 +289,30 @@ body {
   color: var(--muted);
 }
 
+/* Extensions' status bar items: on the left, they sit with the app's own; on the right, they're pushed to the end. */
+#status-left {
+  display: contents;
+}
+
+#status-right {
+  display: flex;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+button.status-item {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.status-item:hover {
+  color: var(--ink);
+}
+
 #save[data-status="conflict"],
 #save[data-status="offline"] {
   color: #c2410c;
@@ -1068,6 +1092,13 @@ body {
 .extension {
   padding: 0.75rem 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* The Catalog, below the installed extensions. */
+.extensions-view .catalog h2 {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 650;
 }
 
 .extension-head {

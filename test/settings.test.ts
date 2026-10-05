@@ -11,9 +11,9 @@ import { memoryStore } from "./store.ts";
 const you: Author = { kind: "user", email: "you@example.com" };
 
 test("a settings file's good settings are used and the rest are reported", () => {
-  assert.deepEqual(parseSettings('{"$schema": "/schema/settings.json", "editor.fontSize": 18, "editor.vim": "yes", "colour": 1}'), {
+  assert.deepEqual(parseSettings('{"$schema": "/schema/settings.json", "editor.fontSize": 18, "editor.livePreview": "yes", "colour": 1}'), {
     settings: { "editor.fontSize": 18 },
-    problems: ['"editor.vim" must be true or false', 'Unknown setting "colour"'],
+    problems: ['"editor.livePreview" must be true or false', 'Unknown setting "colour"'],
   });
   assert.deepEqual(parseSettings(""), { settings: {}, problems: [] });
   assert.match(parseSettings("{oops").problems[0], /^Not valid JSON/);
@@ -28,7 +28,7 @@ test("workspace settings override user settings, which override the defaults; ke
   );
   assert.equal(settings["editor.fontSize"], 14);
   assert.equal(settings["editor.lineNumbers"], true);
-  assert.equal(settings["editor.vim"], true);
+  assert.equal(settings["editor.livePreview"], true);
   const key = (k: string) => ({ key: k, code: "", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false });
   assert.equal(commandForKey(key("k"), settings.keybindings, true), "quickOpen");
   assert.equal(commandForKey(key("s"), settings.keybindings, true), null, "a null command unbinds the key");

@@ -19,7 +19,9 @@ import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
 import type { Offline } from "./offline.ts";
 import type { Panels } from "./panels.ts";
+import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
+import type { StatusItems } from "./status-items.ts";
 import type { Workbench } from "./workbench.ts";
 
 /** What of the app extensions reach, through their contexts. */
@@ -35,8 +37,7 @@ export interface RuntimeApp {
   openFromBar(path: FilePath): void;
   /** The file focused last, for views that work on "the note on show" while they have focus. */
   lastFile(): FilePath | null;
-  /** Map a Vim normal-mode sequence to a command. */
-  vimKey(keys: string, command: string): void;
+  statusItems: StatusItems;
   onSaved: Array<(path: FilePath) => void>;
   onFocus: Array<(path: FilePath | null) => void>;
   /** Keep an answer to a permission prompt in your settings. */
@@ -104,11 +105,18 @@ export class ExtensionRuntime {
     return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })));
   }
 
-  /** Put in what the manifests of extensions that are on declare: commands, Vim sequences and views. No extension code runs. */
+  /** Every keybinding in effect, with the Vim sequences extensions declare. */
+  allKeybindings(): Array<{ command: string; key?: string; vim?: string }> {
+    const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key }] : []));
+    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim }] : [])));
+    return [...keys, ...vim];
+  }
+
+  /** Put in what the manifests of extensions that are on declare: commands, status bar items and views. No extension code runs. */
   declare(): void {
+    this.app.statusItems.declare(this.host.on().flatMap((m) => m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id }))));
     for (const m of this.host.on()) {
       for (const c of m.contributes.commands) this.app.commands.register({ id: c.command, title: c.title, run: () => this.runCommand(c.command) });
-      for (const k of m.contributes.keybindings) if ("vim" in k) this.app.vimKey(k.vim, k.command);
       for (const view of Object.values(m.contributes.views).flat()) {
         const declared = {
           id: view.id,
@@ -209,6 +217,17 @@ export class ExtensionRuntime {
     };
   }
 
+  private async split(direction: "left" | "right" | "up" | "down", path?: FilePath): Promise<void> {
+    if (!["left", "right", "up", "down"].includes(direction)) throw new Error(`"${direction}" isn't a direction to split in`);
+    if (path) await this.app.workbench.load(path);
+    this.app.workbench.split(direction, path);
+  }
+
+  private tabs(): { active: number; count: number } {
+    const g = L.focused(this.app.workbench.layout);
+    return { active: g.active, count: g.tabs.length };
+  }
+
   /** A webview in `el` for one of an extension's views. Messages from its page go to `onMessage`. */
   private webview(m: ExtensionManifest, viewId: string, el: HTMLElement, onMessage: (message: unknown) => void): Webview {
     el.replaceChildren();
@@ -261,7 +280,9 @@ export class ExtensionRuntime {
           const key = keyFor(id, app.settings().keybindings);
           return key && formatKeys(key);
         },
+        keybindings: () => this.allKeybindings(),
       },
+      statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {
         provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
         open: (text) => app.bar.open(text),
@@ -291,9 +312,9 @@ export class ExtensionRuntime {
         summary: (change) => this.summary(change),
       },
       editor: {
-        extend: (extension) => {
+        extend: (extension, where) => {
           needsEditor();
-          app.workbench.noteExtensions.push(extension);
+          (where?.everywhere ? app.workbench.allExtensions : app.workbench.noteExtensions).push(extension);
         },
         focused: () => {
           needsEditor();
@@ -337,6 +358,10 @@ export class ExtensionRuntime {
         openPicked: (path) => app.openFromBar(path),
         // With a view focused (History in a window, say), the file is the one focused last.
         focusedPath: () => app.workbench.focusedPath ?? app.lastFile(),
+        hasUnsavedChanges: () => !!app.workbench.focusedSession?.dirty,
+        split: (direction, path) => this.split(direction, path),
+        tabs: () => this.tabs(),
+        moveTab: (by) => app.workbench.change((l) => L.shiftTab(l, by)),
         refreshFromServer: (paths) => app.workbench.refreshFromServer(paths),
         notice: (message, actions) => app.workbench.notice(message, actions),
       },
@@ -373,6 +398,10 @@ export class ExtensionRuntime {
             const key = keyFor(a, app.settings().keybindings);
             return key && formatKeys(key);
           }
+          case "commands.keybindings":
+            return this.allKeybindings();
+          case "statusBar.set":
+            return app.statusItems.set(m.id, a, String(b ?? ""), typeof c === "string" ? c : undefined);
           case "commandBar.provide":
             providers.set(a, String(b));
             app.bar.provide({
@@ -439,6 +468,14 @@ export class ExtensionRuntime {
             return app.workbench.open(a as FilePath, b as { newTab?: boolean });
           case "workbench.focusedPath":
             return app.workbench.focusedPath ?? app.lastFile();
+          case "workbench.hasUnsavedChanges":
+            return !!app.workbench.focusedSession?.dirty;
+          case "workbench.split":
+            return this.split(a as "left" | "right" | "up" | "down", (b ?? undefined) as FilePath | undefined);
+          case "workbench.tabs":
+            return this.tabs();
+          case "workbench.moveTab":
+            return app.workbench.change((l) => L.shiftTab(l, Number(a)));
           case "workbench.notice":
             return app.workbench.notice(`${m.name}: ${a}`);
         }

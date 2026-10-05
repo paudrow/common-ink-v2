@@ -5,7 +5,7 @@
 import { syntaxTree } from "@codemirror/language";
 import type { Line } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
-import { livePreview, type Preview } from "./live-preview.ts";
+import { livePreview, type Preview } from "common-ink/live-preview";
 
 const hide = Decoration.replace({});
 const linkMark = (href: string) => Decoration.mark({ class: "cm-md-link", attributes: { "data-href": href, title: `${href} (⌘-click or gd to follow)` } });

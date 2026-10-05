@@ -7,12 +7,17 @@ import { extensionFileOf, manifestPath, parseManifest, type ActivationEvent, typ
 import type { FilePath, FileSummary, WorkspaceFile } from "../../worker/src/files.ts";
 import type { ExtensionContext, ExtensionModule } from "./extension-api.ts";
 
-/** An extension that ships with Common Ink, with its source to show (and copy). */
+/** An extension that ships with Common Ink, with its source to show, and the JavaScript to copy. */
 export interface BuiltIn {
   manifest: ExtensionManifest;
-  module: ExtensionModule;
-  /** Its files' text, by name, as in its folder. */
-  sources: Record<string, string>;
+  /** Its code, loaded the first time it's needed. */
+  load(): Promise<ExtensionModule>;
+  /** Its files' names, as in its folder. */
+  files: string[];
+  /** A file's text, loaded when it's shown. */
+  source(file: string): Promise<string>;
+  /** Its files as Customize copies them into the workspace: JavaScript, with extension.json saying so. Loaded when it's customized. */
+  copy(): Promise<Record<string, string>>;
   /** Where its folder is in the repository, for showing. */
   folder: string;
 }
@@ -120,7 +125,7 @@ export class ExtensionHost {
       // The workspace's copy runs instead, below; in safe mode the built-in runs as it shipped.
       if (copy && !safe) continue;
       records.push({ id: b.manifest.id, tier: "page", manifest: b.manifest, builtIn: b, workspace: copy, state: disabled.includes(b.manifest.id) ? "off" : "inactive" });
-      this.modules.set(b.manifest.id, async () => b.module);
+      this.modules.set(b.manifest.id, () => b.load());
     }
     for (const w of workspace.values()) {
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
@@ -226,7 +231,17 @@ export function changedExtensions(atStart: ReadonlyMap<string, string>, now: Rea
   return new Set([...ids].filter((id) => atStart.get(id) !== now.get(id)));
 }
 
-/** Whether a built-in's source runs on its own as a workspace extension: plain JavaScript importing nothing from the app. */
-export function isSelfContained(b: BuiltIn): boolean {
-  return Object.entries(b.sources).every(([file, source]) => !/\.ts$/.test(file) && ![...source.matchAll(/^\s*import\s[^;]*?from\s+["']([^"']+)["']/gm)].some((m) => !m[1].startsWith("./")));
+/**
+ * What a module imports that an extension may not: anything but its own folder's files and the
+ * libraries (library-names.ts). Type-only imports don't count; they're gone when it runs.
+ */
+export function forbiddenImports(source: string, libraries: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const m of source.matchAll(/^\s*import\s+(type\s+)?([^;]*?)\s*from\s+["']([^"']+)["']|^\s*import\s+["']([^"']+)["']/gm)) {
+    if (m[1]) continue;
+    const from = m[3] ?? m[4];
+    if (from.startsWith("./") || libraries.includes(from)) continue;
+    out.push(from);
+  }
+  return out;
 }

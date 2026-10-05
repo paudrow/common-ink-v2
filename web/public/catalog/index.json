@@ -1,0 +1,12 @@
+{
+  "name": "Common Ink",
+  "extensions": [
+    {
+      "id": "word-count",
+      "name": "Word count",
+      "version": "1.0.0",
+      "description": "A Word count view for the note on show. It runs sandboxed, and asks before reading your notes.",
+      "path": "word-count/"
+    }
+  ]
+}
