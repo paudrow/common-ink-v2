@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
 import { coveringKey, decide, globMatches, hostMatches, parseGrants, type Grants } from "../worker/src/permissions.ts";
 import { PermissionBroker, PermissionDenied, type Choice } from "../web/src/broker.ts";
+import type { Trigger } from "../web/src/permission-words.ts";
 
 const weather = parseManifest(
   {
@@ -49,10 +50,12 @@ test("what to do: undeclared never, then your answer, then built-ins allowed, th
   assert.deepEqual(parseGrants({ weather: { a: "allow", b: "maybe" }, other: "no" }), { weather: { a: "allow" } });
 });
 
-/** A broker whose prompts are answered from a script, recording what each prompt asked. */
+/** A broker whose prompts are answered from a script, recording what each prompt asked, and why now. */
 function broker(answers: Choice[], builtIn = false) {
   const prompts: string[][] = [];
+  const triggers: Array<Trigger | null> = [];
   const saved: string[] = [];
+  const told: string[] = [];
   let grants: Record<string, Record<string, "allow" | "deny">> = {};
   const b = new PermissionBroker({
     grants: () => grants,
@@ -61,16 +64,18 @@ function broker(answers: Choice[], builtIn = false) {
       saved.push(`${id} ${key} ${answer}`);
       grants = { ...grants, [id]: { ...grants[id], [key]: answer } };
     },
-    prompt: async (_m, asks, joined) => {
+    prompt: async (_m, asks, joined, trigger) => {
       const shown = asks.map((a) => a.key);
       prompts.push(shown);
+      triggers.push(trigger);
       joined((a) => shown.push(a.key));
       await new Promise((r) => setTimeout(r, 5));
       return answers.shift() ?? "deny";
     },
+    undeclared: (denied) => told.push(denied.message),
     changed: () => {},
   });
-  return { b, prompts, saved };
+  return { b, prompts, triggers, saved, told };
 }
 
 test("asked once: Allow once lasts the session, Always allow is kept, Don't allow is kept and not asked again", async () => {
@@ -106,6 +111,7 @@ test("one Don't allow is enough: an ask while the answer is being kept gets it, 
       prompts.push(asks.map((a) => a.key));
       return "deny";
     },
+    undeclared: () => {},
     changed: () => {},
   });
   const first = b.check(weather, { kind: "files:read", target: "Journal/Mon.md" });
@@ -119,21 +125,46 @@ test("one Don't allow is enough: an ask while the answer is being kept gets it, 
   assert.deepEqual(saved, ["weather files:read:Journal/** deny"], "and kept once");
 });
 
-test("an undeclared ask is refused without a prompt; Escape refuses for now without keeping it", async () => {
-  const { b, prompts, saved } = broker(["dismiss"]);
-  await assert.rejects(b.check(weather, { kind: "network", target: "evil.example" }), /didn't declare that it may connect to evil\.example/);
-  await assert.rejects(b.check(weather, { kind: "network", target: "api.weather.gov" }), PermissionDenied);
+test("an undeclared ask is refused without a prompt, and you hear of it once; Escape refuses for now without keeping it", async () => {
+  const { b, prompts, saved, told } = broker(["dismiss"]);
+  await assert.rejects(b.check(weather, { kind: "network", target: "evil.example" }), { message: "Weather can't connect to evil.example: it only asked to connect to api.weather.gov or any site under tiles.example." });
+  await assert.rejects(b.check(weather, { kind: "network", target: "evil2.example" }), PermissionDenied);
+  await assert.rejects(b.check(weather, { kind: "files:write", target: "Journal/Mon.md" }), { message: "Weather can't change the note Journal/Mon: it never asked for that." });
+  assert.deepEqual(told, ["Weather can't connect to evil.example: it only asked to connect to api.weather.gov or any site under tiles.example.", "Weather can't change the note Journal/Mon: it never asked for that."], "once per kind");
+  await assert.rejects(b.check(weather, { kind: "network", target: "api.weather.gov" }), { message: "Weather can't connect to api.weather.gov: you didn't allow it this time. Change that in Extensions → Weather." });
   await assert.rejects(b.check(weather, { kind: "network", target: "api.weather.gov" }), PermissionDenied);
   assert.equal(prompts.length, 1);
   assert.deepEqual(saved, []);
   assert.deepEqual(
-    b.log.map((e) => [e.kind, e.detail, e.outcome]),
+    b.log.slice(0, 3).map((e) => [e.ask.kind, e.ask.target, e.outcome]),
     [
       ["network", "api.weather.gov", "denied"],
       ["network", "api.weather.gov", "denied"],
-      ["network", "evil.example", "denied"],
+      ["files:write", "Journal/Mon.md", "denied"],
     ],
   );
+});
+
+test("a kept Don't allow says which of your answers refused it, in its words", async () => {
+  const { b } = broker(["deny"]);
+  await assert.rejects(b.check(weather, { kind: "files:read", target: "Journal/Mon.md" }), { message: "Weather can't read the note Journal/Mon: you don't allow it to read everything in Journal. Change that in Extensions → Weather." });
+  await assert.rejects(b.check(weather, { kind: "files:read", target: "Journal/Tue.md" }), { message: "Weather can't read the note Journal/Tue: you don't allow it to read everything in Journal. Change that in Extensions → Weather." });
+});
+
+test("a prompt says what you just did that the extension is acting on, and nothing once it's a while ago", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  const { b, triggers } = broker(["once", "once", "once", "once"]);
+  b.cause("weather", { kind: "command", title: "Show the forecast" });
+  b.cause("weather", { kind: "view", name: "Forecast" });
+  await b.check(weather, { kind: "network", target: "api.weather.gov" });
+  b.cause("other", { kind: "view", name: "Elsewhere" });
+  t.mock.timers.tick(5_000);
+  await b.check(weather, { kind: "clipboard:write" });
+  t.mock.timers.tick(6_000);
+  await b.check(weather, { kind: "files:read", scope: "Journal/**" });
+  b.cause("weather", { kind: "view", name: "Forecast" });
+  await b.check(weather, { kind: "files:read", scope: "Plans/*.md" });
+  assert.deepEqual(triggers, [{ kind: "command", title: "Show the forecast" }, { kind: "command", title: "Show the forecast" }, null, { kind: "view", name: "Forecast" }], "the view drawing is the reason only when nothing just now is");
 });
 
 test("prompts come one at a time, and an extension's asks while its prompt is up join it", async () => {
@@ -163,5 +194,5 @@ test("a request in flight shows as busy and lands in the log", async () => {
   release();
   await running;
   assert.deepEqual(b.busy(), []);
-  assert.deepEqual([b.log[0].kind, b.log[0].detail, b.log[0].outcome], ["network", "https://api.weather.gov/points", "allowed"]);
+  assert.deepEqual([b.log[0].ask, b.log[0].url, b.log[0].outcome], [{ kind: "network", target: "api.weather.gov" }, "https://api.weather.gov/points", "allowed"]);
 });

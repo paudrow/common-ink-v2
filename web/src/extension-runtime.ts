@@ -9,6 +9,7 @@ import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/per
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { PermissionBroker } from "./broker.ts";
+import type { Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
@@ -46,6 +47,8 @@ export interface RuntimeApp {
   saveGrant(extension: string, key: string, answer: "allow" | "deny"): Promise<void>;
   /** Show a permission prompt. */
   prompt: ConstructorParameters<typeof PermissionBroker>[0]["prompt"];
+  /** An extension tried something it never asked for. */
+  undeclared: ConstructorParameters<typeof PermissionBroker>[0]["undeclared"];
   /** An extension's state, error or activity changed. */
   changed(): void;
 }
@@ -84,6 +87,7 @@ export class ExtensionRuntime {
       isBuiltIn: (id) => !!this.host.records.find((r) => r.id === id && r.builtIn && !r.workspace),
       save: (id, key, answer) => app.saveGrant(id, key, answer),
       prompt: app.prompt,
+      undeclared: app.undeclared,
       changed: () => app.changed(),
     });
     this.host = new ExtensionHost({
@@ -130,26 +134,37 @@ export class ExtensionRuntime {
   /**
    * An extension installed or turned on while the app runs, put in at once when nothing about it needs a
    * reload: a sandboxed extension, whose contributions are all declared and whose code runs in its own
-   * frame. (A trusted one changes the page and its editors, so it waits for a reload.) Returns whether it did.
+   * frame. (A trusted one changes the page and its editors, so it waits for a reload.) Returns whether it
+   * did. `because` is what you did, for its asks as it starts.
    */
-  async addLive(files: readonly FileSummary[], id: string, trusted: readonly string[]): Promise<boolean> {
+  async addLive(files: readonly FileSummary[], id: string, trusted: readonly string[], because: Trigger): Promise<boolean> {
     if (trusted.includes(id)) return false;
     const w = findWorkspaceExtensions(files).find((x) => x.id === id);
     const record = w && (await this.host.add(w, (path) => this.app.offline.read(path)));
     if (!record) return false;
     this.declareOne(record.manifest);
+    this.broker.cause(id, because);
     if (record.manifest.activationEvents.includes("onStartup")) await this.host.activate(record);
     return true;
   }
 
   private declareOne(m: ExtensionManifest): void {
     this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id })));
-    for (const c of m.contributes.commands) this.app.commands.register({ id: c.command, title: c.title, run: () => this.runCommand(c.command) });
+    for (const c of m.contributes.commands)
+      this.app.commands.register({
+        id: c.command,
+        title: c.title,
+        run: () => {
+          this.broker.cause(m.id, { kind: "command", title: c.title });
+          return this.runCommand(c.command);
+        },
+      });
     for (const view of Object.values(m.contributes.views).flat()) {
       const declared = {
         id: view.id,
         title: view.name,
         render: async (el: HTMLElement) => {
+          this.broker.cause(m.id, { kind: "view", name: view.name });
           await this.activateFor(`onView:${view.id}`, (x) => Object.values(x.contributes.views).flat().some((v) => v.id === view.id));
           const renderer = this.renderers.get(view.id);
           if (renderer) await renderer.render(el);
@@ -165,6 +180,7 @@ export class ExtensionRuntime {
 
   /** Start the extensions that start with the app. */
   start(): Promise<void> {
+    for (const m of this.host.on()) if (m.activationEvents.includes("onStartup")) this.broker.cause(m.id, { kind: "startup" });
     return this.host.fire("onStartup");
   }
 
@@ -176,6 +192,11 @@ export class ExtensionRuntime {
   /** Tell sandboxed extensions something happened. */
   broadcast(name: "saved" | "focus", arg: FilePath | null): void {
     for (const host of this.sandboxes.values()) host.event(name, arg);
+  }
+
+  /** You did something any extension may act on (switched to a note): their asks just after say so. */
+  youDid(trigger: Trigger): void {
+    for (const m of this.host.on()) this.broker.cause(m.id, trigger);
   }
 
   /** Settings changed: sandboxed extensions get their own section's new values. */
@@ -197,6 +218,8 @@ export class ExtensionRuntime {
 
   private async drawEmbed(el: HTMLElement, embed: Embed): Promise<void> {
     const declares = (m: ExtensionManifest) => m.contributes.embeds.some((e) => e.language === embed.language);
+    const drawer = this.host.on().find(declares);
+    if (drawer) this.broker.cause(drawer.id, { kind: "embed", title: drawer.contributes.embeds.find((e) => e.language === embed.language)!.title, note: embed.note });
     await this.activateFor(`onEmbed:${embed.language}`, declares);
     const draw = this.embedDrawers.get(embed.language);
     if (draw) return draw(el, embed);
@@ -299,16 +322,10 @@ export class ExtensionRuntime {
         return api.writeAs(m.id, path, text, base);
       },
       list: async () => {
-        // Each declared scope is asked about as a whole; files in the ones allowed are listed.
-        const allowed: string[] = [];
-        for (const scope of m.permissions["files:read"]?.paths ?? []) {
-          try {
-            await check({ kind: "files:read", scope });
-            allowed.push(scope);
-          } catch {
-            // Not allowed: its files aren't listed.
-          }
-        }
+        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
+        const scopes = m.permissions["files:read"]?.paths ?? [];
+        const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
+        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
         return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
       },
       fetch: async (url, init) => {

@@ -5,7 +5,7 @@
       "id": "word-count",
       "name": "Word count",
       "version": "1.0.0",
-      "description": "A Word count view for the note on show. It runs sandboxed, and asks before reading your notes.",
+      "description": "How many words the note on show has, in the status bar; click it for characters and reading time. It runs sandboxed, and asks before reading your notes.",
       "path": "word-count/"
     },
     {
