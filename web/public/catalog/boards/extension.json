@@ -2,13 +2,14 @@
   "id": "boards",
   "name": "Boards",
   "version": "1.0.0",
+  "publisher": "Common Ink",
   "description": "Task lists and Kanban boards in notes. ```tasks folder=Projects``` lists open todos from across your notes, live, to check off where they are; ```kanban``` draws its own markdown (## columns, - cards) as a board, and dragging a card rewrites the block. It runs sandboxed.",
   "main": "index.js",
   "files": ["index.js"],
   "activationEvents": ["onEmbed:tasks", "onEmbed:kanban"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "List the todos in your notes, and read a board's note" },
-    "files:write": { "paths": ["**"], "why": "Check off a todo in its note, and move a board's cards in its note" }
+    "files:read": { "paths": ["**/*.md"], "why": "List the todos in your notes, and read a board's note" },
+    "files:write": { "paths": ["**/*.md"], "why": "Check off a todo in its note, and move a board's cards in its note" }
   },
   "contributes": {
     "embeds": [

@@ -29,7 +29,7 @@ test("task lists gather todos from the notes; checking one off and moving a card
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(`${h.base}/?file=${encodeURIComponent("Boards tour.md")}`);
-  await allow(page, /Boards wants to.*read your notes/s);
+  await allow(page, /^Boards Catalog by Common Ink wants to\s*Read all your notes/);
   const tasks = page.frameLocator('.cm-embed[data-embed="tasks"] iframe').first();
   await tasks.locator("li").first().waitFor();
   const titles = await tasks.locator("li .title").allTextContents();
@@ -37,7 +37,7 @@ test("task lists gather todos from the notes; checking one off and moving a card
 
   // Check off a todo from Chores, there.
   await tasks.locator("li", { hasText: "Take out the recycling" }).locator("input").check();
-  await allow(page, /Boards wants to.*change your notes/s);
+  await allow(page, /^Boards Catalog by Common Ink wants to\s*Change the note Chores/);
   // It's recurring, so it stays open and moves on a week, in Chores.
   const today = new Date().toLocaleDateString("en-CA");
   await until(page, "Chores.md", (text) => {
