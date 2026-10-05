@@ -126,6 +126,13 @@ export interface Seed {
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
 
+/** A short, stable fingerprint of a text (FNV-1a), for telling whether a seed's text changed. */
+function textHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16);
+}
+
 const lines = (text: string) => text.split("\n");
 
 const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
@@ -316,7 +323,11 @@ export class Files {
     return this.db.tx(() => this.apply(w));
   }
 
-  /** Apply a seed once: running it again with the same id changes nothing. */
+  /**
+   * Apply a seed once: running it again with the same id changes nothing. A note is written if it's
+   * missing, if the seed says to replace it, or if the seed's text for it changed since it was last
+   * seeded: a demo the PR changed shows as it is now, and what was there is in history.
+   */
   seed(seed: Seed): void {
     this.db.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
@@ -326,8 +337,13 @@ export class Files {
         const path = parseFilePath(raw);
         if (!path) throw new Error(`Not a file path: ${raw}`);
         const current = this.read(path);
+        const key = `seeded:${path}`;
+        const [seeded] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = ?", key);
+        // Seeded before seeds were remembered: changed if it reads differently now.
+        const changed = seeded ? seeded.value !== textHash(text) : current?.text !== text;
         if (!current) added.add(path);
-        if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+        if (!current || replace || changed) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+        this.db.run("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, textHash(text));
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
       for (const { path, text, agent, label } of seed.edits ?? []) {
