@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 29,
   "title": "Quick-add: a task the way you'd say it",
   "steps": [
     "Open any note and press ⌘⇧. (Ctrl+Shift+. off a Mac). It's the character, wherever your layout puts it: on Dvorak it's the key that types \".\". The quick-add bar opens over the note, in Vim's insert mode if you use Vim.",
