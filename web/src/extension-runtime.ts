@@ -15,6 +15,8 @@ import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
+import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
@@ -569,6 +571,28 @@ export class ExtensionRuntime {
           );
         },
       },
+      media: {
+        session: (spec) => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play media`);
+          return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+        },
+        current: () => {
+          const s = currentMedia();
+          return s && mediaInfo(s);
+        },
+        onChange: (fn) => void onMedia(guard(fn)),
+        play: (id) => mediaSession(id)?.play(),
+        pause: (id) => mediaSession(id)?.pause(),
+        stop: (id) => {
+          const s = mediaSession(id);
+          if (s) stopMedia(s);
+        },
+        reveal: (id) => {
+          const s = mediaSession(id);
+          if (s?.el) revealMedia(s);
+          else if (s?.note) void app.workbench.open(s.note);
+        },
+      },
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
@@ -803,3 +827,5 @@ export class ExtensionRuntime {
   }
 }
 
+/** A session as extensions see it. */
+const mediaInfo = (s: MediaSession) => ({ id: s.id, title: s.title, kind: s.kind, playing: s.playing, note: noteOfMedia(s) ?? s.note ?? null });

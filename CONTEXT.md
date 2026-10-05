@@ -31,6 +31,10 @@ A calendar entry that comes from a data source and may recur.
 A binary file (image, PDF, …) attached to a workspace and referenced from notes by its address, `/uploads/<name>`. Uploading is a change to `.common-ink/uploads.json`.
 _Avoid_: Asset, attachment
 
+**Media session**:
+Something that plays: background noise, or a video or track in a note's link embed. The mini player, the status bar and the media keys control the one played last. A playing video floats in a small window while its note is out of sight, and docks when the note shows again.
+_Avoid_: Player (that's the site's own, in the frame), picture-in-picture
+
 ## History
 
 **Change**:

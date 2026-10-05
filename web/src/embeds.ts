@@ -22,7 +22,7 @@ import type { FilePath } from "../../worker/src/files.ts";
 import { attrsRecord, directiveText, parseAttrs, serializeAttrs, withValues, type Attr } from "./directives.ts";
 import { embedForm } from "./embed-form.ts";
 import { blockPreview, previewEnabled, type BlockPreview } from "./live-preview.ts";
-import { dropLives, livesOf, rememberedHeight } from "./lives.ts";
+import { attachLives, dropLives, livesOf, rememberedHeight } from "./lives.ts";
 
 /** One embed in a note, as its extension gets it. */
 export interface Embed {
@@ -91,8 +91,9 @@ class UrlSlot extends WidgetType {
       this.host.drawUrl(el, this.url, this.id);
       // A click on its edge puts the cursor on its line, to edit the link.
       el.addEventListener("mousedown", (e) => {
+        if (e.target !== el) return;
         const slot = livesOf(view).slotOf(el);
-        if (e.target !== el || !slot) return;
+        if (!slot) return;
         e.preventDefault();
         view.dispatch({ selection: { anchor: view.state.doc.lineAt(view.posAtDOM(slot)).from } });
         view.focus();
@@ -450,7 +451,9 @@ function keepAlive(host: EmbedHost) {
       update: () => null,
     }),
     ViewPlugin.define((view) => {
-      livesOf(view);
+      // Where a box's markdown is now, for a floating window's Back to note.
+      attachLives(view).locate = (key) =>
+        (key.startsWith("url:") ? findUrlEmbeds(view.state, host).find((u) => urlKey(u) === key) : findEmbeds(view.state, host.contributions()).found.find((f) => f.embed.key === key))?.from ?? null;
       return { destroy: () => dropLives(view) };
     }),
     EditorView.updateListener.of((u) => {

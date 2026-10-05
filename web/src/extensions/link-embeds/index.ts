@@ -69,6 +69,44 @@ function siteFrame(src: string, title: string, look: Look): { box: HTMLElement; 
 
 const darkMode = matchMedia("(prefers-color-scheme: dark)");
 
+const YOUTUBE = "https://www.youtube-nocookie.com";
+const SPOTIFY = "https://open.spotify.com";
+
+/** A site's player, as the media controller sees it: what it's called, and how to talk to it. */
+interface Player {
+  title: string;
+  kind: "video" | "audio";
+  /** Where its page is from: messages to it go only there. */
+  origin: string;
+  /** What to say first, before it says anything. */
+  hello?: unknown;
+  play: unknown;
+  pause: unknown;
+  /** What one of its messages says: whether it plays now, or what it's called. */
+  heard(data: unknown): { playing?: boolean; title?: string } | null;
+}
+
+/**
+ * What YouTube's player says: its state as it changes (1 playing, 3 buffering; 2 paused, 0 ended), and
+ * in its regular news (infoDelivery) the state and the video's title.
+ */
+export function youtubeSaid(data: unknown): { playing?: boolean; title?: string } | null {
+  const d = data as { event?: string; info?: unknown } | null;
+  if (!d || typeof d !== "object") return null;
+  const playing = (state: unknown) => (typeof state === "number" && state !== 3 ? state === 1 : undefined);
+  if (d.event === "onStateChange") {
+    const p = playing(d.info);
+    return p === undefined ? null : { playing: p };
+  }
+  if (d.event !== "infoDelivery" && d.event !== "initialDelivery") return null;
+  const info = (d.info ?? {}) as { playerState?: unknown; videoData?: { title?: unknown } };
+  const out: { playing?: boolean; title?: string } = {};
+  const p = playing(info.playerState);
+  if (p !== undefined) out.playing = p;
+  if (typeof info.videoData?.title === "string" && info.videoData.title) out.title = info.videoData.title;
+  return Object.keys(out).length ? out : null;
+}
+
 export default {
   activate(ctx: ExtensionContext) {
     ctx.editor.extend(theme);
@@ -92,11 +130,14 @@ export default {
       return { box, frame };
     };
 
-    // Posts say how tall they are by message; each goes to its own frame.
+    // Posts say how tall they are by message, and players whether they play: each goes to its own frame.
     const sizes = new Map<Window, (height: number) => void>();
+    const players = new WeakMap<Window, (data: unknown) => void>();
     window.addEventListener("message", (e) => {
-      const resize = e.source && sizes.get(e.source as Window);
-      if (!resize) return;
+      const from = e.source as Window | null;
+      const player = from && players.get(from);
+      const resize = from && sizes.get(from);
+      if (!player && !resize) return;
       let data: unknown = e.data;
       if (typeof data === "string") {
         try {
@@ -105,17 +146,60 @@ export default {
           return;
         }
       }
+      player?.(data);
+      if (!resize) return;
       const d = data as { height?: number; "twttr.embed"?: { method?: string; params?: Array<{ height?: number }> } };
       const height = d["twttr.embed"]?.method === "twttr.private.resize" ? d["twttr.embed"].params?.[0]?.height : d.height;
       if (typeof height === "number" && height > 0) resize(Math.min(height, 2000));
     });
+
+    /**
+     * A site's player as something that plays (ctx.media): told to play and pause by the site's own
+     * messages, and hearing from it whether it plays. One that has to be greeted first is greeted on
+     * each load until it answers.
+     */
+    const playable = (frame: HTMLIFrameElement, box: HTMLElement, p: Player) => {
+      const tell = (message: unknown) => frame.contentWindow?.postMessage(message, p.origin);
+      const media = ctx.media.session({ title: p.title, kind: p.kind, el: box, play: () => tell(p.play), pause: () => tell(p.pause) });
+      frame.addEventListener("load", () => {
+        const from = frame.contentWindow;
+        if (!from) return;
+        let heard = false;
+        players.set(from, (data) => {
+          heard = true;
+          const said = p.heard(data);
+          if (said) media.set(said);
+        });
+        if (!p.hello) return;
+        let tries = 0;
+        const greet = () => {
+          if (heard || ++tries > 40 || !frame.isConnected) return;
+          tell(p.hello);
+          setTimeout(greet, 250);
+        };
+        greet();
+      });
+    };
     const sized = ({ box, frame }: { box: HTMLElement; frame: HTMLIFrameElement }) => {
       frame.addEventListener("load", () => frame.contentWindow && sizes.set(frame.contentWindow, (h) => (frame.style.height = `${h}px`)), { once: true });
       return box;
     };
 
+    // YouTube's player says what it's doing once greeted ("listening"), with enablejsapi=1 and our origin.
     ctx.urlEmbeds.register("youtube", {
-      render: (el, { match }) => el.replaceChildren(siteFrame(`https://www.youtube-nocookie.com/embed/${match[1]}`, "YouTube video", { kind: "video", radius: 12 }).box),
+      render(el, { match }) {
+        const { box, frame } = siteFrame(`${YOUTUBE}/embed/${match[1]}?enablejsapi=1&origin=${encodeURIComponent(location.origin)}`, "YouTube video", { kind: "video", radius: 12 });
+        el.replaceChildren(box);
+        playable(frame, box, {
+          title: "YouTube video",
+          kind: "video",
+          origin: YOUTUBE,
+          hello: JSON.stringify({ event: "listening", id: 1, channel: "widget" }),
+          play: JSON.stringify({ event: "command", func: "playVideo", args: [] }),
+          pause: JSON.stringify({ event: "command", func: "pauseVideo", args: [] }),
+          heard: youtubeSaid,
+        });
+      },
     });
     ctx.urlEmbeds.register("x", {
       render: (el, { match }) =>
@@ -140,8 +224,22 @@ export default {
     });
     ctx.urlEmbeds.register("spotify", {
       // Spotify's dark card is theme=0; without it, the card takes its cover's color.
-      render: (el, { match }) =>
-        el.replaceChildren(inTheme((dark) => `https://open.spotify.com/embed/${match[1]}/${match[2]}${dark ? "?theme=0" : ""}`, "Spotify", { kind: "player", radius: 12, height: match[1] === "track" || match[1] === "episode" ? 152 : 352 }).box),
+      render(el, { match }) {
+        const { box, frame } = inTheme((dark) => `${SPOTIFY}/embed/${match[1]}/${match[2]}${dark ? "?theme=0" : ""}`, "Spotify", { kind: "player", radius: 12, height: match[1] === "track" || match[1] === "episode" ? 152 : 352 });
+        el.replaceChildren(box);
+        // It says how its playback goes as it plays (playback_update), and takes pause and resume.
+        playable(frame, box, {
+          title: `Spotify ${match[1]}`,
+          kind: "audio",
+          origin: SPOTIFY,
+          play: { command: "resume" },
+          pause: { command: "pause" },
+          heard: (data) => {
+            const d = data as { type?: string; payload?: { isPaused?: boolean } };
+            return d?.type === "playback_update" && typeof d.payload?.isPaused === "boolean" ? { playing: !d.payload.isPaused } : null;
+          },
+        });
+      },
     });
 
     // Cards are kept for the session, so a note drawn again doesn't fetch again.

@@ -241,6 +241,20 @@ export class Workbench {
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
   }
 
+  /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
+  reveal(view: EditorView, pos: number | null): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    if (!at) return;
+    const [id, item] = at.split("\n");
+    const group = L.groups(this.layout).find((g) => g.id === id);
+    const index = group?.tabs.findIndex((t) => L.openableKey(t) === item) ?? -1;
+    if (!group || index < 0) return;
+    this.change((l) => L.selectTab(l, group.id, index));
+    view.focus();
+    // Once its tab shows: scrolled while hidden, the editor would keep the scroll for later, and do it on the next scroll of yours.
+    if (pos !== null) requestAnimationFrame(() => view.dispatch({ effects: EditorView.scrollIntoView(Math.min(pos, view.state.doc.length), { y: "center" }) }));
+  }
+
   /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
   openView(id: string, how: { newTab?: boolean } = {}): void {
     const item = { view: id };

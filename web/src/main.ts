@@ -1,5 +1,6 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
@@ -175,6 +176,10 @@ const workbench = new Workbench(
   offline,
   new Navigation(savedNavigation()),
 );
+// A floating video's setting, and its Back to note (media.ts, lives.ts).
+mediaHooks.whenHidden = () => whenHiddenOf(settings["media.whenHidden"]);
+mediaHooks.reveal = (view, pos) => workbench.reveal(view, pos);
+mediaHooks.open = (path) => workbench.open(path);
 // After a reload, the entry the browser is on is where you are.
 if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
 

@@ -12,11 +12,23 @@ import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Embed } from "./embeds.ts";
+import type { MediaHandle, MediaKind, MediaSpec } from "./media.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { WorkbenchChrome } from "./workbench.ts";
 
 export type { Embed, Item, Provider };
+export type { MediaHandle, MediaSpec };
+
+/** A session as the controls see it: what it is, whether it plays, and the note it's in. */
+export interface MediaInfo {
+  id: number;
+  title: string;
+  kind: MediaKind;
+  playing: boolean;
+  /** The note it plays in, if it's in one. */
+  note: FilePath | null;
+}
 
 /** How a trusted extension draws a view straight into the page. Called when it shows, and again when it's refreshed. */
 export interface ViewRenderer {
@@ -180,6 +192,25 @@ export interface ExtensionContext {
   /** System notifications, with the notifications permission. */
   notifications: {
     show(title: string, body?: string): Promise<void>;
+  };
+  /**
+   * What plays (a video, a track, background sound), with the media permission. The mini player, the
+   * status bar and the keyboard's media keys control the one played last; a video playing in an embed
+   * floats while its note is out of sight ("media.whenHidden").
+   */
+  media: {
+    /** Something that plays. `el` is where it's drawn, if it's in a note's embed. */
+    session(spec: MediaSpec): MediaHandle;
+    /** What the controls act on: the one played last, while it plays (or keeps its place, like noise). */
+    current(): MediaInfo | null;
+    /** Call `fn` when anything starts, stops, or changes. */
+    onChange(fn: () => void): void;
+    /** Play, pause, or stop a session by id. */
+    play(id: number): void;
+    pause(id: number): void;
+    stop(id: number): void;
+    /** Show the note a session plays in, scrolled to it. */
+    reveal(id: number): void;
   };
   /** The network, through the Worker: only hosts the manifest declares and you've allowed. */
   net: {

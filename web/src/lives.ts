@@ -10,8 +10,17 @@
 // with CSS, not removed, so the same iframe shows again, with whatever changed pushed into it. Each box's
 // height is remembered across visits (in this browser), so on a note's first paint its slot is already
 // as tall as what will fill it, and a box not ready yet holds that height as a quiet card.
+//
+// A video playing in a box (media.ts) floats instead, while its note is out of sight: its tab hidden, its
+// slot scrolled away, or its tab closed. Floating is only CSS (position: fixed, in a small window with a
+// bar to drag it by), so the video plays on; it docks again when its slot is on show. A box playing when
+// its editor closes is kept, its scroller with it, until the note opens again (and takes them back) or it's
+// stopped.
 import type { EditorView } from "@codemirror/view";
+import type { FilePath } from "../../worker/src/files.ts";
+import { editorFile } from "./editor-file.ts";
 import { blockHeight, measureBlock } from "./live-preview.ts";
+import { endMediaIn, letGoMedia, mediaHooks, mediaIn, onMedia, type MediaSession } from "./media.ts";
 
 interface Live {
   el: HTMLElement;
@@ -21,7 +30,45 @@ interface Live {
   make: () => HTMLElement;
   /** Its height, as last measured. */
   height: number;
+  /** Floating in a small window of its own, while it plays out of sight. */
+  floating: boolean;
+  /** Its floating window was closed: it stays hidden until it's on show again. */
+  closed: boolean;
+  /** Whether it was on show when last placed. */
+  seen: boolean;
+  /** Whether what plays in it was playing when last placed. */
+  played: boolean;
+  /** The floating window's bar, made the first time it floats. */
+  bar?: HTMLElement;
+  /** Where its floating window is, from the page's bottom right corner. */
+  corner?: Corner;
 }
+
+interface Corner {
+  right: number;
+  bottom: number;
+}
+
+const FLOAT = "common-ink.media-float";
+/** Where a floating window goes: where the last one was dragged to, or above the mini player. */
+function floatCorner(): Corner {
+  try {
+    const c = JSON.parse(localStorage.getItem(FLOAT) ?? "null") as Corner | null;
+    if (c && Number.isFinite(c.right) && Number.isFinite(c.bottom)) return c;
+  } catch {
+    // Without storage, it goes to the usual place.
+  }
+  return { right: 16, bottom: 88 };
+}
+function keepCorner(c: Corner) {
+  try {
+    localStorage.setItem(FLOAT, JSON.stringify(c));
+  } catch {
+    // Kept for this page only.
+  }
+}
+/** Every floating window, in the order they started floating: each new one goes above the last. */
+const floating = new Set<HTMLElement>();
 
 const HEIGHTS = "common-ink.embed-heights";
 /** Boxes' heights from earlier visits, by key: at most this many are kept. */
@@ -70,6 +117,12 @@ function documentLayer(): HTMLElement {
 
 export class Lives {
   private lives = new Map<string, Live>();
+  /** The editor it keeps boxes for, or null once that's closed and only playing boxes are kept. */
+  private view: EditorView | null = null;
+  /** The note its editor shows, so the note opening again can take its boxes back. */
+  note: FilePath | null = null;
+  /** Where a box's markdown is in the note now, by key: for Back to note. embeds.ts sets it. */
+  locate: (key: string) => number | null = () => null;
   /** Laid over the editor's scroller, the same size and scrolled with it; the boxes are in its content. */
   private scroller: HTMLElement;
   private layer: HTMLElement;
@@ -81,13 +134,14 @@ export class Lives {
   private resized: Pick<ResizeObserver, "observe" | "unobserve" | "disconnect"> = typeof ResizeObserver === "undefined" ? { observe() {}, unobserve() {}, disconnect() {} } : new ResizeObserver((entries) => {
     let changed = false;
     for (const entry of entries) {
-      if (entry.target === this.view.dom) {
+      if (entry.target === this.view?.dom) {
         changed = true;
         continue;
       }
       const key = this.keyOfBox(entry.target as HTMLElement);
       const live = key !== null ? this.lives.get(key) : undefined;
-      if (!live || !live.el.isConnected) continue;
+      // A floating window's size is its own, not the box's in the note.
+      if (!live || !live.el.isConnected || live.floating) continue;
       const height = live.el.offsetHeight;
       if (!height || height === live.height) continue;
       live.height = height;
@@ -98,7 +152,7 @@ export class Lives {
       changed = true;
     }
     if (changed) {
-      this.view.requestMeasure();
+      this.view?.requestMeasure();
       this.place();
     }
   });
@@ -109,14 +163,14 @@ export class Lives {
       const box = (r.target as HTMLElement).closest<HTMLElement>("[data-live]");
       const key = box && this.keyOfBox(box);
       const live = key ? this.lives.get(key) : undefined;
-      if (!live || live.el.matches("[data-pending]") || live.el.querySelector("[data-pending]")) continue;
+      if (!live || live.floating || live.el.matches("[data-pending]") || live.el.querySelector("[data-pending]")) continue;
       live.height = live.el.offsetHeight || live.height;
       if (live.height) remember(key!, live.height);
       if (live.slot && live.height) live.slot.style.height = `${live.height}px`;
     }
   });
 
-  constructor(private view: EditorView) {
+  constructor(view: EditorView) {
     this.scroller = document.createElement("div");
     this.scroller.className = "embed-scroller";
     this.layer = document.createElement("div");
@@ -127,9 +181,18 @@ export class Lives {
     this.scroller.append(this.layer);
     documentLayer().append(this.scroller);
     this.ready?.observe(this.layer, { subtree: true, attributes: true, attributeFilter: ["data-pending"] });
-    // Scrolled together: the note's own scrolling, and a wheel over a frame (which scrolls this layer).
-    view.scrollDOM.addEventListener("scroll", this.fromEditor, { passive: true });
+    // A wheel over a frame scrolls this layer: the note scrolls with it.
     this.scroller.addEventListener("scroll", this.fromLayer, { passive: true });
+    this.adopt(view);
+    all.add(this);
+  }
+
+  /** Keep boxes for this editor: a new one, or one showing the note again after its last closed. */
+  adopt(view: EditorView) {
+    this.view = view;
+    this.note = view.state.facet(editorFile);
+    // Scrolled together: the note's own scrolling, and a wheel over a frame.
+    view.scrollDOM.addEventListener("scroll", this.fromEditor, { passive: true });
     // The editor moves or resizes (a tab hidden or shown, a split, a panel): place everything again.
     this.resized.observe(view.dom);
   }
@@ -138,6 +201,7 @@ export class Lives {
   private following = 0;
 
   private fromEditor = () => {
+    if (!this.view) return;
     const { scrollTop, scrollLeft, scrollHeight, scrollWidth } = this.view.scrollDOM;
     // As tall as the editor's content (which grows as CodeMirror draws more), so it can follow all the way.
     if (this.layer.offsetHeight < scrollHeight) this.layer.style.height = `${scrollHeight}px`;
@@ -165,7 +229,7 @@ export class Lives {
 
   private fromLayer = () => {
     // Its own following of the editor (maybe cut short, if it was shorter): nothing to send back.
-    if (performance.now() < this.following) return;
+    if (!this.view || performance.now() < this.following) return;
     const { scrollTop, scrollLeft } = this.scroller;
     if (this.view.scrollDOM.scrollTop !== scrollTop) this.view.scrollDOM.scrollTop = scrollTop;
     if (this.view.scrollDOM.scrollLeft !== scrollLeft) this.view.scrollDOM.scrollLeft = scrollLeft;
@@ -177,10 +241,11 @@ export class Lives {
    */
   private watch() {
     this.still = 0;
-    if (this.watching || typeof requestAnimationFrame === "undefined") return;
+    if (this.watching || !this.view || typeof requestAnimationFrame === "undefined") return;
     const tick = () => {
-      if (!this.lives.size || !this.view.dom.isConnected || ++this.still > 60) return void (this.watching = 0);
-      const r = this.view.scrollDOM.getBoundingClientRect();
+      const view = this.view;
+      if (!view || !this.lives.size || !view.dom.isConnected || ++this.still > 60) return void (this.watching = 0);
+      const r = view.scrollDOM.getBoundingClientRect();
       if (r.top !== this.shown.top || r.left !== this.shown.left || r.width !== this.shown.width || r.height !== this.shown.height) this.place();
       this.watching = requestAnimationFrame(tick);
     };
@@ -196,7 +261,7 @@ export class Lives {
     if (live && take && !take(live.el)) this.redraw(key, live, make);
     if (!live) {
       const el = make();
-      live = { el, slot: null, make, height: rememberedHeight(key) || Number(el.dataset.estimate) || 0 };
+      live = { el, slot: null, make, height: rememberedHeight(key) || Number(el.dataset.estimate) || 0, floating: false, closed: false, seen: false, played: false };
       if (live.height) el.style.setProperty("--embed-height", `${live.height}px`);
       el.dataset.live = key;
       this.themed.append(el);
@@ -241,41 +306,62 @@ export class Lives {
   }
 
   /**
-   * Lay the scroller over the editor's, and put each box over its slot, or hide it while it has none or
-   * its editor isn't on show. Reads layout first, then writes.
+   * Lay the scroller over the editor's, and put each box over its slot; or, while it has none or it's out
+   * of sight, hide it, or float it if it's a video playing. Reads layout first, then writes.
    */
   place() {
     this.watch();
-    const editor = this.view.scrollDOM;
-    const r = editor.getBoundingClientRect();
-    const on = this.view.dom.isConnected && r.width > 0 && r.height > 0;
-    const top = r.top + editor.clientTop;
-    const left = r.left + editor.clientLeft;
+    const view = this.view;
+    const editor = view?.scrollDOM;
+    const r = editor?.getBoundingClientRect();
+    const on = !!view && !!editor && !!r && view.dom.isConnected && r.width > 0 && r.height > 0;
+    const top = on ? r.top + editor.clientTop : 0;
+    const left = on ? r.left + editor.clientLeft : 0;
     const spots = [...this.lives.values()].map((live) => {
       const s = on && live.slot?.isConnected ? live.slot.getBoundingClientRect() : null;
-      const at = s && (s.width > 0 || s.height > 0) ? { top: s.top - top + editor.scrollTop, left: s.left - left + editor.scrollLeft, width: s.width } : null;
-      return { live, at };
+      const at = on && s && (s.width > 0 || s.height > 0) ? { top: s.top - top + editor.scrollTop, left: s.left - left + editor.scrollLeft, width: s.width } : null;
+      // On show: some of it is inside the editor's window.
+      const seen = !!at && !!s && s.bottom > r!.top && s.top < r!.bottom;
+      return { live, at, seen };
     });
-    const size = { width: editor.clientWidth, height: editor.clientHeight, inner: editor.scrollHeight, innerWidth: editor.scrollWidth };
-    this.shown = { top: r.top, left: r.left, width: r.width, height: r.height };
-    // The editor's theme classes, so the styles extensions give their embeds (scoped to the editor) apply here too.
-    const themed = `embed-themes ${[...this.view.dom.classList].filter((c) => c !== "cm-editor" && c !== "cm-focused").join(" ")}`;
-    if (this.themed.className !== themed) {
-      this.themed.className = themed;
-      // And the text the editor's scroller gives what's in it, as a box there had.
-      const font = getComputedStyle(editor);
-      for (const p of ["font-family", "font-size", "line-height", "color", "letter-spacing"]) this.themed.style.setProperty(p, font.getPropertyValue(p));
-    }
-    const box = this.scroller.style;
-    box.visibility = on ? "" : "hidden";
-    box.top = `${top}px`;
-    box.left = `${left}px`;
-    box.width = `${size.width}px`;
-    box.height = `${size.height}px`;
-    this.layer.style.height = `${size.inner}px`;
-    this.layer.style.width = `${size.innerWidth}px`;
-    this.fromEditor();
-    for (const { live, at } of spots) {
+    if (view && editor && on) {
+      const size = { width: editor.clientWidth, height: editor.clientHeight, inner: editor.scrollHeight, innerWidth: editor.scrollWidth };
+      this.shown = { top: r.top, left: r.left, width: r.width, height: r.height };
+      // The editor's theme classes, so the styles extensions give their embeds (scoped to the editor) apply here too.
+      const themed = `embed-themes ${[...view.dom.classList].filter((c) => c !== "cm-editor" && c !== "cm-focused").join(" ")}`;
+      if (this.themed.className !== themed) {
+        this.themed.className = themed;
+        // And the text the editor's scroller gives what's in it, as a box there had.
+        const font = getComputedStyle(editor);
+        for (const p of ["font-family", "font-size", "line-height", "color", "letter-spacing"]) this.themed.style.setProperty(p, font.getPropertyValue(p));
+      }
+      const box = this.scroller.style;
+      box.visibility = "";
+      box.top = `${top}px`;
+      box.left = `${left}px`;
+      box.width = `${size.width}px`;
+      box.height = `${size.height}px`;
+      this.layer.style.height = `${size.inner}px`;
+      this.layer.style.width = `${size.innerWidth}px`;
+      this.fromEditor();
+    } else this.scroller.style.visibility = "hidden";
+    const when = mediaHooks.whenHidden();
+    for (const { live, at, seen } of spots) {
+      const media = mediaIn(live.el);
+      // Its window closed, it stays closed, until it's on show again or it's played again (the mini player).
+      if (seen || (media?.playing && !live.played)) live.closed = false;
+      live.played = !!media?.playing;
+      if (!seen && media?.playing && !live.floating) {
+        // Out of sight while it plays: a video floats; with "pause", anything pauses as it goes.
+        if (when === "pause" && live.seen) media.pause();
+        else if (when === "float" && media.kind === "video" && !live.closed) live.floating = true;
+      }
+      if (seen && live.floating) this.dock(live);
+      live.seen = seen;
+      if (live.floating) {
+        this.float(live);
+        continue;
+      }
       live.el.classList.toggle("is-hidden", !at);
       if (!at) continue;
       const style = live.el.style;
@@ -286,14 +372,157 @@ export class Lives {
     }
   }
 
+  /** Show a box in its floating window: the same element, only styled so; its bar made the first time. */
+  private float(live: Live) {
+    const key = this.keyOfBox(live.el)!;
+    const el = live.el;
+    if (!floating.has(el)) {
+      // Each new window goes above the ones already floating.
+      const base = floatCorner();
+      live.corner = { right: base.right, bottom: base.bottom + [...floating].filter((f) => f.isConnected).length * 220 };
+      floating.add(el);
+    }
+    if (!live.bar) live.bar = this.floatBar(key, live);
+    if (live.bar.parentNode !== el) el.prepend(live.bar);
+    const media = mediaIn(el);
+    const name = this.note ? this.note.replace(/\.md$/, "").split("/").pop()! : "";
+    const title = live.bar.querySelector<HTMLElement>(".title")!;
+    const note = live.bar.querySelector<HTMLElement>(".note")!;
+    if (title.textContent !== (media?.title ?? "")) title.textContent = media?.title ?? "";
+    if (note.textContent !== name) note.textContent = name;
+    el.classList.remove("is-hidden");
+    el.classList.add("is-floating");
+    el.style.right = `${live.corner!.right}px`;
+    el.style.bottom = `${live.corner!.bottom}px`;
+  }
+
+  /** Back in the note, over its slot. */
+  private dock(live: Live) {
+    live.floating = false;
+    floating.delete(live.el);
+    live.el.classList.remove("is-floating");
+    live.el.style.right = "";
+    live.el.style.bottom = "";
+  }
+
+  /** A floating window's bar: what plays and which note it's from, Back to note, and Stop and close. */
+  private floatBar(key: string, live: Live): HTMLElement {
+    const bar = document.createElement("div");
+    bar.className = "media-float-bar";
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "Floating video");
+    const label = document.createElement("span");
+    label.className = "label";
+    const title = document.createElement("span");
+    title.className = "title";
+    const note = document.createElement("span");
+    note.className = "note";
+    label.append(title, note);
+    const button = (text: string, name: string, run: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = text;
+      b.title = name;
+      b.setAttribute("aria-label", name);
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        run();
+      });
+      return b;
+    };
+    bar.append(label, button("↩", "Back to note", () => void this.back(key)), button("✕", "Stop and close", () => this.close(key)));
+    // Dragged by its bar: the pointer stays with the bar even over the frame.
+    bar.addEventListener("pointerdown", (e) => {
+      if ((e.target as HTMLElement).closest("button") || e.button !== 0) return;
+      e.preventDefault();
+      bar.setPointerCapture(e.pointerId);
+      const from = { x: e.clientX, y: e.clientY, ...live.corner! };
+      const move = (m: PointerEvent) => {
+        const rect = live.el.getBoundingClientRect();
+        const right = Math.min(Math.max(from.right - (m.clientX - from.x), 0), innerWidth - rect.width);
+        const bottom = Math.min(Math.max(from.bottom - (m.clientY - from.y), 0), innerHeight - rect.height);
+        live.corner = { right, bottom };
+        live.el.style.right = `${right}px`;
+        live.el.style.bottom = `${bottom}px`;
+      };
+      const up = () => {
+        bar.removeEventListener("pointermove", move);
+        bar.removeEventListener("pointerup", up);
+        bar.removeEventListener("pointercancel", up);
+        keepCorner(live.corner!);
+      };
+      bar.addEventListener("pointermove", move);
+      bar.addEventListener("pointerup", up);
+      bar.addEventListener("pointercancel", up);
+    });
+    return bar;
+  }
+
+  /** Back to note: show its tab, or open the note again if it was closed, and scroll to it. */
+  async back(key: string) {
+    if (!this.view && this.note) await mediaHooks.open(this.note);
+    if (this.view) mediaHooks.reveal(this.view, this.locate(key));
+  }
+
+  /** Stop and close a floating window: it pauses where it is, and waits in its note, or goes if that's closed. */
+  close(key: string) {
+    const live = this.lives.get(key);
+    if (!live) return;
+    mediaIn(live.el)?.pause();
+    this.dock(live);
+    live.closed = true;
+    if (!this.view) this.forget(key, live);
+    this.place();
+    this.letGoIfDone();
+  }
+
   /** Let go of the boxes `keep` says no to: their markdown isn't in the note any more. */
   prune(keep: (key: string) => boolean) {
+    for (const [key, live] of this.lives) if (!keep(key)) this.forget(key, live);
+  }
+
+  private forget(key: string, live: Live) {
+    this.resized.unobserve(live.el);
+    floating.delete(live.el);
+    endMediaIn(live.el);
+    live.el.remove();
+    this.lives.delete(key);
+  }
+
+  /**
+   * Its editor closed: keep what's playing (floating, if it's a video), and let go of the rest. Kept, it
+   * waits for the note to open again. With "pause", nothing is kept.
+   */
+  release() {
+    const view = this.view;
+    if (!view) return;
+    const when = mediaHooks.whenHidden();
     for (const [key, live] of this.lives) {
-      if (keep(key)) continue;
-      this.resized.unobserve(live.el);
-      live.el.remove();
-      this.lives.delete(key);
+      const media = mediaIn(live.el);
+      if (!media?.playing || when === "pause") {
+        this.forget(key, live);
+        continue;
+      }
+      live.slot = null;
+      if (media.kind === "video" && when === "float" && !live.closed) live.floating = true;
     }
+    cancelAnimationFrame(this.watching);
+    this.watching = 0;
+    view.scrollDOM.removeEventListener("scroll", this.fromEditor);
+    this.resized.unobserve(view.dom);
+    this.view = null;
+    if (!this.lives.size) return this.destroy();
+    this.place();
+  }
+
+  /** Kept after its editor closed, with nothing playing, paused to play on, or floating any more: let go of it all. */
+  letGoIfDone() {
+    if (this.view) return;
+    for (const [key, live] of this.lives) {
+      const media = mediaIn(live.el);
+      if (!live.floating && !media?.playing && !media?.held) this.forget(key, live);
+    }
+    if (!this.lives.size) this.destroy();
   }
 
   destroy() {
@@ -301,13 +530,15 @@ export class Lives {
     cancelAnimationFrame(this.settling);
     this.resized.disconnect();
     this.ready?.disconnect();
-    this.view.scrollDOM.removeEventListener("scroll", this.fromEditor);
+    this.view?.scrollDOM.removeEventListener("scroll", this.fromEditor);
+    for (const [key, live] of this.lives) this.forget(key, live);
     this.scroller.remove();
-    this.lives.clear();
+    all.delete(this);
   }
 
   private redraw(key: string, live: Live, make: () => HTMLElement) {
     this.resized.unobserve(live.el);
+    endMediaIn(live.el);
     const el = make();
     el.dataset.live = key;
     live.el.replaceWith(el);
@@ -318,20 +549,80 @@ export class Lives {
   private keyOfBox(el: HTMLElement): string | null {
     return el.dataset.live ?? null;
   }
+
+  /** Whether this box, by this key, is one of its own. */
+  holds(key: string, box: HTMLElement) {
+    return this.lives.get(key)?.el === box;
+  }
+
+  /** Whether it's kept only for what plays, its editor closed. */
+  get orphaned() {
+    return !this.view;
+  }
 }
 
 const byView = new WeakMap<EditorView, Lives>();
+/** Every keeper, its editor open or not. */
+const all = new Set<Lives>();
 
-/** The keeper of an editor's boxes (made the first time), or, given a slot, the one it belongs to. */
+// What plays changed: a video that started or stopped may float, dock or go.
+if (typeof queueMicrotask !== "undefined")
+  onMedia(() => {
+    for (const lives of [...all]) {
+      lives.place();
+      lives.letGoIfDone();
+    }
+  });
+
+/** The keeper of an editor's boxes, or, given a slot, the one it belongs to. */
 export function livesOf(of: EditorView | HTMLElement): Lives {
   if (!("state" in of)) return owners.get(of)!;
-  let lives = byView.get(of);
-  if (!lives) byView.set(of, (lives = new Lives(of)));
+  return byView.get(of) ?? attachLives(of);
+}
+
+/**
+ * An editor's keeper, as its plugin starts: made, or taken back. Its plugin made again (the editor
+ * reconfigured) takes back what it kept; a new editor for a note takes back what was kept playing when
+ * the note's last editor closed. A closed editor's own calls after that (a stray event) take nothing.
+ */
+export function attachLives(view: EditorView): Lives {
+  const had = byView.get(view);
+  if (had && !had.orphaned) return had;
+  const note = view.state.facet(editorFile);
+  const kept = had && all.has(had) && had.orphaned ? had : note ? [...all].find((l) => l.orphaned && l.note === note) : undefined;
+  kept?.adopt(view);
+  const lives = kept ?? new Lives(view);
+  byView.set(view, lives);
   return lives;
 }
 
-/** Forget an editor's boxes, when it's gone. */
+/** An editor is gone (or its plugin is, for now): let go of its boxes, but what's playing. */
 export function dropLives(view: EditorView) {
-  byView.get(view)?.destroy();
-  byView.delete(view);
+  byView.get(view)?.release();
+}
+
+/** The keeper and key of the box `el` is drawn in. */
+function boxOf(el: HTMLElement): { lives: Lives; key: string } | null {
+  const box = el.closest<HTMLElement>(".embed-themes > [data-live]");
+  const key = box?.dataset.live;
+  const lives = key ? [...all].find((l) => l.holds(key, box!)) : undefined;
+  return lives && key ? { lives, key } : null;
+}
+
+/** The note a session plays in. */
+export const noteOfMedia = (session: MediaSession): FilePath | null => (session.el && boxOf(session.el)?.lives.note) ?? null;
+
+/** Show the note a session plays in, scrolled to it. */
+export function revealMedia(session: MediaSession) {
+  const at = session.el && boxOf(session.el);
+  if (at) void at.lives.back(at.key);
+}
+
+/** Stop a session: it stops (or pauses), and its floating window closes. */
+export function stopMedia(session: MediaSession) {
+  if (session.stop) session.stop();
+  else session.pause();
+  letGoMedia(session);
+  const at = session.el && boxOf(session.el);
+  if (at) at.lives.close(at.key);
 }
