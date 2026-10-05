@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 36,
   "title": "Google Calendar: two-way sync, recurring edits, conflicts, and reconnecting",
   "steps": [
     "A Preview has no Google account, so its calendar is still the Sample calendar. ⌘⇧P, Show calendar: each event now has its calendar's colour beside it.",
