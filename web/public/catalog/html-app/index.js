@@ -11,8 +11,17 @@ const HEAD = `<script type="importmap">${JSON.stringify({ imports: IMPORTS })}</
 
 export default {
   activate(ctx) {
+    /** The HTML each frame runs now. */
+    const running = new WeakMap();
     ctx.embeds.register("html-app", {
       resolve(webview, embed) {
+        running.set(webview, embed.body);
+        webview.html = HEAD + embed.body;
+      },
+      // New HTML runs in the same frame, so there's no blank one on the way; a new height or title needs nothing from it.
+      update(webview, embed) {
+        if (running.get(webview) === embed.body) return;
+        running.set(webview, embed.body);
         webview.html = HEAD + embed.body;
       },
     });

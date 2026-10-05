@@ -135,16 +135,42 @@ export interface StatusBarItemContribution {
   command?: string;
 }
 
-/** An embed in notes: a fenced code block whose info string starts with `language`. */
+/**
+ * How an embed is written in a note: a leaf directive on a line of its own (`::timer{duration=25m}`),
+ * a container directive around markdown (`:::kanban` … `:::`), or a fenced block around code.
+ */
+export type EmbedSyntax = "leaf" | "container" | "fence";
+
+export const EMBED_SYNTAXES: readonly EmbedSyntax[] = ["leaf", "container", "fence"];
+
+/** One of an embed's arguments: its type and what it means, and how its settings form offers it. */
+export interface EmbedArgument {
+  type: "string" | "number" | "duration" | "boolean";
+  description: string;
+  default?: string;
+  /** Its name in the settings form; the key, capitalized, if it doesn't say. */
+  label?: string;
+  /** The values it may take, offered as a choice. */
+  enum?: string[];
+  /** Values offered in one click (durations: 5m, 25m, 1h). */
+  presets?: string[];
+  /** Kept as it is, and not in the settings form: an `id`. */
+  hidden?: boolean;
+}
+
+/** An embed in notes, named `language`, drawn by the extension in place of its markdown. */
 export interface EmbedContribution {
   language: string;
   title: string;
   description: string;
-  /** The info string's key=value arguments, each with its type and what it means. */
-  arguments: Record<string, { type: "string" | "number" | "duration" | "boolean"; description: string; default?: string }>;
-  /** What the block's body holds, if anything. */
+  syntax: EmbedSyntax;
+  /** Its key=value arguments, each with its type and what it means. */
+  arguments: Record<string, EmbedArgument>;
+  /** What the block's body holds, if anything: a container's markdown, or a fence's code. */
   body?: string;
 }
+
+const ARGUMENT_TYPES = ["string", "number", "duration", "boolean"];
 
 /** A URL alone on its own line, drawn as an embed. */
 export interface UrlEmbedContribution {
@@ -286,7 +312,25 @@ function contributions(v: unknown, id: string): Contributions {
       const o = object(item, at);
       const language = text(o.language, `${at}.language`);
       if (!/^[a-z][a-z0-9-]*$/.test(language)) throw new ManifestError(`${at}.language must be lowercase letters, digits and dashes`);
-      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), arguments: (o.arguments ?? {}) as EmbedContribution["arguments"], ...(typeof o.body === "string" ? { body: o.body } : {}) };
+      const body = typeof o.body === "string" ? o.body : undefined;
+      const syntax = o.syntax === undefined ? (body === undefined ? "leaf" : "fence") : (o.syntax as EmbedSyntax);
+      if (!EMBED_SYNTAXES.includes(syntax)) throw new ManifestError(`${at}.syntax must be one of ${EMBED_SYNTAXES.join(", ")}`);
+      const args: Record<string, EmbedArgument> = {};
+      for (const [key, value] of Object.entries(o.arguments === undefined ? {} : object(o.arguments, `${at}.arguments`))) {
+        const a = object(value, `${at}.arguments.${key}`);
+        if (!ARGUMENT_TYPES.includes(a.type as string)) throw new ManifestError(`${at}.arguments.${key}.type must be one of ${ARGUMENT_TYPES.join(", ")}`);
+        const strings = (field: string) => (a[field] === undefined ? undefined : list(a[field], `${at}.arguments.${key}.${field}`, (v, w) => text(v, w)));
+        args[key] = {
+          type: a.type as EmbedArgument["type"],
+          description: text(a.description, `${at}.arguments.${key}.description`, true),
+          ...(a.default !== undefined ? { default: String(a.default) } : {}),
+          ...(typeof a.label === "string" ? { label: a.label } : {}),
+          ...(strings("enum") ? { enum: strings("enum") } : {}),
+          ...(strings("presets") ? { presets: strings("presets") } : {}),
+          ...(a.hidden === true ? { hidden: true } : {}),
+        };
+      }
+      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), syntax, arguments: args, ...(body !== undefined ? { body } : {}) };
     }),
     urlEmbeds: list(c.urlEmbeds, "contributes.urlEmbeds", (item, at) => {
       const o = object(item, at);

@@ -16,48 +16,173 @@ const { EditorView } = await import("@codemirror/view");
 const { createState } = await import("../web/src/editor.ts");
 const { DEFAULTS } = await import("../worker/src/settings.ts");
 const { embeds, findEmbeds, parseInfo } = await import("../web/src/embeds.ts");
+const { StateEffect, Transaction } = await import("@codemirror/state");
 const clock = await import("../web/src/extensions/timers/clock.ts");
 const { noiseSamples } = await import("../web/src/extensions/media/noise.ts");
 const { exampleOf, listEmbeds } = await import("../worker/src/embed-list.ts");
 const { findWorkspaceExtensions } = await import("../web/src/extension-host.ts");
 const { memoryStore } = await import("./store.ts");
-import type { Embed } from "../web/src/embeds.ts";
+import type { Embed, EmbedHost } from "../web/src/embeds.ts";
+import type { EmbedContribution } from "../worker/src/extensions.ts";
 import type { FilePath } from "../worker/src/files.ts";
 
-const NOTE = ["# Plan", "", "```timer duration=25m label=\"Deep work\"", "```", "", "```js", "code()", "```", "", "```timer id=tea duration=4m", "```", "", "```html-app height=200", "<p>hi</p>", "```", "", "End"].join("\n");
+const NOTE = [
+  "# Plan",
+  "",
+  '::timer{duration=25m label="Deep work"}',
+  "",
+  "```js",
+  "code()",
+  "```",
+  "",
+  "::timer{id=tea duration=4m}",
+  "",
+  "::unknown{x=1}",
+  "",
+  ":::board{done=Shipped}",
+  "## To do",
+  "- [ ] Write it",
+  ":::",
+  "",
+  "```html-app height=200",
+  "<p>hi</p>",
+  "```",
+  "",
+  "End",
+].join("\n");
 
-test("an info string is a language and key=value arguments, quoted or not", () => {
-  assert.deepEqual(parseInfo('timer duration=25m label="Deep work"'), { language: "timer", args: { duration: "25m", label: "Deep work" } });
-  assert.deepEqual(parseInfo("alarm at=07:30 label='Wake up'"), { language: "alarm", args: { at: "07:30", label: "Wake up" } });
-  assert.deepEqual(parseInfo("python"), { language: "python", args: {} });
+const DECLARED = new Map([
+  ["timer", { syntax: "leaf" as const }],
+  ["board", { syntax: "container" as const }],
+  ["html-app", { syntax: "fence" as const }],
+]);
+
+const state = (doc: string, extensions: import("@codemirror/state").Extension[] = []) =>
+  createState(doc, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions, onUpdate: () => {}, onBlur: () => {} });
+
+test("an info string is a language and key=value arguments, quoted or not, kept in order with their quotes", () => {
+  assert.deepEqual(parseInfo('timer duration=25m label="Deep work"'), {
+    language: "timer",
+    attrs: [
+      { key: "duration", value: "25m", quote: "" },
+      { key: "label", value: "Deep work", quote: '"' },
+    ],
+  });
+  assert.deepEqual(parseInfo("alarm at=07:30 label='Wake up'").attrs.map((a) => [a.key, a.value, a.quote]), [
+    ["at", "07:30", ""],
+    ["label", "Wake up", "'"],
+  ]);
+  assert.deepEqual(parseInfo("python"), { language: "python", attrs: [] });
 });
 
-test("embeds are the fenced blocks of declared languages, each with a key that stays put", () => {
-  const view = new EditorView({ state: createState(NOTE, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
-  const found = findEmbeds(view.state, new Set(["timer", "html-app"])).map((f) => f.embed);
+test("embeds are written as their contribution says: a leaf line, a container, or a fence; each with a key that stays put", () => {
+  const scan = findEmbeds(state(NOTE), DECLARED);
   assert.deepEqual(
-    found.map((e) => [e.language, e.key, e.args, e.body]),
+    scan.found.map(({ embed: e }) => [e.language, e.syntax, e.key, e.args, e.body]),
     [
-      ["timer", "Plan.md#timer:0", { duration: "25m", label: "Deep work" }, ""],
-      ["timer", "Plan.md#tea", { id: "tea", duration: "4m" }, ""],
-      ["html-app", "Plan.md#html-app:0", { height: "200" }, "<p>hi</p>"],
+      ["timer", "leaf", "Plan.md#timer:0", { duration: "25m", label: "Deep work" }, ""],
+      ["timer", "leaf", "Plan.md#tea", { id: "tea", duration: "4m" }, ""],
+      ["board", "container", "Plan.md#board:0", { done: "Shipped" }, "## To do\n- [ ] Write it"],
+      ["html-app", "fence", "Plan.md#html-app:0", { height: "200" }, "<p>hi</p>"],
     ],
-    "an id argument names it; otherwise it's which block of its language it is; js isn't an embed",
+    "an id argument names it; otherwise it's which of its kind it is. js and an undeclared directive aren't embeds",
   );
+  assert.deepEqual(scan.unclosed, []);
+  assert.deepEqual(findEmbeds(state("```timer duration=5m\n```"), DECLARED).found, [], "a leaf embed written as a fence is just code");
+});
+
+test("a container left open isn't an embed, and says so above it", () => {
+  const view = new EditorView({ state: state(":::board\n## To do\n- Card\n\nEnd", [embeds(host([]))]), parent: document.body });
+  assert.deepEqual(findEmbeds(view.state, DECLARED).unclosed, [{ from: 0, language: "board" }]);
+  assert.equal(view.dom.querySelector(".cm-embed-needs")?.textContent, "This Board isn't closed: add a line with ::: after its last line.");
+  assert.equal(view.dom.querySelectorAll(".cm-embed").length, 0);
   view.destroy();
 });
 
-test("an embed is drawn in place of its block until the cursor is in it", () => {
+/** A host that draws each embed as its arguments, and takes new ones in place unless told not to. */
+function host(drawn: Embed[], opts: { updates?: Embed[]; refuse?: boolean } = {}): EmbedHost {
+  const contributions = new Map<string, EmbedContribution>([
+    ["timer", { language: "timer", title: "Timer", description: "", syntax: "leaf", arguments: { duration: { type: "duration", description: "How long", default: "25m", presets: ["5m", "25m"] }, label: { type: "string", description: "What it's for" }, id: { type: "string", description: "", hidden: true } } }],
+    ["board", { language: "board", title: "Board", description: "", syntax: "container", arguments: {} }],
+  ]);
+  return {
+    contributions: () => contributions,
+    draw: (el, e) => void (drawn.push(e), (el.textContent = `drawn ${e.args.duration ?? e.language}`)),
+    update: (el, e) => {
+      if (opts.refuse) return false;
+      opts.updates?.push(e);
+      el.textContent = `drawn ${e.args.duration}`;
+      return true;
+    },
+    needs: () => null,
+  };
+}
+
+test("an embed is drawn in place of its markdown until the cursor is on it, with Settings and Edit markdown", () => {
   const drawn: Embed[] = [];
-  const host = { languages: () => new Set(["timer"]), draw: (el: HTMLElement, e: Embed) => void (drawn.push(e), (el.textContent = `drawn ${e.args.duration}`)), needs: () => null };
-  const view = new EditorView({
-    state: createState(NOTE, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions: [embeds(host)], onUpdate: () => {}, onBlur: () => {} }),
-    parent: document.body,
-  });
+  const view = new EditorView({ state: state(NOTE, [embeds(host(drawn))]), parent: document.body });
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  assert.deepEqual([...view.dom.querySelectorAll(".cm-embed")].map((e) => e.textContent), ["drawn 25m", "drawn 4m"]);
+  const bodies = () => [...view.dom.querySelectorAll(".cm-embed .cm-embed-body")].map((e) => e.textContent);
+  assert.deepEqual(bodies(), ["drawn 25m", "drawn 4m", "drawn board"]);
+  assert.deepEqual([...view.dom.querySelector(".cm-embed .cm-embed-tools")!.querySelectorAll("button")].map((b) => b.textContent), ["Settings", "Edit markdown"]);
   view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 2 } });
-  assert.deepEqual([...view.dom.querySelectorAll(".cm-embed")].map((e) => e.textContent), ["drawn 4m"], "the cursor in the first shows its markdown");
+  assert.deepEqual(bodies(), ["drawn 4m", "drawn board"], "the cursor on the first shows its markdown");
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  view.dom.querySelectorAll<HTMLButtonElement>(".cm-embed-tools button")[1].click();
+  assert.equal(view.state.selection.main.head, view.state.doc.line(3).to, "Edit markdown puts the cursor at the end of its line");
+  view.destroy();
+});
+
+test("new arguments go to the drawn embed in place: its element stays, unless its extension can't take them", () => {
+  const drawn: Embed[] = [];
+  const updates: Embed[] = [];
+  const view = new EditorView({ state: state(NOTE, [embeds(host(drawn, { updates }))]), parent: document.body });
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  const first = view.dom.querySelector(".cm-embed")!;
+  const line = view.state.doc.line(3);
+  view.dispatch({ changes: { from: line.from, to: line.to, insert: '::timer{duration=50m label="Deep work"}' } });
+  assert.equal(view.dom.querySelector(".cm-embed"), first, "the same element");
+  assert.deepEqual(updates.map((e) => e.args.duration), ["50m"]);
+  assert.equal(first.querySelector(".cm-embed-body")!.textContent, "drawn 50m");
+  view.dispatch({ changes: { from: 0, insert: "Intro\n\n" } });
+  assert.equal(view.dom.querySelector(".cm-embed"), first, "an edit elsewhere leaves it alone");
+  assert.equal(updates.length, 1);
+  view.destroy();
+
+  const refusing = new EditorView({ state: state(NOTE, [embeds(host([], { refuse: true }))]), parent: document.body });
+  refusing.dispatch({ selection: { anchor: refusing.state.doc.length } });
+  const before = refusing.dom.querySelector(".cm-embed")!;
+  const l = refusing.state.doc.line(3);
+  refusing.dispatch({ changes: { from: l.from, to: l.to, insert: "::timer{duration=50m}" } });
+  assert.notEqual(refusing.dom.querySelector(".cm-embed"), before, "drawn again");
+  refusing.destroy();
+});
+
+test("Settings writes the arguments into the markdown as your edit, keeping their order and quotes and leaving defaults out", () => {
+  const view = new EditorView({ state: state('# Plan\n\n::timer{label="Deep work" id=tea}\n\nEnd', [embeds(host([]))]), parent: document.body });
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  const events: string[] = [];
+  const listen = EditorView.updateListener.of((u) => u.transactions.forEach((tr) => tr.docChanged && events.push(tr.annotation(Transaction.userEvent) ?? "")));
+  view.dispatch({ effects: StateEffect.appendConfig.of(listen) });
+  view.dom.querySelector<HTMLButtonElement>(".cm-embed-tools button")!.click();
+  const form = view.dom.querySelector<HTMLFormElement>(".cm-embed-form")!;
+  assert.deepEqual([...form.querySelectorAll("label")].map((l) => l.textContent), ["Duration", "Label"], "an id isn't offered");
+  const [duration, label] = [...form.querySelectorAll("input")];
+  assert.equal(duration.value, "25m", "a default shows as its value");
+  assert.equal(form.querySelector(".actions code")!.textContent, '::timer{label="Deep work" id=tea}', "and isn't written");
+  form.querySelectorAll<HTMLButtonElement>(".presets button")[0].click();
+  label.value = "Tea, then work";
+  label.dispatchEvent(new window.Event("input"));
+  assert.equal(form.querySelector(".actions code")!.textContent, '::timer{label="Tea, then work" duration=5m id=tea}');
+  duration.value = "soon";
+  duration.dispatchEvent(new window.Event("input"));
+  assert.equal(form.querySelector<HTMLButtonElement>("button[type=submit]")!.disabled, true, "a duration it can't read can't be saved");
+  duration.value = "5m";
+  duration.dispatchEvent(new window.Event("input"));
+  form.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  assert.equal(view.state.doc.line(3).text, '::timer{label="Tea, then work" duration=5m id=tea}');
+  assert.deepEqual(events, ["input.embed"], "one edit, yours");
+  assert.equal(view.dom.querySelector(".cm-embed-form"), null);
   view.destroy();
 });
 
@@ -105,9 +230,12 @@ test("list_embeds lists every embed with its arguments and an example, and says 
   const timer = list.find((e) => e.language === "timer")!;
   assert.equal(timer.extension, "timers");
   assert.equal(timer.on, true);
-  assert.equal(timer.example, "```timer duration=25m\n```");
+  assert.equal(timer.syntax, "leaf");
+  assert.equal(timer.example, "::timer{duration=25m}");
   assert.equal(list.find((e) => e.language === "noise")?.on, false);
-  assert.equal(exampleOf({ language: "html-app", title: "", description: "", arguments: { height: { type: "number", description: "", default: "360" } }, body: "<p>…</p>" }), "```html-app height=360\n<p>…</p>\n```");
+  assert.equal(list.find((e) => e.language === "noise")?.example, "::noise{color=brown volume=0.3}");
+  assert.equal(exampleOf({ language: "html-app", title: "", description: "", syntax: "fence", arguments: { height: { type: "number", description: "", default: "360" } }, body: "<p>…</p>" }), "```html-app height=360\n<p>…</p>\n```");
+  assert.equal(exampleOf({ language: "board", title: "", description: "", syntax: "container", arguments: { done: { type: "string", description: "", default: "Shipped it" } }, body: "## Column" }), ':::board{done="Shipped it"}\n## Column\n:::');
 });
 
 test("an extension's state.json isn't part of it: changing it needs no reload", () => {

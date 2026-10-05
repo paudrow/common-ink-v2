@@ -249,7 +249,7 @@ export const OPERATIONS = {
   }),
   list_embeds: op<Record<string, never>>({
     description:
-      "The embeds notes can hold: fenced code blocks that extensions draw in place, like ```timer duration=25m label=\"Focus\"```. Each comes with its language, what it does, its key=value arguments, what its body holds (if anything), an example to copy, and whether its extension is on here. Write one into a note as a fenced block: the language and arguments on the opening line, the body (if any) inside. Extensions installed from the Extensions view's Catalog add more.",
+      "The embeds notes can hold, which extensions draw in place. Each comes with its name, its syntax, what it does, its key=value arguments, what its body holds (if anything), an example to copy, and whether its extension is on here. Write each the way its syntax says: a leaf is one line, `::timer{duration=25m label=\"Focus\"}`; a container wraps markdown, `:::kanban` on a line, its markdown, then `:::` on a line; a fence is a code block, its name and arguments on the opening line. Extensions installed from the Extensions view's Catalog add more.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),

@@ -59,11 +59,14 @@
       .sort((a, b) => b.score - a.score || a.i - b.i)
       .map((m) => m.item);
 
+  /** The handle on a webview, the same one each time: an update to an embed reaches the page it resolved. */
+  const webviewHandles = new Map();
   function webview(id) {
+    if (webviewHandles.has(id)) return webviewHandles.get(id);
     let html = "";
     const own = [];
     webviewListeners.set(id, own);
-    return {
+    const handle = {
       get html() {
         return html;
       },
@@ -74,6 +77,8 @@
       post: (message) => call("webview.post", id, message),
       onMessage: (fn) => void own.push(fn),
     };
+    webviewHandles.set(id, handle);
+    return handle;
   }
 
   function context(extension) {
@@ -109,7 +114,9 @@
       embeds: {
         register(language, provider) {
           handlers.set(`embed:${language}`, (webviewId, embed) => provider.resolve(webview(webviewId), embed));
-          return call("embeds.register", language);
+          // New arguments or body for an embed it drew, in place: the app only sends them if it said it can take them.
+          if (provider.update) handlers.set(`embedUpdate:${language}`, (webviewId, embed) => provider.update(webview(webviewId), embed));
+          return call("embeds.register", language, typeof provider.update === "function");
         },
       },
       state: { get: () => call("state.get"), set: (value) => call("state.set", value) },

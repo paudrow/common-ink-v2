@@ -23,7 +23,7 @@
       "id": "pomodoro",
       "name": "Pomodoro",
       "version": "1.0.0",
-      "description": "Work in focused rounds with breaks between: ```pomodoro work=25m break=5m```. It shows in the status bar and notifies at each change. It runs sandboxed.",
+      "description": "Work in focused rounds with breaks between: `::pomodoro{work=25m break=5m}`. It shows in the status bar and notifies at each change. It runs sandboxed.",
       "path": "pomodoro/",
       "embeds": [
         "pomodoro"

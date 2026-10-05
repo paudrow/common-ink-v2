@@ -1,4 +1,4 @@
-// Media, a built-in extension: ```noise``` embeds (noise.ts), and the media controller for what plays.
+// Media, a built-in extension: `::noise` embeds (noise.ts), and the media controller for what plays.
 // One sound plays at a time. While one is loaded, a mini player in the corner shows it with play,
 // pause, volume and stop; the status bar names it; and the keyboard's media keys work (Media Session).
 // It keeps playing when its note closes. Each embed's volume is kept in the extension's state.
@@ -121,30 +121,41 @@ export default {
     }
 
     ctx.editor.extend(theme);
+    /** The embed each drawn box shows, by the element it was drawn into: new arguments replace it. */
+    const drawn = new WeakMap<HTMLElement, { embed: Embed; update(): void }>();
     ctx.embeds.register("noise", {
-      render(el, embed) {
+      render(el, first) {
+        const ref = { embed: first, update: () => {} };
         const box = document.createElement("div");
         box.className = "noise-embed";
         const button = document.createElement("button");
         button.type = "button";
-        button.addEventListener("click", () => (now?.key === embed.key && now.player.playing ? toggle() : play(embed)));
+        button.addEventListener("click", () => (now?.key === ref.embed.key && now.player.playing ? toggle() : play(ref.embed)));
         const title = document.createElement("span");
         const volume = slider(
-          volumeFor(embed),
-          (v) => now?.key === embed.key && (now.player.volume = v),
-          (v) => keepVolume(embed.key, v),
+          volumeFor(first),
+          (v) => now?.key === ref.embed.key && (now.player.volume = v),
+          (v) => keepVolume(ref.embed.key, v),
         );
         box.append(button, title, volume);
-        const update = () => {
-          const playing = now?.key === embed.key && now.player.playing;
+        ref.update = () => {
+          const playing = now?.key === ref.embed.key && now.player.playing;
           button.textContent = playing ? "Pause" : "Play";
-          title.textContent = titleOf(embed);
+          title.textContent = titleOf(ref.embed);
           box.classList.toggle("playing", playing);
-          if (now?.key === embed.key) volume.value = String(now.player.volume);
+          volume.value = String(now?.key === ref.embed.key ? now.player.volume : volumeFor(ref.embed));
         };
         el.replaceChildren(box);
-        live.add({ el: box, update });
-        update();
+        live.add({ el: box, update: () => ref.update() });
+        drawn.set(el, ref);
+        ref.update();
+      },
+      // A new color plays from the next Play; a new volume or label shows at once.
+      update(el: HTMLElement, embed: Embed) {
+        const d = drawn.get(el);
+        if (!d) return;
+        d.embed = embed;
+        d.update();
       },
     });
     ctx.commands.register("media.toggle", toggle);
