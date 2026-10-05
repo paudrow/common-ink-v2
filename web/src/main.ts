@@ -1,5 +1,6 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { isRecordPath } from "../../worker/src/records.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
@@ -71,6 +72,7 @@ let settings: Settings = DEFAULTS;
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
+const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const offline = new Offline(idbKV(), api);
@@ -258,11 +260,13 @@ async function refreshList() {
 /** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
 async function renderUnsent() {
   const unsent = await offline.unsent();
+  const ops = await offline.ops();
+  const waiting = unsent.length + ops.length;
   const clashing = unsent.filter((u) => u.conflict);
-  const parts = [offline.online ? "" : "Offline", unsent.length ? `${unsent.length} unsent ${unsent.length === 1 ? "change" : "changes"}` : ""].filter(Boolean);
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : ""].filter(Boolean);
   unsentLine.textContent = parts.join(" · ") + (clashing.length ? ` (${clashing.length} can't be merged: open ${docLabel(clashing[0].path)})` : "");
-  unsentLine.title = unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`).join("\n");
-  unsentLine.dataset.state = clashing.length ? "conflict" : unsent.length || !offline.online ? "waiting" : "";
+  unsentLine.title = [...unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
+  unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
 offline.onChange(() => void renderUnsent());
 unsentLine.addEventListener("click", async () => {
@@ -272,6 +276,9 @@ unsentLine.addEventListener("click", async () => {
 
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
+  // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
+  const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
+  for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`);
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
     await refreshList();
@@ -405,6 +412,7 @@ const extensions = new ExtensionRuntime({
   lastFile: () => lastFile,
   onSaved: savedListeners,
   onFocus: focusListeners,
+  onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
     const grants = parseGrants(settings["extensions.permissions"]);
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
@@ -424,6 +432,7 @@ function askerOf(id: string): Asker {
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
 focusListeners.push((path) => extensions.broadcast("focus", path));
+recordListeners.push(() => extensions.broadcast("records", null));
 
 // Extensions' manifests are read once, as the app loads. Turning one on or off, or changing its files,
 // applies after a reload (ADR 0006 says why), and until then the status bar and the Extensions view say so.
@@ -711,6 +720,7 @@ window.addEventListener("pagehide", () => {
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
 // Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
 let historyTimer2 = 0;
+let recordsTimer = 0;
 connectLive({
   async change(notice) {
     const open = await workbench.remoteChange(notice.path, notice.revision);
@@ -718,6 +728,12 @@ connectLive({
     if (open && !mine && notice.path === workbench.focusedPath) {
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
+    }
+    // A data source's records aren't listed: views of them hear of it, once a burst of changes ends.
+    if (isRecordPath(notice.path)) {
+      clearTimeout(recordsTimer);
+      recordsTimer = window.setTimeout(() => recordListeners.forEach((fn) => fn()), 150);
+      return;
     }
     // A new file, or an extension's (which may have been deleted): list them again.
     if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/extensions/")) void refreshList();

@@ -1,6 +1,7 @@
-// How a task repeats: the `rec:` token, read into an RFC 5545 recurrence rule, and the date math
-// for the next due date. Tasks are dates, not times, so everything here is calendar days counted in
-// UTC (a date never moves with a time zone or a daylight-saving change).
+// How a task or an event repeats: the `rec:` token or an event's RRULE, read into an RFC 5545
+// recurrence rule, and the date math for the next due date or an event's days. It's all calendar days
+// counted in UTC (a date never moves with a time zone or a daylight-saving change); an event puts its
+// time of day on each day in its own time zone (worker/src/calendar.ts).
 //
 //   rec:weekly  rec:2w  rec:mon,thu  rec:2w-mon,thu  rec:6th  rec:last-day  rec:1st-tue,3rd-tue
 //   rec:last-fri  rec:mar-1  rec:1st-mon-mar  rec:day-50  rec:after-1m  rec:RRULE:FREQ=…;BYDAY=…
@@ -23,6 +24,10 @@ export interface Rule {
   byMonth: number[];
   /** Days of the year; negative counts from the end. */
   byYearDay: number[];
+  /** An RRULE's BYSETPOS: which of each period's dates count (1st, -1 = last). */
+  bySetPos?: number[];
+  /** An RRULE's WKST: the day weeks start on (0 = Monday), for rules every few weeks. */
+  weekStart?: number;
   /** An RRULE's COUNT: how many times it's left to happen (read like a task's `times:`). */
   count?: number;
   /** An RRULE's UNTIL, as a day: no occurrence after it. */
@@ -85,7 +90,7 @@ export function parseRule(raw: string): Rule | null {
   return null;
 }
 
-/** An RRULE's parts (FREQ, INTERVAL, BYDAY, BYMONTHDAY, BYMONTH, BYYEARDAY, COUNT, UNTIL), or null if it has anything else. */
+/** An RRULE's parts (FREQ, INTERVAL, BYDAY, BYMONTHDAY, BYMONTH, BYYEARDAY, BYSETPOS, WKST, COUNT, UNTIL), or null if it has anything else. */
 function parseRRule(src: string): Rule | null {
   const parts = new Map<string, string>();
   for (const p of src.split(";")) {
@@ -117,11 +122,14 @@ function parseRRule(src: string): Rule | null {
       const days = v.split(",").map((x) => x.match(/^([+-]?[1-5])?(MO|TU|WE|TH|FR|SA|SU)$/));
       if (days.some((m) => !m)) return null;
       rule.byDay = unique(days.map((m) => ({ n: m![1] ? +m![1] : 0, day: RFC_DAYS.indexOf(m![2]) })));
+    } else if (k === "WKST") {
+      if (!RFC_DAYS.includes(v)) return null;
+      rule.weekStart = RFC_DAYS.indexOf(v);
     } else {
-      const range = { BYMONTHDAY: [-31, 31], BYMONTH: [1, 12], BYYEARDAY: [-366, 366] }[k];
+      const range = { BYMONTHDAY: [-31, 31], BYMONTH: [1, 12], BYYEARDAY: [-366, 366], BYSETPOS: [-366, 366] }[k];
       const ns = range && list(v, range[0], range[1]);
       if (!ns) return null;
-      rule[k === "BYMONTHDAY" ? "byMonthDay" : k === "BYMONTH" ? "byMonth" : "byYearDay"] = [...new Set(ns)];
+      rule[k === "BYMONTHDAY" ? "byMonthDay" : k === "BYMONTH" ? "byMonth" : k === "BYSETPOS" ? "bySetPos" : "byYearDay"] = [...new Set(ns)];
     }
   }
   return rule;
@@ -140,7 +148,7 @@ export function ruleProblem(raw: string): string | null {
 
 /** A rule as the shortest `rec:` value that says it. */
 export function formatRule(r: Rule): string {
-  if (r.count || r.until) return toRRule(r); // only an RRULE says how it ends
+  if (r.count || r.until || r.bySetPos || r.weekStart !== undefined) return toRRule(r); // only an RRULE says these
   if (isInterval(r)) {
     const gap = `${r.interval}${r.freq[0]}`;
     return r.from === "done" ? `after-${gap}` : r.interval === 1 ? WORDS[r.freq] : gap;
@@ -174,6 +182,8 @@ export function toRRule(r: Rule): string {
   if (r.byMonthDay.length) parts.push(`BYMONTHDAY=${r.byMonthDay.join(",")}`);
   if (r.byMonth.length) parts.push(`BYMONTH=${r.byMonth.join(",")}`);
   if (r.byYearDay.length) parts.push(`BYYEARDAY=${r.byYearDay.join(",")}`);
+  if (r.bySetPos) parts.push(`BYSETPOS=${r.bySetPos.join(",")}`);
+  if (r.weekStart !== undefined) parts.push(`WKST=${RFC_DAYS[r.weekStart]}`);
   if (r.count) parts.push(`COUNT=${r.count}`);
   if (r.until) parts.push(`UNTIL=${r.until.replace(/-/g, "")}`);
   return `RRULE:${parts.join(";")}`;
@@ -187,6 +197,10 @@ const ampList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, 
 
 /** What a rule does: short for a chip ("1st & 3rd Tue"), or long for the editor ("Every month on the 1st and 3rd Tuesday"). */
 export function ruleLabel(r: Rule, long = false): string {
+  if (r.bySetPos) {
+    const which = r.bySetPos.map(nth);
+    return `${ruleLabel({ ...r, bySetPos: undefined }, long)}${long ? `, the ${andList(which)} of them` : ` (${which.join(", ")})`}`;
+  }
   const every = r.interval === 1 ? (long ? `Every ${r.freq}` : WORDS[r.freq][0].toUpperCase() + WORDS[r.freq].slice(1)) : `Every ${r.interval} ${r.freq}s`;
   if (isInterval(r)) {
     if (r.from === "due") return every;
@@ -247,8 +261,14 @@ function weekdaysBetween(first: number, last: number, n: number, day: number): n
   return pick === undefined ? [] : [pick];
 }
 
-/** Every date the rule gives in the `k`th period after the anchor's (period = interval × freq). */
+/** Every date the rule gives in the `k`th period after the anchor's (period = interval × freq), in order. */
 function period(r: Rule, anchor: number, k: number): number[] {
+  const all = [...new Set(periodDates(r, anchor, k))].sort((x, y) => x - y);
+  if (!r.bySetPos) return all;
+  return [...new Set(r.bySetPos.map((n) => all.at(n > 0 ? n - 1 : n)).filter((x): x is number => x !== undefined))].sort((x, y) => x - y);
+}
+
+function periodDates(r: Rule, anchor: number, k: number): number[] {
   const a = partsOf(anchor);
   const monthFilter = (xs: number[]) => (r.byMonth.length ? xs.filter((x) => r.byMonth.includes(partsOf(x).m)) : xs);
   if (r.freq === "day") {
@@ -257,8 +277,9 @@ function period(r: Rule, anchor: number, k: number): number[] {
     return ok ? monthFilter([x]) : [];
   }
   if (r.freq === "week") {
-    const start = anchor - weekday(anchor) + 7 * k * r.interval;
-    return monthFilter((r.byDay.length ? r.byDay.map((d) => d.day) : [weekday(anchor)]).map((d) => start + d));
+    const weekStart = r.weekStart ?? 0;
+    const start = anchor - ((weekday(anchor) - weekStart + 7) % 7) + 7 * k * r.interval;
+    return monthFilter((r.byDay.length ? r.byDay.map((d) => d.day) : [weekday(anchor)]).map((d) => start + ((d - weekStart + 7) % 7)));
   }
   if (r.freq === "month") {
     const index = a.y * 12 + (a.m - 1) + k * r.interval;
@@ -332,6 +353,23 @@ export function occurrences(r: Rule, from: string, count: number): string[] {
     at = next;
   }
   return out;
+}
+
+/**
+ * The days a rule gives, from `first` (the series' own first day, which always counts) through
+ * `last`, in order. An RRULE's COUNT counts from `first`, and nothing comes after its UNTIL.
+ */
+export function ruleDays(r: Rule, first: string, last: string): string[] {
+  const anchor = fromIso(first);
+  const end = Math.min(fromIso(last), r.until ? fromIso(r.until) : Infinity);
+  const out: number[] = [anchor];
+  // A rule that stops giving days (every Feb 30) is given up on a horizon after its last one.
+  for (let k = 0, hit = 0; out.at(-1)! <= end && (!r.count || out.length < r.count) && k - hit <= HORIZON[r.freq]; k++) {
+    const days = period(r, anchor, k).filter((x) => x > out.at(-1)!).sort((x, y) => x - y);
+    if (days.length) hit = k;
+    for (const x of days) if (!r.count || out.length < r.count) out.push(x);
+  }
+  return out.filter((x) => x <= end).map(toIso);
 }
 
 /** Days from one date to another. */

@@ -1,24 +1,52 @@
 {
   "id": "calendar",
   "name": "Calendar",
-  "version": "1.0.0",
-  "description": "Your Google Calendar's coming days, recurring events included.",
+  "version": "3.0.0",
+  "description": "Your calendar: agenda, 3 days, week, month and year, scrolling sideways through dates, with events to make, move and change, repeating ones too. From Google Calendar, or in Previews the Sample calendar.",
   "main": "index.ts",
-  "files": ["index.ts"],
-  "activationEvents": ["onView:calendar", "onCommand:calendar.show", "onCommand:google.connect"],
+  "files": ["index.ts", "model.ts", "dom.ts", "views.ts", "editor.ts", "grid.ts", "months.ts", "agenda.ts", "page.ts", "links.ts", "notes.ts"],
+  "activationEvents": ["onStartup"],
   "permissions": {
-    "calendar:read": { "why": "Show your events, which the Common Ink server reads from Google Calendar" }
+    "data:calendar:read": { "why": "Show your events, and the events notes link to" },
+    "data:calendar:write": { "why": "Add, move and change events when you do" },
+    "files:read": { "paths": ["**/*.md"], "why": "See whether an event's meeting note is there already" },
+    "files:write": { "paths": ["**/*.md"], "why": "Make a meeting note for an event, when you ask" },
+    "editor": { "why": "Draw links to events in notes as their time and title" }
   },
   "contributes": {
     "commands": [
+      { "command": "calendar.open", "title": "Open calendar" },
       { "command": "calendar.show", "title": "Show calendar" },
+      { "command": "calendar.insertLink", "title": "Insert event link…" },
       { "command": "google.connect", "title": "Connect Google calendar and contacts" }
     ],
+    "menus": { "quickOpen": [{ "command": "calendar.open" }] },
+    "embeds": [
+      {
+        "language": "calendar",
+        "syntax": "leaf",
+        "title": "Calendar",
+        "description": "Your calendar's events, live, in a note: the coming days as a list, or 3 days, a week or a month to drag and click in, as in the Calendar.",
+        "arguments": {
+          "view": { "type": "string", "label": "View", "description": "How it shows them", "default": "agenda", "enum": ["agenda", "3day", "week", "month"] },
+          "days": { "type": "number", "label": "Days", "description": "How many days the list shows, from today", "default": 3, "presets": ["1", "3", "7", "14"] },
+          "calendars": { "type": "string", "label": "Calendars", "description": "Only these calendars, by id, separated by commas (all, when empty)" },
+          "height": { "type": "number", "label": "Height", "description": "Its height in pixels, for 3 days, a week or a month", "default": 380 },
+          "id": { "type": "string", "description": "Keeps where it's scrolled when blocks move or change; leave it as it is", "hidden": true }
+        }
+      }
+    ],
     "views": { "sidebar": [{ "id": "calendar", "name": "Calendar" }] },
+    "dataSources": [{ "id": "calendar", "kind": "calendar", "title": "Calendar", "description": "Events from Google Calendar, kept as records with history." }],
     "configuration": {
       "title": "Calendar",
       "properties": {
-        "calendar.days": { "type": "integer", "default": 14, "minimum": 1, "maximum": 60, "description": "How many days ahead the Calendar view shows." }
+        "calendar.days": { "type": "integer", "default": 14, "minimum": 1, "maximum": 60, "description": "How many days ahead the Calendar side panel shows." },
+        "calendar.view": { "type": "string", "default": "week", "enum": ["agenda", "3day", "week", "month", "year"], "description": "The view the Calendar tab opens on, the first time." },
+        "calendar.weekStart": { "type": "string", "default": "monday", "enum": ["monday", "sunday"], "description": "The day weeks start on." },
+        "calendar.startHour": { "type": "integer", "default": 7, "minimum": 0, "maximum": 23, "description": "The hour the time grid opens scrolled to." },
+        "calendar.meetingNotes": { "type": "string", "default": "Meetings", "description": "The folder Create meeting note puts notes in." },
+        "calendar.linkBack": { "type": "boolean", "default": false, "description": "When you make a meeting note, add a link to it to the event's description. That changes the event for everyone invited." }
       }
     }
   }

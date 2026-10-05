@@ -110,4 +110,5 @@ test("the seed replaces Try this PR, and leaves the rest to Files.seed; its id f
 
 test("sample notes can say dates relative to the day the Preview deploys", () => {
   assert.equal(fillDates("due:{{today}} due:{{today+3}} due:{{today-1}}", "2026-12-30"), "due:2026-12-30 due:2027-01-02 due:2026-12-29");
+  assert.equal(fillDates("standup_{{day+2}}T090000.json", "2026-12-30"), "standup_20270101T090000.json");
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatRule, nextDue, nth, parseRule } from "../../web/src/extensions/tasks/recurrence.ts";
+import { formatRule, nextDue, nth, parseRule } from "../../worker/src/recurrence.ts";
 import { editTask, editTaskLine, parseTask } from "../../web/src/extensions/tasks/tasks.ts";
 import { forAll, type Rng } from "./gen.ts";
 

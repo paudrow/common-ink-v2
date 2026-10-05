@@ -93,18 +93,11 @@ test("connecting data asks for calendar and contacts offline, and keeps Google's
   assert.deepEqual(connected, [{ email: "ada@example.com", refreshToken: "refresh-1", scopes: ["openid", ...DATA_SCOPES] }]);
 });
 
-test("with Google connected, events and contacts come from Google, and its formats stay out of the app", async () => {
+test("with Google connected, contacts come from Google, and its formats stay out of the app", async () => {
   const seen: string[] = [];
   const fetcher = fakeGoogle(
     {
       "https://oauth2.googleapis.com/token": { access_token: "access-1" },
-      "https://www.googleapis.com/calendar/v3/calendars/primary/events": {
-        items: [
-          { id: "a", summary: "Standup", start: { dateTime: "2026-10-05T09:00:00Z" }, end: { dateTime: "2026-10-05T09:15:00Z" }, recurringEventId: "s" },
-          { id: "b", status: "cancelled", start: { dateTime: "2026-10-06T09:00:00Z" }, end: { dateTime: "2026-10-06T09:15:00Z" } },
-          { id: "c", summary: "Offsite", start: { date: "2026-10-08" }, end: { date: "2026-10-10" } },
-        ],
-      },
       "https://people.googleapis.com/v1/people/me/connections": {
         connections: [{ resourceName: "people/1", names: [{ displayName: "Sam" }], emailAddresses: [{ value: "sam@example.com" }] }, { resourceName: "people/2" }],
       },
@@ -112,35 +105,19 @@ test("with Google connected, events and contacts come from Google, and its forma
     seen,
   );
   const { sources } = memoryStore({ fixtures: false, google }, fetcher);
-  await assert.rejects(sources.events("ada@example.com", "2026-10-05T00:00:00Z", "2026-10-19T00:00:00Z"), /isn't connected/);
-  assert.deepEqual(sources.status("ada@example.com"), { using: "none", googleAvailable: true });
+  await assert.rejects(sources.contacts("ada@example.com", ""), /isn't connected/);
+  assert.equal(sources.status("ada@example.com").using, "none");
+  assert.equal(sources.status("ada@example.com").sources[0].state, "not-connected");
   assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["openid"] }), false, "without the data scopes it isn't connected");
   assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: DATA_SCOPES }), true);
   assert.equal(sources.status("ada@example.com").using, "google");
-  assert.deepEqual(await sources.events("ada@example.com", "2026-10-05T00:00:00Z", "2026-10-19T00:00:00Z"), [
-    { id: "a", title: "Standup", start: "2026-10-05T09:00:00Z", end: "2026-10-05T09:15:00Z", allDay: false, location: undefined, recurring: true, calendar: "primary" },
-    { id: "c", title: "Offsite", start: "2026-10-08", end: "2026-10-10", allDay: true, location: undefined, recurring: false, calendar: "primary" },
-  ]);
-  assert.ok(seen.some((s) => s.startsWith("GET https://www.googleapis.com/calendar") && s.includes("singleEvents=true") && s.endsWith("Bearer access-1")));
   assert.deepEqual(await sources.contacts("ada@example.com", "sam"), [{ id: "people/1", name: "Sam", emails: ["sam@example.com"], phones: [], organization: undefined }]);
+  assert.ok(seen.some((s) => s.startsWith("GET https://people.googleapis.com") && s.endsWith("Bearer access-1")));
   sources.disconnect("ada@example.com");
   assert.equal(sources.status("ada@example.com").using, "none");
 });
 
-test("the recorded fixtures stand in for Google, with the calendar moved to start today", () => {
-  const events = fixtures.events("2026-12-01T00:00:00Z", "2026-12-15T00:00:00Z", "2026-12-01");
-  assert.deepEqual(
-    events.map((e) => [e.title, e.start.slice(0, 10), e.recurring]),
-    [
-      ["Team standup", "2026-12-01", true],
-      ["Team standup", "2026-12-02", true],
-      ["Dentist", "2026-12-02", false],
-      ["Team offsite", "2026-12-04", false],
-      ["Team standup", "2026-12-04", true],
-      ["Dinner with Sam", "2026-12-05", false],
-      ["Weekly review", "2026-12-08", true],
-    ],
-  );
+test("the recorded contacts stand in for Google", () => {
   assert.deepEqual(
     fixtures.contacts("example.org").map((c) => c.name),
     ["Ada Lovelace"],
@@ -148,16 +125,14 @@ test("the recorded fixtures stand in for Google, with the calendar moved to star
   assert.equal(fixtures.contacts().length, 3, "a person without a name isn't listed");
 });
 
-test("data source operations answer for the person, or the person an agent works for", async () => {
+test("contacts answer for the person, or the person an agent works for", async () => {
   const store = memoryStore();
   const mine = await runOperation("list_contacts", { query: "sam" }, store, { kind: "user", email: "ada@example.com" });
   assert.ok(mine.ok && (mine.value as unknown[]).length === 1);
-  const agent = await runOperation("list_events", {}, store, { kind: "agent", name: "Claude", by: "ada@example.com" });
+  const agent = await runOperation("list_contacts", {}, store, { kind: "agent", name: "Claude", by: "ada@example.com" });
   assert.ok(agent.ok);
-  const alone = await runOperation("list_events", {}, store, { kind: "agent", name: "Nightly" });
+  const alone = await runOperation("list_contacts", {}, store, { kind: "agent", name: "Nightly" });
   assert.deepEqual(alone, { ok: false, error: "Data sources belong to a person, and this agent isn't working for one" });
-  const bad = await runOperation("list_events", { from: "2026-10-10T00:00:00Z", to: "2026-10-01T00:00:00Z" }, store, { kind: "user", email: "a@b.c" });
-  assert.equal(bad.ok, false);
 });
 
 test("Google's ID token is checked for this app and a confirmed email", async () => {

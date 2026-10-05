@@ -3,12 +3,20 @@
   "name": "common-ink-v2",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-20",
-  // Served at common-ink-v2.<subdomain>.workers.dev, behind Cloudflare Access, and each pull request's
-  // Preview at pr-<n>-common-ink-v2.<subdomain>.workers.dev, which opens signed in as a dev user.
-  "workers_dev": true,
+  // Tasks' code, which the Worker shares (complete-task.ts), imports repeat rules by their library name.
+  "alias": { "common-ink/recurrence": "./src/recurrence.ts" },
+  // Production is commonink.app, with Google sign-in; www redirects to it (worker/src/hosts.ts), since
+  // Google returns only to addresses registered with it. It has no workers.dev address. The two custom
+  // domains are named by `npm run deploy` (--domain), not as routes here: with routes, wrangler dev and
+  // the browser tests would see every request as commonink.app's, and the dev user only signs in on
+  // localhost. A custom domain belongs to one Worker at a time, so v1 has to let go of commonink.app
+  // (moving to v1.commonink.app) before this deploys: scripts/cutover-wizard.sh walks through it.
+  "workers_dev": false,
+  // Each pull request's Preview is at pr-<n>-common-ink-v2.<subdomain>.workers.dev and opens signed in
+  // as a dev user. Like every Worker-level setting, this takes effect when production deploys.
   "preview_urls": true,
   // The web app, built by Vite into ../dist. The Worker runs first for everything except Vite's hashed
-  // scripts and styles, so every page and API call is checked against Access.
+  // scripts and styles, so every page and API call is checked for a signed-in person.
   "assets": {
     "directory": "../dist",
     "binding": "ASSETS",

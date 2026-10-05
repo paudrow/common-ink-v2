@@ -26,7 +26,7 @@ The manifest declares the most an extension can ever ask for, each with a reason
 - `notifications`
 - `media`
 - `history:read`
-- `calendar:read` and `contacts:read`
+- `data:calendar:read`, `data:calendar:write` and `data:contacts:read` (named so in ADR 0007; first `calendar:read` and `contacts:read`)
 - `settings:write`, outside the extension's own section
 - `editor`, trusted only
 

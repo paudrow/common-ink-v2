@@ -14,6 +14,7 @@ import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts } from "./embed-list.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
+import { redirectFor } from "./hosts.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -57,6 +58,8 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    const elsewhere = redirectFor(url);
+    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
     const res = await handle(req, env, url);
     if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
     const out = new Response(res.body, res);
@@ -160,7 +163,14 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/history": "history",
   "POST /api/undo": "undo",
   "GET /api/sources": "data_sources",
+  "GET /api/calendars": "list_calendars",
+  "POST /api/sync": "sync_calendar",
   "GET /api/events": "list_events",
+  "GET /api/event": "read_event",
+  "POST /api/events": "create_event",
+  "PATCH /api/event": "update_event",
+  "DELETE /api/event": "delete_event",
+  "POST /api/event/link": "link_event",
   "GET /api/contacts": "list_contacts",
   "POST /api/diff": "diff",
   "GET /api/version": "read_version",
@@ -178,6 +188,8 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, 400);
+  // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
+  if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
   return json(result.value, (result.value as { status?: string }).status === "conflict" ? 409 : 200);
 }

@@ -88,19 +88,23 @@ export function tryThisPr(sections: Section[], pr: PullRequest): string {
   ].join("\n");
 }
 
-/** "{{today}}", "{{today+3}}" and "{{today-1}}" in sample notes become dates, so due dates stay near the day the Preview deploys. */
+/**
+ * "{{today}}", "{{today+3}}" and "{{today-1}}" in sample notes become dates, so due dates stay near the
+ * day the Preview deploys. "{{day+3}}" is the same date written as calendar ids write it, "20261008".
+ */
 export function fillDates(text: string, today: string): string {
-  return text.replace(/\{\{today(?:([+-])(\d+))?\}\}/g, (_, sign: string | undefined, days: string | undefined) => {
+  return text.replace(/\{\{(today|day)(?:([+-])(\d+))?\}\}/g, (_, form: string, sign: string | undefined, days: string | undefined) => {
     const d = new Date(`${today}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + (sign === "-" ? -1 : 1) * Number(days ?? 0));
-    return d.toISOString().slice(0, 10);
+    const date = d.toISOString().slice(0, 10);
+    return form === "day" ? date.replace(/-/g, "") : date;
   });
 }
 
 export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
   const notes = [
     // Kept as you edit them, unless the PR changes them (Files.seed tells).
-    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: false }))),
+    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, path: fillDates(n.path, today), text: fillDates(n.text, today), replace: false }))),
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
   const edits = sections.flatMap((s) => s.edits);
@@ -153,7 +157,7 @@ export function scenarioSeed(scenario: Scenario, sections: Section[], today = ne
     return section;
   });
   const day = scenario.now?.slice(0, 10) ?? today;
-  const notes = [...picked.flatMap((s) => s.notes), ...scenario.notes].map((n) => ({ ...n, text: fillDates(n.text, day), replace: false }));
+  const notes = [...picked.flatMap((s) => s.notes), ...scenario.notes].map((n) => ({ ...n, path: fillDates(n.path, day), text: fillDates(n.text, day), replace: false }));
   if (scenario.open) {
     const open = parseFilePath(scenario.open);
     if (!open || !notes.some((n) => n.path === open)) throw new Error(`Scenario ${scenario.name} opens ${scenario.open}, which it doesn't have`);

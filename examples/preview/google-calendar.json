@@ -1,0 +1,11 @@
+{
+  "pr": 36,
+  "title": "Google Calendar: two-way sync, recurring edits, conflicts, and reconnecting",
+  "steps": [
+    "A Preview has no Google account, so its calendar is still the Sample calendar. ⌘⇧P, Show calendar: each event now has its calendar's colour beside it.",
+    "Try Google locally with a fake one: `npm run dev -- --fake-google`. ⌘⇧P, Show calendar: it syncs as it shows (a weekday Standup, a Dentist visit tomorrow, a read-only Team calendar's Offsite), and Show data sources says when.",
+    "End the fake Google's grant, as its test apps' grants end after 7 days: `curl -X POST localhost:8787/api/levers/google -d '{\"revoked\":true}'`. Change an event (`bin/common-ink event set event:google/primary/dentist --title 'Dentist (waiting)'`): it shows here at once, the status bar says Reconnect Google Calendar, and the calendar says one edit is waiting.",
+    "Give the grant back (`-d '{\"revoked\":false}'`, which is what reconnecting does): the waiting edit goes to Google and the status bar clears.",
+    "Agents: sync_calendar brings Google's changes in now and says how the source stands."
+  ]
+}

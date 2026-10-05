@@ -1,9 +1,18 @@
 // Google: sign-in (OpenID Connect) and, once you connect them, your calendar and contacts. The Worker
 // talks to Google directly; refresh tokens stay in the workspace's Durable Object and never reach a page.
-import { toContact, toEvent, type Contact, type Event, type GoogleEvent, type GooglePerson } from "./sources.ts";
+import { toContact, type Contact, type GooglePerson } from "./sources.ts";
 
 export const SIGN_IN_SCOPES = ["openid", "email", "profile"];
-export const DATA_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/contacts.readonly"];
+/**
+ * The least that calendar and contacts need. calendar.events reads and writes events on every calendar
+ * you can see; calendar.calendarlist.readonly lists those calendars with their colours. Contacts stay
+ * read-only.
+ */
+export const DATA_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/contacts.readonly",
+];
 
 export interface GoogleConfig {
   clientId: string;
@@ -63,15 +72,6 @@ export async function accessToken(config: GoogleConfig, refreshToken: string, fe
   });
   if (!res.ok) throw new Error(`Google refused the connection (${res.status}); connect Google again`);
   return ((await res.json()) as { access_token: string }).access_token;
-}
-
-/** Events in the primary calendar between two times, with recurring events expanded. */
-export async function calendarEvents(token: string, from: string, to: string, fetcher: typeof fetch = fetch): Promise<Event[]> {
-  const params = new URLSearchParams({ timeMin: from, timeMax: to, singleEvents: "true", orderBy: "startTime", maxResults: "250" });
-  const res = await fetcher(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`Google Calendar answered ${res.status}`);
-  const body = (await res.json()) as { items?: GoogleEvent[] };
-  return (body.items ?? []).map((e) => toEvent(e)).filter((e): e is Event => e !== null);
 }
 
 /** Your contacts, all pages of them. */

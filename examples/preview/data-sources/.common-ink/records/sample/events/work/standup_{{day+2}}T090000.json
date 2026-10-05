@@ -1,0 +1,11 @@
+{
+  "id": "standup_{{day+2}}T090000",
+  "calendar": "work",
+  "title": "Team standup",
+  "status": "cancelled",
+  "allDay": false,
+  "start": "{{today+2}}T09:00:00",
+  "end": "{{today+2}}T09:15:00",
+  "series": "standup",
+  "originalStart": "{{today+2}}T09:00:00"
+}

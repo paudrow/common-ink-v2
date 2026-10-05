@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": { "common-ink/recurrence": ["./src/recurrence.ts"] }
   },
   "include": ["src"]
 }

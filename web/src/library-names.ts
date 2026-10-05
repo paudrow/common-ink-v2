@@ -27,6 +27,14 @@ export const APP_MODULES = {
   "common-ink/layout": { file: "web/src/layout.ts", exports: ["LAYOUT_PATH", "activeFile", "activeTab", "closeTab", "closeTabs", "cycleGroup", "cycleTab", "emptyLayout", "equalize", "fileTab", "focusDirection", "focusGroup", "focused", "groups", "insertTab", "keepFile", "keepTab", "moveTab", "moveTabDirection", "neighbor", "only", "openTab", "openableKey", "openableOf", "parseLayout", "rects", "resizeFocused", "resizeSplit", "selectTab", "shiftTab", "showInTab", "split", "splitAt"] },
   "common-ink/editor-file": { file: "web/src/editor-file.ts", exports: ["editorFile"] },
   "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
+  "common-ink/recurrence": {
+    file: "worker/src/recurrence.ts",
+    exports: ["DAY_NAMES", "MONTH_NAMES", "daysBetween", "endsLabel", "formatRule", "isInterval", "nextDue", "nth", "occurrences", "parseRule", "recLabel", "ruleDays", "ruleLabel", "ruleProblem", "shiftDate", "toRRule"],
+  },
+  "common-ink/calendar": {
+    file: "worker/src/calendar.ts",
+    exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
+  },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {
     file: "worker/src/uploads.ts",

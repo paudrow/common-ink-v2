@@ -76,7 +76,7 @@ export function contributionLines(m: ExtensionManifest, titleOf: (command: strin
   const views = Object.values(c.views).flat();
   const settings = c.configuration ? Object.keys(c.configuration.properties) : [];
   const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim${k.operator ? " operator" : ""})`} → ${title(k.command)}`);
-  const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${title(i.command)} (${menu === "tabMenu" ? "tab menu" : menu === "commandBar" ? "command bar" : "editor menu"})`));
+  const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${title(i.command)} (${{ tabMenu: "tab menu", commandBar: "command bar", editorContext: "editor menu", quickOpen: "⌘P" }[menu] ?? menu})`));
   const lines: Array<[string, string[]]> = [
     ["Commands", c.commands.map((x) => x.title)],
     ["Keybindings", keys],
@@ -86,6 +86,7 @@ export function contributionLines(m: ExtensionManifest, titleOf: (command: strin
     ["Status bar", c.statusBarItems.map((s) => s.id)],
     ["Embeds", c.embeds.map((e) => `${e.title} (\`\`\`${e.language})`)],
     ["Link embeds", c.urlEmbeds.map((e) => e.title)],
+    ["Data sources", c.dataSources.map((d) => d.title)],
   ];
   return lines.filter(([, items]) => items.length).map(([label, items]) => [label, items.join(", ")]);
 }

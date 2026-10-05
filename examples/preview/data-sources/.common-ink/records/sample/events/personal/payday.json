@@ -1,0 +1,12 @@
+{
+  "id": "payday",
+  "calendar": "personal",
+  "title": "Payday",
+  "status": "confirmed",
+  "allDay": true,
+  "start": "2025-01-31",
+  "end": "2025-02-01",
+  "recurrence": [
+    "RRULE:FREQ=MONTHLY;BYDAY=-1FR"
+  ]
+}

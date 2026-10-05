@@ -7,7 +7,6 @@
   "files": [
     "index.ts",
     "tasks.ts",
-    "recurrence.ts",
     "tags.ts",
     "chips.ts",
     "dom.ts",

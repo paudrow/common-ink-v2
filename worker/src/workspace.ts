@@ -3,20 +3,27 @@
 // of every change as it's recorded; the sockets use the Hibernation API, so idle ones cost nothing. It also keeps data source
 // connections.
 import { DurableObject } from "cloudflare:workers";
-import { DataSources } from "./data-sources.ts";
-import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
-import type { Granted } from "./google.ts";
+import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
+import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { DATA_SCOPES, type Granted } from "./google.ts";
+import { sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { RESET_CLOSE } from "./levers.ts";
 
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  /** "1" in Previews and local development: data sources answer with recorded fixtures. */
+  /** "1" in Previews and local development: the Sample calendar and recorded contacts stand in for Google. */
   DATA_FIXTURES?: string;
   /** Uploads' bytes, by hash. */
   UPLOADS: R2Bucket;
+  /** "1" in a browser test's Worker, with LEVERS: Google Calendar is a fake Google (fake-google.ts), connected. Never in production. */
+  FAKE_GOOGLE?: string;
+  LEVERS?: string;
 }
+
+/** How often a connected Google Calendar syncs on its own. */
+const SYNC_EVERY = 10 * 60_000;
 
 /** The scenario a workspace was last seeded from, and whether a reset chose it (test levers, docs/TESTING.md). */
 export interface SeededScenario {
@@ -28,6 +35,8 @@ export interface SeededScenario {
 
 export class Workspace extends DurableObject<WorkspaceEnv> {
   private db: Db;
+  /** The fake Google a browser test's Worker uses (FAKE_GOOGLE), kept while the object lives. */
+  private fake: FakeGoogle | null = null;
   private files: Files;
   private sources: DataSources;
 
@@ -44,7 +53,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
   private open(): [Files, DataSources] {
-    const files = new Files(this.db, Date.now, (notice) => {
+    const announce = (notice: ChangeNotice) => {
       const message = JSON.stringify({ type: "change", ...notice });
       for (const ws of this.ctx.getWebSockets()) {
         try {
@@ -53,9 +62,16 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
           // A socket that's closing: it reconnects and catches up.
         }
       }
-    });
+    };
+    if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
+      this.fake ??= sampleGoogle(Date.now());
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, this.fake.fetch);
+      if (!sources.syncs) sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+      return [files, sources];
+    }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
-    return [files, new DataSources(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google })];
+    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google }, announce);
+    return [files, sources];
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -89,8 +105,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.recent(q);
   }
 
+  /** Undo changes; a data source's records are put back through the source (data-sources.ts). */
   undo(revisions: Revision[], author: Author) {
-    return this.files.undo(revisions, author);
+    return undoChanges(this.files, this.sources, revisions, author);
   }
 
   combined(revisions: Revision[]) {
@@ -101,8 +118,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
-    return this.files.restore(path, at, author);
+    return restoreFile(this.files, this.sources, path, at, author);
   }
 
   /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
@@ -159,8 +177,42 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
-  connectGoogle(granted: Granted) {
-    return this.sources.connect(granted);
+  /**
+   * Test levers, with the fake Google: end Google's grant (as its test apps' end after 7 days), or
+   * give it again, as reconnecting does.
+   */
+  async fakeGoogle(change: { revoked: boolean }) {
+    if (!this.fake) return null;
+    this.fake.revoked = change.revoked;
+    if (!change.revoked) await this.connectGoogle({ email: "tester@localhost", refreshToken: "fake-2", scopes: DATA_SCOPES });
+    return { revoked: this.fake.revoked };
+  }
+
+  /** Keep Google's grant, then send what waited for it and sync, soon, without holding up sign-in. */
+  async connectGoogle(granted: Granted) {
+    const ok = this.sources.connect(granted);
+    if (ok) await this.ctx.storage.setAlarm(Date.now() + 1000);
+    return ok;
+  }
+
+  /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
+  async alarm() {
+    await this.sources.sync();
+    await this.scheduleSync();
+  }
+
+  private async scheduleSync() {
+    if (!this.sources.syncs) return;
+    const next = Date.now() + SYNC_EVERY;
+    const set = await this.ctx.storage.getAlarm();
+    if (!set || set > next) await this.ctx.storage.setAlarm(next);
+  }
+
+  /** Sync now if it hasn't in the last half minute (a calendar view opening asks); always, if `force`. */
+  async syncSources(force = false) {
+    if (force || this.sources.due(30_000)) await this.sources.sync();
+    await this.scheduleSync();
+    return this.sources.status("").sources[0];
   }
 
   disconnectGoogle(email: string) {
@@ -171,8 +223,24 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.sources.status(email);
   }
 
-  events(email: string, from: string, to: string) {
-    return this.sources.events(email, from, to);
+  calendars() {
+    return this.sources.calendars();
+  }
+
+  events(from: number, to: number, zone: string, calendars?: string[]) {
+    return this.sources.events(from, to, zone, calendars);
+  }
+
+  event(address: string, zone?: string) {
+    return this.sources.event(address, zone);
+  }
+
+  editEvent(edit: EventEdit, author: Author, zone?: string) {
+    return this.sources.edit(edit, author, zone);
+  }
+
+  outbox() {
+    return this.sources.outbox(this.sources.calendarSource);
   }
 
   contacts(email: string, query: string) {

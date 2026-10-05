@@ -1,12 +1,23 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
 import { diffPatch } from "node-diff3";
 import { isNote, type Author, type Change, type FilePath } from "../../worker/src/files.ts";
+import { keyOfPath } from "../../worker/src/records.ts";
 
-/** "you", a person's email, or an agent's name with who it worked for. */
+/** What each data source's sync is called. */
+const SYNCS: Record<string, string> = { "google-calendar": "Google Calendar sync", "sample-calendar": "Sample calendar" };
+
+/** "you", a person's email, an agent's name with who it worked for, or a data source's sync. */
 export function describeAuthor(author: Author, me?: string): string {
-  if (author.kind === "user") return author.email === me ? "you" : author.email;
-  if (author.kind === "extension") return `${author.id} (extension${author.by === me ? "" : `, for ${author.by}`})`;
-  return author.by ? `${author.name} (for ${author.by === me ? "you" : author.by})` : author.name;
+  switch (author.kind) {
+    case "user":
+      return author.email === me ? "you" : author.email;
+    case "extension":
+      return `${author.id} (extension${author.by === me ? "" : `, for ${author.by}`})`;
+    case "sync":
+      return SYNCS[author.source] ?? `${author.source} sync`;
+    case "agent":
+      return author.by ? `${author.name} (for ${author.by === me ? "you" : author.by})` : author.name;
+  }
 }
 
 export interface DiffLine {
@@ -48,9 +59,11 @@ const NAMES: Array<[RegExp, string]> = [
   [/^\.common-ink\/labels\.json$/, "Labels"],
 ];
 
-/** What to call a file: a note's path without ".md", or the name of a workspace JSON file. */
+/** What to call a file: a note's path without ".md", the name of a workspace JSON file, or which record it is. */
 export function docLabel(path: FilePath): string {
   if (isNote(path)) return path.replace(/\.md$/, "");
+  const record = keyOfPath(path);
+  if (record) return record.kind === "calendar" ? `Calendar ${record.id}` : `Event ${record.id} (${record.collection})`;
   const extension = /^\.common-ink\/extensions\/(.+)$/.exec(path);
   return NAMES.find(([re]) => re.test(path))?.[1] ?? (extension ? `Extension ${extension[1]}` : path);
 }
