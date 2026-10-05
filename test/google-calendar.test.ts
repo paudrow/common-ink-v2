@@ -145,3 +145,75 @@ test("a sync leaves an event with an edit waiting to go out as it is here", asyn
   assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (mine)");
   assert.equal(fake.event("ada@example.com", "dentist")?.location, "Moved", "Google's change merged in");
 });
+
+test("saving a series from the editor with its times as they were keeps its changed occurrences in Google", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  // What the editor sends on Save: every field, times and repeat as they were.
+  await op(store, "update_event", {
+    address: "event:google/primary/standup_20261005T160000Z",
+    scope: "all",
+    title: "Daily sync",
+    allDay: false,
+    start: "2026-10-05T09:00",
+    end: "2026-10-05T09:15",
+    timeZone: LA,
+    location: null,
+    description: null,
+    recurrence: ["RRULE:FREQ=DAILY;COUNT=5", "EXDATE;TZID=America/Los_Angeles:20261008T090000"],
+  });
+  const late = fake.event("ada@example.com", "standup_20261006T160000Z");
+  assert.deepEqual([late?.summary, late?.status], ["Standup (late)", "confirmed"]);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await listed(store), [
+    "2026-10-05T16:00 Daily sync",
+    "2026-10-06T17:00 Standup (late)",
+    "2026-10-06T21:30 Dentist",
+    "2026-10-08 Offsite",
+    "2026-10-09T16:00 Daily sync",
+  ]);
+});
+
+test("edits that waited for Google all keep what Google changed meanwhile", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.revoked = true;
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 4" });
+  fake.revoked = false;
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, description: "Bring forms" });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  await store.sources.sync();
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location, g.description], ["Dentist (Dr Lee)", "Room 4", "Bring forms"]);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string; location?: string; description?: string } }).event;
+  assert.deepEqual([here.title, here.location, here.description], ["Dentist (Dr Lee)", "Room 4", "Bring forms"]);
+});
+
+test("an edit Google refuses goes back to how Google has it, says why, and doesn't hold up the edits after it", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.refusing.set("dentist", "Invalid value for: summary");
+  const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+  const why = "Google Calendar refused the change to Dentist (Dr Lee): Invalid value for: summary. It's back as Google has it, and the change is in its history.";
+  assert.deepEqual(refused, { ok: false, error: why });
+  assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist");
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
+  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff");
+  const state = store.sources.status("ada@example.com").sources[0];
+  assert.deepEqual([state.state, state.pending, state.conflict], ["ok", 0, why]);
+});
+
+test("edits made at once go to Google once each, in order", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  const before = fake.calls.length;
+  await Promise.all([
+    op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }),
+    op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" }),
+  ]);
+  assert.deepEqual(
+    fake.calls.slice(before).filter((c) => !c.startsWith("POST /token")),
+    ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
+  );
+});

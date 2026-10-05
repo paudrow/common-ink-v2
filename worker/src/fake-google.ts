@@ -21,6 +21,8 @@ export class FakeGoogle {
   revoked = false;
   /** Every request, as "METHOD path?query", for tests to read. */
   readonly calls: string[] = [];
+  /** Events whose changes Google refuses (400), with what it says: an invalid field, or a rule of the calendar's. */
+  readonly refusing = new Map<string, string>();
 
   addCalendar(entry: GoogleCalendarEntry): void {
     this.calendars.set(entry.id, { entry, events: new Map() });
@@ -82,6 +84,8 @@ export class FakeGoogle {
     const body = typeof init.body === "string" ? (JSON.parse(init.body) as GoogleEvent) : null;
     const ifMatch = new Headers(init.headers).get("If-Match");
     if (!id && method === "GET") return this.list(cal.events, url.searchParams);
+    const refusal = method !== "GET" && this.refusing.get(id ?? body?.id ?? "");
+    if (refusal) return error(400, refusal, "invalid");
     if (!id && method === "POST") {
       if (!body?.id) return error(400, "Missing id");
       if (cal.events.has(body.id)) return error(409, "The requested identifier already exists.", "duplicate");
