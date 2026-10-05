@@ -136,6 +136,20 @@ browserTest(h, "a repeating event's edits ask which ones: this event, this and f
   assert.ok((await standups()).filter((e) => e.title === "Team standup").every((e) => e.location !== "Room 9"), "the first part didn't change");
 });
 
+browserTest(h, "saving a whole series from the editor keeps its moved and cancelled occurrences, and its floating time", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.page.locator('.cal-day[data-day="2026-10-05"] .cal-event', { hasText: "Team standup" }).click();
+  const editor = app.page.locator(".cal-editor");
+  await editor.waitFor();
+  await editor.locator(".cal-title").fill("Daily");
+  await editor.locator("button", { hasText: "Save" }).click();
+  await app.page.locator(".cal-scope button", { hasText: "All events" }).click();
+  const week = async () => (await titled(app, "2026-10-05T00:00:00Z", "2026-10-10T00:00:00Z")).filter((e) => e.address.includes("standup")).map((e) => `${e.start.slice(0, 16)} ${e.title}`);
+  await until(app, "the series is Daily", async () => (await week())[0]?.endsWith("Daily"));
+  assert.deepEqual(await week(), ["2026-10-05T09:00 Daily", "2026-10-06T09:30 Team standup (late start)", "2026-10-08T09:00 Daily", "2026-10-09T09:00 Daily"]);
+  assert.equal(((await event(app, "event:sample/work/standup")) as { timeZone?: string } | null)?.timeZone, undefined, "still floating");
+});
+
 browserTest(h, "scrolling sideways goes on through the weeks, drawing only a few at a time, and the keys move through periods and events", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
   const title = app.page.locator(".cal-title-text");
