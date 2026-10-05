@@ -51,8 +51,14 @@ async function settled(page: Page) {
   }
 }
 
-/** Which embeds are drawn now, by kind. */
-const drawn = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".cm-embed")].map((e) => e.dataset.embed ?? e.dataset.urlEmbed).join(" "));
+/** Which embeds show now, by kind, top to bottom (one whose markdown shows is kept, hidden). */
+const drawn = (page: Page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".cm-embed:not(.is-hidden)")]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+      .map((e) => e.dataset.embed ?? e.dataset.urlEmbed)
+      .join(" "),
+  );
 
 test("j and k step onto and off every kind of embed, line by line, jumping none", async () => {
   const page = await h.browser.newPage({ viewport: { width: 1200, height: 1400 } });

@@ -120,15 +120,20 @@ function host(drawn: Embed[], opts: { updates?: Embed[]; refuse?: boolean } = {}
   };
 }
 
-test("an embed is drawn in place of its markdown until the cursor is on it, with Settings and Edit markdown", () => {
+test("an embed is drawn in place of its markdown until the cursor is on it, with Settings and Edit markdown; it's kept, hidden, meanwhile", () => {
   const drawn: Embed[] = [];
   const view = new EditorView({ state: state(NOTE, [embeds(host(drawn))]), parent: document.body });
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  const bodies = () => [...view.dom.querySelectorAll(".cm-embed .cm-embed-body")].map((e) => e.textContent);
+  const bodies = () => [...view.dom.querySelectorAll(".cm-embed:not(.is-hidden) .cm-embed-body")].map((e) => e.textContent);
   assert.deepEqual(bodies(), ["drawn 25m", "drawn 4m", "drawn board"]);
   assert.deepEqual([...view.dom.querySelector(".cm-embed .cm-embed-tools")!.querySelectorAll("button")].map((b) => b.textContent), ["Settings", "Edit markdown"]);
+  const timer = view.dom.querySelector(".cm-embed");
   view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 2 } });
   assert.deepEqual(bodies(), ["drawn 4m", "drawn board"], "the cursor on the first shows its markdown");
+  assert.ok(timer!.isConnected && timer!.classList.contains("is-hidden"), "kept, hidden");
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  assert.equal(view.dom.querySelector(".cm-embed"), timer, "and shown again: the same box, not drawn again");
+  assert.equal(drawn.length, 3, "each drawn once");
   view.dispatch({ selection: { anchor: view.state.doc.length } });
   view.dom.querySelectorAll<HTMLButtonElement>(".cm-embed-tools button")[1].click();
   assert.equal(view.state.selection.main.head, view.state.doc.line(3).to, "Edit markdown puts the cursor at the end of its line");

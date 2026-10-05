@@ -87,11 +87,21 @@ const hostOf = (url: string) => {
 /** Give a drawn embed new arguments or body in place: false if it can't take them, and it's drawn again. */
 type Updater = (embed: Embed) => boolean;
 
-/** What a webview tells its frame: how tall its page is, and that it has loaded. */
+/** What a webview tells its frame: how tall its page is, that it has loaded, and that it first painted. */
 interface WebviewHooks {
   onHeight?: (height: number) => void;
   onLoaded?: () => void;
+  onPainted?: () => void;
 }
+
+/**
+ * An embed's box is drawn with `data-pending` on its body until what it shows is ready: its extension
+ * has started and drawn it, and a frame has painted. Until then it's a quiet card as tall as it was
+ * last time (lives.ts), so nothing flashes and nothing below it moves.
+ */
+const settle = (el: HTMLElement) => {
+  if (!el.querySelector(".cm-embed-frame.is-pending")) delete el.dataset.pending;
+};
 
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
@@ -240,11 +250,15 @@ export class ExtensionRuntime {
   /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments; and links alone on their lines. */
   readonly embedHost: Omit<EmbedHost, "needs"> = {
     contributions: () => new Map(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => [e.language, e] as const))),
-    draw: (el, embed, tools) => drawSafely(el, `The ${embed.language} embed`, () => this.drawEmbed(el, embed, tools)),
+    draw: (el, embed, tools) => drawSafely(el, `The ${embed.language} embed`, () => this.drawEmbed(el, embed, tools).finally(() => settle(el))),
     update: (el, embed) => this.updaters.get(el)?.(embed) ?? false,
     // The first pattern that matches, in the order extensions are listed and contribute them.
     urlEmbed: (url) => this.host.on().flatMap((m) => m.contributes.urlEmbeds).find((e) => matches(e.pattern, url))?.id ?? null,
-    drawUrl: (el, url, id) => drawSafely(el, "The link embed", () => this.drawUrl(el, url, id)),
+    drawUrl: (el, url, id) => drawSafely(el, "The link embed", () => this.drawUrl(el, url, id).finally(() => settle(el))),
+    prepare: (languages) => {
+      // A note's embeds start their extensions as it opens, alongside the editor's first render.
+      for (const language of new Set(languages)) void this.activateFor(`onEmbed:${language}`, (m) => m.contributes.embeds.some((e) => e.language === language)).catch(() => {});
+    },
   };
 
   private async drawUrl(el: HTMLElement, url: string, id: string): Promise<void> {
@@ -312,19 +326,20 @@ export class ExtensionRuntime {
     tools.prepend(stop);
     const run = () => {
       const frame = document.createElement("div");
-      frame.className = "cm-embed-frame";
+      // Invisible until its page has painted, then shown with a short fade: never a blank frame.
+      frame.className = "cm-embed-frame is-pending";
       const inner = document.createElement("div");
       inner.style.height = clamp(fixed() || 80);
-      // Until its page has loaded (a three.js module can take a moment), it says so.
-      const loading = document.createElement("div");
-      loading.className = "cm-embed-loading";
-      loading.textContent = "Loading…";
-      const loaded = () => loading.remove();
-      window.setTimeout(loaded, 15_000);
-      frame.append(inner, loading);
+      const painted = () => {
+        if (!frame.classList.contains("is-pending")) return;
+        frame.classList.remove("is-pending");
+        settle(el);
+      };
+      window.setTimeout(painted, 5000);
+      frame.append(inner);
       el.replaceChildren(frame);
       [box, stop.hidden] = [inner, false];
-      update = start(inner, { onHeight: (h) => !fixed() && (inner.style.height = clamp(h)), onLoaded: loaded }, embed);
+      update = start(inner, { onHeight: (h) => !fixed() && (inner.style.height = clamp(h)), onPainted: painted }, embed);
     };
     run();
     return (next) => {
@@ -432,7 +447,7 @@ export class ExtensionRuntime {
   /** A webview in `el` for one of an extension's views. Messages from its page go to `onMessage`. */
   private webview(m: ExtensionManifest, viewId: string, el: HTMLElement, onMessage: (message: unknown) => void, hooks: WebviewHooks = {}): Webview {
     el.replaceChildren();
-    const view = new Webview(el, `${viewId}:${++webviewIds}`, `${m.name}: ${viewId}`, onMessage, hooks.onHeight, hooks.onLoaded);
+    const view = new Webview(el, `${viewId}:${++webviewIds}`, `${m.name}: ${viewId}`, onMessage, hooks.onHeight, hooks.onLoaded, hooks.onPainted);
     view.frame.dataset.view = viewId;
     return view;
   }
