@@ -4,6 +4,7 @@
 // any other write, and the cache takes the server's answer. Edits of a data source's records (ADR
 // 0007), which go to the server as operations rather than files, wait the same way, in order.
 import type { FilePath, FileSummary, Revision, WorkspaceFile, WriteResult } from "../../worker/src/files.ts";
+import { ServerAnswer } from "./api.ts";
 
 /** A small key-value store: IndexedDB in the browser, a Map in tests. */
 export interface KV {
@@ -45,9 +46,14 @@ export interface Network {
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
 export const unreachable = (err: unknown) => err instanceof TypeError || (err as Error)?.name === "TypeError";
 
+/** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
+const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
+
 export class Offline {
   /** Whether the last request reached the server. */
   online = true;
+  /** Held edits of records being sent now, so a second send waits for it rather than sending them again. */
+  private sendingOps: Promise<{ sent: number; refused: Array<{ op: HeldOp; error: string }> }> | null = null;
   private held = 0;
   private listeners: Array<() => void> = [];
 
@@ -162,10 +168,16 @@ export class Offline {
   }
 
   /**
-   * Send held edits of records, oldest first, stopping if the server can't be reached. One the server
-   * refuses (the event's gone, say) is dropped, and its reason returned.
+   * Send held edits of records, oldest first, stopping if the server can't be reached or fails. One
+   * the server refuses (the event's gone, say) is dropped, and its reason returned. While a send is
+   * under way, another call gets that one's result.
    */
-  async flushOps(send: (op: HeldOp) => Promise<unknown>): Promise<{ sent: number; refused: Array<{ op: HeldOp; error: string }> }> {
+  flushOps(send: (op: HeldOp) => Promise<unknown>): Promise<{ sent: number; refused: Array<{ op: HeldOp; error: string }> }> {
+    this.sendingOps ??= this.sendOps(send).finally(() => (this.sendingOps = null));
+    return this.sendingOps;
+  }
+
+  private async sendOps(send: (op: HeldOp) => Promise<unknown>): Promise<{ sent: number; refused: Array<{ op: HeldOp; error: string }> }> {
     let sent = 0;
     const refused: Array<{ op: HeldOp; error: string }> = [];
     for (const op of await this.ops()) {
@@ -174,8 +186,8 @@ export class Offline {
         sent++;
         this.reached(true);
       } catch (err) {
-        if (unreachable(err)) {
-          this.reached(false);
+        if (!refusal(err)) {
+          if (unreachable(err)) this.reached(false);
           break;
         }
         refused.push({ op, error: (err as Error).message });

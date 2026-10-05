@@ -17,7 +17,7 @@ import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
-import type { Scope } from "../../worker/src/calendar.ts";
+import { newEventId, type Scope } from "../../worker/src/calendar.ts";
 import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
@@ -84,7 +84,8 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined,
       calendars: () => read("data:calendar:read", api.calendars),
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
-      create: (event) => send("POST", { ...event }, `Add ${event.title}`),
+      // The id is made here, so an edit held offline and sent twice makes one event.
+      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
       update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
       remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },

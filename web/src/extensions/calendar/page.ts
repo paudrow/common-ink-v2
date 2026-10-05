@@ -34,6 +34,8 @@ const EVENT_COLORS: Record<string, string> = {
 
 /** The person's time zone: new events are made in it. */
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+/** The zone an edit of an event keeps: its own, floating (null) if it floats, or the person's for an all-day event given times. */
+const zoneFor = (o: Occurrence): string | null => (o.allDay ? ZONE : (o.timeZone ?? null));
 
 /** What the view keeps between visits, in its state file: the view, and the calendars you hid. */
 export interface PageState {
@@ -322,14 +324,14 @@ export class CalendarPage {
     };
   }
 
-  /** An event's fields from the form, as the API takes them; times in the event's own zone, or the person's. */
-  private fields(d: Draft, zone: string | undefined) {
+  /** An event's fields from the form, as the API takes them; times in `zone`, or floating (null) at the person's wall time. */
+  private fields(d: Draft, zone: string | null) {
     return {
       title: d.title,
       allDay: d.allDay,
-      start: d.allDay ? d.startDay : inZone(d.startDay, minutesOf(d.startTime), zone),
-      end: d.allDay ? addDays(d.endDay, 1) : inZone(d.endDay, minutesOf(d.endTime), zone),
-      timeZone: d.allDay ? null : (zone ?? ZONE),
+      start: d.allDay ? d.startDay : inZone(d.startDay, minutesOf(d.startTime), zone ?? undefined),
+      end: d.allDay ? addDays(d.endDay, 1) : inZone(d.endDay, minutesOf(d.endTime), zone ?? undefined),
+      timeZone: d.allDay ? null : zone,
       location: d.location || null,
       description: d.description || null,
       recurrence: d.recurrence.length ? d.recurrence : null,
@@ -349,7 +351,7 @@ export class CalendarPage {
       readOnly: !this.writable(o),
       link: o.link,
       extra: await this.extra(o),
-      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, o.timeZone), scope)),
+      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, zoneFor(o)), scope)),
       remove: async (scope) => this.wrote(await this.ctx.data.calendar.remove(o.address, scope), `Deleted ${o.title || "the event"}`),
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
@@ -372,7 +374,7 @@ export class CalendarPage {
       repeating: false,
       readOnly: false,
       save: async (d) => {
-        const result = await this.ctx.data.calendar.create({ ...this.fields(d, undefined), title: d.title || "(No title)", calendar: d.calendar });
+        const result = await this.ctx.data.calendar.create({ ...this.fields(d, ZONE), title: d.title || "(No title)", calendar: d.calendar });
         this.focus = result.address;
         return this.wrote(result);
       },
@@ -388,7 +390,7 @@ export class CalendarPage {
     if (scope === null) return this.renderer?.redraw();
     const change = to.allDay
       ? { allDay: true, start: to.startDay, end: to.endDay }
-      : { allDay: false, start: inZone(to.startDay, to.start, o.timeZone), end: inZone(to.endDay, to.end, o.timeZone), timeZone: o.timeZone ?? ZONE };
+      : { allDay: false, start: inZone(to.startDay, to.start, o.timeZone), end: inZone(to.endDay, to.end, o.timeZone), timeZone: zoneFor(o) };
     try {
       this.wrote(await this.ctx.data.calendar.update(o.address, change, scope));
     } catch (err) {
