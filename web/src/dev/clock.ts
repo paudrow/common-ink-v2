@@ -1,5 +1,5 @@
 // The page's clock, moved by the `now` lever: Date reads the chosen time when it's set and runs on from
-// there, across reloads of the tab, so todos, recurrence, timers and alarms see the day a test is
+// there, across reloads of the tab, so tasks, repeats, timers and alarms see the day a test is
 // written for. Only the page's own code sees it; sandboxed extensions' frames keep the real clock.
 
 const RealDate = Date;
