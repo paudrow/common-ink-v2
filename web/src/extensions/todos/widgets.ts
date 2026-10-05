@@ -126,18 +126,20 @@ export function todoPreviews(text: string, lineFrom: number, today: string, chip
   const todo = parts && parseTodo(text);
   if (!parts || !todo) return [];
   const at = (offset: number) => lineFrom + offset;
-  const out: Preview[] = [{ from: at(parts.box.from), to: at(parts.box.to), decoration: Decoration.replace({ widget: new CheckboxWidget(todo.done, todo.title, today, text) }) }];
+  // Each part shows its markdown only while the cursor is on it: the rest of the line stays as it reads.
+  const own = (from: number, to: number) => ({ from: at(from), to: at(to), span: { from: at(from), to: at(to) } });
+  const out: Preview[] = [{ ...own(parts.box.from, parts.box.to), decoration: Decoration.replace({ widget: new CheckboxWidget(todo.done, todo.title, today, text) }) }];
   if (todo.done) {
     out.push({ from: at(0), to: at(0), decoration: doneLine });
-    if (parts.body.to > parts.body.from) out.push({ from: at(parts.body.from), to: at(parts.body.to), decoration: doneText });
+    if (parts.body.to > parts.body.from) out.push({ from: at(parts.body.from), to: at(parts.body.to), decoration: doneText, always: true });
   }
   if (parts.due && chips) {
     const { date } = parts.due;
-    out.push({ from: at(parts.due.from), to: at(parts.due.to), decoration: Decoration.replace({ widget: new ChipWidget(() => dueChipEl(date, today, todo.done), `due:${date}:${todo.done}:${today}`) }) });
+    out.push({ ...own(parts.due.from, parts.due.to), decoration: Decoration.replace({ widget: new ChipWidget(() => dueChipEl(date, today, todo.done), `due:${date}:${todo.done}:${today}`) }) });
   }
   if (parts.every && chips) {
     const { every } = parts.every;
-    out.push({ from: at(parts.every.from), to: at(parts.every.to), decoration: Decoration.replace({ widget: new ChipWidget(() => everyChipEl(every), `every:${every.count}${every.unit}`) }) });
+    out.push({ ...own(parts.every.from, parts.every.to), decoration: Decoration.replace({ widget: new ChipWidget(() => everyChipEl(every), `every:${every.count}${every.unit}`) }) });
   }
   return out;
 }

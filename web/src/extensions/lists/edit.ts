@@ -22,12 +22,16 @@ export function changeFor(state: EditorState, next: readonly string[]): { from: 
   return { from: state.doc.line(a + 1).from, to: state.doc.line(b + 1).to, insert: next.slice(a, b + 1).join("\n") };
 }
 
-/** Where the cursor was: its line, and how far into the line's text (past its indent) it was. */
+/**
+ * Where the cursor was: its line, and how far into the line's text (past its indent) it was. Over a
+ * selection (Vim's >> selects the line, and the next line's start), it's the first selected line's first
+ * character, as Vim leaves it.
+ */
 function cursorOf(state: EditorState) {
-  const head = state.selection.main.head;
-  const line = state.doc.lineAt(head);
+  const { head, from, empty } = state.selection.main;
+  const line = state.doc.lineAt(empty ? head : from);
   const indent = /^[ \t]*/.exec(line.text)![0].length;
-  return { line: line.number - 1, offset: head - line.from - indent };
+  return { line: line.number - 1, offset: empty ? head - line.from - indent : 0 };
 }
 
 /** The cursor put back on line `line` of `lines`, as far into its text as it was. */
@@ -54,24 +58,40 @@ function selectedLines(state: EditorState) {
   return { first, last: Math.max(first, end.number - 1 - (to === end.from && to > from ? 1 : 0)) };
 }
 
-/** Indent the items on the selected lines, with their children. False if no line is in an item. */
-export function indentItems(view: EditorView): boolean {
+/** Says, quietly, why an edit didn't happen. */
+export type Say = (why: string) => void;
+
+/**
+ * Indent the items on the selected lines, with their children, as Workflowy does: each goes under the
+ * item above it at its level, one level deeper and no more. The first item of a list, or the first child
+ * under a parent, has nothing above to nest under, so it stays; and if the first selected item can't
+ * indent, none of them do, so a selection moves as a block or not at all. False if no line is in an item.
+ */
+export function indentItems(view: EditorView, say: Say = () => {}): boolean {
   let lines = linesOf(view.state);
   const { first, last } = selectedLines(view.state);
   const items = M.itemsIn(lines, first, last);
   if (!items.length) return false;
+  if (!M.indent(lines, items[0])) {
+    say("Can't indent: nothing above to nest under");
+    return true;
+  }
   const cursor = cursorOf(view.state);
-  // Top down: each indents under the one above it, which may be one indented just before.
+  // Top down: the first goes under the one above it, and the rest join it there as its siblings.
   for (const i of items) lines = M.indent(lines, i)?.lines ?? lines;
   return apply(view, lines, cursor.line, cursor.offset);
 }
 
-/** Dedent the items on the selected lines out of their parents, as an outliner does. */
-export function dedentItems(view: EditorView): boolean {
+/** Dedent the items on the selected lines out of their parents, as an outliner does. One at the top stays. */
+export function dedentItems(view: EditorView, say: Say = () => {}): boolean {
   let lines = linesOf(view.state);
   const { first, last } = selectedLines(view.state);
   const items = M.itemsIn(lines, first, last);
   if (!items.length) return false;
+  if (items.every((i) => !M.dedent(lines, i))) {
+    say("Can't dedent: it's already at the top");
+    return true;
+  }
   const cursor = cursorOf(view.state);
   const own = M.itemAt(lines, cursor.line) ?? items[0];
   const within = cursor.line - own;

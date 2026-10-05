@@ -72,9 +72,6 @@ const outlineCase = (options: Parameters<typeof outline>[1]) => (r: Rng): Case =
   return { lines, i: r.pick(all), j: r.int(0, lines.length - 1), kind: r.pick(["bullet", "number", "todo"] as const) };
 };
 
-const PARAGRAPHS_END_LISTS =
-  "previousSibling skips a paragraph after a blank line, so a list's first item takes the list before it as its own: in [1. t0, , Paragraph, , 1. t1, 1. t2], moveUp(4) swaps t1 above the paragraph and renumberAround(_, [5]) leaves 1. t2";
-
 test("indenting, dedenting, moving, converting and renumbering keep every item's text, the number of lines, and children indented as far as their parent's text", () => {
   forAll(outlineCase({ between: true, ordered: false }), ({ lines, i, j, kind }) => {
     const [from, to] = [Math.min(i, j), Math.max(i, j)];
@@ -98,7 +95,6 @@ test("indenting, dedenting, moving, converting and renumbering keep every item's
 for (const between of [false, true]) {
   test(
     `indent, dedent, move up and move down take an item's children with it and change only its own place${between ? ", with paragraphs between lists" : ""}`,
-    { todo: between && PARAGRAPHS_END_LISTS },
     () => {
       forAll(outlineCase({ between }), ({ lines, i }) => {
         const before = tree(lines);
@@ -142,7 +138,6 @@ for (const between of [false, true]) {
 
   test(
     `indenting an item and dedenting it straight back, or moving it up and back down, leaves the outline as it was${between ? ", with paragraphs between lists" : ""}`,
-    { todo: between && PARAGRAPHS_END_LISTS },
     () => {
       forAll(outlineCase({ between }), ({ lines, i }) => {
         const indented = M.indent(lines, i);
@@ -157,7 +152,6 @@ for (const between of [false, true]) {
 
   test(
     `renumbering every line counts each numbered list up from its first number, and renumbering again changes nothing${between ? ", with paragraphs between lists" : ""}`,
-    { todo: between && PARAGRAPHS_END_LISTS },
     () => {
       forAll(outlineCase({ between, ordered: false }), ({ lines, i, j }) => {
         const out = M.renumberAround(lines, lines.map((_, k) => k));

@@ -122,7 +122,6 @@ test("after any sequence of window and tab commands, the layout is tidy, saves a
 
 test(
   "a layout reads back with exactly the sizes it was saved with",
-  { todo: "parseLayout renormalizes sizes that add up to 1 within float error: three windows resized to [0.7, 0.2, 0.1] save as 0.20000000000000004 and read back as 0.19999999999999998" },
   () => forAll(steps, (s) => assert.deepEqual(saved(run(s)), run(s))),
 );
 

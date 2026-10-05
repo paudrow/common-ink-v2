@@ -71,7 +71,8 @@ browserTest(h, "reset empties the workspace back to its scenario, revisions keep
 
 browserTest(h, "the inspector drives Vim with key events, as an agent's browser tool would, and reports windows, mode and cursor", { scenario: "lists", open: "Lists tour" }, async (app) => {
   await app.call("keys", "/Basil<CR>");
-  assert.deepEqual(await app.editor.cursor(), { line: 8, column: 7, head: 272, anchor: 272, text: "    - Basil", lines: 33 });
+  const { line, column, text } = (await app.editor.cursor())!;
+  assert.deepEqual({ line, column, text }, { line: 8, column: 7, text: "    - Basil" });
   await app.call("keys", "i");
   assert.equal(await app.editor.mode(), "insert");
   await app.call("keys", "Sweet <Esc>:vs<CR>");

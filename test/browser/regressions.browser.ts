@@ -1,6 +1,5 @@
 // Bugs people found by hand, pinned down so they stay fixed (docs/TESTING.md says how to add one). Each
-// test names what went wrong. One still fails, and runs as a todo naming the pull request that fixes it.
-// Others are pinned elsewhere: Copy writing to the clipboard in the click (test/markdown-extensions.test.ts
+// test names what went wrong. Others are pinned elsewhere: Copy writing to the clipboard in the click (test/markdown-extensions.test.ts
 // and default-extensions.browser.ts), and a site's embed showing nothing behind its corners
 // (link-embeds.browser.ts).
 import assert from "node:assert/strict";
@@ -45,7 +44,7 @@ browserTest(h, "a window left alone after its split closes fills the workbench a
 browserTest(
   h,
   "a list item's text stays where it is when the cursor comes onto its line",
-  { scenario: "lists", open: "Lists tour", todo: "the list line jump, fixed in #23 (lists)" },
+  { scenario: "lists", open: "Lists tour" },
   async (app) => {
     const { lines } = (await where(app))!;
     const items = await app.page.evaluate(() => [...document.querySelectorAll(".cm-line")].length);

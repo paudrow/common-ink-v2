@@ -63,7 +63,7 @@ export function subtreeEnd(lines: readonly string[], i: number): number {
   return end;
 }
 
-/** The item before `i` at its level, under the same parent, if there is one. */
+/** The item before `i` at its level, under the same parent, if there is one. Text at its level ends a list, as it does going down (nextSibling). */
 export function previousSibling(lines: readonly string[], i: number): number | null {
   const base = indentOf(lines[i]);
   for (let j = i - 1; j >= 0; j--) {
@@ -71,8 +71,8 @@ export function previousSibling(lines: readonly string[], i: number): number | n
     const at = indentOf(lines[j]);
     const item = parseItem(lines[j]);
     if (item && at === base) return j;
-    if (at < base) return null;
-    // Deeper lines are an earlier sibling's children; same-level text is its lazy continuation.
+    // Text at its level ends the list, as anything shallower does; deeper lines are an earlier sibling's.
+    if (at <= base) return null;
   }
   return null;
 }

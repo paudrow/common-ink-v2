@@ -81,3 +81,13 @@ test("the command bar picks a provider by prefix", () => {
   assert.deepEqual(providerFor("plan", [notes, commands]), { provider: notes, query: "plan" });
   assert.equal(providerFor("plan", [commands]), null);
 });
+
+test("a command run for a key can decline it, and the key does what it would have", async () => {
+  const { Commands } = await import("../web/src/commands.ts");
+  const commands = new Commands();
+  commands.register({ id: "here", title: "Here", run: () => false }, { id: "there", title: "There", run: () => undefined }, { id: "later", title: "Later", run: async () => false });
+  assert.equal(commands.runForKey("here"), false, "declined: false, at once");
+  assert.equal(commands.runForKey("there"), true);
+  assert.equal(commands.runForKey("later"), true, "an answer that comes later is too late to give the key back");
+  assert.equal(commands.runForKey("nowhere"), false);
+});
