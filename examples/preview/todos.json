@@ -2,14 +2,11 @@
   "pr": 12,
   "title": "Todos",
   "steps": [
-    "Open Chores. Todos are checkboxes, with chips for when they're due (\"Overdue 1d\" in orange, \"Today\" in blue, then \"Tomorrow\", a weekday, or a date) and how they repeat (\"↻ weekly\"). Done todos are muted and struck through.",
-    "Move the cursor onto a todo (j and k, or click its text): that line shows its raw markdown, `- [ ] … due:2026-… every:…`, so you edit real text. Vim motions like w, e, f and x only ever meet real characters. Move off it and the checkbox and chips come back.",
-    "Click Book a dentist appointment's checkbox: it's checked off, and the cursor stays where it was, in normal mode. Click again to reopen it.",
-    "Click Water the plants' checkbox: it shows checked for a moment, then stays open with its due date moved on 3 days, on the same line. Nothing piles up.",
+    "Open Chores. Tasks are checkboxes, with their tokens as chips where they're written: when they're due, how they repeat, priority, people and tags. Done tasks are muted and struck through.",
+    "Move the cursor onto a chip (w and e, or click beside it): that token shows its raw markdown, `due:2026-…`, so you edit real text. The rest of the line stays where it was.",
+    "Click Book a dentist appointment's checkbox: it's ticked, with done: and today's date, and the cursor stays where it was. Click again to reopen it.",
+    "Click Water the plants' checkbox: it shows ticked for a moment, then stays open with its due date moved on 3 days, on the same line.",
     "Show history of this note: that change reads \"Completed 'Water the plants' (due …)\", by you.",
-    "Put the cursor on a todo and press ⌘Enter (Ctrl+Enter off a Mac), or gx in normal mode: the same toggle from the keyboard.",
-    "Click a chip: the cursor goes to its text, which shows raw, ready to change the date.",
-    "⌘⇧P, Show todos: every open todo in every note, under Overdue, Today, Upcoming and No date, with the same checkboxes and chips. Check one off there: it's written to its note as a change by you. Click a title to jump to its line.",
-    "Write your own: `- [ ] Call the bank due:2026-12-01 every:month`. `every:` takes day, weekday, week, month or year, with an optional count, like `every:2weeks`."
+    "⌘⇧P, Show todos: Today, then every other open task, with the same checkboxes and chips."
   ]
 }

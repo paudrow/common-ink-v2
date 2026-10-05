@@ -46,6 +46,7 @@ A link alone on its own line is drawn as what it links to: a YouTube video, a po
 | `stopwatch` | leaf | Counts up | `label`, `id` |
 | `alarm` | leaf | Rings and notifies at a time of day while Common Ink is open | `at` (07:30), `label`, `id` |
 | `noise` | leaf | White, pink or brown noise, made in the browser | `color`, `volume` (0 to 1), `label` |
+| `tasks` | leaf | Tasks from across the notes, live, grouped, to tick and change where they are | `folder`, `note`, `tag`, `assignee`, `due` (`<=today`, `tomorrow`, `>=2026-10-01`), `group` (note, due, priority, tag, person), `status` (open, done, all), `limit` |
 
 ## From the Catalog
 
@@ -54,7 +55,6 @@ These work once the person installs them from the Catalog at the bottom of the E
 | Embed | Syntax | What it is | Arguments |
 |---|---|---|---|
 | `pomodoro` | leaf | Rounds of work and breaks | `work`, `break`, `long`, `rounds`, `label`, `id` |
-| `tasks` | leaf | Open todos from across the notes, live, to check off where they are | `folder`, `note`, `q`, `due` (overdue, today, week, any), `done`, `limit` |
 | `kanban` | container | A board drawn from its own markdown: `## Column`, then `- card` lines; dragging a card rewrites them | none; the content is the board |
 | `html-app` | fence | An HTML page in a sandboxed frame; the body is its HTML | `height` (pixels, default 360), `title` |
 
@@ -93,3 +93,27 @@ It gets the app's colours as CSS variables (`--bg`, `--ink`, `--muted`, `--line`
 ````
 
 The Preview's "Three.js scene" note is a fuller example.
+
+## Tasks
+
+A task is a checkbox line, `- [ ] Send the invoice`, with todo.txt-style tokens anywhere in it. The line is the source of truth, and the app changes one token at a time in place.
+
+| Token | Means |
+|---|---|
+| `due:2026-10-01`, `due:2026-10-01T09:30` | When it's due |
+| `start:2026-09-28` (or `scheduled:`) | Hidden from open lists until then |
+| `done:2026-10-01` | When it was ticked (written when it's ticked) |
+| `rec:weekly` | How it repeats: `daily`, `weekly`, `monthly`, `yearly`, `2w`, `mon,thu`, `2w-mon,thu`, `6th`, `last-day`, `1st-tue,3rd-tue`, `last-fri`, `mar-1`, `1st-mon-mar`, `day-50`, `after-1m` (a gap after it's done), or `RRULE:FREQ=…` |
+| `until:2027-06-30`, `times:5` | When a repeat ends: its last day, or how many times are left, this one included |
+| `!high`, `!low` | Priority |
+| `@jane` | A person |
+| `#work/clients` | A tag; `/` nests |
+
+Ticking a repeating task doesn't tick it: it moves on to its next date, on the same line (and `times:` counts down). Its last time, it's ticked with `done:`.
+
+```markdown
+- [ ] Pay rent due:2026-11-01 rec:1st @sam !high #home/bills
+- [ ] Team standup notes due:2026-10-06 rec:1st-tue,3rd-tue until:2027-06-30
+- [x] Fix the bike light done:2026-10-02
+```
+

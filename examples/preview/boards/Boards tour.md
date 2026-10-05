@@ -1,18 +1,6 @@
 # Boards tour
 
-Boards draws two embeds: a task list gathered live from your notes, and a Kanban board made of markdown. It runs sandboxed, so the first time it reads your notes it asks.
-
-## Every open todo
-
-::tasks
-
-## Due this week
-
-::tasks{due=week}
-
-Check one off here, and it's checked off in its note; a note's name opens it. Add a todo to any note (`- [ ] something due:2026-10-09`) and the lists above update.
-
-## A board
+Boards draws a Kanban board made of markdown. It runs sandboxed, so the first time it reads or changes a note it asks.
 
 :::kanban
 ## To do
@@ -29,3 +17,5 @@ Check one off here, and it's checked off in its note; a note's name opens it. Ad
 :::
 
 Drag a card to another column (or use its ← → buttons): it moves at once, and the markdown above changes to match, as a change by Boards in history. Put the cursor in it to see it: the board is real markdown between `:::kanban` and `:::`.
+
+Task lists gathered from your notes are the Todos extension's: see [[Todos tour]].

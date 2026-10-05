@@ -1,0 +1,14 @@
+{
+  "pr": 0,
+  "title": "Todos, as v1 had them",
+  "steps": [
+    "Open Chores. Each task's tokens are chips where they're written: \"Yesterday\" in red, \"Today\" in amber, a repeat (\"Weekly\", \"1st & 3rd Tue\", \"Daily · 5 left\"), a flag for priority, a person with their initials, a #tag. Done tasks are muted and struck through, with a real checkmark.",
+    "Click Pay rent's \"High\" chip: a menu of High, Normal and Low. Pick Low: only that token changes (`!low`), and ⌘Z takes it back. Click its date chip: Today, Tomorrow, Next week, a date picker, or Clear.",
+    "Click a repeat chip (\"Weekly\" on the recycling): quick picks, Skip this one, Stop repeating, and More options… for the whole rule (every N weeks on chosen days, the 2nd Tuesday, the last day of the month, from completion), with how it ends (on a date, or after N times) and the next dates it gives.",
+    "Tick Take out the recycling: it shows ticked a moment, then stays open on the same line, due a week on. Nothing piles up. Physio exercises counts down (\"4 left\"); its last time, it's ticked done with done: and the day. One ⌘Z takes a tick back. History says \"Completed 'Take out the recycling' (due …)\".",
+    "Put the cursor on a task: its line ends with ⚙ and a faint hint of what it doesn't have yet (due · repeat · @ · # · !); each opens that field's editor. ⌘. (Ctrl+. off a Mac) opens ⚙ from the keyboard, and ⌘Enter ticks the task under the cursor.",
+    "Type a token: `due:` offers Today, Tomorrow, the coming weekdays, Next week and Pick a date…; `rec:` offers the repeats and More options…; `!` offers high and low; `@` and `#` the people and tags already in use.",
+    "Open Todos tour: `::tasks` lists tasks from across your notes, in rows like v1's Tasks page: its checkbox, its words, its chips, ⚙, ↗ and open to the side. Group by note, due date, priority, tag or person; show Open, Done or All. Click a task's words to edit them in place.",
+    "⌘⇧P, Show todos: Today at the top (overdue, due today, starting today), then everything else. Narrow it to a tag from the select, or click a tag chip; a person chip's \"Show jane's tasks\" narrows it to them."
+  ]
+}
