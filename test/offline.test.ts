@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author, FilePath } from "../worker/src/files.ts";
-import { memoryKV, Offline, type Network } from "../web/src/offline.ts";
+import { ServerAnswer } from "../web/src/api.ts";
+import { memoryKV, Offline, type HeldOp, type Network } from "../web/src/offline.ts";
 import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -90,10 +91,27 @@ test("edits of records made offline wait in order, go once the server's back, an
   assert.deepEqual([down.sent, (await offline.ops()).length, offline.online], [0, 3, false]);
   const sent: string[] = [];
   const back = await offline.flushOps(async (op) => {
-    if (op.method === "DELETE") throw new Error("There's no event at event:sample/work/gone");
+    if (op.method === "DELETE") throw new ServerAnswer("There's no event at event:sample/work/gone", 400);
     sent.push(op.what);
   });
   assert.deepEqual(sent, ["Change A", "Add C"]);
   assert.deepEqual(back.refused.map((r) => [r.op.what, r.error]), [["Delete gone", "There's no event at event:sample/work/gone"]]);
+  assert.deepEqual(await offline.ops(), []);
+});
+
+test("held edits of records go once each, however often sending starts, and wait while the server fails", async () => {
+  const offline = new Offline(memoryKV(), { list: async () => [], read: async (path) => ({ path, text: "", revision: 0 }), write: async () => ({ status: "saved", file: { path: "x.md" as never, text: "", revision: 1 } }) });
+  await offline.holdOp({ method: "POST", body: { id: "lunch00000000000000000000", title: "Lunch", start: "2026-10-05T12:00" }, what: "Add Lunch" });
+  const failing = await offline.flushOps(async () => {
+    throw new ServerAnswer("Service Unavailable", 503);
+  });
+  assert.deepEqual([failing.sent, failing.refused, (await offline.ops()).length], [0, [], 1], "a server that fails keeps the edit");
+  const sent: string[] = [];
+  const send = async (op: HeldOp) => {
+    sent.push(op.what);
+    await new Promise((r) => setTimeout(r, 10));
+  };
+  await Promise.all([offline.flushOps(send), offline.flushOps(send)]);
+  assert.deepEqual(sent, ["Add Lunch"]);
   assert.deepEqual(await offline.ops(), []);
 });

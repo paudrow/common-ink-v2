@@ -120,9 +120,19 @@ export const api = {
 /** The person's time zone: how floating times and all-day events are read. */
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** The server answered, with a problem: what it said, and its HTTP status. */
+export class ServerAnswer extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function answer<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body as { error?: string } | null)?.error ?? `${res.status}`);
+  if (!res.ok) throw new ServerAnswer((body as { error?: string } | null)?.error ?? `${res.status}`, res.status);
   return body as T;
 }
 
