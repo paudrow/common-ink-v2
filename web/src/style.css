@@ -1143,6 +1143,12 @@ button.status-item:hover {
   display: none;
 }
 
+.extension-about {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .extension-row {
   display: flex;
   align-items: center;
