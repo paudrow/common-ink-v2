@@ -1,0 +1,22 @@
+{
+  "id": "link-embeds",
+  "name": "Link embeds",
+  "version": "1.0.0",
+  "description": "A link alone on its own line, drawn as what it links to: a YouTube video (from youtube-nocookie.com), a post on X or Bluesky, a Spotify track, album or playlist, or, for any other page, a card with its title, description and picture, fetched by the Worker without your cookies. The line the cursor is on shows the link. Off, links are links, and the page frames nothing from these sites.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onUrlEmbed:youtube", "onUrlEmbed:x", "onUrlEmbed:bluesky", "onUrlEmbed:spotify", "onUrlEmbed:link-card"],
+  "permissions": {
+    "editor": { "why": "Draw links as embeds in notes" },
+    "network": { "hosts": ["*"], "why": "Fetch a page for its link card, and look up a Bluesky handle: through the Worker, with no cookies" }
+  },
+  "contributes": {
+    "urlEmbeds": [
+      { "id": "youtube", "title": "YouTube video", "pattern": "^https?://(?:www\\.|m\\.)?(?:youtube\\.com/(?:watch\\?(?:[^#]*&)?v=|shorts/|embed/|live/)|youtu\\.be/)([\\w-]{11})", "frameHosts": ["www.youtube-nocookie.com"] },
+      { "id": "x", "title": "Post on X", "pattern": "^https?://(?:www\\.|mobile\\.)?(?:twitter|x)\\.com/\\w+/status(?:es)?/(\\d+)", "frameHosts": ["platform.twitter.com"] },
+      { "id": "bluesky", "title": "Bluesky post", "pattern": "^https?://bsky\\.app/profile/([^/\\s]+)/post/([\\w]+)", "frameHosts": ["embed.bsky.app"] },
+      { "id": "spotify", "title": "Spotify", "pattern": "^https?://open\\.spotify\\.com/(?:intl-[\\w-]+/)?(track|album|playlist|episode|show)/(\\w+)", "frameHosts": ["open.spotify.com"] },
+      { "id": "link-card", "title": "Link card", "pattern": "^https?://", "frameHosts": [] }
+    ]
+  }
+}

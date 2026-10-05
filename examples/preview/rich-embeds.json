@@ -1,0 +1,11 @@
+{
+  "pr": 25,
+  "title": "Link embeds: videos, posts, music and link cards",
+  "steps": [
+    "Open Link embeds tour. Each link alone on its line is drawn: a YouTube video (from youtube-nocookie.com), a Bluesky post, a Spotify track, and cards for two other pages. Put the cursor on one: the link shows, to edit.",
+    "A card's title, description and picture come from the page, fetched by the Worker without your cookies; the picture arrives as data, so the browser loads nothing from the site. Extension activity shows each fetch, as Link embeds'.",
+    "Paste a link to a post on X (x.com/…/status/…) on a line of its own: it's drawn as the post.",
+    "A link in a sentence, a list or a code block stays a link.",
+    "Turn Link embeds off in the Extensions view and reload: links are links again, and the page's policy no longer lets it frame YouTube, X, Bluesky or Spotify (dev tools, the page's Content-Security-Policy, frame-src)."
+  ]
+}

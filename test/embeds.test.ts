@@ -115,6 +115,8 @@ function host(drawn: Embed[], opts: { updates?: Embed[]; refuse?: boolean } = {}
       return true;
     },
     needs: () => null,
+    urlEmbed: () => null,
+    drawUrl: () => {},
   };
 }
 

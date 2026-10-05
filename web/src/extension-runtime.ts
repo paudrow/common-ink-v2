@@ -60,10 +60,28 @@ interface Services {
   /** Files it may read, of all there are. Asks for each declared scope it needs, once. */
   list(): Promise<FileSummary[]>;
   fetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string }): Promise<ExtensionResponse>;
+  card(url: string): ReturnType<typeof api.extensionCard>;
   check(ask: Ask): Promise<void>;
 }
 
 let webviewIds = 0;
+
+/** Whether a URL embed's pattern matches a URL; a pattern that isn't a regular expression matches nothing. */
+const matches = (pattern: string, url: string) => {
+  try {
+    return new RegExp(pattern).test(url);
+  } catch {
+    return false;
+  }
+};
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    throw new Error(`"${url}" isn't a URL`);
+  }
+};
 
 /** Give a drawn embed new arguments or body in place: false if it can't take them, and it's drawn again. */
 type Updater = (embed: Embed) => boolean;
@@ -84,6 +102,8 @@ export class ExtensionRuntime {
   private embedDrawers = new Map<string, (el: HTMLElement, embed: Embed, tools: HTMLElement) => Updater | null>();
   /** How to give each drawn embed new arguments or body in place, for the ones whose extension can take them. */
   private updaters = new WeakMap<HTMLElement, Updater>();
+  /** How each URL embed draws, by its id. */
+  private urlDrawers = new Map<string, (el: HTMLElement, link: { url: string; match: string[] }) => void>();
   private sandboxes = new Map<string, SandboxHost>();
 
   constructor(private app: RuntimeApp) {
@@ -216,12 +236,30 @@ export class ExtensionRuntime {
     return Object.fromEntries(Object.keys(settings).filter((k) => k.startsWith(`${id}.`)).map((k) => [k, settings[k]]));
   }
 
-  /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments. */
+  /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments; and links alone on their lines. */
   readonly embedHost: Omit<EmbedHost, "needs"> = {
     contributions: () => new Map(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => [e.language, e] as const))),
     draw: (el, embed, tools) => void this.drawEmbed(el, embed, tools),
     update: (el, embed) => this.updaters.get(el)?.(embed) ?? false,
+    // The first pattern that matches, in the order extensions are listed and contribute them.
+    urlEmbed: (url) => this.host.on().flatMap((m) => m.contributes.urlEmbeds).find((e) => matches(e.pattern, url))?.id ?? null,
+    drawUrl: (el, url, id) => void this.drawUrl(el, url, id),
   };
+
+  private async drawUrl(el: HTMLElement, url: string, id: string): Promise<void> {
+    const declares = (m: ExtensionManifest) => m.contributes.urlEmbeds.some((e) => e.id === id);
+    await this.activateFor(`onUrlEmbed:${id}`, declares);
+    const contribution = this.host.on().flatMap((m) => m.contributes.urlEmbeds).find((e) => e.id === id);
+    const draw = this.urlDrawers.get(id);
+    if (draw && contribution) return draw(el, { url, match: [...(new RegExp(contribution.pattern).exec(url) ?? [])] });
+    // Its extension didn't draw it: the link, as a link.
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = url;
+    a.className = "cm-md-link";
+    a.dataset.href = url;
+    el.replaceChildren(a);
+  }
 
   private async drawEmbed(el: HTMLElement, embed: Embed, tools: HTMLElement): Promise<void> {
     const declares = (m: ExtensionManifest) => m.contributes.embeds.some((e) => e.language === embed.language);
@@ -324,7 +362,7 @@ export class ExtensionRuntime {
     throw new Error(`${m.name}'s state kept changing under it; try again`);
   }
 
-  private async activateFor(event: `onView:${string}` | `onCommand:${string}` | `onEmbed:${string}`, declares: (m: ExtensionManifest) => boolean): Promise<void> {
+  private async activateFor(event: `onView:${string}` | `onCommand:${string}` | `onEmbed:${string}` | `onUrlEmbed:${string}`, declares: (m: ExtensionManifest) => boolean): Promise<void> {
     await this.host.fire(event);
     // Declaring it is enough to start it, whatever activation events it lists.
     const owner = this.host.owner(declares);
@@ -361,14 +399,14 @@ export class ExtensionRuntime {
         return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
       },
       fetch: async (url, init) => {
-        let host: string;
-        try {
-          host = new URL(url).hostname;
-        } catch {
-          throw new Error(`"${url}" isn't a URL`);
-        }
+        const host = hostOf(url);
         await check({ kind: "network", target: host });
         return this.broker.inFlightWhile(m.id, url, () => api.extensionFetch(m.id, url, init, this.broker.allowedOnce(m, { kind: "network", target: host })));
+      },
+      card: async (url) => {
+        const host = hostOf(url);
+        await check({ kind: "network", target: host });
+        return this.broker.inFlightWhile(m.id, url, () => api.extensionCard(m.id, url, this.broker.allowedOnce(m, { kind: "network", target: host })));
       },
     };
   }
@@ -515,6 +553,13 @@ export class ExtensionRuntime {
           );
         },
       },
+      urlEmbeds: {
+        register: (id, provider) => {
+          if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
+          needsEditor();
+          this.urlDrawers.set(id, guard((el: HTMLElement, link: { url: string; match: string[] }) => provider.render(el, link)));
+        },
+      },
       state: {
         get: () => this.readState(m),
         set: (value) => this.writeState(m, value),
@@ -558,7 +603,7 @@ export class ExtensionRuntime {
           return api.upload(name, data);
         },
       },
-      net: { fetch: services.fetch },
+      net: { fetch: services.fetch, card: services.card },
       clipboard: {
         read: async () => {
           await services.check({ kind: "clipboard:read" });
@@ -697,6 +742,8 @@ export class ExtensionRuntime {
             return services.write(a as FilePath, String(b), Number(c));
           case "net.fetch":
             return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });
+          case "net.card":
+            return services.card(a);
           case "clipboard.read":
             await services.check({ kind: "clipboard:read" });
             return navigator.clipboard.readText();

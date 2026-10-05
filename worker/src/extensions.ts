@@ -173,8 +173,11 @@ export interface EmbedContribution {
 const ARGUMENT_TYPES = ["string", "number", "duration", "boolean"];
 
 /** A URL alone on its own line, drawn as an embed. */
+/** A link alone on its own line, drawn as an embed: the first contribution whose pattern matches draws it. */
 export interface UrlEmbedContribution {
-  /** A regular expression the whole URL must match. */
+  /** Names it, for its activation event (onUrlEmbed:<id>) and ctx.urlEmbeds.register. */
+  id: string;
+  /** A regular expression the URL must match (its groups are passed to the drawing). */
   pattern: string;
   title: string;
   /** Hosts the embed's frame loads from: the app's frame-src allows these only while the extension is on. */
@@ -340,7 +343,14 @@ function contributions(v: unknown, id: string): Contributions {
       } catch {
         throw new ManifestError(`${at}.pattern isn't a regular expression`);
       }
-      return { pattern, title: text(o.title, `${at}.title`), frameHosts: list(o.frameHosts, `${at}.frameHosts`, (h, a) => text(h, a)) };
+      const title = text(o.title, `${at}.title`);
+      const frameHosts = list(o.frameHosts, `${at}.frameHosts`, (h, a) => {
+        const host = text(h, a);
+        // It goes into the page's policy: a host name, and nothing else.
+        if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host)) throw new ManifestError(`${a} isn't a host name, like www.youtube-nocookie.com`);
+        return host;
+      });
+      return { id: typeof o.id === "string" && o.id ? o.id : title.toLowerCase().replace(/[^a-z0-9]+/g, "-"), pattern, title, frameHosts };
     }),
   };
 }
@@ -379,8 +389,9 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       const out: PermissionRequest = { why };
       if (kind === "network") {
         out.hosts = strings("hosts");
-        const bad = out.hosts.find((h) => !HOST.test(h));
-        if (!out.hosts.length || bad) throw new ManifestError(`${at}.hosts must name hosts, like "api.weather.gov" or "*.example.com"${bad ? `; "${bad}" isn't one` : ""}`);
+        // "*" is any host: declared plainly, so asking for it says so.
+        const bad = out.hosts.find((h) => h !== "*" && !HOST.test(h));
+        if (!out.hosts.length || bad) throw new ManifestError(`${at}.hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any${bad ? `; "${bad}" isn't one` : ""}`);
       }
       if (kind === "files:read" || kind === "files:write") {
         out.paths = strings("paths");
