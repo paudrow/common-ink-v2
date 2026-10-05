@@ -21,6 +21,21 @@
       { "command": "google.connect", "title": "Connect Google calendar and contacts" }
     ],
     "menus": { "quickOpen": [{ "command": "calendar.open" }] },
+    "embeds": [
+      {
+        "language": "calendar",
+        "syntax": "leaf",
+        "title": "Calendar",
+        "description": "Your calendar's events, live, in a note: the coming days as a list, or 3 days, a week or a month to drag and click in, as in the Calendar.",
+        "arguments": {
+          "view": { "type": "string", "label": "View", "description": "How it shows them", "default": "agenda", "enum": ["agenda", "3day", "week", "month"] },
+          "days": { "type": "number", "label": "Days", "description": "How many days the list shows, from today", "default": 3, "presets": ["1", "3", "7", "14"] },
+          "calendars": { "type": "string", "label": "Calendars", "description": "Only these calendars, by id, separated by commas (all, when empty)" },
+          "height": { "type": "number", "label": "Height", "description": "Its height in pixels, for 3 days, a week or a month", "default": 380 },
+          "id": { "type": "string", "description": "Keeps where it's scrolled when blocks move or change; leave it as it is", "hidden": true }
+        }
+      }
+    ],
     "views": { "sidebar": [{ "id": "calendar", "name": "Calendar" }] },
     "dataSources": [{ "id": "calendar", "kind": "calendar", "title": "Calendar", "description": "Events from Google Calendar, kept as records with history." }],
     "configuration": {

@@ -27,7 +27,7 @@ browserTest(h, "a link to an event is a chip that keeps up with it, and a click 
   const editor = app.page.locator(".cal-editor");
   await editor.waitFor();
   assert.equal(await editor.locator(".cal-title").inputValue(), "Dentist (Dr Lee)");
-  assert.deepEqual(await editor.locator(".cal-note-link").allInnerTexts(), ["Standup notes"]);
+  assert.deepEqual(await editor.locator(".cal-note-link").allInnerTexts(), ["Meeting prep", "Standup notes"]);
   // The calendar loads around the event and brings it on screen first; then the editor holds still.
   await app.idle();
   await editor.locator("button", { hasText: "New meeting note" }).click();
