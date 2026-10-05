@@ -4,6 +4,7 @@
 //   common-ink cat <path>              a file's text
 //   common-ink write <path> [--base N] save stdin as a file's text (based on the revision read now, by default)
 //   common-ink rm <path> [--base N]    delete a file (undo brings it back)
+//   common-ink upload <file> [--name N] upload a file; prints the link to put in a note
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
@@ -83,6 +84,22 @@ const commands: Record<string, () => Promise<void>> = {
     print(data, () => (data.status === "conflict" ? `Not deleted: ${path} changed since revision ${revision}.` : `deleted ${path} at revision ${data.file?.revision}`));
     if (status === 409) process.exitCode = 1;
   },
+  async upload() {
+    const nameFlag = take("--name", true);
+    const local = positional()[0];
+    if (!local) throw new Error("Usage: common-ink upload <file> [--name NAME]");
+    const { readFile } = await import("node:fs/promises");
+    const { basename } = await import("node:path");
+    const name = typeof nameFlag === "string" ? nameFlag : basename(local);
+    const headers: Record<string, string> = { "X-Common-Ink-Agent": process.env.COMMON_INK_AGENT ?? "CLI", "Content-Type": "application/octet-stream" };
+    if (process.env.CF_ACCESS_CLIENT_ID) headers["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
+    if (process.env.CF_ACCESS_CLIENT_SECRET) headers["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
+    const res = await fetch(`${base}/api/upload${q({ name })}`, { method: "PUT", headers, body: await readFile(local) });
+    const data = (await res.json().catch(() => null)) as { status?: string; url?: string; upload?: { name: string; type: string }; error?: string } | null;
+    if (!res.ok || !data?.upload) throw new Error(data?.error ?? `${res.status} ${res.statusText}`);
+    const { name: saved, type } = data.upload;
+    print(data, () => `${data.status} ${saved}\n${type.startsWith("image/") ? `![${saved.replace(/\.[^.]+$/, "")}](${data.url})` : `[${saved}](${data.url})`}`);
+  },
   async history() {
     const author = take("--author", true);
     const limit = take("--limit", true);
@@ -104,7 +121,7 @@ const commands: Record<string, () => Promise<void>> = {
 
 const run = commands[command ?? ""];
 if (!run) {
-  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...>  [--json]");
+  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...>  [--json]");
   process.exit(2);
 }
 await run().catch((err: Error) => {

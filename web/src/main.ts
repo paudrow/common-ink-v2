@@ -395,7 +395,7 @@ const plugins: PluginContext = {
     contacts: api.contacts,
     connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
   },
-  files: { list: () => files, fetchList: () => offline.list(), read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) },
+  files: { list: () => files, fetchList: () => offline.list(), read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base), upload: (name, data) => api.upload(name, data) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,
@@ -406,6 +406,7 @@ const plugins: PluginContext = {
     provideViews: (prefix, make) => workbench.provideViews(prefix, make),
     refreshFromServer: (paths) => workbench.refreshFromServer(paths),
     label: docLabel,
+    notice: (message, actions) => workbench.notice(message, actions),
   },
   events: { onSaved: (fn) => void savedListeners.push(fn), onFocus: (fn) => void focusListeners.push(fn) },
 };

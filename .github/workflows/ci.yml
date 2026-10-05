@@ -85,6 +85,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Make sure the uploads bucket exists
+        run: scripts/ensure-bucket.sh common-ink-v2-uploads
       # Secrets go up with the deploy, from the repository's secrets, and only when they're set; a
       # secret left out keeps the value it had.
       - name: Deploy
@@ -133,6 +135,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Make sure the Previews' uploads bucket exists
+        run: scripts/ensure-bucket.sh common-ink-v2-uploads-preview
       - name: Deploy Preview
         id: deploy
         run: |

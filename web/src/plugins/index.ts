@@ -11,6 +11,8 @@ import googleSource from "./google.ts?raw";
 import { historyPlugin } from "./history.ts";
 import historySource from "./history.ts?raw";
 import { todosPlugin } from "./todos/index.ts";
+import { uploadsPlugin } from "./uploads.ts";
+import uploadsSource from "./uploads.ts?raw";
 import todosSource from "./todos/index.ts?raw";
 
 export const BUILT_IN: BuiltIn[] = [
@@ -61,5 +63,13 @@ export const BUILT_IN: BuiltIn[] = [
     module: contactsPlugin,
     source: googleSource,
     file: "web/src/plugins/google.ts",
+  },
+  {
+    id: "uploads",
+    name: "Uploads",
+    description: "Paste or drop files into a note to upload them to the workspace, with a link where they landed; Show uploads lists them.",
+    module: uploadsPlugin,
+    source: uploadsSource,
+    file: "web/src/plugins/uploads.ts",
   },
 ];

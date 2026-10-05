@@ -1159,3 +1159,42 @@ p.plugin-adds.muted {
   display: flex;
   flex-direction: column;
 }
+
+/* The Uploads view (plugins/uploads.ts). */
+:is(#panel, .tab-view) .upload-add {
+  margin-bottom: 0.75rem;
+}
+
+:is(#panel, .tab-view) .uploads .upload {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+:is(#panel, .tab-view) .upload img {
+  grid-column: 1 / -1;
+  max-width: 100%;
+  max-height: 8rem;
+  object-fit: contain;
+  justify-self: start;
+  border-radius: 4px;
+}
+
+:is(#panel, .tab-view) .upload a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+:is(#panel, .tab-view) .upload .meta {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+:is(#panel, .tab-view) .upload button {
+  grid-column: 2;
+  grid-row: span 2;
+}

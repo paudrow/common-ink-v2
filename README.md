@@ -21,14 +21,16 @@ The Worker is in `worker/`, the web app in `web/`. Each pull request adds `examp
 
 Pushes to `main` deploy to `common-ink-v2.<subdomain>.workers.dev`, behind Cloudflare Access. Each pull request gets a Preview at `pr-<n>-common-ink-v2.<subdomain>.workers.dev` that opens signed in as a dev user, with its own sample notes. Both need, in the repository's settings, the secret `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and the variable `CLOUDFLARE_ACCOUNT_ID`. Production also needs the variables `ACCESS_TEAM_DOMAIN` (like `example.cloudflareaccess.com`) and `ACCESS_AUD`.
 
+Uploads are kept in R2: production in the bucket `common-ink-v2-uploads`, every Preview in `common-ink-v2-uploads-preview`. CI makes each bucket if it's missing (`scripts/ensure-bucket.sh`), which needs the token to have **Workers R2 Storage: Edit** too. Otherwise make them once with `npx wrangler r2 bucket create common-ink-v2-uploads` and `npx wrangler r2 bucket create common-ink-v2-uploads-preview`. `npm run dev` keeps uploads on disk.
+
 To get the Access values, open the Worker in the Cloudflare dashboard, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for `workers.dev` only. Its **Manage Cloudflare Access** page shows the application's audience (AUD) tag. Until the variables are set, production answers every request with 401.
 
 ## Agents: CLI and MCP
 
-Agents use the same operations as the app: list, read and write files, read history, undo.
+Agents use the same operations as the app: list, read, write and delete files, read history, undo, and upload.
 
-- **CLI.** `bin/common-ink ls | cat <path> | write <path> | history [path] | show <revision> | undo <revision...>` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token.
-- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are `list_files`, `read_file`, `write_file`, `history` and `undo`.
+- **CLI.** `bin/common-ink ls | cat <path> | write <path> | rm <path> | upload <file> | history [path] | show <revision> | undo <revision...>` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token.
+- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are the workspace operations (`worker/src/operations.ts`): `list_files`, `read_file`, `write_file`, `delete_file`, `history`, `undo`, `diff`, `read_version`, `restore`, labels, data sources, `list_uploads` and `upload_file`.
 
 ## Google sign-in, calendar and contacts
 

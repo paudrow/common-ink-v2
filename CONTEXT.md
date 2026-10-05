@@ -28,7 +28,7 @@ _Avoid_: Integration, connector
 A calendar entry that comes from a data source and may recur.
 
 **Upload**:
-A binary file (image, PDF, …) attached to a workspace and referenced from notes.
+A binary file (image, PDF, …) attached to a workspace and referenced from notes by its address, `/uploads/<name>`. Uploading is a change to `.common-ink/uploads.json`.
 _Avoid_: Asset, attachment
 
 ## History
