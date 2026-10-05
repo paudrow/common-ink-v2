@@ -28,7 +28,7 @@ const boxes = (view: InstanceType<typeof EditorView>) => [...view.contentDOM.que
 const press = (el: HTMLElement) => el.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }));
 const lineText = (view: InstanceType<typeof EditorView>, n: number) => view.state.doc.line(n).text;
 
-test("todos show as checkboxes and chips, except on the line the cursor is on, which shows its text", () => {
+test("todos show as checkboxes and chips; each shows its text only while the cursor is on it", () => {
   const view = editor();
   assert.equal(view.state.selection.main.head, 0, "the cursor starts on the heading");
   assert.deepEqual(
@@ -40,10 +40,18 @@ test("todos show as checkboxes and chips, except on the line the cursor is on, w
     ["Tomorrow", "Today", "↻ every 3 days"],
   );
   assert.ok(view.contentDOM.querySelector(".cm-todo-done .cm-todo-done-text"), "a done todo is muted and struck through");
-  // Move to Call mum's line: its raw text shows, and the others keep their widgets.
-  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 8 } });
+  // On Call mum's words, its box and chip stay: the line reads as it did.
+  const call = view.state.doc.line(2);
+  view.dispatch({ selection: { anchor: call.from + 8 } });
+  assert.equal(boxes(view).length, 3);
+  assert.equal(view.contentDOM.querySelectorAll(".todo-chip").length, 3);
+  // On its box, the box is its markdown; on its date, the date is.
+  view.dispatch({ selection: { anchor: call.from + 3 } });
   assert.equal(boxes(view).length, 2);
-  assert.match(view.contentDOM.querySelectorAll(".cm-line")[1].textContent!, /^- \[ \] Call mum due:2026-10-05$/);
+  assert.match(view.contentDOM.querySelectorAll(".cm-line")[1].textContent!, /^- \[ \] Call mum/);
+  view.dispatch({ selection: { anchor: call.from + call.text.indexOf("due:") + 2 } });
+  assert.equal(boxes(view).length, 3);
+  assert.match(view.contentDOM.querySelectorAll(".cm-line")[1].textContent!, /due:2026-10-05$/);
   view.destroy();
 });
 

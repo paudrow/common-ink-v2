@@ -44,6 +44,15 @@ test("an item's subtree is it and what's indented under it; siblings and parents
   assert.equal(M.itemAt(TREE, 8), null);
 });
 
+test("a paragraph between two lists makes them two lists, up and down alike", () => {
+  const lines = L("1. t0\n\nParagraph\n\n1. t1\n1. t2");
+  assert.equal(M.previousSibling(lines, 4), null, "t1 starts its own list");
+  assert.equal(M.nextSibling(lines, 0), null);
+  assert.equal(M.moveUp(lines, 4), null, "so it can't move up past the paragraph");
+  assert.equal(M.indent(lines, 4), null, "or indent under the list before it");
+  assert.deepEqual(M.renumberAround(lines, [5]), L("1. t0\n\nParagraph\n\n1. t1\n2. t2"), "and numbers on its own");
+});
+
 test("indent: an item and its children go under the item before it; the first item can't", () => {
   const e = M.indent(L("- a\n- b\n  - b1\n- c"), 1)!;
   assert.equal(T(e.lines), "- a\n  - b\n    - b1\n- c");
@@ -122,9 +131,14 @@ const edit = await import("../web/src/extensions/lists/edit.ts");
 import type { ExtensionContext } from "../web/src/extension-api.ts";
 
 const added: unknown[] = [];
-const commands = new Map<string, () => void>();
+const commands = new Map<string, () => unknown>();
+const status: string[] = [];
 let focused: InstanceType<typeof EditorView> | null = null;
-lists.activate({ editor: { extend: (e: unknown) => void added.push(e), focused: () => focused }, commands: { register: (id: string, run: () => void) => void commands.set(id, run) } } as unknown as ExtensionContext);
+lists.activate({
+  editor: { extend: (e: unknown) => void added.push(e), focused: () => focused },
+  commands: { register: (id: string, run: () => unknown) => void commands.set(id, run) },
+  statusBar: { set: (id: string, text: string) => void (id === "lists.message" && text && status.push(text)) },
+} as unknown as ExtensionContext);
 
 function editor(doc: string, cursor: number | string) {
   const view = new EditorView({ state: createState(doc, { json: false, readOnly: false, settings: DEFAULTS, extensions: added as never, onUpdate: () => {}, onBlur: () => {} }), parent: document.body });
@@ -195,7 +209,7 @@ test("the commands convert items, and fold an item's children away and back", ()
   view.destroy();
 });
 
-test("lists are drawn with bullets by depth, numbers in a column, hanging indents and the raw line where the cursor is", () => {
+test("lists are drawn with bullets by depth, numbers in a column and hanging indents, and keep that layout under the cursor", () => {
   const view = editor("- top\n  - inner\n    text of inner\n1. one\n- [ ] todo\n\nEnd", "End");
   const lines = [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")];
   assert.equal(lines[0].querySelector(".cm-list-bullet")?.textContent, "•");
@@ -206,9 +220,71 @@ test("lists are drawn with bullets by depth, numbers in a column, hanging indent
   assert.equal(lines[3].querySelector(".cm-list-number")?.textContent, "1.");
   assert.equal(lines[4].querySelector(".cm-list-bullet"), null, "a todo's box is the Todos extension's");
   assert.ok(lines[4].classList.contains("cm-list-line"));
-  view.dispatch({ selection: { anchor: view.state.doc.line(2).from } });
-  const raw = view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[1];
-  assert.equal(raw.textContent, "  - inner", "the cursor's line is its markdown");
-  assert.ok(!raw.classList.contains("cm-list-line"));
+  // The cursor on an item's text: its line is laid out the same, bullet and all.
+  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 6 } });
+  const inner = () => view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[1];
+  assert.ok(inner().classList.contains("cm-list-line"), "its hanging indent stays");
+  assert.equal(inner().style.getPropertyValue("--list-depth"), "1");
+  assert.equal(inner().querySelector(".cm-list-bullet")?.textContent, "◦");
+  // On its marker, the bullet is its "-", in the same box.
+  view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 2 } });
+  assert.equal(inner().querySelector(".cm-list-bullet.raw")?.textContent, "-");
+  assert.ok(inner().classList.contains("cm-list-line"));
+  // A number is always its own text, whatever the cursor's doing.
+  view.dispatch({ selection: { anchor: view.state.doc.line(4).from } });
+  assert.equal(view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")[3].querySelector(".cm-list-number")?.textContent, "1.");
+  view.destroy();
+});
+
+test("smart indent: only under the item above, one level at a time; a refused indent says why, quietly, and changes nothing", () => {
+  const view = editor("1. one\n2. two\n3. three", "one");
+  status.length = 0;
+  assert.ok(key(view, "Tab"), "the key is taken, so no tab is typed");
+  assert.equal(view.state.doc.toString(), "1. one\n2. two\n3. three", "the first item has nothing to nest under");
+  assert.deepEqual(status, ["Can't indent: nothing above to nest under"]);
+  view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf("two") } });
+  assert.ok(key(view, "Tab"));
+  assert.equal(view.state.doc.toString(), "1. one\n   1. two\n2. three", "under the item above, renumbered at both levels");
+  assert.ok(key(view, "Tab"));
+  assert.equal(view.state.doc.toString(), "1. one\n   1. two\n2. three", "no double indent: it's the first child now");
+  assert.equal(status.at(-1), "Can't indent: nothing above to nest under");
+  view.dispatch({ selection: { anchor: 0 } });
+  assert.ok(key(view, "Tab", { shiftKey: true }));
+  assert.equal(view.state.doc.toString(), "1. one\n   1. two\n2. three", "the top level can't dedent");
+  assert.equal(status.at(-1), "Can't dedent: it's already at the top");
+  view.destroy();
+});
+
+test("a selection indents as a block: under the item above the first, or not at all", () => {
+  const view = editor("- a\n- b\n- c\n- d", "b");
+  view.dispatch({ selection: EditorSelection.range(view.state.doc.toString().indexOf("b"), view.state.doc.toString().indexOf("c") + 1) });
+  assert.ok(key(view, "Tab"));
+  assert.equal(view.state.doc.toString(), "- a\n  - b\n  - c\n- d", "b and c both go under a, as siblings");
+  view.dispatch({ selection: EditorSelection.range(0, view.state.doc.toString().indexOf("c") + 1) });
+  assert.ok(key(view, "Tab"));
+  assert.equal(view.state.doc.toString(), "- a\n  - b\n  - c\n- d", "a can't indent, so none of them do");
+  view.destroy();
+});
+
+test("Alt-Right and Alt-Left indent and dedent a list item; off a list, they decline, so the key moves by word as usual", () => {
+  const view = editor("Some text here\n\n- a\n- b", "text");
+  assert.equal(commands.get("lists.indentItem")!(), false, "not on a list: the key's own job");
+  assert.equal(view.state.doc.toString(), "Some text here\n\n- a\n- b");
+  view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf("b") } });
+  assert.equal(commands.get("lists.indentItem")!(), true);
+  assert.equal(view.state.doc.toString(), "Some text here\n\n- a\n  - b");
+  assert.equal(commands.get("lists.dedentItem")!(), true);
+  assert.equal(view.state.doc.toString(), "Some text here\n\n- a\n- b");
+  view.destroy();
+});
+
+test("indenting over a whole-line selection (Vim's >>) leaves the cursor on that line's marker, as Vim does", () => {
+  const view = editor("- a\n- b\n- c", "b");
+  const b = view.state.doc.line(2);
+  view.dispatch({ selection: EditorSelection.range(b.from, view.state.doc.line(3).from) });
+  edit.indentItems(view);
+  assert.equal(view.state.doc.toString(), "- a\n  - b\n- c");
+  assert.equal(lineOfCursor(view), "  - b", "on its own line, not the next");
+  assert.equal(view.state.selection.main.head - view.state.doc.line(2).from, 2, "at its marker");
   view.destroy();
 });

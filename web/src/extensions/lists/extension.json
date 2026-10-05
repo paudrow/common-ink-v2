@@ -2,7 +2,7 @@
   "id": "lists",
   "name": "Lists",
   "version": "1.0.0",
-  "description": "Lists that edit like an outliner: Tab and Shift-Tab (or >> and <<) indent and dedent an item with its children, Alt-Up and Alt-Down (or [e and ]e) move it, Enter continues the list and on an empty item steps out, numbers renumber themselves at every level, and items fold. Drawn with real bullets, aligned numbers, hanging indents and guides.",
+  "description": "Lists that edit like an outliner: Tab and Shift-Tab, Alt-Right and Alt-Left (or >> and <<) indent and dedent an item with its children, one level at a time and only under the item above it, Alt-Up and Alt-Down (or [e and ]e) move it, Enter continues the list and on an empty item steps out, numbers renumber themselves at every level, and items fold. Drawn with real bullets, aligned numbers, hanging indents and guides.",
   "main": "index.ts",
   "files": ["index.ts", "model.ts", "edit.ts", "preview.ts"],
   "activationEvents": ["onStartup"],
@@ -13,6 +13,8 @@
     "commands": [
       { "command": "lists.indent", "title": "Indent list item" },
       { "command": "lists.dedent", "title": "Dedent list item" },
+      { "command": "lists.indentItem", "title": "Indent the list item the cursor is on" },
+      { "command": "lists.dedentItem", "title": "Dedent the list item the cursor is on" },
       { "command": "lists.moveUp", "title": "Move list item up" },
       { "command": "lists.moveDown", "title": "Move list item down" },
       { "command": "lists.toBullets", "title": "Make bullets" },
@@ -20,7 +22,10 @@
       { "command": "lists.toTodos", "title": "Make todos" },
       { "command": "lists.toggleFold", "title": "Fold or unfold list item" }
     ],
+    "statusBarItems": [{ "id": "lists.message", "alignment": "left", "priority": 0 }],
     "keybindings": [
+      { "key": "Alt-ArrowRight", "command": "lists.indentItem" },
+      { "key": "Alt-ArrowLeft", "command": "lists.dedentItem" },
       { "vim": ">", "command": "lists.indent", "operator": true },
       { "vim": "<", "command": "lists.dedent", "operator": true },
       { "vim": "[e", "command": "lists.moveUp" },
