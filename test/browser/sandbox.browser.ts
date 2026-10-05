@@ -129,6 +129,9 @@ test("a sandboxed view asks before reading a note, and Don't allow is kept", asy
   await page.click("text=Don't allow");
   const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
   await webview!.waitForFunction(() => document.body.textContent?.includes("You didn't allow"));
+  // Keeping the answer saves your settings, which Word count hears of and counts again: it isn't asked twice.
+  await page.waitForTimeout(1500);
+  assert.equal(await page.$(".dialog"), null, "one Don't allow is enough");
   const settings = await page.evaluate(() => fetch("/api/file?path=.common-ink%2Fusers%2Ftester%40localhost%2Fsettings.json").then((r) => r.json()));
   assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**": "deny" } });
   await page.reload();
