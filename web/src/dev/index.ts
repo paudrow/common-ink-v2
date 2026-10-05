@@ -29,11 +29,12 @@ export interface Problem {
   message: string;
 }
 
+/** One layout shift the browser saw, with each element that moved and by how much (dx, dy in px). */
 export interface LayoutShift {
   time: number;
   value: number;
   hadRecentInput: boolean;
-  nodes: string[];
+  moved: Array<{ node: string; dx: number; dy: number }>;
 }
 
 export function boot(page: LeversPage) {
@@ -68,10 +69,15 @@ export function boot(page: LeversPage) {
     consoleError(...args);
   };
   try {
+    type Source = { node?: Node; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly };
     new PerformanceObserver((list) => {
-      for (const e of list.getEntries() as Array<PerformanceEntry & { value: number; hadRecentInput: boolean; sources?: Array<{ node?: Node }> }>) {
-        const nodes = (e.sources ?? []).map((s) => (s.node instanceof Element ? `${s.node.tagName.toLowerCase()}${s.node.className ? `.${String(s.node.className).split(" ").join(".")}` : ""}` : (s.node?.nodeName ?? "?")));
-        keep(shifts, { time: e.startTime, value: e.value, hadRecentInput: e.hadRecentInput, nodes });
+      for (const e of list.getEntries() as Array<PerformanceEntry & { value: number; hadRecentInput: boolean; sources?: Source[] }>) {
+        const moved = (e.sources ?? []).map((s) => ({
+          node: s.node instanceof Element ? `${s.node.tagName.toLowerCase()}${s.node.className ? `.${String(s.node.className).trim().split(/\s+/).join(".")}` : ""}` : (s.node?.nodeName ?? "(gone)"),
+          dx: Math.round(s.currentRect.x - s.previousRect.x),
+          dy: Math.round(s.currentRect.y - s.previousRect.y),
+        }));
+        keep(shifts, { time: e.startTime, value: e.value, hadRecentInput: e.hadRecentInput, moved });
       }
     }).observe({ type: "layout-shift", buffered: true });
   } catch {}

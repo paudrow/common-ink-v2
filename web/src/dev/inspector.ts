@@ -178,6 +178,15 @@ export function makeInspector(app: DevApp, kept: Kept) {
       };
     },
 
+    /** Where the cursor is, cheaply: the focused note, line and column (1-based), and Vim's mode. */
+    where() {
+      const view = focusedEditor();
+      if (!view) return null;
+      const head = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(head);
+      return { path: workbench.focusedPath, line: line.number, column: head - line.from + 1, lines: view.state.doc.lines, mode: vimOf(view)?.mode ?? null };
+    },
+
     /** Press keys in Vim's notation ("jj>>", ":vs<CR>", "<C-w>l") where focus is, as the keyboard would. */
     async keys(seq: string) {
       for (const k of parseKeys(seq, IS_MAC)) {
@@ -224,6 +233,14 @@ export function makeInspector(app: DevApp, kept: Kept) {
         if (performance.now() - started > timeout) throw new Error(`Not idle after ${timeout}ms: ${busy.join("; ") || "requests kept coming"}`);
         await new Promise((r) => setTimeout(r, 50));
       }
+    },
+
+    /**
+     * Hold back the page's requests that match `pattern` (against "METHOD /path?query", such as
+     * "PUT /api/file") by `ms`, to open the window a race needs. With no pattern, hold none back.
+     */
+    slow(pattern?: string, ms = 1000) {
+      net.slow = pattern ? [...net.slow, { match: new RegExp(pattern), ms }] : [];
     },
 
     /** Reset the workspace to a scenario, by default the one it holds, and start the page over. */

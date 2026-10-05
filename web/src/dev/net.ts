@@ -15,6 +15,8 @@ export const net = {
   /** The newest revision the live socket has announced. */
   lastRevision: 0,
   live: null as WebSocket | HeldSocket | null,
+  /** Requests held back on purpose, to open the window a race needs: "METHOD /path?query" matched against each. */
+  slow: [] as Array<{ match: RegExp; ms: number }>,
 };
 
 const touch = () => (net.lastActivity = performance.now());
@@ -47,6 +49,9 @@ export function installNet(hooks: NetHooks): void {
     net.inFlight++;
     touch();
     try {
+      const said = `${(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase()} ${decodeURIComponent(url.pathname + url.search)}`;
+      const held = net.slow.find((s) => s.match.test(said));
+      if (held) await new Promise((r) => setTimeout(r, held.ms));
       return await realFetch(input, init);
     } finally {
       net.inFlight--;

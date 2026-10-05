@@ -22,7 +22,7 @@ export interface AppState {
   embeds: Array<{ kind: string; language: string; note: string | null; shown: boolean; state: string; webview?: { loaded: boolean; drawn: { webgl: number; "2d": number } } }>;
   history: Array<{ revision: number; path: string; author: string }>;
   problems: Array<{ kind: string; message: string }>;
-  layoutShifts: Array<{ time: number; value: number; hadRecentInput: boolean; nodes: string[] }>;
+  layoutShifts: Array<{ time: number; value: number; hadRecentInput: boolean; moved: Array<{ node: string; dx: number; dy: number }> }>;
   dialogs: string[];
   notices: string[];
 }
