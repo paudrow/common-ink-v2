@@ -256,3 +256,15 @@ test("undoing a change to one occurrence puts it back as its series has it, in G
     "2026-10-09T16:00 Standup",
   ]);
 });
+
+test("undoing deleting one occurrence brings it back in Google too", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  await op(store, "delete_event", { address: "event:google/primary/standup_20261009T160000Z", scope: "this" });
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.status, "cancelled");
+  const [deleted] = store.files.recent({ limit: 1 });
+  await op(store, "undo", { revisions: [deleted.revision] });
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.status, "confirmed");
+  await op(store, "sync_calendar", { force: true });
+  assert.ok((await listed(store)).includes("2026-10-09T16:00 Standup"));
+});

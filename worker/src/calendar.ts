@@ -535,6 +535,22 @@ function rekeyed(e: Exception, series: CalendarEvent, shift: (s: Day | WallTime)
 }
 
 /**
+ * What taking back a changed occurrence's own changes writes: the occurrence as its series makes it,
+ * while the series still has it. Deleting its record would cancel it in Google. Without the
+ * occurrence in its series any more, the record is deleted.
+ */
+export function planUnchange(events: readonly CalendarEvent[], e: CalendarEvent, viewer = "UTC"): RecordOp {
+  const back = e.series === undefined ? null : findTarget(events.filter((o) => o.id !== e.id), e.id, viewer);
+  return back?.kind === "occurrence" ? { op: "put", event: back.occurrence, created: false } : { op: "delete", event: e };
+}
+
+/** A moved series' changed occurrences, each record once: one moved onto another's old start takes that record over. */
+function oncePerRecord(ops: RecordOp[], series: CalendarEvent, viewer: string): RecordOp[] {
+  const put = new Set(ops.flatMap((o) => (o.op === "put" ? [o.event.id] : [])));
+  return ops.flatMap((o) => (o.op === "put" ? [o] : put.has(o.event.id) ? [] : [planUnchange([series], o.event, viewer)]));
+}
+
+/**
  * The records an edit writes. `scope` matters only for a series' occurrences: "this" changes that
  * one alone, "following" splits the series there and changes the new part, "all" changes the series
  * (moving every occurrence by as much as this one moved). Occurrences changed on their own keep their
@@ -568,7 +584,7 @@ export function planUpdate(events: readonly CalendarEvent[], target: Target, cha
     const recurrence = own.recurrence !== undefined ? own.recurrence : startsMove ? movedLines(series, timing!, shift, days, viewer) : undefined;
     const put = applied(series, { ...own, timing, recurrence });
     if (!startsMove) return [{ op: "put", event: put, created: false }, ...self.map((e) => ({ op: "put" as const, event: e, created: false }))];
-    return [{ op: "put", event: put, created: false }, ...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))];
+    return [{ op: "put", event: put, created: false }, ...oncePerRecord([...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))], put, viewer)];
   }
 
   const { cut, left } = endBefore(series, occurrence.originalStart, viewer);

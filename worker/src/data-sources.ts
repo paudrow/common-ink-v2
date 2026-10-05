@@ -4,7 +4,7 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
-import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
+import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planUnchange, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
 import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
@@ -528,7 +528,8 @@ export class DataSources {
 
   /**
    * Put a record back to a text it had (or delete it, for ""), as an edit of its source: how undo
-   * and restore reach records, so the source hears of it too.
+   * and restore reach records, so the source hears of it too. A changed occurrence with no text to go
+   * back to goes back to how its series makes it.
    */
   async revert(path: FilePath, text: string, author: Author, undoes?: Revision): Promise<EditResult | Refused> {
     const key = keyOfPath(path);
@@ -536,7 +537,7 @@ export class DataSources {
     const before = readEvent(this.files.read(path)?.text ?? "");
     const after = text ? readEvent(text) : null;
     if (text && !after) return { status: "refused", error: `That version of ${path} isn't an event` };
-    const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [{ op: "delete", event: before }] : [];
+    const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [planUnchange(this.family(key.source, key.collection, key.id), before)] : [];
     return this.apply(key.source, ops, author, addressOf(key), undoes);
   }
 }
