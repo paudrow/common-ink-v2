@@ -20,6 +20,6 @@ https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC
 
 https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
 
-https://en.wikipedia.org/wiki/Common_ink
+https://en.wikipedia.org/wiki/Fountain_pen
 
 A card shows the page's title, description and picture. The Worker fetches them, without your cookies, and the picture comes to the app as data, so your browser loads nothing from the site.
