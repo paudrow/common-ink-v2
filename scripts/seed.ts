@@ -54,7 +54,9 @@ export function readSections(dir: string, catalog = path.join(dir, "../../web/pu
         : [];
       const installed = (install as string[]).flatMap((id) => {
         const manifest = JSON.parse(fs.readFileSync(path.join(catalog, id, "extension.json"), "utf8")) as { main?: string; files?: string[] };
-        return ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+        const files = ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+        // As installing from the Catalog leaves it: where it came from, so it says Catalog.
+        return [...files, { path: `.common-ink/extensions/${id}/installed.json`, text: `${JSON.stringify({ catalog: "Common Ink" })}\n` }];
       });
       return { slug, pr, title, steps, notes: [...notes, ...installed], edits };
     });
