@@ -109,11 +109,21 @@ export default {
     // Every extension's Vim sequences, this one's included, as normal-mode keys that run their commands.
     // Vim's own Ctrl-W in normal mode does nothing, and as a whole key it would swallow Ctrl-W h and the rest.
     Vim.unmap("<C-w>", "normal");
-    for (const { vim: keys, command } of ctx.commands.keybindings()) {
+    for (const { vim: keys, command, operator } of ctx.commands.keybindings()) {
       if (!keys) continue;
-      const action = `run:${command}`;
-      Vim.defineAction(action, () => void ctx.commands.run(command));
-      Vim.mapCommand(keys, "action", action, {}, { context: "normal" });
+      const name = `run:${command}`;
+      if (operator) {
+        // In place of Vim's own operator: Vim selects what the motion covers (>> a line, >ip a
+        // paragraph, or the visual selection), the command acts on the selection, and the cursor stays.
+        Vim.defineOperator(name, (cm: CM) => {
+          ctx.commands.run(command);
+          return cm.getCursor();
+        });
+        Vim.mapCommand(keys, "operator", name, {}, {});
+        continue;
+      }
+      Vim.defineAction(name, () => void ctx.commands.run(command));
+      Vim.mapCommand(keys, "action", name, {}, { context: "normal" });
     }
   },
 };

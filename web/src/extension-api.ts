@@ -78,7 +78,7 @@ export interface ExtensionContext {
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
-    keybindings(): Array<{ command: string; key?: string; vim?: string }>;
+    keybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }>;
     /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext"), with their titles. */
     menu(menu: "commandBar" | "tabMenu" | "editorContext"): Array<{ command: string; title: string }>;
   };

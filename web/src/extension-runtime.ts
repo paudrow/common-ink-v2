@@ -125,9 +125,9 @@ export class ExtensionRuntime {
   }
 
   /** Every keybinding in effect, with the Vim sequences extensions declare. */
-  allKeybindings(): Array<{ command: string; key?: string; vim?: string }> {
+  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }> {
     const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key }] : []));
-    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim }] : [])));
+    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim, ...(k.operator ? { operator: true as const } : {}) }] : [])));
     return [...keys, ...vim];
   }
 
@@ -161,7 +161,9 @@ export class ExtensionRuntime {
         title: c.title,
         run: () => {
           this.broker.cause(m.id, { kind: "command", title: c.title });
-          return this.runCommand(c.command);
+          // Started already, its answer comes back at once: false declines a key (commands.runForKey).
+          const handler = this.handlers.get(c.command);
+          return handler ? handler() : this.runCommand(c.command);
         },
       });
     for (const view of Object.values(m.contributes.views).flat()) {

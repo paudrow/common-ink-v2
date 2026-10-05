@@ -1,0 +1,15 @@
+{
+  "pr": 23,
+  "title": "Lists that edit like an outliner",
+  "steps": [
+    "Open Lists tour. Lists are drawn with real bullets that change with depth, numbers in a right-aligned column, guides for each level, and long items that wrap under their own text. Put the cursor on an item: the line doesn't move. Its indent, bullet and number stay, numbers are always their text, and a bullet shows its `-` only while the cursor is on it. Bold, links and a todo's box and dates show their markdown only where the cursor is.",
+    "On \"Order seeds\", press Tab (or Alt-Right): it moves under \"Plan the garden\"'s previous item, taking Tomatoes and Basil with it. Shift-Tab (or Alt-Left) brings it back out, after its parent, and the items after it stay where they were. In Vim, >> and << do the same, and the cursor stays on the line; > and < on a visual selection move every item selected, as a block.",
+    "Indent works as Workflowy's does: only under the item above, one level at a time. Tab on the first item of a list, or on an item that's already the first child, does nothing, and the status bar says why for a moment (\"Can't indent: nothing above to nest under\"). Select several items whose first can't indent, and none of them move. Off a list, Alt-Right and Alt-Left move by word, as usual.",
+    "Alt-Down (or ]e in Vim) on \"Fix the bike\" moves it below \"Call the plumber\", its patch with it; Alt-Up (or [e) moves it back.",
+    "In the numbered list, move \"Fold in the butter\" up: the numbers follow. Indent \"Mix the dry things\": it becomes 1. under Preheat, and the rest renumber. Delete a line: the numbers close up, in the same undo step.",
+    "At the end of an item, Enter starts the next one (a todo starts a todo, a number the next number). Enter again on the empty item steps out a level, then out of the list.",
+    "Click the bullet of \"Plan the garden\" (or za in Vim): its children fold away behind a …; the bullet gets a ring. Click again to bring them back.",
+    "⌘⇧P, Make a numbered list on the bullets, or Make todos: the items change, their text and children stay.",
+    "Turn Lists off in the Extensions view and reload: lists are plain markdown, and Tab does nothing special."
+  ]
+}
