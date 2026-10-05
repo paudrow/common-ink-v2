@@ -80,10 +80,10 @@ jobs:
           tar xzf gitleaks.tar.gz gitleaks
           ./gitleaks git --config .gitleaks.toml --redact --no-banner .
 
-  # Every commit to main goes live at https://common-ink-v2.<subdomain>.workers.dev. People sign in with
-  # Google (GOOGLE_CLIENT_ID and ALLOWED_EMAILS variables, GOOGLE_CLIENT_SECRET and SESSION_SECRET
-  # secrets) or through Cloudflare Access (ACCESS_TEAM_DOMAIN and ACCESS_AUD); with neither, the Worker
-  # answers every request with 401.
+  # Every commit to main goes live at https://commonink.app. People sign in with Google
+  # (GOOGLE_CLIENT_ID and ALLOWED_EMAILS variables, GOOGLE_CLIENT_SECRET and SESSION_SECRET secrets);
+  # agents may come through Cloudflare Access (ACCESS_TEAM_DOMAIN and ACCESS_AUD). With neither, the
+  # Worker answers every request with 401.
   deploy:
     needs: [check, browser, secrets]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
