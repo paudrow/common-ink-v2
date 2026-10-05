@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
-import { coveringKey, decide, globMatches, hostMatches, parseGrants } from "../worker/src/permissions.ts";
+import { coveringKey, decide, globMatches, hostMatches, parseGrants, type Grants } from "../worker/src/permissions.ts";
 import { PermissionBroker, PermissionDenied, type Choice } from "../web/src/broker.ts";
 
 const weather = parseManifest(
@@ -83,6 +83,40 @@ test("asked once: Allow once lasts the session, Always allow is kept, Don't allo
   await assert.rejects(b.check(weather, { kind: "files:read", target: "Journal/Tue.md" }), PermissionDenied);
   assert.equal(prompts.length, 3, "a denial isn't asked about again");
   assert.deepEqual(saved, ["weather clipboard:write allow", "weather files:read:Journal/** deny"]);
+});
+
+test("one Don't allow is enough: an ask while the answer is being kept gets it, without a second prompt", async () => {
+  const prompts: string[][] = [];
+  const saved: string[] = [];
+  let grants: Grants = {};
+  let saving!: () => void;
+  const b = new PermissionBroker({
+    grants: () => grants,
+    isBuiltIn: () => false,
+    // Keeping an answer takes a while: a write, then settings read again.
+    save: (id, key, answer) =>
+      new Promise((done) => {
+        saved.push(`${id} ${key} ${answer}`);
+        saving = () => {
+          grants = { [id]: { [key]: answer } };
+          done();
+        };
+      }),
+    prompt: async (_m, asks) => {
+      prompts.push(asks.map((a) => a.key));
+      return "deny";
+    },
+    changed: () => {},
+  });
+  const first = b.check(weather, { kind: "files:read", target: "Journal/Mon.md" });
+  await new Promise((r) => setTimeout(r, 0));
+  // The extension tries again (it heard its settings save, say) before the answer is in settings.
+  await assert.rejects(b.check(weather, { kind: "files:read", target: "Journal/Tue.md" }), PermissionDenied);
+  saving();
+  await assert.rejects(first, PermissionDenied);
+  await assert.rejects(b.check(weather, { kind: "files:read", target: "Journal/Wed.md" }), PermissionDenied);
+  assert.equal(prompts.length, 1, "asked once");
+  assert.deepEqual(saved, ["weather files:read:Journal/** deny"], "and kept once");
 });
 
 test("an undeclared ask is refused without a prompt; Escape refuses for now without keeping it", async () => {

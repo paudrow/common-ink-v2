@@ -78,6 +78,12 @@ export class PermissionBroker {
   private once = new Set<string>();
   /** "Don't allow" without keeping it (Escape), this session only. */
   private deniedForNow = new Set<string>();
+  /**
+   * Answers chosen but not yet in settings: keeping one takes a moment (a write, then settings read
+   * again), and an ask in that moment (the extension trying again, or hearing its own settings save)
+   * must get the answer you just gave, not another prompt.
+   */
+  private keeping = new Map<string, Answer>();
   private queue: Prompting[] = [];
   private showing: Prompting | null = null;
   readonly log: Activity[] = [];
@@ -96,12 +102,12 @@ export class PermissionBroker {
     const key = `${extension.id} ${decision.key}`;
     let outcome = decision.outcome;
     if (outcome === "ask" && this.deniedForNow.has(key)) outcome = "deny";
+    if (outcome === "ask" && this.keeping.has(key)) outcome = this.keeping.get(key)!;
     if (outcome === "ask") {
       const choice = await this.ask(extension, ask, decision.key);
-      if (choice === "always") await this.o.save(extension.id, decision.key, "allow");
       if (choice === "once") this.once.add(key);
-      if (choice === "deny") await this.o.save(extension.id, decision.key, "deny");
       if (choice === "dismiss") this.deniedForNow.add(key);
+      if (choice === "always" || choice === "deny") await this.keep(extension.id, decision.key, choice === "always" ? "allow" : "deny");
       outcome = choice === "deny" || choice === "dismiss" ? "deny" : "allow";
     }
     if (outcome === "deny") {
@@ -109,6 +115,18 @@ export class PermissionBroker {
       throw new PermissionDenied(`You didn't allow ${extension.name} to ${describeAsk(ask)}. Change that in the Extensions view.`);
     }
     record("allowed");
+  }
+
+  /** Keep an answer in settings, once, however many asks it answered. */
+  private async keep(extension: string, key: string, answer: Answer): Promise<void> {
+    const k = `${extension} ${key}`;
+    if (this.keeping.has(k)) return;
+    this.keeping.set(k, answer);
+    try {
+      await this.o.save(extension, key, answer);
+    } finally {
+      this.keeping.delete(k);
+    }
   }
 
   /** Whether `ask` was allowed only for this session, for telling the Worker so. */
