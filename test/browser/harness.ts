@@ -24,7 +24,8 @@ export function harness() {
       logLevel: "none",
     } as never);
     h.base = `http://${worker.address}:${worker.port}`;
-    h.browser = await chromium.launch({ executablePath: CHROME, headless: true });
+    // WebGL without a GPU (CI), for three.js in an html-app.
+    h.browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
   });
   after(async () => {
     await h.browser?.close();

@@ -3,7 +3,7 @@
 // extension with a built-in's id runs in its place: that's how a built-in is customized. Each extension
 // starts only when one of its activation events happens, through a context that catches what it
 // throws, so one broken extension can't take the others down.
-import { extensionFileOf, manifestPath, parseManifest, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
+import { extensionFileOf, manifestPath, parseManifest, STATE_FILE, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { FilePath, FileSummary, WorkspaceFile } from "../../worker/src/files.ts";
 import type { ExtensionContext, ExtensionModule } from "./extension-api.ts";
 
@@ -67,7 +67,8 @@ export function findWorkspaceExtensions(files: readonly FileSummary[]): Workspac
   const byId = new Map<string, FileSummary[]>();
   for (const f of files) {
     const at = extensionFileOf(f.path);
-    if (at) byId.set(at.id, [...(byId.get(at.id) ?? []), f]);
+    // Its state changes as it runs; that's not a change to the extension.
+    if (at && at.file !== STATE_FILE) byId.set(at.id, [...(byId.get(at.id) ?? []), f]);
   }
   return [...byId].flatMap(([id, folder]) => {
     if (!folder.some((f) => f.path === manifestPath(id))) return [];

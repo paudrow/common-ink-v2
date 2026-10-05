@@ -238,7 +238,7 @@ test("in the app, a declared command starts its extension the first time it runs
     commands,
     bar: { provide() {}, open() {} } as never,
     panels: { register: (v: { id: string; render(el: unknown): unknown }) => views.set(v.id, v), toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
-    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, noteExtensions: [], notice: (m: string) => ran.push(`notice: ${m}`) } as never,
+    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => ran.push(`notice: ${m}`) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
     settings: () => DEFAULTS,
     files: () => [],
@@ -290,7 +290,10 @@ test("the app's catalog lists folders on the app only", async () => {
   const { parseCatalog } = await import("../worker/src/catalog.ts");
   const index = JSON.parse(readFileSync("web/public/catalog/index.json", "utf8"));
   const entries = parseCatalog(index, "https://app.example/catalog/index.json", true);
-  assert.deepEqual(entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]), [["word-count", "https://app.example/catalog/word-count/", "Common Ink", true]]);
+  assert.deepEqual(
+    entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]),
+    ["word-count", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
+  );
   for (const e of entries) {
     const m = parseManifest(JSON.parse(readFileSync(`web/public/catalog/${e.id}/extension.json`, "utf8")), e.id);
     assert.notEqual(typeof m, "string", `${e.id}'s extension.json is valid`);

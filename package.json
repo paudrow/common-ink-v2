@@ -34,7 +34,9 @@
     "@replit/codemirror-vim": "^6.4.0",
     "jose": "^6.2.12",
     "katex": "^0.19.0",
-    "node-diff3": "^3.2.1"
+    "node-diff3": "^3.2.1",
+    "three": "^0.186.1",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261004.1",

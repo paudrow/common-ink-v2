@@ -106,6 +106,13 @@
         },
         open: (text) => call("commandBar.open", text),
       },
+      embeds: {
+        register(language, provider) {
+          handlers.set(`embed:${language}`, (webviewId, embed) => provider.resolve(webview(webviewId), embed));
+          return call("embeds.register", language);
+        },
+      },
+      state: { get: () => call("state.get"), set: (value) => call("state.set", value) },
       views: {
         register(id, provider) {
           handlers.set(`view:${id}`, (webviewId) => provider.resolve(webview(webviewId)));

@@ -30,6 +30,7 @@ import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
+import { embeds } from "./embeds.ts";
 
 // Extensions in the workspace import CodeMirror and the app's helpers as libraries: the app's copies.
 offerLibraries();
@@ -617,6 +618,8 @@ try {
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
   catalog = extensions.catalog();
   extensions.declare();
+  // Embeds draw in notes for the languages extensions that are on declare.
+  workbench.extend(embeds(extensions.embedHost));
   await loadSettings();
   statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE);
   reloadSettingsAtStart = reloadSettingsNow();

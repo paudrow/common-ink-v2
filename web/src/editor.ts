@@ -11,6 +11,8 @@ import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type Decora
 import { tags as t } from "@lezer/highlight";
 import { diffPatch } from "node-diff3";
 import type { Settings } from "../../worker/src/settings.ts";
+import type { FilePath } from "../../worker/src/files.ts";
+import { editorFile } from "./embeds.ts";
 import { previewEnabled } from "./live-preview.ts";
 
 /** Marks text that came from the server, so it isn't saved back as an edit. */
@@ -88,7 +90,7 @@ export function reconfigure(view: EditorView, settings: EditorSettings) {
 
 export function createState(
   doc: string,
-  opts: { json: boolean; code?: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
+  opts: { json: boolean; code?: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void; path?: FilePath },
 ): EditorState {
   const s = extensionsFor(opts.settings);
   return EditorState.create({
@@ -108,6 +110,7 @@ export function createState(
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),
+      editorFile.of(opts.path ?? null),
       opts.extensions,
       EditorView.contentAttributes.of(opts.json || opts.code ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
       EditorView.updateListener.of(opts.onUpdate),

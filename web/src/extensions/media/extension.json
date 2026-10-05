@@ -1,0 +1,32 @@
+{
+  "id": "media",
+  "name": "Media",
+  "version": "1.0.0",
+  "description": "Background sound in notes, made in the browser with nothing fetched: ```noise color=brown volume=0.3```. While something plays, a mini player shows it, the status bar names it, and the keyboard's media keys pause and play it.",
+  "main": "index.ts",
+  "files": ["index.ts", "noise.ts"],
+  "activationEvents": ["onEmbed:noise", "onCommand:media.toggle", "onCommand:media.stop"],
+  "permissions": {
+    "editor": { "why": "Draw sound players in notes" },
+    "media": { "why": "Play background sound" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "media.toggle", "title": "Play or pause background sound" },
+      { "command": "media.stop", "title": "Stop background sound" }
+    ],
+    "statusBarItems": [{ "id": "media.playing", "alignment": "right", "priority": 20, "command": "media.toggle" }],
+    "embeds": [
+      {
+        "language": "noise",
+        "title": "Background noise",
+        "description": "White, pink or brown noise, for focus or sleep, made in the browser. Play it in the note; it keeps playing when the note closes, and the mini player controls it.",
+        "arguments": {
+          "color": { "type": "string", "description": "white, pink or brown (softest)", "default": "brown" },
+          "volume": { "type": "number", "description": "From 0 to 1", "default": "0.3" },
+          "label": { "type": "string", "description": "What it's called in the mini player" }
+        }
+      }
+    ]
+  }
+}

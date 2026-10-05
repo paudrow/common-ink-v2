@@ -8,14 +8,16 @@ import gfm from "../../web/src/extensions/gfm/extension.json";
 import history from "../../web/src/extensions/history/extension.json";
 import latex from "../../web/src/extensions/latex/extension.json";
 import livePreview from "../../web/src/extensions/live-preview/extension.json";
+import media from "../../web/src/extensions/media/extension.json";
 import quickOpen from "../../web/src/extensions/quick-open/extension.json";
+import timers from "../../web/src/extensions/timers/extension.json";
 import todos from "../../web/src/extensions/todos/extension.json";
 import uploads from "../../web/src/extensions/uploads/extension.json";
 import vim from "../../web/src/extensions/vim/extension.json";
 import workbench from "../../web/src/extensions/workbench/extension.json";
 import { parseManifest, type ExtensionManifest } from "./extensions.ts";
 
-const RAW: unknown[] = [workbench, quickOpen, commandList, vim, livePreview, gfm, codeBlocks, latex, history, todos, calendar, contacts, uploads];
+const RAW: unknown[] = [workbench, quickOpen, commandList, vim, livePreview, gfm, codeBlocks, latex, history, todos, timers, media, calendar, contacts, uploads];
 
 export const BUILT_IN_MANIFESTS: ExtensionManifest[] = RAW.map((m) => {
   const id = (m as { id: string }).id;

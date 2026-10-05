@@ -13,6 +13,10 @@ export const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 export const manifestPath = (id: string) => `${EXTENSIONS_DIR}${id}/extension.json` as FilePath;
 export const extensionFilePath = (id: string, file: string) => `${EXTENSIONS_DIR}${id}/${file}` as FilePath;
 
+/** Where an extension keeps its state (ctx.state): its own, always writable, and not part of its code. */
+export const STATE_FILE = "state.json";
+export const statePath = (id: string) => extensionFilePath(id, STATE_FILE);
+
 /** A workspace extension's file, by path: its folder's id and the file's path inside it. */
 export function extensionFileOf(path: string): { id: string; file: string } | null {
   const m = /^\.common-ink\/extensions\/([a-zA-Z0-9][\w.-]{0,63})\/(.+)$/.exec(path);
