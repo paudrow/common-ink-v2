@@ -3,7 +3,7 @@
 // where the cursor's line isn't; a displayed equation, until the cursor is in it.
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
-import { blockPreview, livePreview, type BlockPreview, type Preview } from "common-ink/live-preview";
+import { blockHeight, blockPreview, livePreview, measureBlock, type BlockPreview, type Preview } from "common-ink/live-preview";
 import type { ExtensionContext } from "../../extension-api.ts";
 import { math, texOf } from "./syntax.ts";
 
@@ -34,15 +34,20 @@ class MathWidget extends WidgetType {
   eq(other: MathWidget) {
     return other.tex === this.tex && other.display === this.display;
   }
+  get estimatedHeight() {
+    return this.display ? blockHeight(`math|${this.tex}`, 60) : -1;
+  }
   toDOM(view: EditorView) {
     const el = document.createElement(this.display ? "div" : "span");
     el.className = this.display ? "cm-math cm-math-display" : "cm-math";
+    if (this.display) measureBlock(`math|${this.tex}`, el);
     // The TeX until KaTeX arrives, and if it can't.
     el.textContent = this.tex;
     void loadKatex().then(
       (k) => {
         k.render(this.tex, el, { displayMode: this.display, throwOnError: false, output: "htmlAndMathml" });
         view.requestMeasure();
+        if (this.display) measureBlock(`math|${this.tex}`, el);
       },
       () => el.classList.add("cm-math-failed"),
     );

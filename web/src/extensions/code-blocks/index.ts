@@ -1,11 +1,14 @@
 // Code blocks, a built-in extension: fenced code parsed in its language (from @codemirror/language-data,
-// each language loaded the first time a block names it) and highlighted, and Copy and Wrap on each
-// block's opening line. Wrap follows the code-blocks.wrap setting; a block's Wrap button flips it for
-// that block while the note is open.
+// each language loaded the first time a block names it) and highlighted. A block reads as a card: a
+// header with its language, Wrap and Copy in place of its opening fence, and its closing fence hidden,
+// until the cursor is in it, when the fences show. Its code lines are the same either way (Live
+// preview styles them), so nothing moves. Wrap follows the code-blocks.wrap setting; a block's Wrap
+// button flips it for that block while the note is open.
 import { LanguageDescription, ParseContext, syntaxTree } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { StateEffect, StateField, type EditorState } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+import type { SyntaxNode } from "@lezer/common";
 import { parseCode } from "@lezer/markdown";
 import { livePreview, type Preview } from "common-ink/live-preview";
 import type { ExtensionContext } from "../../extension-api.ts";
@@ -36,30 +39,43 @@ const flipped = StateField.define<ReadonlySet<number>>({
   },
 });
 
-/** The block's code: the lines between its fences. */
-function codeOf(state: EditorState, fence: number): string {
-  const node = syntaxTree(state).resolveInner(fence, 1);
-  for (let n: typeof node | null = node; n; n = n.parent) {
+/** The fenced block at `pos`, if `pos` is in one: its node, and its code (the lines between its fences). */
+function blockAt(state: EditorState, pos: number) {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
     if (n.name !== "FencedCode") continue;
     const text = n.getChild("CodeText");
-    return text ? state.doc.sliceString(text.from, text.to) : "";
+    return { node: n, code: text ? state.doc.sliceString(text.from, text.to) : "" };
   }
-  return "";
+  // At the end of a line inside a block, the node starts after `pos`; look back too.
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); n; n = n.parent) {
+    if (n.name !== "FencedCode") continue;
+    const text = n.getChild("CodeText");
+    return { node: n, code: text ? state.doc.sliceString(text.from, text.to) : "" };
+  }
+  return null;
 }
 
-class Tools extends WidgetType {
+/**
+ * A block's header, in place of its opening fence while the cursor isn't in the block: its language,
+ * and Wrap and Copy. It's no taller than the fence's line, so nothing moves when the fence shows instead.
+ */
+class Header extends WidgetType {
   constructor(
+    readonly language: string,
     readonly wraps: boolean,
     readonly copy: (text: string) => Promise<void>,
   ) {
     super();
   }
-  eq(other: Tools) {
-    return other.wraps === this.wraps;
+  eq(other: Header) {
+    return other.language === this.language && other.wraps === this.wraps;
   }
   toDOM(view: EditorView) {
     const box = document.createElement("span");
-    box.className = "cm-code-tools";
+    box.className = "cm-code-header";
+    const label = document.createElement("span");
+    label.className = "cm-code-lang";
+    label.textContent = this.language || "code";
     const button = (text: string, title: string, run: (b: HTMLButtonElement) => void) => {
       const b = document.createElement("button");
       b.type = "button";
@@ -73,16 +89,15 @@ class Tools extends WidgetType {
     const fence = () => view.state.doc.lineAt(view.posAtDOM(box)).from;
     const wrap = button("Wrap", this.wraps ? "Long lines wrap: press to let them run on" : "Long lines run on: press to wrap them", () => view.dispatch({ effects: flip.of(fence()) }));
     wrap.setAttribute("aria-pressed", String(this.wraps));
-    box.append(
-      wrap,
-      button("Copy", "Copy this block's code", (b) => {
-        void this.copy(codeOf(view.state, fence())).then(
-          () => (b.textContent = "Copied"),
-          () => (b.textContent = "Not copied"),
-        );
-        setTimeout(() => (b.textContent = "Copy"), 1500);
-      }),
-    );
+    const copy = button("Copy", "Copy this block's code (⌘⇧C)", (b) => {
+      // Written in this click, before anything waits: browsers allow it only while handling the click.
+      void this.copy(blockAt(view.state, fence())?.code ?? "").then(
+        () => (b.textContent = "Copied"),
+        () => (b.textContent = "Not copied"),
+      );
+      setTimeout(() => (b.textContent = "Copy"), 1500);
+    });
+    box.append(label, wrap, copy);
     return box;
   }
   ignoreEvent() {
@@ -91,34 +106,59 @@ class Tools extends WidgetType {
 }
 
 const noWrap = Decoration.line({ class: "cm-code-nowrap" });
+const fenceLine = Decoration.line({ class: "cm-code-fence" });
+const hide = Decoration.replace({});
 
 const theme = EditorView.theme({
-  ".cm-code-tools": { float: "right", display: "inline-flex", gap: "0.25em", fontFamily: "var(--prose)", fontSize: "0.75rem" },
-  ".cm-code-tools button": { font: "inherit", color: "var(--muted)", background: "none", border: "1px solid var(--line)", borderRadius: "4px", padding: "0 0.4em", cursor: "pointer" },
-  ".cm-code-tools button:hover": { color: "var(--ink)" },
-  ".cm-code-tools button[aria-pressed=true]": { color: "var(--ink)", backgroundColor: "var(--code-bg)" },
+  // As tall as the line it's on, never taller: the fence that shows in its place takes the same line.
+  ".cm-code-header": { display: "inline-flex", width: "100%", alignItems: "center", gap: "0.35em", verticalAlign: "top", fontFamily: "var(--prose)", fontSize: "0.7rem", lineHeight: "1.2" },
+  ".cm-code-lang": { flex: "1", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: "650", color: "var(--muted)" },
+  ".cm-code-header button": { font: "inherit", lineHeight: "1.2", color: "var(--muted)", background: "none", border: "1px solid var(--line)", borderRadius: "4px", padding: "0 0.45em", cursor: "pointer" },
+  ".cm-code-header button:hover": { color: "var(--ink)" },
+  ".cm-code-header button[aria-pressed=true]": { color: "var(--ink)" },
+  // While you're in the block, its fences show, quietly, in the same lines the header and the end took.
+  "& .cm-line.cm-code-fence": { color: "var(--muted)" },
   "& .cm-line.cm-code-nowrap": { whiteSpace: "pre", overflowWrap: "normal" },
 });
 
 export default {
   activate(ctx: ExtensionContext) {
     ctx.editor.markdown(parseCode({ codeParser }));
-    const tools = livePreview((line, view) => {
+    const card = livePreview((line, view) => {
       const out: Preview[] = [];
-      syntaxTree(view.state).iterate({
+      const state = view.state;
+      syntaxTree(state).iterate({
         from: line.from,
         to: line.to,
         enter: (node) => {
           if (node.name !== "FencedCode") return;
-          const open = view.state.doc.lineAt(node.from);
-          const wraps = ctx.settings.get<boolean>("code-blocks.wrap") !== view.state.field(flipped).has(open.from);
+          const open = state.doc.lineAt(node.from);
+          const last = state.doc.lineAt(node.to);
+          const closing = last.number > open.number && /^\s*(```|~~~)/.test(last.text) ? last : null;
+          const wraps = ctx.settings.get<boolean>("code-blocks.wrap") !== state.field(flipped).has(open.from);
           if (!wraps) out.push({ from: line.from, to: line.from, decoration: noWrap });
-          if (open.number === line.number) out.push({ from: line.to, to: line.to, decoration: Decoration.widget({ widget: new Tools(wraps, ctx.clipboard.write), side: 1 }) });
+          const fence = line.number === open.number || line.number === closing?.number;
+          if (fence) out.push({ from: line.from, to: line.from, decoration: fenceLine });
+          // The cursor anywhere in the block shows its fences; otherwise it's a card.
+          const inside = state.selection.ranges.some((r) => r.from <= node.to && r.to >= node.from);
+          if (inside || !fence) return false;
+          const indent = /^\s*/.exec(line.text)![0].length;
+          if (line.number === open.number) {
+            const info = node.node.getChild("CodeInfo");
+            const language = info ? state.doc.sliceString(info.from, info.to).split(/\s/)[0] : "";
+            out.push({ from: line.from + indent, to: line.to, decoration: Decoration.replace({ widget: new Header(language, wraps, ctx.clipboard.write) }) });
+          } else if (line.to > line.from + indent) out.push({ from: line.from + indent, to: line.to, decoration: hide });
           return false;
         },
       });
       return out;
     });
-    ctx.editor.extend([flipped, tools, codeHighlighting, theme]);
+    ctx.editor.extend([flipped, card, codeHighlighting, theme]);
+    // ⌘⇧C copies the block the cursor is in, in the keypress.
+    ctx.commands.register("code-blocks.copy", () => {
+      const view = ctx.editor.focused();
+      const block = view && blockAt(view.state, view.state.selection.main.head);
+      if (block) void ctx.clipboard.write(block.code);
+    });
   },
 };
