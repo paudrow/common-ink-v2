@@ -65,7 +65,7 @@ test("Try this PR lists this PR's steps first, then the rest newest first", () =
   );
 });
 
-test("the seed keeps sample notes, and replaces sample extensions' files and Try this PR; its id follows its content", () => {
+test("the seed replaces Try this PR, and leaves the rest to Files.seed; its id follows its content", () => {
   const sections = [
     {
       slug: "a",
@@ -84,7 +84,7 @@ test("the seed keeps sample notes, and replaces sample extensions' files and Try
     seed.notes.map((n) => [n.path, n.replace]),
     [
       ["Welcome.md", false],
-      [".common-ink/extensions/clock/extension.json", true],
+      [".common-ink/extensions/clock/extension.json", false],
       ["Try this PR.md", true],
     ],
   );
