@@ -50,6 +50,7 @@ export default {
     const kept = (await ctx.state.get()) || {};
     const sessions = kept.sessions || {};
     const views = new Map();
+    const updates = new WeakMap();
     const save = () => ctx.state.set({ sessions }).catch(() => {});
 
     const config = (embed) => ({
@@ -76,11 +77,17 @@ export default {
       ctx.statusBar.set("pomodoro.phase", running ? `🍅 ${PHASES[running.phase]} ${format(left(running, Date.now()))}` : "");
     };
 
+    /** A session takes its block's arguments, keeping where it is in its rounds. */
+    const take = (embed) => {
+      const c = config(embed);
+      const was = sessions[embed.key];
+      sessions[embed.key] = was ? { ...was, work: c.work, break: c.break, long: c.long, rounds: c.rounds, label: c.label } : fresh(c);
+      return c;
+    };
+
     ctx.embeds.register("pomodoro", {
       resolve(webview, embed) {
-        const c = config(embed);
-        const was = sessions[embed.key];
-        sessions[embed.key] = was ? { ...was, work: c.work, break: c.break, long: c.long, rounds: c.rounds, label: c.label } : fresh(c);
+        let c = take(embed);
         views.set(embed.key, [...(views.get(embed.key) || []), webview]);
         webview.onMessage((m) => {
           const s = sessions[embed.key];
@@ -93,6 +100,15 @@ export default {
           status();
         });
         webview.html = PAGE;
+        updates.set(webview, (next) => {
+          c = take(next);
+          show(next.key);
+          save();
+        });
+      },
+      // New arguments (a longer break, a label) go to the running page: it isn't drawn again.
+      update(webview, embed) {
+        updates.get(webview)?.(embed);
       },
     });
 

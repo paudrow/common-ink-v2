@@ -1,5 +1,5 @@
-// Timers, a built-in extension: ```timer```, ```stopwatch``` and ```alarm``` embeds (clock.ts), drawn in
-// the note. Their state is the extension's (state.json, in history), keyed by each embed's key, so they
+// Timers, a built-in extension: `::timer`, `::stopwatch` and `::alarm` embeds (clock.ts), drawn in
+// the note. New arguments (a new duration, say) apply in place, keeping the time it's at. Their state is the extension's (state.json, in history), keyed by each embed's key, so they
 // keep going when their note closes or the page reloads. While one runs, the status bar shows it;
 // when one is done, it rings (Web Audio, made here) and notifies.
 import { EditorView } from "@codemirror/view";
@@ -73,6 +73,14 @@ export default {
 
     /** What's drawn now, to keep up to date; ones no longer on the page drop out. */
     const live = new Set<{ el: HTMLElement; update(): void }>();
+    /** The embed each drawn box shows, by the element it was drawn into: new arguments replace it. */
+    const drawn = new WeakMap<HTMLElement, { embed: Embed; update(): void }>();
+    const takeNew = (el: HTMLElement, embed: Embed) => {
+      const d = drawn.get(el);
+      if (!d) return;
+      d.embed = embed;
+      d.update();
+    };
 
     const clockFor = (embed: Embed, kind: Clock["kind"]): Clock => {
       const duration = kind === "timer" ? (parseDuration(embed.args.duration) ?? DEFAULT_DURATION) : 0;
@@ -96,24 +104,25 @@ export default {
       refresh();
     };
 
-    const drawClock = (el: HTMLElement, embed: Embed, kind: Clock["kind"]) => {
+    const drawClock = (el: HTMLElement, first: Embed, kind: Clock["kind"]) => {
       const box = document.createElement("div");
       box.className = "timer-embed";
       const label = span("timer-label");
       const time = span("timer-time");
+      const ref = { embed: first, update: () => {} };
       const toggle = button("Start", () => {
         audio ??= new AudioContext();
-        const c = clockFor(embed, kind);
-        state.clocks[embed.key] = c.running ? pause(c, now()) : start(c, now());
+        const c = clockFor(ref.embed, kind);
+        state.clocks[ref.embed.key] = c.running ? pause(c, now()) : start(c, now());
         changed();
       });
       const again = button("Reset", () => {
-        state.clocks[embed.key] = reset(clockFor(embed, kind));
+        state.clocks[ref.embed.key] = reset(clockFor(ref.embed, kind));
         changed();
       });
       box.append(label, time, toggle, again);
       const update = () => {
-        const c = clockFor(embed, kind);
+        const c = clockFor(ref.embed, kind);
         const t = now();
         label.textContent = c.label || (kind === "timer" ? "Timer" : "Stopwatch");
         time.textContent = format(kind === "timer" ? remainingAt(c, t) : elapsedAt(c, t));
@@ -121,26 +130,29 @@ export default {
         box.classList.toggle("running", c.running);
         box.classList.toggle("done", c.done);
       };
+      ref.update = update;
       el.replaceChildren(box);
       live.add({ el: box, update });
+      drawn.set(el, ref);
       update();
     };
 
-    const drawAlarm = (el: HTMLElement, embed: Embed) => {
+    const drawAlarm = (el: HTMLElement, first: Embed) => {
       const box = document.createElement("div");
       box.className = "timer-embed";
       const label = span("timer-label");
       const time = span("timer-time");
       const note = span("timer-note");
+      const ref = { embed: first, update: () => {} };
       const toggle = button("Off", () => {
         audio ??= new AudioContext();
-        const a = alarmFor(embed);
-        state.alarms[embed.key] = a.on ? { ...a, on: false } : switchOn(a, new Date());
+        const a = alarmFor(ref.embed);
+        state.alarms[ref.embed.key] = a.on ? { ...a, on: false } : switchOn(a, new Date());
         changed();
       });
       box.append(label, time, toggle, note);
       const update = () => {
-        const a = alarmFor(embed);
+        const a = alarmFor(ref.embed);
         label.textContent = a.label || "Alarm";
         time.textContent = a.at;
         toggle.textContent = a.on ? "On" : "Off";
@@ -148,15 +160,17 @@ export default {
         note.textContent = !timeOfDay(a.at) ? `"${a.at}" isn't a time of day, like 07:30` : a.on ? "Rings while Common Ink is open" : "";
         box.classList.toggle("running", a.on);
       };
+      ref.update = update;
       el.replaceChildren(box);
       live.add({ el: box, update });
+      drawn.set(el, ref);
       update();
     };
 
     ctx.editor.extend(theme);
-    ctx.embeds.register("timer", { render: (el, embed) => drawClock(el, embed, "timer") });
-    ctx.embeds.register("stopwatch", { render: (el, embed) => drawClock(el, embed, "stopwatch") });
-    ctx.embeds.register("alarm", { render: drawAlarm });
+    ctx.embeds.register("timer", { render: (el, embed) => drawClock(el, embed, "timer"), update: takeNew });
+    ctx.embeds.register("stopwatch", { render: (el, embed) => drawClock(el, embed, "stopwatch"), update: takeNew });
+    ctx.embeds.register("alarm", { render: drawAlarm, update: takeNew });
 
     /** The status bar: the running timer nearest its end (and how many more run), or else the next alarm. */
     const status = () => {

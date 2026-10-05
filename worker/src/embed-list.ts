@@ -15,11 +15,13 @@ export interface EmbedType extends EmbedContribution {
   example: string;
 }
 
-/** A fenced block for an embed, with its arguments' defaults. */
+/** An embed written the way its syntax says, with its arguments' defaults: a leaf's line, a container, or a fenced block. */
 export function exampleOf(e: EmbedContribution): string {
   const args = Object.entries(e.arguments)
-    .filter(([, a]) => a.default !== undefined)
-    .map(([name, a]) => `${name}=${/\s/.test(a.default!) ? `"${a.default}"` : a.default}`);
+    .filter(([, a]) => a.default !== undefined && !a.hidden)
+    .map(([name, a]) => `${name}=${/^[\w.:/+@#-]+$/.test(a.default!) ? a.default : `"${a.default}"`}`);
+  if (e.syntax === "leaf") return `::${e.language}${args.length ? `{${args.join(" ")}}` : ""}`;
+  if (e.syntax === "container") return `:::${e.language}${args.length ? `{${args.join(" ")}}` : ""}\n${e.body ? `${e.body}\n` : ""}:::`;
   return `\`\`\`${[e.language, ...args].join(" ")}\n${e.body ? `${e.body}\n` : ""}\`\`\``;
 }
 

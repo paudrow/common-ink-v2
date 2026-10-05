@@ -45,11 +45,22 @@ test("task lists gather todos from the notes; checking one off and moving a card
     return !!due && due > today;
   });
 
-  // Move a card: the block's markdown follows.
+  // Move a card: it moves at once, and the board's markdown follows, with the same frame throughout.
   const board = page.frameLocator('.cm-embed[data-embed="kanban"] iframe');
+  await board.locator(".card", { hasText: "Book the venue" }).waitFor();
+  const frame = await (await page.$('.cm-embed[data-embed="kanban"] iframe'))!.contentFrame();
+  await frame!.evaluate(() => ((window as unknown as { mark: number }).mark = 1));
+  await page.evaluate(() => ((window as unknown as { board: Element }).board = document.querySelector('.cm-embed[data-embed="kanban"] iframe')!));
+  const sameFrame = async () =>
+    (await page.evaluate(() => document.querySelector('.cm-embed[data-embed="kanban"] iframe') === (window as unknown as { board: Element }).board)) &&
+    (await (await page.$('.cm-embed[data-embed="kanban"] iframe'))!.contentFrame())!.evaluate(() => (window as unknown as { mark?: number }).mark === 1);
   // Its → button (shown on hover or focus), pressed as a keyboard would.
   await board.locator(".card", { hasText: "Book the venue" }).locator("button", { hasText: "→" }).evaluate((b: HTMLElement) => b.click());
+  await board.locator(".column", { hasText: "Doing" }).locator(".card", { hasText: "Book the venue" }).waitFor();
   await until(page, "Boards tour.md", (text) => text.includes("## Doing\n- Draft the slides\n  with speaker notes\n- Book the venue"));
+  // The note's change has come back to the editor: still the same frame, never reloaded.
+  await page.waitForTimeout(800);
+  assert.equal(await sameFrame(), true, "no flash: the board's frame stays, across its own write-back");
   const history = await page.evaluate(() => fetch(`/api/history?path=${encodeURIComponent("Boards tour.md")}`).then((r) => r.json()));
   assert.ok((history.changes ?? history).some((c: { author: { kind: string; id?: string } }) => c.author.kind === "extension" && c.author.id === "boards"), "the move is Boards' change");
   assert.ok((await note(page, "Boards tour.md")).text.includes("## To do\n- Write the outline\n- Send the invitations"));

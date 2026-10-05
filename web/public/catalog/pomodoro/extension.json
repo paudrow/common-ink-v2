@@ -3,7 +3,7 @@
   "name": "Pomodoro",
   "version": "1.0.0",
   "publisher": "Common Ink",
-  "description": "Work in focused rounds: ```pomodoro work=25m break=5m``` takes you through work and breaks, with a longer break every few rounds. It shows in the status bar, notifies at each change, and keeps going when its note closes. It runs sandboxed.",
+  "description": "Work in focused rounds: `::pomodoro{work=25m break=5m}` takes you through work and breaks, with a longer break every few rounds. It shows in the status bar, notifies at each change, and keeps going when its note closes. It runs sandboxed.",
   "main": "index.js",
   "files": ["index.js"],
   "activationEvents": ["onStartup"],
@@ -15,15 +15,16 @@
     "embeds": [
       {
         "language": "pomodoro",
+        "syntax": "leaf",
         "title": "Pomodoro",
         "description": "Rounds of work and short breaks, with a long break after every few rounds. Start, pause, skip and reset it in the note.",
         "arguments": {
-          "work": { "type": "duration", "description": "A work round", "default": "25m" },
-          "break": { "type": "duration", "description": "A short break", "default": "5m" },
-          "long": { "type": "duration", "description": "The long break", "default": "15m" },
+          "work": { "type": "duration", "description": "A work round", "default": "25m", "presets": ["25m", "50m"] },
+          "break": { "type": "duration", "description": "A short break", "default": "5m", "presets": ["5m", "10m"] },
+          "long": { "type": "duration", "label": "Long break", "description": "The long break", "default": "15m", "presets": ["15m", "30m"] },
           "rounds": { "type": "number", "description": "Work rounds before a long break", "default": "4" },
           "label": { "type": "string", "description": "What you're working on" },
-          "id": { "type": "string", "description": "Keeps its state when blocks move or change; leave it as it is" }
+          "id": { "type": "string", "description": "Keeps its state when blocks move or change; leave it as it is", "hidden": true }
         }
       }
     ]

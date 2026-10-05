@@ -84,6 +84,9 @@ const hostOf = (url: string) => {
   }
 };
 
+/** Give a drawn embed new arguments or body in place: false if it can't take them, and it's drawn again. */
+type Updater = (embed: Embed) => boolean;
+
 /** What a webview tells its frame: how tall its page is, and that it has loaded. */
 interface WebviewHooks {
   onHeight?: (height: number) => void;
@@ -97,7 +100,9 @@ export class ExtensionRuntime {
   private renderers = new Map<string, ViewRenderer>();
   private describers: Array<(change: Change) => string | null> = [];
   /** How each embed language draws, once its extension has said. */
-  private embedDrawers = new Map<string, (el: HTMLElement, embed: Embed) => void>();
+  private embedDrawers = new Map<string, (el: HTMLElement, embed: Embed, tools: HTMLElement) => Updater | null>();
+  /** How to give each drawn embed new arguments or body in place, for the ones whose extension can take them. */
+  private updaters = new WeakMap<HTMLElement, Updater>();
   /** How each URL embed draws, by its id. */
   private urlDrawers = new Map<string, (el: HTMLElement, link: { url: string; match: string[] }) => void>();
   private sandboxes = new Map<string, SandboxHost>();
@@ -230,11 +235,11 @@ export class ExtensionRuntime {
     return Object.fromEntries(Object.keys(settings).filter((k) => k.startsWith(`${id}.`)).map((k) => [k, settings[k]]));
   }
 
-  /** Start whichever extension declares something, by its activation event, then wait for it. */
-  /** What draws embeds in notes: the languages extensions that are on declare, and drawing each by its extension. */
+  /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments; and links alone on their lines. */
   readonly embedHost: Omit<EmbedHost, "needs"> = {
-    languages: () => new Set(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => e.language))),
-    draw: (el, embed) => drawSafely(el, `The ${embed.language} embed`, () => this.drawEmbed(el, embed)),
+    contributions: () => new Map(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => [e.language, e] as const))),
+    draw: (el, embed, tools) => drawSafely(el, `The ${embed.language} embed`, () => this.drawEmbed(el, embed, tools)),
+    update: (el, embed) => this.updaters.get(el)?.(embed) ?? false,
     // The first pattern that matches, in the order extensions are listed and contribute them.
     urlEmbed: (url) => this.host.on().flatMap((m) => m.contributes.urlEmbeds).find((e) => matches(e.pattern, url))?.id ?? null,
     drawUrl: (el, url, id) => drawSafely(el, "The link embed", () => this.drawUrl(el, url, id)),
@@ -255,57 +260,82 @@ export class ExtensionRuntime {
     el.replaceChildren(a);
   }
 
-  private async drawEmbed(el: HTMLElement, embed: Embed): Promise<void> {
+  private async drawEmbed(el: HTMLElement, embed: Embed, tools: HTMLElement): Promise<void> {
     const declares = (m: ExtensionManifest) => m.contributes.embeds.some((e) => e.language === embed.language);
     const drawer = this.host.on().find(declares);
     if (drawer) this.broker.cause(drawer.id, { kind: "embed", title: drawer.contributes.embeds.find((e) => e.language === embed.language)!.title, note: embed.note });
     await this.activateFor(`onEmbed:${embed.language}`, declares);
     const draw = this.embedDrawers.get(embed.language);
-    if (draw) return draw(el, embed);
+    if (draw) {
+      const updater = draw(el, embed, tools);
+      if (updater) this.updaters.set(el, updater);
+      return;
+    }
     const owner = this.host.on().find(declares);
     el.classList.add("cm-embed-missing");
     el.textContent = `${owner?.name ?? "An extension"} didn't draw this ${embed.language} embed. Did it fail to start? See the Extensions view.`;
   }
 
   /**
-   * Code an extension runs in an embed: a webview in a quiet frame, with Stop. Stopping removes the
-   * frame, and with it everything running in it; Run starts it again.
+   * Code an extension runs in an embed: a webview in a quiet frame, with Stop in the embed's toolbar.
+   * Stopping removes the frame, and with it everything running in it; Run starts it again. New
+   * arguments or body go to the running webview when its extension can take them (`start` returns how),
+   * so the frame isn't reloaded; a new `height` resizes the frame.
    */
-  private framed(el: HTMLElement, m: ExtensionManifest, embed: Embed, start: (box: HTMLElement, hooks: WebviewHooks) => void): void {
-    const declared = m.contributes.embeds.find((e) => e.language === embed.language);
-    const title = declared?.title ?? embed.language;
+  private framed(el: HTMLElement, m: ExtensionManifest, first: Embed, tools: HTMLElement, start: (box: HTMLElement, hooks: WebviewHooks, embed: Embed) => Updater | null): Updater {
+    const declared = m.contributes.embeds.find((e) => e.language === first.language);
+    const title = declared?.title ?? first.language;
+    let embed = first;
+    let box: HTMLElement | null = null;
+    let update: Updater | null = null;
     // A height in its arguments (or their default), or else the height of what it shows.
-    const fixed = Number(embed.args.height ?? declared?.arguments.height?.default);
+    const fixed = () => Number(embed.args.height ?? declared?.arguments.height?.default);
     const clamp = (h: number) => `${Math.min(Math.max(h, 40), 2000)}px`;
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "cm-embed-stop";
+    stop.textContent = "Stop";
+    stop.title = `Stop ${title}: what it's running stops`;
+    stop.addEventListener("mousedown", (e) => e.preventDefault());
+    stop.addEventListener("click", () => {
+      [box, update, stop.hidden] = [null, null, true];
+      const stopped = document.createElement("div");
+      stopped.className = "cm-embed-stopped";
+      const again = document.createElement("button");
+      again.textContent = "Run";
+      again.addEventListener("click", run);
+      stopped.append(`${title} is stopped.`, again);
+      el.replaceChildren(stopped);
+    });
+    tools.prepend(stop);
     const run = () => {
       const frame = document.createElement("div");
       frame.className = "cm-embed-frame";
-      const box = document.createElement("div");
-      box.style.height = clamp(fixed || 80);
-      const stop = document.createElement("button");
-      stop.className = "cm-embed-stop";
-      stop.textContent = "Stop";
-      stop.title = `Stop ${title}: what it's running stops`;
-      stop.addEventListener("click", () => {
-        const stopped = document.createElement("div");
-        stopped.className = "cm-embed-stopped";
-        const again = document.createElement("button");
-        again.textContent = "Run";
-        again.addEventListener("click", run);
-        stopped.append(`${title} is stopped.`, again);
-        el.replaceChildren(stopped);
-      });
+      const inner = document.createElement("div");
+      inner.style.height = clamp(fixed() || 80);
       // Until its page has loaded (a three.js module can take a moment), it says so.
       const loading = document.createElement("div");
       loading.className = "cm-embed-loading";
       loading.textContent = "Loading…";
       const loaded = () => loading.remove();
       window.setTimeout(loaded, 15_000);
-      frame.append(box, loading, stop);
+      frame.append(inner, loading);
       el.replaceChildren(frame);
-      start(box, { onHeight: fixed ? undefined : (h) => (box.style.height = clamp(h)), onLoaded: loaded });
+      [box, stop.hidden] = [inner, false];
+      update = start(inner, { onHeight: (h) => !fixed() && (inner.style.height = clamp(h)), onLoaded: loaded }, embed);
     };
     run();
+    return (next) => {
+      // Stopped, it runs with the newest arguments when you press Run.
+      if (!box) {
+        embed = next;
+        return true;
+      }
+      if (!update || !update(next)) return false;
+      embed = next;
+      if (fixed()) box.style.height = clamp(fixed());
+      return true;
+    };
   }
 
   /** An extension's state, from its state.json: null if it has none. */
@@ -509,8 +539,16 @@ export class ExtensionRuntime {
           this.embedDrawers.set(
             language,
             "resolve" in provider
-              ? (el, embed) => this.framed(el, m, embed, (box, hooks) => drawSafely(box, `${m.name}'s ${language} embed`, () => provider.resolve(this.webviewHandle(m, `embed:${language}`, box, hooks), embed), failed))
-              : (el: HTMLElement, embed: Embed) => drawSafely(el, `${m.name}'s ${language} embed`, () => provider.render(el, embed), failed),
+              ? (el, embed, tools) =>
+                  this.framed(el, m, embed, tools, (box, hooks, first) => {
+                    const handle = this.webviewHandle(m, `embed:${language}`, box, hooks);
+                    drawSafely(box, `${m.name}'s ${language} embed`, () => provider.resolve(handle, first), failed);
+                    return provider.update ? (next) => (guard(() => provider.update!(handle, next))(), true) : null;
+                  })
+              : (el, embed) => {
+                  drawSafely(el, `${m.name}'s ${language} embed`, () => provider.render(el, embed), failed);
+                  return provider.update ? (next) => (guard(() => provider.update!(el, next))(), true) : null;
+                },
           );
         },
       },
@@ -664,16 +702,20 @@ export class ExtensionRuntime {
               },
             });
             return;
-          case "embeds.register":
+          case "embeds.register": {
             if (!m.contributes.embeds.some((e) => e.language === a)) throw new Error(`Embed "${a}" isn't declared in ${m.id}'s contributes.embeds`);
-            this.embedDrawers.set(a, (el, embed) =>
-              this.framed(el, m, embed, (box, hooks) => {
+            // Whether its provider takes new arguments in place: said as it registers, since a change can't wait on the frame to answer.
+            const updates = b === true;
+            this.embedDrawers.set(a, (el, embed, tools) =>
+              this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
                 webviews.set(view.id, view);
-                void host.invoke(`embed:${a}`, view.id, embed).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
+                void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
+                return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
             );
             return;
+          }
           case "state.get":
             return this.readState(m);
           case "state.set":

@@ -20,7 +20,7 @@ async function install(app: App, code: string, trusted: boolean) {
   await app.writeFile(".common-ink/extensions/broken/extension.json", JSON.stringify(MANIFEST));
   await app.writeFile(".common-ink/extensions/broken/index.js", code);
   if (trusted) await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "extensions.trusted": ["broken"] }));
-  await app.writeFile("Broken.md", "# Broken\n\n```broken\n```\n\nThe note still works.\n");
+  await app.writeFile("Broken.md", "# Broken\n\n::broken{}\n\nThe note still works.\n");
   await app.reload();
 }
 
