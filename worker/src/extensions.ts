@@ -85,7 +85,11 @@ export interface CommandContribution {
 }
 
 /** A default shortcut for a command: a key ("Mod-Enter") or a Vim normal-mode sequence ("gx"). Settings can rebind it. */
-export type KeybindingContribution = { key: string; command: string } | { vim: string; command: string };
+/**
+ * A key, or a Vim sequence, that runs a command. A Vim key with "operator": true replaces Vim's operator
+ * of that key (">", say): the command runs on the lines a motion covers (>>, >j, >ip) or the visual selection.
+ */
+export type KeybindingContribution = { key: string; command: string } | { vim: string; command: string; operator?: true };
 
 export type MenuId = "commandBar" | "tabMenu" | "editorContext";
 
@@ -257,7 +261,7 @@ function contributions(v: unknown, id: string): Contributions {
       const o = object(item, at);
       const command = text(o.command, `${at}.command`);
       if (typeof o.key === "string" && o.key) return { key: o.key, command };
-      if (typeof o.vim === "string" && o.vim) return { vim: o.vim, command };
+      if (typeof o.vim === "string" && o.vim) return { vim: o.vim, command, ...(o.operator === true ? { operator: true as const } : {}) };
       throw new ManifestError(`${at} needs a "key" or a "vim" sequence`);
     }),
     menus,

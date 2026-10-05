@@ -1,0 +1,14 @@
+{
+  "pr": 23,
+  "title": "Lists that edit like an outliner",
+  "steps": [
+    "Open Lists tour. Lists are drawn with real bullets that change with depth, numbers in a right-aligned column, guides for each level, and long items that wrap under their own text. Put the cursor on a line: it shows its markdown.",
+    "On \"Order seeds\", press Tab: it moves under \"Plan the garden\"'s previous item, taking Tomatoes and Basil with it. Shift-Tab brings it back out, after its parent, and the items after it stay where they were. In Vim, >> and << do the same, and > and < on a visual selection do it to every item selected.",
+    "Alt-Down (or ]e in Vim) on \"Fix the bike\" moves it below \"Call the plumber\", its patch with it; Alt-Up (or [e) moves it back.",
+    "In the numbered list, move \"Fold in the butter\" up: the numbers follow. Indent \"Mix the dry things\": it becomes 1. under Preheat, and the rest renumber. Delete a line: the numbers close up, in the same undo step.",
+    "At the end of an item, Enter starts the next one (a todo starts a todo, a number the next number). Enter again on the empty item steps out a level, then out of the list.",
+    "Click the bullet of \"Plan the garden\" (or za in Vim): its children fold away behind a …; the bullet gets a ring. Click again to bring them back.",
+    "⌘⇧P, Make a numbered list on the bullets, or Make todos: the items change, their text and children stay.",
+    "Turn Lists off in the Extensions view and reload: lists are plain markdown, and Tab does nothing special."
+  ]
+}

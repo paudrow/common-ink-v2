@@ -1,0 +1,31 @@
+{
+  "id": "lists",
+  "name": "Lists",
+  "version": "1.0.0",
+  "description": "Lists that edit like an outliner: Tab and Shift-Tab (or >> and <<) indent and dedent an item with its children, Alt-Up and Alt-Down (or [e and ]e) move it, Enter continues the list and on an empty item steps out, numbers renumber themselves at every level, and items fold. Drawn with real bullets, aligned numbers, hanging indents and guides.",
+  "main": "index.ts",
+  "files": ["index.ts", "model.ts", "edit.ts", "preview.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Edit and draw lists in notes" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "lists.indent", "title": "Indent list item" },
+      { "command": "lists.dedent", "title": "Dedent list item" },
+      { "command": "lists.moveUp", "title": "Move list item up" },
+      { "command": "lists.moveDown", "title": "Move list item down" },
+      { "command": "lists.toBullets", "title": "Make bullets" },
+      { "command": "lists.toNumbers", "title": "Make a numbered list" },
+      { "command": "lists.toTodos", "title": "Make todos" },
+      { "command": "lists.toggleFold", "title": "Fold or unfold list item" }
+    ],
+    "keybindings": [
+      { "vim": ">", "command": "lists.indent", "operator": true },
+      { "vim": "<", "command": "lists.dedent", "operator": true },
+      { "vim": "[e", "command": "lists.moveUp" },
+      { "vim": "]e", "command": "lists.moveDown" },
+      { "vim": "za", "command": "lists.toggleFold" }
+    ]
+  }
+}

@@ -68,7 +68,7 @@ export function contributionLines(m: ExtensionManifest, titleOf: (command: strin
   const title = (command: string) => c.commands.find((x) => x.command === command)?.title ?? titleOf(command) ?? command;
   const views = Object.values(c.views).flat();
   const settings = c.configuration ? Object.keys(c.configuration.properties) : [];
-  const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim)`} → ${title(k.command)}`);
+  const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim${k.operator ? " operator" : ""})`} → ${title(k.command)}`);
   const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${title(i.command)} (${menu === "tabMenu" ? "tab menu" : menu === "commandBar" ? "command bar" : "editor menu"})`));
   const lines: Array<[string, string[]]> = [
     ["Commands", c.commands.map((x) => x.title)],
