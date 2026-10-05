@@ -1,0 +1,8 @@
+{
+  "about": "The Sample calendar: three calendars, repeating events with a moved and a cancelled occurrence, all-day and multi-day events, a calendar that can't be changed, and the Calendar tour note.",
+  "sections": [
+    "data-sources"
+  ],
+  "now": "2026-10-05T09:00",
+  "open": "Calendar tour.md"
+}

@@ -19,7 +19,8 @@ export interface LocalWorker {
 
 /** The Worker on the built app, with nothing kept between runs. `vars` replace the dev ones: leave LEVERS out to see the app as production runs it. */
 export async function startWorker(vars: Record<string, string> = { DEV_USER: "tester@localhost", SEED: "1", DATA_FIXTURES: "1", LEVERS: "1" }): Promise<LocalWorker> {
-  const worker = await unstable_dev(path.join(root, "worker/src/index.ts"), {
+  // No script: the config's main is the entry, so paths in the config (its alias) are read from its folder, as deploys read them.
+  const worker = await unstable_dev("", {
     config: path.join(root, "worker/wrangler.jsonc"),
     vars,
     experimental: { disableExperimentalWarning: true },

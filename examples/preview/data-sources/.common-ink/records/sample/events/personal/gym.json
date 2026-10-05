@@ -1,0 +1,12 @@
+{
+  "id": "gym",
+  "calendar": "personal",
+  "title": "Gym",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today-14}}T07:00:00",
+  "end": "{{today-14}}T08:00:00",
+  "recurrence": [
+    "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=16"
+  ]
+}

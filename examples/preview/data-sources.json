@@ -1,0 +1,11 @@
+{
+  "pr": 0,
+  "title": "Data sources: calendar events as records, with history",
+  "steps": [
+    "Open Calendar tour. ⌘⇧P, Show calendar: the coming two weeks from the Sample calendar. The standup repeats on weekdays (↻); tomorrow's starts late and the day after's is cancelled.",
+    "⌘⇧P, Show data sources: the Sample calendar, with 3 calendars and its events, and nothing waiting to sync.",
+    "⌘⇧P, Show history of everything: the seed wrote each event as a record. Open one: its JSON opens read-only.",
+    "From a terminal: `COMMON_INK_URL=<this Preview> bin/common-ink events` lists the week; `bin/common-ink event move <address> --start 2026-10-08T10:00 --scope this` moves one occurrence. The Calendar view updates on its own, and history says the CLI did it.",
+    "MCP: tools/list has list_calendars, list_events, read_event, create_event, update_event, delete_event and link_event."
+  ]
+}

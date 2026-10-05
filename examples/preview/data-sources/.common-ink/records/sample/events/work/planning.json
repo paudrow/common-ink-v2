@@ -1,0 +1,11 @@
+{
+  "id": "planning",
+  "calendar": "work",
+  "title": "Quarterly planning",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today}}T13:00:00",
+  "end": "{{today}}T14:30:00",
+  "location": "Room 4",
+  "description": "Bring the roadmap draft."
+}

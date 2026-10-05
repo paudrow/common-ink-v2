@@ -96,6 +96,20 @@
         "empty"
       ],
       "port": 8793
+    },
+    {
+      "name": "common-ink-calendar",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8794",
+        "--scenario",
+        "calendar"
+      ],
+      "port": 8794
     }
   ]
 }

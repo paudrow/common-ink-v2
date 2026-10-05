@@ -76,8 +76,13 @@ export interface EditResult {
   error?: string;
 }
 
-/** An edit that can't be made, for a reason the caller can act on. */
-export class EditError extends Error {}
+/** An edit that couldn't be made, and why, in words the caller can act on. It's an answer, not a throw, so it crosses the Durable Object's boundary as it is. */
+export interface Refused {
+  status: "refused";
+  error: string;
+}
+
+class EditError extends Error {}
 
 interface StateRow {
   lastSync?: number;
@@ -208,7 +213,7 @@ export class DataSources {
 
   /** An event's own record, its series, and the series' changed occurrences: what an edit of it may touch. */
   private family(source: SourceId, calendar: string, id: string): CalendarEvent[] {
-    const fromId = /^(.+)_\d{8}(T\d{6}Z)?$/.exec(id)?.[1];
+    const fromId = /^(.+)_\d{8}(T\d{6}Z?)?$/.exec(id)?.[1];
     const own = this.readAll(this.records.family(source, calendar, fromId ? [id, fromId] : [id]), readEvent);
     const series = own.find((e) => e.id === id)?.series;
     if (!series || series === fromId) return own;
@@ -218,7 +223,16 @@ export class DataSources {
   // ---------------------------------------------------------------- editing
 
   /** Make an edit: write its records as `author`'s changes, then push them to the source. */
-  async edit(edit: EventEdit, author: Author, zone = "UTC"): Promise<EditResult> {
+  async edit(edit: EventEdit, author: Author, zone = "UTC"): Promise<EditResult | Refused> {
+    try {
+      return await this.planned(edit, author, zone);
+    } catch (err) {
+      if (err instanceof EditError) return { status: "refused", error: err.message };
+      throw err;
+    }
+  }
+
+  private async planned(edit: EventEdit, author: Author, zone: string): Promise<EditResult> {
     if (edit.op === "create") {
       const source = this.calendarSource;
       const calendars = this.calendars();
@@ -318,12 +332,12 @@ export class DataSources {
    * Put a record back to a text it had (or delete it, for ""), as an edit of its source: how undo
    * and restore reach records, so the source hears of it too.
    */
-  async revert(path: FilePath, text: string, author: Author, undoes?: Revision): Promise<EditResult> {
+  async revert(path: FilePath, text: string, author: Author, undoes?: Revision): Promise<EditResult | Refused> {
     const key = keyOfPath(path);
-    if (!key || key.kind !== "event") throw new EditError(`${path} isn't an event's record`);
+    if (!key || key.kind !== "event") return { status: "refused", error: `${path} changes only through its source's sync` };
     const before = readEvent(this.files.read(path)?.text ?? "");
     const after = text ? readEvent(text) : null;
-    if (text && !after) throw new EditError(`That version of ${path} isn't an event`);
+    if (text && !after) return { status: "refused", error: `That version of ${path} isn't an event` };
     const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [{ op: "delete", event: before }] : [];
     return this.apply(key.source, ops, author, addressOf(key), undoes);
   }
@@ -376,9 +390,9 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
       continue;
     }
     const previous = files.recent({ path, before: r, limit: 1 })[0];
-    await sources.revert(path, previous ? (files.versionAt(path, previous.revision) ?? "") : "", author, r);
+    const result = await sources.revert(path, previous ? (files.versionAt(path, previous.revision) ?? "") : "", author, r);
     const file = files.read(path);
-    out.push({ revision: r, status: "undone", ...(file ? { file } : {}) });
+    out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
   return out;
 }
@@ -389,8 +403,10 @@ export async function restoreFile(files: Files, sources: DataSources, path: File
   const revision = "revision" in at ? at.revision : (files.recent({ path, before: at.before, limit: 1 })[0]?.revision ?? 0);
   const text = files.versionAt(path, revision);
   if (text === null) return null;
-  await sources.revert(path, text, author);
-  return { status: "saved", file: files.read(path) ?? { path, text: "", revision } };
+  const result = await sources.revert(path, text, author);
+  const file = files.read(path);
+  if (result.status === "refused") return { status: "conflict", file };
+  return { status: "saved", file: file ?? { path, text: "", revision } };
 }
 
 /** Times as agents and the app send them: days, or wall times with an optional zone. A day alone means all day. */

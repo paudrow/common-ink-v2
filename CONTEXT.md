@@ -24,8 +24,26 @@ _Avoid_: Todo, item
 External structured data connected to a workspace, such as calendar events or contacts. Its contents are visible but aren't stored as notes.
 _Avoid_: Integration, connector
 
+**Record**:
+One item a data source brings into the workspace, such as an event or a calendar. It has history like a file, but changes only through its data source.
+_Avoid_: Item, entry, object
+
+**Sample calendar**:
+The data source that stands in for Google in Previews and local development, with nothing behind it.
+
 **Event**:
 A calendar entry that comes from a data source and may recur.
+
+**Series**:
+An event that repeats. It's one record; its occurrences are worked out from its rule.
+_Avoid_: Recurring event (in code), master
+
+**Occurrence**:
+One time an event happens. An occurrence of a series that was changed or cancelled on its own is a record of its own.
+_Avoid_: Instance, exception (in the UI)
+
+**Sync**:
+Bringing a data source's own changes into the workspace. Its changes have the sync as their author.
 
 **Upload**:
 A binary file (image, PDF, …) attached to a workspace and referenced from notes by its address, `/uploads/<name>`. Uploading is a change to `.common-ink/uploads.json`.

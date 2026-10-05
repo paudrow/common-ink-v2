@@ -126,10 +126,23 @@ const dayDiff = (a: Day, b: Day) => Math.round((Date.parse(`${b}T00:00:00Z`) - D
 /** An event's start or end as an instant, in its zone or, floating, the viewer's. */
 const instant = (wall: WallTime, zone: string | undefined, viewer: string) => instantOf(wall, zone ?? viewer);
 
-/** Google's way of writing an occurrence's original start in its id: "20261005T160000Z", or "20261005" for a day. */
-export function basicStart(start: Day | WallTime, zone: string | undefined, viewer: string): string {
-  if (start.length === 10) return start.replace(/-/g, "");
-  return new Date(instant(start, zone, viewer)).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+const zForm = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+const compact = (wall: Day | WallTime) => wall.replace(/[-:]/g, "");
+
+/**
+ * How an occurrence's original start is written in its id, as Google writes it: "20261005T160000Z"
+ * (in UTC) for an event with a zone, "20261005" for a day. A floating event's is its wall time
+ * ("20261005T090000"), so its id is the same wherever it's seen from.
+ */
+export function basicStart(start: Day | WallTime, zone: string | undefined): string {
+  if (start.length === 10 || !zone) return compact(start);
+  return zForm(instantOf(start, zone));
+}
+
+/** An occurrence's original start from its id's, as a day or a wall time in the series' zone (or the viewer's, for a UTC one that floats). */
+function startOfBasic(basic: string, zone: string | undefined, viewer: string): Day | WallTime {
+  const wall = basic.length === 8 ? `${basic.slice(0, 4)}-${basic.slice(4, 6)}-${basic.slice(6, 8)}` : `${basic.slice(0, 4)}-${basic.slice(4, 6)}-${basic.slice(6, 8)}T${basic.slice(9, 11)}:${basic.slice(11, 13)}:${basic.slice(13, 15)}`;
+  return basic.endsWith("Z") ? wallTimeAt(Date.parse(`${wall}Z`), zone ?? viewer) : wall;
 }
 
 // ------------------------------------------------------------------ reading events
@@ -209,9 +222,12 @@ function datesIn(line: string, timed: boolean, zone: string | undefined, viewer:
     const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(v.trim());
     if (!m) return [];
     const day = `${m[1]}-${m[2]}-${m[3]}`;
-    if (!m[4]) return [timed ? "" : day.replace(/-/g, "")].filter(Boolean);
+    if (!m[4]) return timed ? [] : [compact(day)];
     const wall = `${day}T${m[4]}:${m[5]}:${m[6]}`;
-    return [basicStart(wall, m[7] ? "UTC" : (tzid ?? zone), viewer)];
+    // Written in UTC or another zone: the same instant, written as the series writes its starts.
+    const at = m[7] ? Date.parse(`${wall}Z`) : tzid && tzid !== zone ? instantOf(wall, tzid) : null;
+    if (at === null) return [basicStart(wall, zone)];
+    return [zone ? zForm(at) : compact(wallTimeAt(at, viewer))];
   });
 }
 
@@ -234,12 +250,6 @@ function readRecurrence(lines: string[], timed: boolean, zone: string | undefine
   return out;
 }
 
-/** "20261005T160000Z" back to an instant, or "20261005" to a day. */
-function fromBasic(basic: string): number | Day {
-  if (basic.length === 8) return `${basic.slice(0, 4)}-${basic.slice(4, 6)}-${basic.slice(6, 8)}`;
-  return Date.parse(`${basic.slice(0, 4)}-${basic.slice(4, 6)}-${basic.slice(6, 8)}T${basic.slice(9, 11)}:${basic.slice(11, 13)}:${basic.slice(13, 15)}Z`);
-}
-
 /**
  * The starts a series has from its first through `last` (a day in its zone), as basic starts with
  * their wall times. A rule this can't read gives only the series' own first start.
@@ -254,17 +264,13 @@ function seriesStarts(series: CalendarEvent & { recurrence: string[] }, last: Da
   const days = rule ? ruleDays(rule, firstDay, typeof rec.until === "string" && rec.until < last ? rec.until : last) : [firstDay];
   const out = days.map((day) => {
     const start = `${day}${timeOfDay}`;
-    return { basic: basicStart(start, zone, viewer), start };
+    return { basic: basicStart(start, zone), start };
   });
-  for (const basic of rec.add) {
-    const at = fromBasic(basic);
-    const start = typeof at === "string" ? at : wallTimeAt(at, zone ?? viewer).slice(0, timeOfDay.length + 10);
-    if (!out.some((o) => o.basic === basic)) out.push({ basic, start });
-  }
+  for (const basic of rec.add) if (!out.some((o) => o.basic === basic)) out.push({ basic, start: startOfBasic(basic, zone, viewer) });
   return out
     .filter((o) => !rec.skip.has(o.basic))
-    .filter((o) => typeof rec.until !== "number" || (fromBasic(o.basic) as number) <= rec.until)
-    .sort((a, b) => a.basic.localeCompare(b.basic));
+    .filter((o) => typeof rec.until !== "number" || o.start.length === 10 || instant(o.start, zone, viewer) <= rec.until)
+    .sort((a, b) => a.start.localeCompare(b.start));
 }
 
 /** An occurrence's id: its series' id and its original start. */
@@ -272,7 +278,7 @@ export const occurrenceId = (series: string, basic: string) => `${series}_${basi
 
 /** The series id and original start in an occurrence's id, or null if it isn't one. */
 export function splitOccurrenceId(id: string): { series: string; basic: string } | null {
-  const m = /^(.+)_(\d{8}(?:T\d{6}Z)?)$/.exec(id);
+  const m = /^(.+)_(\d{8}(?:T\d{6}Z?)?)$/.exec(id);
   return m ? { series: m[1], basic: m[2] } : null;
 }
 
@@ -324,7 +330,7 @@ export function occurrences(events: readonly CalendarEvent[], range: Range, addr
     return from < range.to && (to > range.from || (from === to && from >= range.from));
   };
   const changed = new Map<string, CalendarEvent>();
-  for (const e of events) if (e.series !== undefined) changed.set(occurrenceId(e.series, basicStart(e.originalStart, e.allDay ? undefined : e.timeZone, viewer)), e);
+  for (const e of events) if (e.series !== undefined) changed.set(occurrenceId(e.series, basicStart(e.originalStart, e.allDay ? undefined : e.timeZone)), e);
   const out: Occurrence[] = [];
   const lastDay = addDays(wallTimeAt(range.to, viewer).slice(0, 10), 1);
   for (const e of events) {
@@ -425,8 +431,7 @@ export function findTarget(events: readonly CalendarEvent[], id: string, viewer 
   const series = parts && byId.get(parts.series);
   if (!parts || !series?.recurrence) return null;
   const zone = series.allDay ? undefined : series.timeZone;
-  const at = fromBasic(parts.basic);
-  const start = typeof at === "string" ? at : wallTimeAt(at, zone ?? viewer).slice(0, series.start.length);
+  const start = startOfBasic(parts.basic, zone, viewer);
   const found = seriesStarts(series as CalendarEvent & { recurrence: string[] }, start.slice(0, 10), viewer).find((s) => s.basic === parts.basic);
   if (!found) return null;
   const s = series as CalendarEvent & { recurrence: string[] };
@@ -450,7 +455,7 @@ function endBefore(series: CalendarEvent & { recurrence: string[] }, start: Day 
     const parts = line.slice(6).split(";").filter((p) => !/^(UNTIL|COUNT)=/i.test(p));
     const count = /;COUNT=(\d+)/i.exec(`;${line.slice(6)}`)?.[1];
     if (count) return `RRULE:${[...parts, `COUNT=${before}`].join(";")}`;
-    const until = timed ? new Date(instant(start, zone, viewer) - 1000).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "") : addDays(start, -1).replace(/-/g, "");
+    const until = !timed ? compact(addDays(start, -1)) : zone ? zForm(instantOf(start, zone) - 1000) : compact(wallPlus(start, -1000));
     return `RRULE:${[...parts, `UNTIL=${until}`].join(";")}`;
   });
   const count = series.recurrence.map((l) => /;COUNT=(\d+)/i.exec(`;${l.replace(/^RRULE:/i, "")}`)?.[1]).find(Boolean);

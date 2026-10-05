@@ -47,6 +47,14 @@ test("all-day and floating events fall on the viewer's days", () => {
   assert.deepEqual(brief(occurrences([lunch], range("2026-10-08T00:00-07:00", "2026-10-09T00:00-07:00", LA), at)), ["lunch 2026-10-08T19:00:00.000Z"]);
 });
 
+test("a floating series has the same occurrence ids wherever it's seen from, at the viewer's wall time", () => {
+  const lunch = ev({ id: "lunch", title: "Lunch", start: "2026-10-05T12:00", end: "2026-10-05T13:00", recurrence: ["RRULE:FREQ=DAILY;COUNT=2", "EXDATE:20261006T120000"] });
+  const moved = ev({ id: "lunch_20261005T120000", title: "Late lunch", start: "2026-10-05T13:00", end: "2026-10-05T14:00", series: "lunch", originalStart: "2026-10-05T12:00" });
+  assert.deepEqual(brief(occurrences([lunch, moved], range("2026-10-04T00:00Z", "2026-10-08T00:00Z", "Asia/Tokyo"), at)), ["lunch_20261005T120000 2026-10-05T04:00:00.000Z"]);
+  assert.deepEqual(brief(occurrences([lunch], range("2026-10-04T00:00Z", "2026-10-08T00:00Z", LA), at)), ["lunch_20261005T120000 2026-10-05T19:00:00.000Z"]);
+  assert.equal(findTarget([lunch], "lunch_20261005T120000", LA)?.kind, "occurrence");
+});
+
 test("a series that never ends costs nothing far from now", () => {
   const daily = ev({ id: "d", title: "Walk", start: "2016-01-01T07:00", end: "2016-01-01T07:30", timeZone: "UTC", recurrence: ["RRULE:FREQ=DAILY"] });
   assert.deepEqual(brief(occurrences([daily], range("2036-01-01T00:00Z", "2036-01-02T00:00Z"), at)), ["d_20360101T070000Z 2036-01-01T07:00:00.000Z"]);
