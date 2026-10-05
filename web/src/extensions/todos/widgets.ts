@@ -2,7 +2,7 @@
 // recurrences ("Tomorrow", "Overdue 2d", "↻ weekly"). In the editor they're a live preview: the line
 // you're on shows its raw text.
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
-import { livePreview, type Preview } from "../../live-preview.ts";
+import { livePreview, type Preview } from "common-ink/live-preview";
 import { dueLabel, everyLabel, parseTodo, todoParts, toggleLine, type Every } from "./model.ts";
 
 /** How long a recurring todo shows as checked before it moves to its next date. */

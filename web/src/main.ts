@@ -1,8 +1,8 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
-import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
-import { extensionFilePath } from "../../worker/src/extensions.ts";
+import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
+import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
@@ -32,6 +32,11 @@ import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
+import { offerLibraries } from "./libraries.ts";
+import { StatusItems } from "./status-items.ts";
+
+// Extensions in the workspace import CodeMirror and the app's helpers as libraries: the app's copies.
+offerLibraries();
 
 /** Safe mode (?safe=1): only built-in extensions start, for when a workspace extension breaks the app. */
 const SAFE = new URLSearchParams(location.search).get("safe") === "1";
@@ -40,7 +45,6 @@ const addressFor = (path: FilePath | null, safe = SAFE) => `${path ? urlForFile(
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
-const modeLine = $("#mode");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
@@ -92,7 +96,6 @@ const workbench = new Workbench(
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
     },
-    mode: (mode) => (modeLine.textContent = mode),
     focus(path) {
       if (path) window.history.replaceState(null, "", addressFor(path));
       // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
@@ -257,20 +260,6 @@ function renderList() {
   );
 }
 
-/** Ctrl-O and Ctrl-I move through Vim's jumps in this note, then on to the previous or next note. */
-function jumpOrStep(by: "back" | "forward") {
-  const view = workbench.focusedView;
-  const cm = view && getCM(view);
-  const jumpList = Vim.getVimGlobalState_().jumpList;
-  const offset = by === "back" ? -1 : 1;
-  const cursor = cm?.getCursor();
-  const pos = cm && jumpList.find(cm, offset);
-  if (cm && pos && cursor && (pos.line !== cursor.line || pos.ch !== cursor.ch)) {
-    jumpList.move(cm, offset);
-    cm.setCursor(pos);
-  } else void workbench.step(by);
-}
-
 function followLink() {
   const view = workbench.focusedView;
   const from = workbench.focusedPath;
@@ -334,8 +323,8 @@ commands.register(
   { id: "note.save", title: "Save note", run: () => workbench.save(true) },
   { id: "note.reload", title: "Reload note from the server, discarding unsaved changes", run: () => workbench.reload() },
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
-  { id: "go.back", title: "Go back", run: () => jumpOrStep("back") },
-  { id: "go.forward", title: "Go forward", run: () => jumpOrStep("forward") },
+  { id: "go.back", title: "Go back", run: () => workbench.step("back") },
+  { id: "go.forward", title: "Go forward", run: () => workbench.step("forward") },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
   { id: "tab.closeOthers", title: "Close other tabs", run: () => workbench.closeTabs((_, i) => i !== L.focused(workbench.layout).active) },
@@ -393,6 +382,7 @@ const extensions = new ExtensionRuntime({
   me,
   commands,
   bar,
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command) => commands.run(command)),
   panels,
   workbench,
   offline,
@@ -400,7 +390,6 @@ const extensions = new ExtensionRuntime({
   files: () => files,
   openFromBar,
   lastFile: () => lastFile,
-  vimKey: (keys, command) => vimKey(keys, command),
   onSaved: savedListeners,
   onFocus: focusListeners,
   saveGrant: async (id, key, answer) => {
@@ -472,10 +461,10 @@ function openExtensionSource(r: ExtensionRecord) {
  * its code. You chose to make it yours, so the copy is trusted to run in the page as the built-in did.
  */
 async function customize(b: BuiltIn) {
-  for (const [file, text] of Object.entries(b.sources)) await api.write(extensionFilePath(b.manifest.id, file), text, 0);
+  for (const [file, text] of Object.entries(await b.copy())) await api.write(extensionFilePath(b.manifest.id, file), text, 0);
   if (!settings["extensions.trusted"].includes(b.manifest.id)) await setTrust(b.manifest.id, true);
   await refreshList();
-  await workbench.open(extensionFilePath(b.manifest.id, b.manifest.main), { newTab: true });
+  await workbench.open(extensionFilePath(b.manifest.id, b.manifest.main.replace(/\.ts$/, ".js")), { newTab: true });
 }
 
 /** Delete a workspace extension's files, as changes that undo can take back. */
@@ -548,7 +537,74 @@ const extensionsUi = extensionsView({
     }
   },
   showActivity: () => panels.show("extension-activity"),
+  commandTitle: (command) => commands.all().find((c) => c.id === command)?.title,
+  catalog: () => {
+    if (!listed && !listing) listing = loadCatalog().finally(() => extensionsChanged());
+    return listed;
+  },
+  async installFromCatalog(entry) {
+    try {
+      await installFromCatalog(entry);
+      await refreshList();
+      workbench.notice(`Installed ${entry.name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+    } catch (err) {
+      workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`);
+    }
+    extensionsChanged();
+  },
 });
+
+/** What the catalogs list, read the first time the Extensions view shows. */
+let listed: { entries: CatalogEntry[]; problems: string[] } | null = null;
+let listing: Promise<void> | null = null;
+
+async function loadCatalog() {
+  const entries: CatalogEntry[] = [];
+  const problems: string[] = [];
+  const index = new URL(FIRST_PARTY_CATALOG, location.href).toString();
+  try {
+    const res = await fetch(index);
+    if (!res.ok) throw new Error(`it answered ${res.status}`);
+    entries.push(...parseCatalog(await res.json(), index, true));
+  } catch (err) {
+    problems.push(`The app's catalog couldn't be read: ${(err as Error).message}`);
+  }
+  for (const url of settings["extensions.catalogs"]) {
+    try {
+      entries.push(...(await api.catalog(url)));
+    } catch (err) {
+      problems.push(`The catalog at ${url} couldn't be read: ${(err as Error).message}`);
+    }
+  }
+  listed = { entries, problems };
+}
+
+/**
+ * Copy an extension's files in from a catalog. The app's own are read from the app; another catalog's
+ * are fetched by the Worker, as Install from URL does. Either way it's a workspace extension, sandboxed.
+ */
+async function installFromCatalog(entry: CatalogEntry) {
+  if (!entry.firstParty) return void (await api.installExtension(entry.folder, entry.catalog));
+  const get = async (file: string) => {
+    const res = await fetch(new URL(file, entry.folder));
+    // A missing file is answered with the app's page, so a page isn't a file of the extension's.
+    if (!res.ok || res.headers.get("Content-Type")?.startsWith("text/html")) throw new Error(`${file} isn't in the catalog`);
+    return res.text();
+  };
+  const manifestText = await get("extension.json");
+  const manifest = parseManifest(JSON.parse(manifestText), entry.id);
+  if (typeof manifest === "string") throw new Error(manifest);
+  const files: Array<[string, string]> = [
+    ["extension.json", manifestText],
+    ...(await Promise.all(manifest.files.map(async (f): Promise<[string, string]> => [f, await get(f)]))),
+    // Where it came from, so its row and prompts say Catalog.
+    ["installed.json", `${JSON.stringify({ from: new URL("extension.json", entry.folder).toString(), catalog: entry.catalog })}\n`],
+  ];
+  for (const [file, text] of files) {
+    const path = extensionFilePath(entry.id, file);
+    await api.write(path, text, (await api.read(path)).revision);
+  }
+}
 
 /** Trust an extension to run in the page, or stop: kept in your settings, applied after a reload. */
 async function setTrust(id: string, trusted: boolean) {
@@ -601,83 +657,6 @@ window.addEventListener(
 );
 window.addEventListener("focus", () => void learnLayout());
 void learnLayout();
-
-type ExParams = { argString?: string; input?: string };
-const exArg = (params: ExParams) => (params.argString ?? "").trim();
-
-/** An ex command that opens the note named in its argument, or does something else without one. */
-function exOpen(name: string, prefix: string, withArg: (path: FilePath) => unknown, without: () => unknown) {
-  Vim.defineEx(name, prefix, (_cm: unknown, params: ExParams) => {
-    const arg = exArg(params).replace(/^!\s*/, "");
-    const path = arg ? notePathFor(arg) : null;
-    if (path) void withArg(path);
-    else if (!arg) void without();
-  });
-}
-
-Vim.defineEx("write", "w", () => commands.run("note.save"));
-Vim.defineEx("edit", "e", (_cm: unknown, params: ExParams) => {
-  const arg = exArg(params);
-  const force = /^e(dit)?!/.test(params.input ?? "") || arg.startsWith("!");
-  const path = notePathFor(arg.replace(/^!\s*/, ""));
-  if (path) void workbench.open(path);
-  else if (!arg.replace(/^!\s*/, "") && (force || !workbench.focusedSession?.dirty)) commands.run("note.reload");
-});
-Vim.defineEx("quit", "q", () => commands.run("tab.close"));
-Vim.defineEx("close", "clo", () => commands.run("window.close"));
-Vim.defineEx("only", "on", () => commands.run("window.only"));
-exOpen("split", "sp", (p) => workbench.load(p).then(() => workbench.split("down", p)), () => commands.run("window.splitDown"));
-exOpen("vsplit", "vs", (p) => workbench.load(p).then(() => workbench.split("right", p)), () => commands.run("window.splitRight"));
-exOpen("tabedit", "tabe", (p) => workbench.open(p, { newTab: true }), () => commands.run("tab.open"));
-exOpen("tabnew", "tabnew", (p) => workbench.open(p, { newTab: true }), () => commands.run("tab.open"));
-Vim.defineEx("tabnext", "tabn", () => commands.run("tab.next"));
-Vim.defineEx("tabprevious", "tabp", () => commands.run("tab.previous"));
-Vim.defineEx("tabclose", "tabc", () => commands.run("tab.close"));
-// :tabmove +1, :tabmove -1, or :tabmove N to put the tab at position N (0 is first).
-Vim.defineEx("tabmove", "tabm", (_cm: unknown, params: ExParams) => {
-  const arg = exArg(params);
-  const g = L.focused(workbench.layout);
-  const by = /^[+-]\d+$/.test(arg) ? Number(arg) : /^\d+$/.test(arg) ? Number(arg) - g.active : arg === "" ? g.tabs.length - 1 - g.active : 0;
-  workbench.change((l) => L.shiftTab(l, by));
-});
-
-/** A Vim normal-mode key sequence that runs a command. */
-function vimKey(keys: string, command: string) {
-  const action = `run:${command}`;
-  Vim.defineAction(action, () => commands.run(command));
-  Vim.mapCommand(keys, "action", action, {}, { context: "normal" });
-}
-vimKey("gd", "note.followLink");
-vimKey("<C-o>", "go.back");
-vimKey("<C-i>", "go.forward");
-vimKey("gt", "tab.next");
-vimKey("gT", "tab.previous");
-// Vim's own Ctrl-W in normal mode does nothing, and as a whole key it would swallow Ctrl-W h and the rest.
-Vim.unmap("<C-w>", "normal");
-for (const [keys, command] of [
-  ["h", "window.left"],
-  ["j", "window.down"],
-  ["k", "window.up"],
-  ["l", "window.right"],
-  ["w", "window.next"],
-  ["<C-w>", "window.next"],
-  ["s", "window.splitDown"],
-  ["v", "window.splitRight"],
-  ["q", "tab.close"],
-  ["c", "window.close"],
-  ["o", "window.only"],
-  ["H", "tab.moveLeft"],
-  ["J", "tab.moveDown"],
-  ["K", "tab.moveUp"],
-  ["L", "tab.moveRight"],
-  [">", "window.wider"],
-  ["<", "window.narrower"],
-  ["+", "window.taller"],
-  ["-", "window.shorter"],
-  ["=", "window.equalize"],
-]) {
-  vimKey(`<C-w>${keys}`, command);
-}
 
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {

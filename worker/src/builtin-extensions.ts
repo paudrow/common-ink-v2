@@ -4,12 +4,14 @@ import calendar from "../../web/src/extensions/calendar/extension.json";
 import commandList from "../../web/src/extensions/command-list/extension.json";
 import contacts from "../../web/src/extensions/contacts/extension.json";
 import history from "../../web/src/extensions/history/extension.json";
+import livePreview from "../../web/src/extensions/live-preview/extension.json";
 import quickOpen from "../../web/src/extensions/quick-open/extension.json";
 import todos from "../../web/src/extensions/todos/extension.json";
 import uploads from "../../web/src/extensions/uploads/extension.json";
+import vim from "../../web/src/extensions/vim/extension.json";
 import { parseManifest, type ExtensionManifest } from "./extensions.ts";
 
-const RAW: unknown[] = [quickOpen, commandList, history, todos, calendar, contacts, uploads];
+const RAW: unknown[] = [quickOpen, commandList, vim, livePreview, history, todos, calendar, contacts, uploads];
 
 export const BUILT_IN_MANIFESTS: ExtensionManifest[] = RAW.map((m) => {
   const id = (m as { id: string }).id;

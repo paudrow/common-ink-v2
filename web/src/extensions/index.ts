@@ -1,32 +1,31 @@
-// The built-in extensions, in the order they start, each from its folder: extension.json, its code, and
-// its source to show in the Extensions view (and copy, with Customize).
-import { parseManifest, type ExtensionManifest } from "../../../worker/src/extensions.ts";
+// The built-in extensions, in the order they're listed, each from its folder: extension.json, its code
+// (loaded only when one of its activation events happens, so it isn't in the app's first download), its
+// source to show, and the JavaScript Customize copies into the workspace (both loaded when asked for).
+import { parseManifest } from "../../../worker/src/extensions.ts";
 import type { ExtensionModule } from "../extension-api.ts";
 import type { BuiltIn } from "../extension-host.ts";
-import calendar from "./calendar/index.ts";
-import commandList from "./command-list/index.js";
-import contacts from "./contacts/index.ts";
-import history from "./history/index.ts";
-import quickOpen from "./quick-open/index.js";
-import todos from "./todos/index.ts";
-import uploads from "./uploads/index.ts";
 
 const manifests = import.meta.glob<Record<string, unknown>>("./*/extension.json", { eager: true, import: "default" });
-const sources = import.meta.glob<string>("./*/*.{js,ts,json}", { eager: true, query: "?raw", import: "default" });
+const sources = import.meta.glob<string>("./*/*.{js,ts,json}", { query: "?raw", import: "default" });
+const code = import.meta.glob<{ default: ExtensionModule }>("./*/index.{js,ts}");
 
-function builtIn(id: string, module: ExtensionModule): BuiltIn {
+/** The order they're listed in the Extensions view, and start in when several start together. */
+const ORDER = ["quick-open", "command-list", "vim", "live-preview", "history", "todos", "calendar", "contacts", "uploads"];
+
+function builtIn(id: string): BuiltIn {
   const manifest = parseManifest(manifests[`./${id}/extension.json`], id, { builtIn: true });
   if (typeof manifest === "string") throw new Error(`Built-in extension ${id}: ${manifest}`);
-  const files = Object.entries(sources).flatMap(([path, text]) => (path.startsWith(`./${id}/`) ? [[path.slice(id.length + 3), text] as const] : []));
-  return { manifest: manifest as ExtensionManifest, module, sources: Object.fromEntries(files), folder: `web/src/extensions/${id}` };
+  const load = code[`./${id}/${manifest.main}`];
+  if (!load) throw new Error(`Built-in extension ${id}: no ${manifest.main}`);
+  const files = Object.keys(sources).flatMap((path) => (path.startsWith(`./${id}/`) ? [path.slice(id.length + 3)] : []));
+  return {
+    manifest,
+    load: async () => (await load()).default,
+    files,
+    source: (file) => sources[`./${id}/${file}`]?.() ?? Promise.resolve(""),
+    copy: async () => (await import("virtual:builtin-copies")).default[id] ?? {},
+    folder: `web/src/extensions/${id}`,
+  };
 }
 
-export const BUILT_IN: BuiltIn[] = [
-  builtIn("quick-open", quickOpen),
-  builtIn("command-list", commandList),
-  builtIn("history", history),
-  builtIn("todos", todos),
-  builtIn("calendar", calendar),
-  builtIn("contacts", contacts),
-  builtIn("uploads", uploads),
-];
+export const BUILT_IN: BuiltIn[] = ORDER.filter((id) => manifests[`./${id}/extension.json`]).map(builtIn);

@@ -3,9 +3,13 @@
 Built-in features are extensions on the same manifest and API anyone else's use (ADR 0006): see `web/src/extensions/`. An extension is a folder with two kinds of file:
 
 - `extension.json`, the manifest: what the extension is, what it adds, when its code starts, and what it may ask for.
-- Its code: `main` (default `index.js`), an ES module whose default export has `activate(ctx)`, plus any modules `main` imports from the same folder. It imports nothing else; everything it needs comes through `ctx`.
+- Its code: `main` (default `index.js`), an ES module whose default export has `activate(ctx)`, plus any modules `main` imports from the same folder. Everything else it needs comes through `ctx`, or, for trusted extensions that change editors, from the libraries below.
 
-A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from where it's published with Install from URL in the Extensions view, which copies its files in.
+A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from the Catalog in the Extensions view, or from where it's published with Install from URL, which copies its files in.
+
+## Libraries
+
+Trusted code that changes editors needs CodeMirror, and it must be the app's own copy. An extension may import these by name, and nothing else outside its folder: `@codemirror/state`, `@codemirror/view`, `@codemirror/language`, `@codemirror/commands`, `@lezer/highlight`, `@replit/codemirror-vim`, and the app's `common-ink/live-preview` (the live-preview mechanism todos and markdown use), `common-ink/describe`, `common-ink/keys`, `common-ink/files` and `common-ink/uploads`. In a workspace extension, the Worker points those imports at `/lib/<name>.js`, which hands over the app's instance. The list is `web/src/library-names.ts`.
 
 ## Where it runs
 
@@ -47,7 +51,7 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 
 - **activationEvents.** `onStartup`, `onCommand:<id>`, `onView:<id>`, `onEmbed:<language>`. The extension's code starts the first time one happens. Everything the manifest declares is in place before that: its commands are in the command bar, its keybindings work, its views are listed, its settings are in the settings editor. Without activation events, an extension starts with the app.
 - **contributes.commands, views and menus.** The code fills in what they do with `ctx.commands.register(id, run)` and `ctx.views.register(id, { render(el) })`. Registering one the manifest doesn't declare is an error.
-- **contributes.keybindings.** A `key` like `"Mod-Shift-c"` (Mod is ⌘ on a Mac and Ctrl elsewhere, matched by the character typed) or a Vim normal-mode sequence like `"gC"`. Settings can rebind them.
+- **contributes.keybindings.** A `key` like `"Mod-Shift-c"` (Mod is ⌘ on a Mac and Ctrl elsewhere, matched by the character typed) or a Vim normal-mode sequence like `"gC"`, which works while the Vim extension is on. Settings can rebind keys.
 - **contributes.configuration.** The extension's settings, as JSON Schema: `type`, `default`, `description`, `enum`, `minimum`, `maximum`, and `appliesAfterReload`. Their keys start with the extension's id. They get their own section in the settings editor, and `ctx.settings.get(key)` reads them.
 - **permissions.** The most the extension may ask for, each with why. See ADR 0006 for the kinds and how asking works.
 
@@ -55,21 +59,28 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
-- `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`.
+- `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
+- `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
 - `ctx.files` lists, reads and writes files, each checked against `files:read` and `files:write`. Writes are changes in history by the extension, acting for you.
 - `ctx.net.fetch(url, init)` fetches through the Worker: only hosts the manifest declares and you've allowed, with no cookies or referrer, at most 1 MB. A sandboxed extension has no other way out.
-- `ctx.workbench` opens files, says which file is focused, and shows a notice.
+- `ctx.workbench` opens files, says which file is focused and whether it has unsaved changes, splits a window (`split(direction, path?)`), reads and moves the focused window's tabs (`tabs()`, `moveTab(by)`), and shows a notice.
 - `ctx.changes.describe(fn)` puts words to changes in history, such as "Completed 'Pay rent' (due Oct 1)".
 - `ctx.events.onSaved` and `ctx.events.onFocus` say when a file saved and when focus moved.
 - `ctx.settings.get(key)` reads any setting in effect.
 - `ctx.util.fuzzyFilter`, `notePathFor` and `label` are the helpers the built-ins use.
-- `ctx.editor.extend(extension)` and `ctx.editor.focused()` change note editors. They need the `editor` permission, and only trusted extensions get it.
+- `ctx.editor.extend(extension)` adds a CodeMirror extension to every note's editor, and with `{ everywhere: true }` to every editor, settings and code too (as Vim does). `ctx.editor.focused()` is the focused editor. They need the `editor` permission, and only trusted extensions get it.
 
 ## Customizing a built-in
 
-In the Extensions view, Customize copies a built-in's folder into the workspace as a workspace extension with the same id, and opens its code. After a reload the copy runs in place of the built-in. Revert to built-in deletes the copy (one change per file, which undo can take back). Only built-ins written in plain JavaScript can be copied this way for now.
+In the Extensions view, Customize copies a built-in's folder into the workspace as a workspace extension with the same id, and opens its code. Built-ins written in TypeScript are copied as the JavaScript the app runs (Source shows the TypeScript). The copy is trusted, since you made it yours, and after a reload it runs in place of the built-in. Revert to built-in deletes the copy (one change per file, which undo can take back).
+
+## The default extensions, and the Catalog
+
+The core is the file store and sync, history, the layout, commands and the command bar, settings, the Extensions view, permissions, safe mode, and a plain editor with markdown highlighting and standard keys. On by default, as extensions: Vim, Live preview, Todos, History, Calendar, Contacts, Uploads, and the command bar's Open by name and Command list. Each loads only when one of its activation events happens, so it isn't in the app's first download.
+
+The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default, from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
 
 ## Turning extensions off, and safe mode
 

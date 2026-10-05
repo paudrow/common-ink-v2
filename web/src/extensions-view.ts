@@ -4,11 +4,13 @@
 // its manifest, so it shows before the extension's code has run. Turning one on or off writes
 // "extensions.disabled"; Customize copies a built-in into the workspace, and Revert or Uninstall
 // deletes the workspace's copy. Each is an ordinary change, and each applies after a reload. Each
-// permission shows your answer (Ask, Always allow or Don't allow), in the words prompts use.
+// permission shows your answer (Ask, Always allow or Don't allow), in the words prompts use. Below
+// them, the Catalog: extensions you can install.
 import type { EditorView } from "@codemirror/view";
+import type { CatalogEntry } from "../../worker/src/catalog.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { Answer } from "../../worker/src/permissions.ts";
-import { isSelfContained, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
+import type { BuiltIn, ExtensionRecord } from "./extension-host.ts";
 import { openModal, type Modal } from "./modal.ts";
 import { ANSWER_WORDS, declaredPermissions, plain } from "./permission-words.ts";
 
@@ -38,6 +40,11 @@ export interface ExtensionsViewDeps {
   setTrusted(record: ExtensionRecord, trusted: boolean): Promise<void>;
   install(): Promise<void>;
   showActivity(): void;
+  /** What the catalogs list, or null until they've been read (asking starts reading them). */
+  catalog(): { entries: CatalogEntry[]; problems: string[] } | null;
+  /** A command's title, for keybindings an extension adds to other extensions' or the app's commands. */
+  commandTitle(command: string): string | undefined;
+  installFromCatalog(entry: CatalogEntry): Promise<void>;
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string | false | null | undefined)[]): T {
@@ -54,20 +61,22 @@ function focusable<T extends HTMLElement>(node: T, id: string): T {
 }
 
 /** Where an extension comes from, as the view and its prompts say it. */
-export function originOf(r: Pick<ExtensionRecord, "builtIn" | "workspace" | "installedFrom">): "Built-in" | "Customized" | "From URL" | "Workspace" {
+export function originOf(r: Pick<ExtensionRecord, "builtIn" | "workspace" | "installedFrom" | "catalog">): "Built-in" | "Customized" | "Catalog" | "From URL" | "Workspace" {
   if (r.builtIn) return r.workspace ? "Customized" : "Built-in";
+  if (r.catalog) return "Catalog";
   return r.installedFrom ? "From URL" : "Workspace";
 }
 
 const STATE_TEXT: Record<ExtensionRecord["state"], string> = { active: "On", inactive: "On, starts when used", off: "Off", failed: "Failed", safe: "Not loaded: safe mode" };
 
-/** What a manifest says an extension adds, in words, by kind. Exported for tests. */
-export function contributionLines(m: ExtensionManifest): Array<[string, string]> {
+/** What a manifest says an extension adds, in words, by kind; other commands it binds keys to are named by `titleOf`. Exported for tests. */
+export function contributionLines(m: ExtensionManifest, titleOf: (command: string) => string | undefined = () => undefined): Array<[string, string]> {
   const c = m.contributes;
+  const title = (command: string) => c.commands.find((x) => x.command === command)?.title ?? titleOf(command) ?? command;
   const views = Object.values(c.views).flat();
   const settings = c.configuration ? Object.keys(c.configuration.properties) : [];
-  const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim)`} → ${c.commands.find((x) => x.command === k.command)?.title ?? k.command}`);
-  const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${c.commands.find((x) => x.command === i.command)?.title ?? i.command} (${menu === "tabMenu" ? "tab menu" : menu === "commandBar" ? "command bar" : "editor menu"})`));
+  const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim)`} → ${title(k.command)}`);
+  const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${title(i.command)} (${menu === "tabMenu" ? "tab menu" : menu === "commandBar" ? "command bar" : "editor menu"})`));
   const lines: Array<[string, string[]]> = [
     ["Commands", c.commands.map((x) => x.title)],
     ["Keybindings", keys],
@@ -150,6 +159,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
       ),
       section("Installed", records.filter((r) => r.workspace && !r.builtIn).map((r) => row(r, reload.has(r.id)))),
       section("Built-in", records.filter((r) => r.builtIn).map((r) => row(r, reload.has(r.id)))),
+      catalogSection(),
     );
     filter(root);
   }
@@ -163,6 +173,36 @@ export function extensionsView(deps: ExtensionsViewDeps) {
 
   function section(title: string, rows: HTMLElement[]): HTMLElement | "" {
     return rows.length ? el("section", { className: "extension-section" }, el("h2", { textContent: title }), ...rows) : "";
+  }
+
+  /** Extensions the catalogs list that aren't installed: the app's own first-party ones that aren't on by default, then any others you've added. */
+  function catalogSection(): HTMLElement {
+    const catalog = deps.catalog();
+    const records = deps.records();
+    return el(
+      "section",
+      { className: "extension-section catalog" },
+      el("h2", { textContent: "Catalog" }),
+      el(
+        "p",
+        { className: "extension-about" },
+        "Extensions made with Common Ink that aren't on by default. Installing one copies its files into this workspace, where it runs sandboxed. Catalogs you add (the extensions.catalogs setting) list other people's extensions: they run sandboxed too, but you install them at your own risk.",
+      ),
+      !catalog ? el("p", { className: "extension-about", textContent: "Reading the catalog…" }) : null,
+      ...(catalog?.problems ?? []).map((p) => el("p", { className: "extension-error", role: "alert", textContent: p })),
+      ...(catalog?.entries ?? []).filter((e) => !records.some((r) => r.id === e.id)).map(catalogRow),
+    );
+  }
+
+  function catalogRow(entry: CatalogEntry): HTMLElement {
+    const install = focusable(el("button", { textContent: "Install", onclick: () => void deps.installFromCatalog(entry) }), `catalog:${entry.catalog}:${entry.id}`);
+    return el(
+      "div",
+      { className: "extension-row catalog-entry", dataset: { search: `${entry.name} ${entry.id} ${entry.description}`.toLowerCase(), extension: entry.id } },
+      el("span", { className: "extension-open static" }, el("span", { className: "extension-name", textContent: entry.name }), el("span", { className: "extension-desc", textContent: entry.description })),
+      install,
+      el("span", { className: "badge", textContent: entry.firstParty ? "Catalog" : `${entry.catalog} · at your own risk` }),
+    );
   }
 
   function row(r: ExtensionRecord, reloadNeeded: boolean): HTMLElement {
@@ -216,11 +256,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     const actions = [
       focusable(el("button", { textContent: "Source", title: r.workspace ? `Open ${r.manifest.main}` : `Show ${b?.folder}, read-only`, onclick: () => (modal.close(), deps.openSource(r)) }), `source:${id}`),
       r.manifest.contributes.configuration ? focusable(el("button", { textContent: "Settings", onclick: () => (modal.close(), deps.openSettings(r)) }), `settings:${id}`) : null,
-      b && !r.workspace
-        ? isSelfContained(b)
-          ? focusable(el("button", { textContent: "Customize", title: "Copy it into the workspace, where you can change it", onclick: () => (modal.close(), void deps.customize(b)) }), `customize:${id}`)
-          : el("button", { textContent: "Customize", disabled: true, title: `${name} uses the app's own modules, so a copy of it can't run on its own yet` })
-        : null,
+      b && !r.workspace ? focusable(el("button", { textContent: "Customize", title: "Copy it into the workspace, as JavaScript you can change", onclick: () => (modal.close(), void deps.customize(b)) }), `customize:${id}`) : null,
       r.workspace ? focusable(el("button", { textContent: b ? "Revert to built-in" : "Uninstall", title: "Delete the workspace's files for it, as changes undo can take back", onclick: () => void deps.remove(r) }), `remove:${id}`) : null,
       r.workspace
         ? focusable(
@@ -233,7 +269,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
           )
         : null,
     ];
-    const adds = contributionLines(r.manifest);
+    const adds = contributionLines(r.manifest, deps.commandTitle);
     const asks = declaredPermissions(r.manifest);
     const builtIn = !!b && !r.workspace;
     const kept = asks.some((p) => deps.answer(r, p.key));
@@ -306,26 +342,26 @@ export function extensionsView(deps: ExtensionsViewDeps) {
 
 /** A built-in extension's source, read-only, file by file, with Customize when it can run as a copy. */
 export function builtInSourceView(b: BuiltIn, deps: { editor(text: string): EditorView; customize(b: BuiltIn): void }) {
-  const names = Object.keys(b.sources).sort((x, y) => (x === "extension.json" ? -1 : y === "extension.json" ? 1 : x.localeCompare(y)));
+  const names = [...b.files].sort((x, y) => (x === "extension.json" ? -1 : y === "extension.json" ? 1 : x.localeCompare(y)));
   let showing = names.includes(b.manifest.main) ? b.manifest.main : names[0];
   const view = {
     id: `extension-source:${b.manifest.id}`,
     title: `${b.manifest.name} (built-in)`,
-    render(root: HTMLElement) {
+    async render(root: HTMLElement) {
       root.classList.add("extension-source");
       const pick = el<HTMLSelectElement>("select", { ariaLabel: "File" }, ...names.map((n) => el("option", { value: n, textContent: n, selected: n === showing })));
       pick.addEventListener("change", () => {
         showing = pick.value;
-        view.render(root);
+        void view.render(root);
       });
       const bar = el(
         "div",
         { className: "version-bar" },
         el("span", { textContent: `${b.folder}, read-only: this is the code that runs.` }),
         pick,
-        isSelfContained(b) ? el("button", { textContent: "Customize", onclick: () => deps.customize(b) }) : null,
+        el("button", { textContent: "Customize", onclick: () => deps.customize(b) }),
       );
-      root.replaceChildren(bar, deps.editor(b.sources[showing] ?? "").dom);
+      root.replaceChildren(bar, deps.editor(await b.source(showing)).dom);
     },
   };
   return view;

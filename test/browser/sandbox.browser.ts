@@ -2,59 +2,24 @@
 // tries every way out, and none works. Run with `npm run test:browser` after `npm run build`; it needs
 // Chrome (CHROME_PATH, or Chrome where it usually is).
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { after, before, test } from "node:test";
-import { chromium, type Browser, type Page } from "playwright-core";
-import { unstable_dev, type Unstable_DevWorker } from "wrangler";
+import { test } from "node:test";
+import type { Page } from "playwright-core";
+import { harness, runCommand, writeFile } from "./harness.ts";
 
-const CHROME = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"].find(
-  (p) => p && existsSync(p),
-);
-
-let worker: Unstable_DevWorker;
-let browser: Browser;
-let base: string;
-
-before(async () => {
-  assert.ok(CHROME, "Chrome is needed: set CHROME_PATH");
-  worker = await unstable_dev("worker/src/index.ts", {
-    config: "worker/wrangler.jsonc",
-    vars: { DEV_USER: "tester@localhost", SEED: "1", DATA_FIXTURES: "1" },
-    experimental: { disableExperimentalWarning: true },
-    persist: false,
-    logLevel: "none",
-  } as never);
-  base = `http://${worker.address}:${worker.port}`;
-  browser = await chromium.launch({ executablePath: CHROME, headless: true });
-});
-
-after(async () => {
-  await browser?.close();
-  await worker?.stop();
-});
+const h = harness();
 
 /** Put a workspace extension's files in, as the signed-in person. */
 async function install(page: Page, id: string, files: Record<string, string>) {
-  for (const [file, text] of Object.entries(files)) {
-    await page.evaluate(
-      async ([path, text]) => {
-        const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
-        const base = res.status === 200 ? (await res.json()).revision : 0;
-        await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, text, base }) });
-      },
-      [`.common-ink/extensions/${id}/${file}`, text],
-    );
-  }
+  for (const [file, text] of Object.entries(files)) await writeFile(page, `.common-ink/extensions/${id}/${file}`, text);
 }
 
-const runCommand = (page: Page, title: string) =>
-  page.evaluate((title) => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", metaKey: true, ctrlKey: !navigator.platform.includes("Mac"), shiftKey: true, bubbles: true }));
-    const input = document.querySelector<HTMLInputElement>("#command-bar input")!;
-    input.value = `>${title}`;
-    input.dispatchEvent(new Event("input"));
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  }, title);
+/** Install an extension from the app's catalog, in the Extensions view, as you would. */
+async function installFromCatalog(page: Page, name: string) {
+  await runCommand(page, "Show extensions");
+  const entry = page.locator(".catalog-entry", { hasText: name });
+  await entry.getByRole("button", { name: "Install" }).click();
+  await page.waitForFunction((name) => [...document.querySelectorAll(".notice p")].some((p) => p.textContent?.includes(`Installed ${name}`)), name);
+}
 
 const PROBE = `export default { async activate(ctx) {
   const r = {};
@@ -74,17 +39,17 @@ const PROBE = `export default { async activate(ctx) {
 } };`;
 
 test("a sandboxed extension can't read the app's cookies, storage, page or notes, or reach the network", async () => {
-  const page = await browser.newPage();
+  const page = await h.browser.newPage();
   // Chrome reports a request it blocks by policy too, as one that failed with "csp";
   // anything else that set out for another host left the app.
   const outside = new Map<string, string>();
   page.on("request", (req) => {
-    if (!req.url().startsWith(base)) outside.set(req.url(), "sent");
+    if (!req.url().startsWith(h.base)) outside.set(req.url(), "sent");
   });
   page.on("requestfailed", (req) => {
     if (outside.has(req.url())) outside.set(req.url(), req.failure()?.errorText ?? "failed");
   });
-  await page.goto(`${base}/`);
+  await page.goto(`${h.base}/`);
   await page.waitForSelector(".cm-content");
   await page.evaluate(() => localStorage.setItem("secret", "1"));
   await install(page, "probe", {
@@ -119,19 +84,38 @@ test("a sandboxed extension can't read the app's cookies, storage, page or notes
   await page.close();
 });
 
-test("a sandboxed view asks before reading a note, and Don't allow is kept", async () => {
-  const page = await browser.newPage();
-  await page.goto(`${base}/?file=Welcome.md`);
+/** A prompt's lines: who, what exactly, why now, why at all, its answers, and where to change it. */
+const promptLines = (page: Page) =>
+  page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`) as Promise<string[]>;
+
+/** What Word count's status bar item says, or null while it's hidden. */
+const wordsInStatusBar = (page: Page) =>
+  page.evaluate(() => {
+    const item = document.querySelector<HTMLElement>('.status-item[data-item="wordCount.status"]');
+    return item && !item.hidden ? item.textContent : null;
+  });
+
+test("Word count installs from the catalog and counts in the status bar once you allow it; Don't allow is kept", async () => {
+  const page = await h.browser.newPage();
+  await page.goto(`${h.base}/?file=Welcome.md`);
   await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show word count");
-  await page.waitForSelector(".dialog");
-  // Who, what exactly, why now, and why at all, in that order; then what each button does.
+  await installFromCatalog(page, "Word count");
+  const files = await page.evaluate(() => fetch("/api/files").then((r) => r.json()));
   assert.deepEqual(
-    await page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`),
+    (files.files ?? files).map((f: { path: string }) => f.path).filter((p: string) => p.includes("word-count")).sort(),
+    [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"],
+    "its files are in the workspace, with where they came from",
+  );
+  await page.reload();
+  // It starts with the app, and asks before reading the note on show.
+  await page.waitForSelector(".dialog");
+  const lines = await promptLines(page);
+  assert.equal(lines[2], "It's asking as the app started.");
+  assert.deepEqual(
+    lines.filter((_, i) => i !== 2),
     [
-      "Word count Workspace wants to",
+      "Word count Catalog by Common Ink wants to",
       "Read the note Welcome",
-      "It's asking because you ran Show word count.",
       "Word count says: “Count the words in the note on show”",
       "Allow this time",
       "Always allow Word count to read all your notes",
@@ -140,17 +124,24 @@ test("a sandboxed view asks before reading a note, and Don't allow is kept", asy
     ],
   );
   assert.equal(await page.textContent(".dialog-details code"), "files:read Welcome.md", "the technical scope is behind Details");
+  await page.click("text=Allow this time");
+  await page.waitForFunction(() => /^\d[\d,]* words?$/.test(document.querySelector('.status-item[data-item="wordCount.status"]')?.textContent ?? ""));
+  // This time lasts until you reload.
+  await page.reload();
+  await page.waitForSelector(".dialog");
   await page.click("text=Don't allow");
-  const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
-  await webview!.waitForFunction(() => document.body.textContent?.includes("Word count can't read the note Welcome: you don't allow it to read all your notes."));
+  await page.waitForTimeout(1000);
+  assert.equal(await wordsInStatusBar(page), null, "nothing counted, nothing in the status bar");
   // Keeping the answer saves your settings, which Word count hears of and counts again: it isn't asked twice.
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "one Don't allow is enough");
   const settings = await page.evaluate(() => fetch("/api/file?path=.common-ink%2Fusers%2Ftester%40localhost%2Fsettings.json").then((r) => r.json()));
   assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**/*.md": "deny" } });
+  await runCommand(page, "Show word count");
+  const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
+  await webview!.waitForFunction(() => /^Word count can't read the note \S+: you don't allow it to read all your notes\. Change that in Extensions → Word count\.$/.test(document.getElementById("count")?.textContent ?? ""));
   await page.reload();
   await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show word count");
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "not asked again");
   await page.close();

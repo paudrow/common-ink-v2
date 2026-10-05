@@ -113,3 +113,37 @@ test("the app's policy frames only the sandbox route and connects only to itself
   assert.match(csp, /img-src 'self' data: blob:/);
   assert.doesNotMatch(csp, /\*/);
 });
+
+test("a trusted workspace extension's imports of libraries go to the app's own copies", async () => {
+  const { pointAtLibraries } = await import("../worker/src/extension-routes.ts");
+  assert.equal(
+    pointAtLibraries('import { Decoration } from "@codemirror/view";\nimport { livePreview } from \'common-ink/live-preview\';\nimport { x } from "./model.js";\nconst v = await import("@replit/codemirror-vim");\nimport "left-pad";'),
+    'import { Decoration } from "/lib/@codemirror/view.js";\nimport { livePreview } from \'/lib/common-ink/live-preview.js\';\nimport { x } from "./model.js";\nconst v = await import("/lib/@replit/codemirror-vim.js");\nimport "left-pad";',
+  );
+});
+
+test("another catalog's index is read through the safe fetch, and only its complete entries are listed", async () => {
+  const s = store();
+  const index = {
+    name: "Friends",
+    extensions: [
+      { id: "weather", name: "Weather", version: "2.0.0", description: "Forecasts.", path: "weather" },
+      { id: "Bad Id", name: "Nope", path: "x/" },
+      { id: "script", name: "Script", path: "javascript:alert(1)" },
+    ],
+  };
+  await withFetch(
+    (url) => (url === "https://friends.example/catalog/index.json" ? Response.json(index) : new Response("nope", { status: 404 })),
+    async () => {
+      const read = (target: string) => {
+        const url = new URL(`https://app.example/api/extensions/catalog?url=${encodeURIComponent(target)}`);
+        return extensionApi(new Request(url), url, you.email, you, s);
+      };
+      assert.deepEqual(await (await read("https://friends.example/catalog/index.json"))!.json(), {
+        entries: [{ id: "weather", name: "Weather", version: "2.0.0", description: "Forecasts.", folder: "https://friends.example/catalog/weather/", catalog: "Friends", firstParty: false }],
+      });
+      assert.equal((await read("https://friends.example/missing.json"))!.status, 400);
+      assert.deepEqual(await (await read("http://localhost:8787/catalog/index.json"))!.json(), { error: "Local names can't be fetched" });
+    },
+  );
+});

@@ -5,7 +5,6 @@
 // it changes.
 import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { getCM, Vim } from "@replit/codemirror-vim";
 import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
 import type { Offline } from "./offline.ts";
 import { docLabel } from "./describe.ts";
@@ -41,7 +40,6 @@ export interface View {
 export interface WorkbenchEvents {
   /** The focused tab's save status, or a message about it. */
   status(status: SaveStatus | null, message?: string): void;
-  mode(mode: string): void;
   /** What the focused tab shows changed. */
   focus(path: FilePath | null): void;
   /** A file was saved for the first time, so lists of files are out of date. */
@@ -78,10 +76,11 @@ export class Workbench {
   private layoutTimer = 0;
   /** A layout save is on its way, so news of it coming back isn't someone else's change. */
   private layoutSaving = false;
-  private shownView: EditorView | null = null;
   private settings: Settings = DEFAULTS;
   /** Extensions' CodeMirror extensions, for every note's editor. */
   readonly noteExtensions: Extension[] = [];
+  /** Extensions' CodeMirror extensions for every editor, notes and settings and code alike (Vim keys). */
+  readonly allExtensions: Extension[] = [];
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
 
@@ -408,7 +407,7 @@ export class Workbench {
         code: isExtensionScript(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
-        extensions: [...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
+        extensions: [...this.allExtensions, ...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),
       }),
@@ -420,9 +419,6 @@ export class Workbench {
     box.append(view.dom);
     file.views.add(view);
     this.views.set(key(group, L.fileTab(file.path)), view);
-    getCM(view)?.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
-      if (view === this.focusedView) this.on.mode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
-    });
     return view;
   }
 
@@ -763,14 +759,9 @@ export class Workbench {
     };
   }
 
-  /** After the layout changes: focus the right editor, and give it a fresh Vim jump list if it's a different one. */
+  /** After the layout changes: focus the right editor. */
   private afterFocus() {
     const view = this.focusedView;
-    if (view !== this.shownView) {
-      freshVimJumps();
-      this.shownView = view;
-      this.on.mode("NORMAL");
-    }
     this.on.focus(this.focusedPath);
     this.on.status(this.focusedSession?.status ?? null);
     if (document.querySelector("#command-bar:not([hidden])")) return;
@@ -790,15 +781,4 @@ function safeJson(text: string): unknown {
   } catch {
     return null;
   }
-}
-
-/**
- * Vim's jump list is global and holds positions in the editor that had focus before; in a shorter file
- * the next G or gg throws on them. Each editor starts a fresh jump list, keeping registers and searches.
- */
-function freshVimJumps() {
-  const kept = { ...Vim.getVimGlobalState_() };
-  Vim.resetVimGlobalState_();
-  const fresh = Vim.getVimGlobalState_();
-  Object.assign(fresh, kept, { jumpList: fresh.jumpList });
 }

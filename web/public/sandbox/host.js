@@ -89,7 +89,9 @@
         run: (id) => call("commands.run", id),
         all: () => call("commands.all"),
         shortcut: (id) => call("commands.shortcut", id),
+        keybindings: () => call("commands.keybindings"),
       },
+      statusBar: { set: (id, text, tooltip) => call("statusBar.set", id, text, tooltip) },
       commandBar: {
         provide(provider) {
           const id = String(++providers);
@@ -126,6 +128,10 @@
       workbench: {
         open: (path, how) => call("workbench.open", path, how),
         focusedPath: () => call("workbench.focusedPath"),
+        hasUnsavedChanges: () => call("workbench.hasUnsavedChanges"),
+        split: (direction, path) => call("workbench.split", direction, path),
+        tabs: () => call("workbench.tabs"),
+        moveTab: (by) => call("workbench.moveTab", by),
         notice: (message) => call("workbench.notice", message),
       },
       events: { onSaved: (fn) => void listeners.saved.push(fn), onFocus: (fn) => void listeners.focus.push(fn) },

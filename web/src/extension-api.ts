@@ -62,6 +62,13 @@ export interface ExtensionContext {
     all(): Array<{ id: string; title: string }>;
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
+    /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
+    keybindings(): Array<{ command: string; key?: string; vim?: string }>;
+  };
+  /** The status bar items the manifest declares (contributes.statusBarItems). */
+  statusBar: {
+    /** Show `text` in one of them, or hide it with "". */
+    set(id: string, text: string, tooltip?: string): void;
   };
   commandBar: {
     provide(provider: Provider): void;
@@ -92,8 +99,8 @@ export interface ExtensionContext {
   };
   /** Note editors. Trusted extensions that declare the "editor" permission only. */
   editor: {
-    /** A CodeMirror extension for every note's editor. Add it while activating. */
-    extend(extension: Extension): void;
+    /** A CodeMirror extension for every note's editor, or with `everywhere`, every editor (settings and code too). Add it while activating. */
+    extend(extension: Extension, where?: { everywhere?: boolean }): void;
     /** The focused note's editor, if a note has focus. */
     focused(): EditorView | null;
   };
@@ -126,6 +133,14 @@ export interface ExtensionContext {
     /** Open a file picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
     openPicked(path: FilePath): void;
     focusedPath(): FilePath | null;
+    /** Whether the focused file has changes that aren't saved yet. */
+    hasUnsavedChanges(): boolean;
+    /** Split the focused window, showing `path` in the new one (or what the focused one shows). */
+    split(direction: "left" | "right" | "up" | "down", path?: FilePath): Promise<void>;
+    /** The focused window's tabs: which one is active (0 is first), and how many. */
+    tabs(): { active: number; count: number };
+    /** Move the active tab `by` places in its window. */
+    moveTab(by: number): void;
     /** Take in server changes to these files, where nothing's waiting to be saved. */
     refreshFromServer(paths: FilePath[]): Promise<void>;
     /** A short message over the focused window, with buttons. */

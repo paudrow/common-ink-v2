@@ -2,7 +2,8 @@
 // each goes where you were: ![photo](/uploads/photo.png) for images, [notes.pdf](/uploads/notes.pdf)
 // for anything else. The Uploads view lists them all.
 import { EditorView } from "@codemirror/view";
-import { isImage, parseUploads, UPLOADS_PATH, uploadUrl, type Upload } from "../../../../worker/src/uploads.ts";
+import { isImage, parseUploads, UPLOADS_PATH, uploadUrl } from "common-ink/uploads";
+import type { Upload } from "../../../../worker/src/uploads.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 
 /** The markdown that links to an upload: an image shows, anything else is a link. */

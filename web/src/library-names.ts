@@ -1,0 +1,29 @@
+// The libraries extension code may import by name (ADR 0006): CodeMirror for trusted extensions that
+// change editors, and a few of the app's own helpers. Built-ins import them like any package; a
+// customized copy in the workspace imports the same names, which the Worker points at /lib/<name>.js,
+// a module that hands over the app's own instance (CodeMirror must be one copy). Each common-ink
+// module's exports are listed here; a test checks the list against the module.
+
+/** Packages, whose exports are read at build time. */
+// Not @codemirror/lang-markdown: offering all of it would keep its markdown(), which brings HTML, CSS and
+// JavaScript parsers, in the app's first download. Extensions add to the markdown language through the API.
+export const PACKAGES = ["@codemirror/state", "@codemirror/view", "@codemirror/language", "@codemirror/commands", "@lezer/highlight", "@replit/codemirror-vim"] as const;
+
+/** The app's own modules, by the name extensions import them as, with what they export. */
+export const APP_MODULES = {
+  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["livePreview", "previewEnabled", "revealedLines"] },
+  "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
+  "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
+  "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
+  "common-ink/uploads": {
+    file: "worker/src/uploads.ts",
+    exports: ["MAX_UPLOAD_BYTES", "UPLOADS_PATH", "addUpload", "blobKey", "cleanName", "findUpload", "isImage", "parseUploads", "placeName", "sha256", "showsInline", "typeFor", "uploadUrl", "uploadsText"],
+  },
+} as const;
+
+export type LibraryName = (typeof PACKAGES)[number] | keyof typeof APP_MODULES;
+
+export const LIBRARY_NAMES: readonly string[] = [...PACKAGES, ...Object.keys(APP_MODULES)];
+
+/** Where a customized copy's import of a library goes: one of the app's /lib/ modules. */
+export const libraryUrl = (name: string) => `/lib/${name}.js`;

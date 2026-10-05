@@ -9,7 +9,7 @@
     "Type `wrap` in the search box: only Line wrapping is left.",
     "Switch to Workspace and set Font size to 14: workspace settings win over yours, in this workspace.",
     "⌘⇧P, Open user settings (JSON). Start a new line after the last setting with a comma and a quote: the setting names come up with what each does. Pick one and it's filled in with its default.",
-    "After `\"editor.vim\": ` the choices are true and false. Hover any setting's name for its description and default.",
+    "After `\"editor.lineNumbers\": ` the choices are true and false. Hover any setting's name for its description and default.",
     "Make a mistake, such as `\"editor.fontSize\": 99` or `\"colour\": 1`: it's underlined with why, the status bar says `Settings: 1 problem`, and the settings editor shows the problem on that setting. The rest of the file still applies.",
     "The bar above the JSON has Open settings editor, to go back.",
     "Keybindings are edited in the JSON: `\"keybindings\": [{\"key\": \"Mod-k\", \"command\": \"quickOpen\"}]` makes ⌘K open notes. ⌘⇧P shows the new shortcuts.",

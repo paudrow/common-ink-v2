@@ -2,12 +2,13 @@
 // each and what it changed. Select changes to see what they did together; revert just those, or
 // restore a note to how it was. Labels name a note's state at one revision. Filtering to one author and
 // undoing everything shown is "undo what the agent did".
-import { authorKey, type Change, type FileDiff, type FilePath, type Revision, type UndoResult, type WriteResult } from "../../../../worker/src/files.ts";
+import { authorKey } from "common-ink/files";
+import type { Change, FileDiff, FilePath, Revision, UndoResult, WriteResult } from "../../../../worker/src/files.ts";
 import type { Label } from "../../../../worker/src/labels.ts";
-import { ago, describeAuthor, diffStat, runLines } from "../../describe.ts";
-import { matchKeys } from "../../keys.ts";
+import { ago, describeAuthor, diffStat, runLines } from "common-ink/describe";
+import { matchKeys } from "common-ink/keys";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
-import { VERSION_PREFIX, versionView, versionViewId } from "../../version.ts";
+import { VERSION_PREFIX, versionView, versionViewId } from "./version.ts";
 
 const history: ExtensionModule = {
   activate(ctx) {

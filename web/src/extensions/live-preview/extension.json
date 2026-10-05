@@ -1,0 +1,13 @@
+{
+  "id": "live-preview",
+  "name": "Live preview",
+  "version": "1.0.0",
+  "description": "Markdown as it reads: headings at size without their #, emphasis without its markers, links as their text, uploaded images shown, and rules, quotes and code blocks styled. The line the cursor is on shows its raw markdown. The editor.livePreview setting turns every extension's previews off and on.",
+  "main": "index.ts",
+  "files": ["index.ts", "markdown.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Draw markdown in notes as it reads" }
+  },
+  "contributes": {}
+}

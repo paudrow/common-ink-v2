@@ -56,6 +56,9 @@ function setUp() {
     setTrusted: async () => {},
     install: async () => {},
     showActivity: () => {},
+    catalog: () => ({ entries: [{ id: "pomodoro", name: "Pomodoro", version: "1.0.0", description: "Focus timer.", folder: "https://app.example/catalog/pomodoro/", catalog: "Common Ink", firstParty: true }], problems: [] }),
+    commandTitle: () => undefined,
+    installFromCatalog: async () => {},
   });
   const root = document.createElement("div");
   document.body.replaceChildren(root);
@@ -73,6 +76,7 @@ test("the list is a row each, in sections; a row opens its details in a modal", 
     [
       ["Installed", ["Word-count"]],
       ["Built-in", ["Vim"]],
+      ["Catalog", ["Pomodoro"]],
     ],
   );
   const open = root.querySelector<HTMLButtonElement>('[data-focus="open:word-count"]')!;
@@ -144,7 +148,7 @@ test("the search filters rows and hides sections with none", () => {
   );
   assert.deepEqual(
     [...root.querySelectorAll<HTMLElement>(".extension-section")].map((s) => s.hidden),
-    [false, true],
+    [false, true, true],
   );
 });
 
