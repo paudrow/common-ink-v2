@@ -74,3 +74,58 @@ browserTest(h, "Open today's note makes it with just its date as its title, in t
   await app.page.waitForFunction(() => document.title.startsWith("Journal/2026-10-05"));
   await until(app, "Journal/2026-10-05.md", (t) => t === "# 2026-10-05\n");
 });
+
+/** The notice a tick shows, if any. */
+const toastText = (app: App) => app.page.locator(".task-toast .task-toast-text").last().textContent();
+
+browserTest(h, "a tick is obvious: ticked and struck through, then moved on with its new date standing out, a notice with Undo and Open log, and its chip counting", { scenario: "tasks", open: "Chores", levers: { now: "2026-10-05T09:00" } }, async (app) => {
+  const line = app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Water the plants" });
+  await box(app, "Water the plants").click();
+  // For a moment: ticked, struck through, not moved on yet.
+  assert.match((await line.getAttribute("class"))!, /cm-task-completing/);
+  assert.equal(await line.locator(".cm-checkbox").getAttribute("aria-checked"), "true");
+  // Then moved on, its new due date standing out, and the notice.
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line.cm-task-fresh", { hasText: "Water the plants" }).waitFor();
+  const due = await line.locator('.tk[data-field="due"]').textContent();
+  assert.match(due!, /Oct 8/);
+  assert.equal(await toastText(app), "Done · next due Thu, Oct 8 · Logged in today's note");
+  await until(app, "Chores.md", (t) => t.includes("- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05"));
+  // Its chip: done today, once in the log.
+  await line.locator('.tk[data-field="last"]', { hasText: "✓ Today · 1×" }).waitFor();
+  // Clicked: its completions, each where it's logged.
+  await line.locator('.tk[data-field="last"]').click();
+  assert.deepEqual(await app.page.locator(".chip-pop .fp-item").allTextContents(), ["Today · Journal/2026-10-05"]);
+  await app.page.keyboard.press("Escape");
+  // Open log: today's note, at its ## Done line.
+  await app.page.locator(".task-toast .task-toast-action", { hasText: "Open log" }).click();
+  await app.page.waitForFunction(() => document.title.startsWith("Journal/2026-10-05"));
+  assert.match(JSON.stringify((await app.state()).cursor), /Water the plants done:2026-10-05/);
+  // Undo, from another tick's notice: the line as it was, last: included, and its log line out.
+  await app.open("Chores");
+  await box(app, "Physio exercises").click();
+  await app.page.locator(".task-toast .task-toast-text", { hasText: "next due" }).last().waitFor();
+  await until(app, "Chores.md", (t) => t.includes("- [ ] Physio exercises due:2026-10-06 rec:daily times:4 last:2026-10-05"));
+  await app.page.locator(".task-toast").last().locator(".task-toast-action", { hasText: "Undo" }).click();
+  await until(app, "Chores.md", (t) => t.includes("- [ ] Physio exercises due:2026-10-05 rec:daily times:5\n"));
+  await until(app, "Journal/2026-10-05.md", (t) => !t.includes("Physio"));
+});
+
+browserTest(h, "with reduced motion, a tick moves the task on at once: no strike-through pause, just the highlight and the notice", { scenario: "tasks", open: "Chores", levers: { now: "2026-10-05T09:00" } }, async (app) => {
+  await app.page.emulateMedia({ reducedMotion: "reduce" });
+  await box(app, "Water the plants").click();
+  const line = app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Water the plants" });
+  // At once: no frame where it's struck through and still due today.
+  assert.doesNotMatch((await line.getAttribute("class"))!, /cm-task-completing/);
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line.cm-task-fresh", { hasText: "Water the plants" }).waitFor({ timeout: 500 });
+  assert.equal(await toastText(app), "Done · next due Thu, Oct 8 · Logged in today's note");
+});
+
+browserTest(h, 'with tasks.completionLog "none", the notice doesn\'t say it was logged', { scenario: "tasks", levers: { now: "2026-10-05T09:00" } }, async (app) => {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "tasks.completionLog": "none" }));
+  await app.reload();
+  await app.open("Chores");
+  await box(app, "Water the plants").click();
+  await app.page.locator(".task-toast").waitFor();
+  assert.equal(await toastText(app), "Done · next due Thu, Oct 8");
+  assert.equal(await app.page.locator(".task-toast .task-toast-action", { hasText: "Open log" }).count(), 0);
+});

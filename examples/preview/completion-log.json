@@ -2,7 +2,9 @@
   "pr": 30,
   "title": "Done today: repeating tasks log their completions",
   "steps": [
-    "Open Chores and tick Water the plants. It moves on to its next date on the same line, as before, and a line goes under ## Done in today's daily note, Journal/<today>, made with just the date as its title if it wasn't there: `- [x] Water the plants done:<today> ([[Chores]])`. ⌘⇧P, Open today's note, to see it.",
+    "Open Chores and tick Water the plants. For a moment it shows ticked and struck through; then it moves on to its next date on the same line, its new due date standing out, with `last:` and today's date written in. A notice at the bottom says \"Done · next due Thu, Oct 8 · Logged in today's note\", with Undo and Open log; Open log jumps to its line under ## Done in Journal/<today>, made with just the date as its title if it wasn't there.",
+    "Its chip now reads \"✓ Today · 1×\": when it was last done, and how many completions the daily notes log for it. Click it for the list, each opening its daily note at its line.",
+    "With reduced motion (your system's setting), the tick moves the task on at once: no pause, just the highlight and the notice. With Tasks › Completion log set to none, the notice doesn't say it was logged.",
     "Back in Chores, undo (u in Vim, ⌘Z otherwise): the tick and its log line go together. Redo brings both back.",
     "Tick Book a dentist appointment: a plain task is ticked with done: in Chores, and not logged. Set Tasks › Log plain tasks in settings (⌘,) to log those too.",
     "⌘⇧P, Show tasks: Today has a Done today group, with what's logged today and the plain tasks ticked today. Untick Water the plants there: it asks whether to put it back in Chores (due again the day you ticked it) or only take it out of the log.",
