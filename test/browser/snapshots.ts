@@ -17,8 +17,11 @@ export interface SnapshotOptions {
   maxDiff?: number;
 }
 
-/** Compare the page with its baseline `name`, or write the baseline if there isn't one (outside CI). */
-export async function matchSnapshot(page: Page, name: string, { threshold = 32, maxDiff = 0.002 }: SnapshotOptions = {}): Promise<void> {
+/**
+ * Compare the page with its baseline `name`, or write the baseline if there isn't one (outside CI).
+ * Answers what's wrong, or null, so a test takes all its pictures before it fails.
+ */
+export async function matchSnapshot(page: Page, name: string, { threshold = 32, maxDiff = 0.002 }: SnapshotOptions = {}): Promise<string | null> {
   // The editor's own cursor and the focused line move with every keypress; neither is what's checked.
   await page.addStyleTag({ content: ".cm-cursorLayer, .cm-selectionLayer { visibility: hidden !important; }" });
   await page.evaluate(() => document.fonts.ready);
@@ -27,16 +30,16 @@ export async function matchSnapshot(page: Page, name: string, { threshold = 32, 
   if (process.env.UPDATE_SNAPSHOTS || !fs.existsSync(baseline)) {
     if (process.env.CI && !process.env.UPDATE_SNAPSHOTS) {
       write(path.join(RESULTS, `${name}.png`), shot);
-      throw new Error(`No ${process.platform} baseline for the ${name} snapshot: CI's is in its test-results artifact, as snapshots/${process.platform}/${name}.png; commit it to test/browser/snapshots/${process.platform}/`);
+      return `No ${process.platform} baseline for the ${name} snapshot: CI's is in its test-results artifact, as snapshots/${process.platform}/${name}.png; commit it to test/browser/snapshots/${process.platform}/`;
     }
     write(baseline, shot);
-    return;
+    return null;
   }
   const { ratio, diff, size } = await compare(page, shot, fs.readFileSync(baseline), threshold);
-  if (ratio <= maxDiff) return;
+  if (ratio <= maxDiff) return null;
   write(path.join(RESULTS, `${name}.png`), shot);
   if (diff) write(path.join(RESULTS, `${name}-diff.png`), Buffer.from(diff, "base64"));
-  throw new Error(`The ${name} snapshot changed: ${size ?? `${(ratio * 100).toFixed(2)}% of pixels`} (allowed ${(maxDiff * 100).toFixed(2)}%). This run's and the difference are in test-results/snapshots/; UPDATE_SNAPSHOTS=1 takes it as the new baseline.`);
+  return `The ${name} snapshot changed: ${size ?? `${(ratio * 100).toFixed(2)}% of pixels`} (allowed ${(maxDiff * 100).toFixed(2)}%). This run's and the difference are in test-results/snapshots/; UPDATE_SNAPSHOTS=1 takes it as the new baseline.`;
 }
 
 function write(file: string, data: Buffer) {
