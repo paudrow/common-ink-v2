@@ -105,11 +105,61 @@ browserTest(h, "a link embed's iframe never loads again, has its src written or 
       return slots.some((x) => Math.abs(x.top - f.top) < 2 && Math.abs(x.left - f.left) < 2);
     }),
   );
-  const debug = await app.page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.embed-scroller .cm-url-embed[data-url-embed="youtube"]')].map((box) => {
-    const sc = box.closest<HTMLElement>(".embed-scroller")!;
-    const content = sc.firstElementChild as HTMLElement;
-    return { kids: [...sc.children].map((c) => c.className + "@" + (c as HTMLElement).offsetTop), contentRect: Math.round(content.getBoundingClientRect().top), display: getComputedStyle(sc).display, pos: getComputedStyle(sc).position, cpos: getComputedStyle(content).position, boxTop: box.style.top, boxRect: Math.round(box.getBoundingClientRect().top), sc: sc.getAttribute("style"), scTop: sc.scrollTop, scH: sc.scrollHeight, content: (sc.firstElementChild as HTMLElement).style.height };
-  }));
-  const slots = await app.page.evaluate(() => [...document.querySelectorAll(".cm-embed-slot")].map((x) => { const r = x.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
-  assert.deepEqual(over, [true, true], JSON.stringify({ debug, slots }));
+  assert.deepEqual(over, [true, true], "each window's video over its own slot");
+});
+
+/**
+ * Watch a calendar drawn in a note: its box and its page leaving the page or moving in it, the page
+ * made again (another element), and its fetches of events (each a load of what it shows).
+ */
+const WATCH_CALENDAR = `(() => {
+  const page = document.querySelector(".cal-page.is-embed");
+  const box = page.closest(".cm-embed");
+  const w = (window.calendar = { moves: 0, page, box, fetches: 0 });
+  new MutationObserver((rs) => rs.forEach((r) => [...r.removedNodes, ...r.addedNodes].forEach((n) => (n === page || n === box || n.contains?.(box)) && w.moves++))).observe(document.documentElement, { childList: true, subtree: true });
+  new PerformanceObserver((list) => list.getEntries().forEach((e) => e.name.includes("/api/events") && w.fetches++)).observe({ type: "resource" });
+})()`;
+const calendarWatched = (app: App) =>
+  app.page.evaluate(() => {
+    const w = (window as unknown as { calendar: { moves: number; page: Element; box: Element; fetches: number } }).calendar;
+    const page = document.querySelector(".cal-page.is-embed");
+    return { moves: w.moves, fetches: w.fetches, same: page === w.page && page?.closest(".cm-embed") === w.box, scrolled: (page?.querySelector(".cal-scroll") as HTMLElement | null)?.scrollTop ?? -1 };
+  });
+
+browserTest(h, "a calendar in a note is never drawn again, moved or loaded again: typing above it, a new tab, a split, the cursor on its line", { scenario: "calendar", levers: { now: "2026-10-05T08:00" } }, async (app) => {
+  await app.writeFile("Calendar note.md", "# Calendar note\n\nA paragraph above it.\n\n::calendar{view=week height=300}\n\nBelow\n");
+  await app.goto({ now: "2026-10-05T08:00" }, "Calendar note");
+  await app.page.locator(".cal-page.is-embed .cal-event").first().waitFor();
+  await app.page.waitForTimeout(500);
+  // Scrolled to an hour of its own: what it shows is kept as it was, not drawn from nothing.
+  await app.page.locator(".cal-page.is-embed .cal-scroll").evaluate((e) => (e.scrollTop = 123));
+  await app.page.evaluate(WATCH_CALENDAR);
+  const untouched = { moves: 0, fetches: 0, same: true, scrolled: 123 };
+  const shown = (yes: boolean) => app.page.waitForFunction((yes) => (getComputedStyle(document.querySelector(".cal-page.is-embed")!.closest(".cm-embed")!).visibility === "visible") === yes, yes);
+  await app.call("cursor", 3, 1);
+  await app.keys("<Esc>A and more<Esc>");
+  assert.deepEqual(await calendarWatched(app), untouched, "typing in a paragraph above it");
+  // A word on the blank line right above: a directive starts a block of its own, so it stays drawn.
+  await app.keys("jAx<Esc>");
+  await app.idle();
+  await shown(true);
+  await app.keys("x");
+  await app.idle();
+  assert.deepEqual(await calendarWatched(app), untouched, "typing on the line right above it, and taking it out");
+  await app.keys("j");
+  await shown(false);
+  await app.keys("j");
+  await shown(true);
+  assert.deepEqual(await calendarWatched(app), untouched, "the cursor on its line and off");
+  await app.page.locator("#notes a", { hasText: "Calendar tour" }).click({ modifiers: ["ControlOrMeta"] });
+  await app.page.waitForFunction(() => document.title.startsWith("Calendar tour"));
+  await shown(false);
+  await app.page.locator(".tab", { hasText: "Calendar note" }).first().click();
+  await shown(true);
+  assert.deepEqual(await calendarWatched(app), untouched, "⌘-click opening a note in a new tab, and back");
+  const calendars = await app.page.locator(".cal-page.is-embed").count();
+  await app.command("Split right");
+  await app.page.waitForFunction((n) => document.querySelectorAll(".cal-page.is-embed").length === n + 1, calendars);
+  const after = await calendarWatched(app);
+  assert.deepEqual({ ...after, fetches: 0 }, untouched, "splitting the window: the first calendar is untouched (the new window's own calendar loads its events)");
 });
