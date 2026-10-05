@@ -329,7 +329,11 @@ export class Files {
     });
   }
 
-  /** Apply a seed once: running it again with the same id changes nothing. */
+  /**
+   * Apply a seed once: running it again with the same id changes nothing. A note that isn't there is
+   * added; one the seed wrote last, that no one has changed since, takes the seed's new text; one
+   * someone changed stays theirs, unless the seed replaces it (Try this PR).
+   */
   seed(seed: Seed): void {
     this.db.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
@@ -340,7 +344,9 @@ export class Files {
         if (!path) throw new Error(`Not a file path: ${raw}`);
         const current = this.read(path);
         if (!current) added.add(path);
-        if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+        const last = current && current.text !== text ? this.recent({ path, limit: 1 })[0] : undefined;
+        const untouched = !!last && authorKey(last.author) === authorKey(SEED_AUTHOR);
+        if (!current || replace || untouched) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
       for (const { path, text, agent, label } of seed.edits ?? []) {
