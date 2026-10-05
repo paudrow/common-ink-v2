@@ -28,11 +28,11 @@ browserTest(h, "permissions=allow answers a sandboxed extension's prompt with Al
   const view = app.page.frameLocator("iframe.webview");
   await view.locator("body", { hasText: /\d+ words?/ }).waitFor();
   const shown = await app.prompt.shown();
-  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "word-count", asks: ["files:read:**"], auto: true, answer: "once" }]);
+  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "word-count", asks: ["files:read:**/*.md"], auto: true, answer: "once" }]);
   assert.deepEqual((await app.state()).permissions.grants, {}, "nothing kept in settings");
   await app.goto({ permissions: "deny" });
   await app.command("Show word count");
-  await view.locator("body", { hasText: "You didn't allow" }).waitFor();
+  await view.locator("body", { hasText: "you didn't allow it this time" }).waitFor();
   assert.equal(await app.prompt.dialog().count(), 0, "no dialog either way");
 });
 
@@ -41,8 +41,8 @@ browserTest(h, "net=replay: a link card comes from the recordings, and a page th
   await app.open("Cards");
   await app.page.locator(".link-card .title", { hasText: "A recorded pen" }).waitFor();
   await app.page.locator('.cm-url-embed a.cm-md-link[href="https://recorded.example/missing"]').waitFor();
-  const activity = (await app.state()) as unknown as { activity: Array<{ detail: string; outcome: string }> };
-  assert.ok(activity.activity.some((a) => a.detail.includes("recorded.example/missing") && a.outcome === "failed"), "the missing one failed, in Extension activity");
+  const activity = (await app.state()) as unknown as { activity: Array<{ url?: string; outcome: string }> };
+  assert.ok(activity.activity.some((a) => a.url?.includes("recorded.example/missing") && a.outcome === "failed"), "the missing one failed, in Extension activity");
 });
 
 browserTest(h, "offline: edits wait, the status bar says so, and they reach the server once it's back", { scenario: "lists", open: "Lists tour" }, async (app) => {

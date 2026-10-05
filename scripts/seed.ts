@@ -65,7 +65,9 @@ function folderFiles(dir: string): Array<{ path: string; text: string }> {
 function catalogFiles(catalog: string, ids: readonly string[]): Array<{ path: string; text: string }> {
   return ids.flatMap((id) => {
     const manifest = JSON.parse(fs.readFileSync(path.join(catalog, id, "extension.json"), "utf8")) as { main?: string; files?: string[] };
-    return ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+    const files = ["extension.json", ...new Set([manifest.main ?? "index.js", ...(manifest.files ?? [])])].map((f) => ({ path: `.common-ink/extensions/${id}/${f}`, text: fs.readFileSync(path.join(catalog, id, f), "utf8") }));
+    // As installing from the Catalog leaves it: where it came from, so it says Catalog.
+    return [...files, { path: `.common-ink/extensions/${id}/installed.json`, text: `${JSON.stringify({ catalog: "Common Ink" })}\n` }];
   });
 }
 
@@ -97,7 +99,8 @@ export function fillDates(text: string, today: string): string {
 
 export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
   const notes = [
-    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: false }))),
+    // Notes you edit while reviewing are kept; a sample extension's files are the PR's code, so they follow it.
+    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: n.path.startsWith(".common-ink/extensions/") }))),
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
   const edits = sections.flatMap((s) => s.edits);

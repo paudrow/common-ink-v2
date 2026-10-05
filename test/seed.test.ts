@@ -28,6 +28,22 @@ test("a section's notes come from its folder", () => {
   assert.deepEqual(readSections(dir), [{ slug: "notes", pr: 2, title: "Notes", steps: ["Write one"], notes: [{ path: "Ideas.md", text: "# Ideas\n" }], edits: [] }]);
 });
 
+test("a section installs the Catalog extensions it names, as installing from the Catalog would", () => {
+  const dir = examples({
+    "demo.json": JSON.stringify({ pr: 3, title: "Demo", steps: ["Try it"], install: ["clock"] }),
+    "catalog/clock/extension.json": JSON.stringify({ name: "Clock", main: "main.js" }),
+    "catalog/clock/main.js": "export default { activate() {} };",
+  });
+  assert.deepEqual(
+    readSections(dir, path.join(dir, "catalog"))[0].notes,
+    [
+      { path: ".common-ink/extensions/clock/extension.json", text: JSON.stringify({ name: "Clock", main: "main.js" }) },
+      { path: ".common-ink/extensions/clock/main.js", text: "export default { activate() {} };" },
+      { path: ".common-ink/extensions/clock/installed.json", text: '{"catalog":"Common Ink"}\n' },
+    ],
+  );
+});
+
 test("a malformed section is an error that names its file", () => {
   const dir = examples({ "broken.json": JSON.stringify({ pr: "2", title: "Broken", steps: [] }) });
   assert.throws(() => readSections(dir), /broken\.json/);
@@ -65,13 +81,26 @@ test("Try this PR lists this PR's steps first, then the rest newest first", () =
   );
 });
 
-test("the seed keeps sample notes and replaces Try this PR, and its id follows its content", () => {
-  const sections = [{ slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [{ path: "Welcome.md", text: "# Welcome\n" }], edits: [] }];
+test("the seed keeps sample notes, and replaces sample extensions' files and Try this PR; its id follows its content", () => {
+  const sections = [
+    {
+      slug: "a",
+      pr: 4,
+      title: "Scaffold",
+      steps: ["Open it"],
+      notes: [
+        { path: "Welcome.md", text: "# Welcome\n" },
+        { path: ".common-ink/extensions/clock/extension.json", text: "{}" },
+      ],
+      edits: [],
+    },
+  ];
   const seed = buildSeed(sections, { number: 4 });
   assert.deepEqual(
     seed.notes.map((n) => [n.path, n.replace]),
     [
       ["Welcome.md", false],
+      [".common-ink/extensions/clock/extension.json", true],
       ["Try this PR.md", true],
     ],
   );

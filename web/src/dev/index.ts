@@ -11,7 +11,7 @@ import { installClock, setClock } from "./clock.ts";
 import { installNet, setOffline } from "./net.ts";
 import { makeInspector, type DevApp } from "./inspector.ts";
 
-export type Prompt = (extension: ExtensionManifest, asks: Array<{ ask: Ask; key: string }>, joined: (fn: (ask: { ask: Ask; key: string }) => void) => void) => Promise<Choice>;
+export type Prompt<R extends unknown[] = unknown[]> = (extension: ExtensionManifest, asks: Array<{ ask: Ask; key: string }>, joined: (fn: (ask: { ask: Ask; key: string }) => void) => void, ...rest: R) => Promise<Choice>;
 
 /** A prompt as the inspector reports it: who asked for what, whether a lever answered, and the answer once there is one. */
 export interface PromptRecord {
@@ -85,8 +85,8 @@ export function boot(page: LeversPage) {
   return {
     levers,
     /** Permission prompts, answered by the `permissions` lever when it says so, and recorded either way. */
-    prompt(real: Prompt): Prompt {
-      return async (extension, asks, joined) => {
+    prompt<R extends unknown[]>(real: Prompt<R>): Prompt<R> {
+      return async (extension, asks, joined, ...rest) => {
         const record: PromptRecord = { time: Date.now(), extension: extension.id, asks: asks.map((a) => a.key), auto: levers.permissions === "allow" || levers.permissions === "deny", answer: null };
         keep(prompts, record);
         // Allow once and Escape keep nothing in settings, so a lever's answers last only as long as the page.
@@ -95,11 +95,15 @@ export function boot(page: LeversPage) {
             ? "once"
             : levers.permissions === "deny"
               ? "dismiss"
-              : await real(extension, asks, (fn) =>
-                  joined((a) => {
-                    record.asks.push(a.key);
-                    fn(a);
-                  }),
+              : await real(
+                  extension,
+                  asks,
+                  (fn) =>
+                    joined((a) => {
+                      record.asks.push(a.key);
+                      fn(a);
+                    }),
+                  ...rest,
                 );
         return record.answer;
       };

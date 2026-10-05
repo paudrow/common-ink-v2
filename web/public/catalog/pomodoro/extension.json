@@ -2,6 +2,7 @@
   "id": "pomodoro",
   "name": "Pomodoro",
   "version": "1.0.0",
+  "publisher": "Common Ink",
   "description": "Work in focused rounds: ```pomodoro work=25m break=5m``` takes you through work and breaks, with a longer break every few rounds. It shows in the status bar, notifies at each change, and keeps going when its note closes. It runs sandboxed.",
   "main": "index.js",
   "files": ["index.js"],

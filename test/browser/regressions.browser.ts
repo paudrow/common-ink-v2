@@ -89,11 +89,11 @@ browserTest(h, "one answer to a permission prompt is enough, however many times 
   await app.page.waitForTimeout(1200);
   assert.equal(await app.prompt.dialog().count(), 0, "not asked again while the answer is kept");
   await app.call("slow");
-  await app.page.frameLocator("iframe.webview").locator("body", { hasText: "You didn't allow" }).waitFor();
+  await app.page.frameLocator("iframe.webview").locator("body", { hasText: "you don't allow it" }).waitFor();
   await app.idle();
   const shown = await app.prompt.shown();
   assert.deepEqual(shown.map(({ extension, answer }) => ({ extension, answer })), [{ extension: "word-count", answer: "deny" }]);
-  assert.deepEqual((await app.state()).permissions.grants, { "word-count": { "files:read:**": "deny" } });
+  assert.deepEqual((await app.state()).permissions.grants, { "word-count": { "files:read:**/*.md": "deny" } });
 });
 
 browserTest(h, "j visits every line of a note in order, through tables, math, code blocks and embeds, and k comes back the same way", { scenario: "embeds" }, async (app) => {

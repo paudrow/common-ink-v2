@@ -19,10 +19,12 @@ import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { ExtensionRuntime } from "./extension-runtime.ts";
-import { builtInSourceView, extensionDetailsView, extensionsView, type ExtensionsViewDeps } from "./extensions-view.ts";
+import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } from "./extensions-view.ts";
+import { modalOpen } from "./modal.ts";
+import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
-import { askPermission, confirmDialog, textDialog } from "./dialog.ts";
+import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
@@ -32,6 +34,7 @@ import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
+import type { Prompt } from "./dev/index.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
 const dev = await bootLevers();
@@ -99,6 +102,8 @@ const workbench = new Workbench(
     },
     focus(path) {
       if (path) window.history.replaceState(null, "", addressFor(path));
+      // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
+      if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
       if (path) lastFile = path;
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
@@ -312,6 +317,7 @@ commands.register(
 const bar = new CommandBar();
 const panels = new Panels($("#panel"));
 
+const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
 const extensions = new ExtensionRuntime({
   me,
   commands,
@@ -331,9 +337,17 @@ const extensions = new ExtensionRuntime({
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
     await loadSettings();
   },
-  prompt: dev ? dev.prompt(askPermission) : askPermission,
+  prompt: dev ? dev.prompt(promptFor) : promptFor,
+  // It tried something it never asked for: say so once, with where to see what it does ask for.
+  undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
 });
+/** Who's asking, for a permission prompt: its name, where it's from and who made it, and its details. */
+function askerOf(id: string): Asker {
+  const r = extensions.host.records.find((x) => x.id === id);
+  return { name: r?.manifest.name ?? id, origin: r ? originOf(r) : "Workspace", publisher: r?.manifest.publisher, showDetails: () => extensionsUi.showDetails(id) };
+}
+
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
 focusListeners.push((path) => extensions.broadcast("focus", path));
@@ -363,7 +377,6 @@ function updateReloadLine() {
 function extensionsChanged() {
   panels.refresh("extensions");
   workbench.refreshView("extensions");
-  for (const r of extensions.host.records) workbench.refreshView(`extension:${r.id}`);
   panels.refresh("extension-activity");
   workbench.refreshView("extension-activity");
   // The dot shows while an extension has a network request in flight.
@@ -415,7 +428,7 @@ const extensionDeps: ExtensionsViewDeps = {
     await writeSetting(api, WORKSPACE_SETTINGS, "extensions.disabled", on ? others : [...others, id]);
     await loadSettings();
     // Turning a sandboxed workspace extension on needs no reload; turning anything off does.
-    if (on && extensions.host.records.find((r) => r.id === id && r.state === "off" && r.workspace && !r.builtIn)) await goLive(id);
+    if (on && extensions.host.records.find((r) => r.id === id && r.state === "off" && r.workspace && !r.builtIn)) await goLive(id, { kind: "turnedOn" });
     extensionsChanged();
   },
   safe: SAFE,
@@ -431,6 +444,11 @@ const extensionDeps: ExtensionsViewDeps = {
     if (answer) mine[key] = answer;
     else delete mine[key];
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
+    await loadSettings();
+  },
+  async resetAnswers(r) {
+    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
     await loadSettings();
   },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
@@ -456,7 +474,7 @@ const extensionDeps: ExtensionsViewDeps = {
     try {
       const { id, name } = await api.installExtension(url);
       await refreshList();
-      if (await goLive(id)) workbench.notice(`Installed ${name}. It runs sandboxed.`);
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
       else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
@@ -469,19 +487,16 @@ const extensionDeps: ExtensionsViewDeps = {
     return listed;
   },
   installFromCatalog: (entry) => installAndAnnounce(entry),
-  openDetails: (r) => workbench.openView(`extension:${r.id}`, { newTab: true }),
 };
 const extensionsUi = extensionsView(extensionDeps);
-// Each extension's details, in a tab of their own.
-workbench.provideViews("extension:", (id) => extensionDetailsView(id.slice("extension:".length), extensionDeps));
 
 /**
  * Put an extension that was just installed or turned on into the running app, if it can go in without
  * a reload (a sandboxed one can): its commands, views and embeds work at once, and embeds already on
  * screen draw. Returns whether it went in; if not, it starts after a reload.
  */
-async function goLive(id: string): Promise<boolean> {
-  if (SAFE || !(await extensions.addLive(files, id, settings["extensions.trusted"]))) return false;
+async function goLive(id: string, because: Trigger): Promise<boolean> {
+  if (SAFE || !(await extensions.addLive(files, id, settings["extensions.trusted"], because))) return false;
   statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE).get(id)!);
   catalog = extensions.catalog();
   // Its settings join the catalog, its keybindings the ones in effect, and editors draw its embeds.
@@ -494,7 +509,7 @@ async function installAndAnnounce(entry: CatalogEntry): Promise<void> {
   try {
     await installFromCatalog(entry);
     await refreshList();
-    if (await goLive(entry.id)) workbench.notice(`Installed ${entry.name}.`);
+    if (await goLive(entry.id, { kind: "installed" })) workbench.notice(`Installed ${entry.name}.`);
     else workbench.notice(`Installed ${entry.name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
   } catch (err) {
     workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`);
@@ -540,7 +555,7 @@ async function loadCatalog() {
  * are fetched by the Worker, as Install from URL does. Either way it's a workspace extension, sandboxed.
  */
 async function installFromCatalog(entry: CatalogEntry) {
-  if (!entry.firstParty) return void (await api.installExtension(entry.folder));
+  if (!entry.firstParty) return void (await api.installExtension(entry.folder, entry.catalog));
   const get = async (file: string) => {
     const res = await fetch(new URL(file, entry.folder));
     // A missing file is answered with the app's page, so a page isn't a file of the extension's.
@@ -550,7 +565,12 @@ async function installFromCatalog(entry: CatalogEntry) {
   const manifestText = await get("extension.json");
   const manifest = parseManifest(JSON.parse(manifestText), entry.id);
   if (typeof manifest === "string") throw new Error(manifest);
-  const files: Array<[string, string]> = [["extension.json", manifestText], ...(await Promise.all(manifest.files.map(async (f): Promise<[string, string]> => [f, await get(f)])))];
+  const files: Array<[string, string]> = [
+    ["extension.json", manifestText],
+    ...(await Promise.all(manifest.files.map(async (f): Promise<[string, string]> => [f, await get(f)]))),
+    // Where it came from, so its row and prompts say Catalog.
+    ["installed.json", `${JSON.stringify({ from: new URL("extension.json", entry.folder).toString(), catalog: entry.catalog })}\n`],
+  ];
   for (const [file, text] of files) {
     const path = extensionFilePath(entry.id, file);
     await api.write(path, text, (await api.read(path)).revision);
@@ -564,7 +584,7 @@ async function setTrust(id: string, trusted: boolean) {
   await loadSettings();
 }
 
-const activityUi = activityView(extensions.broker, (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id);
+const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
 panels.register(activityUi);
 workbench.registerView(activityUi);
 // The Extensions view is the app's own, not an extension: turning extensions off can't lock you out of it.
@@ -596,6 +616,8 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
+    // A modal has the keys while it's up: its own, and Tab and Escape.
+    if (modalOpen()) return;
     const id = commandForKey(e, settings.keybindings);
     if (!id) return;
     e.preventDefault();
