@@ -159,6 +159,8 @@ export class Webview {
     onHeight?: (height: number) => void,
     /** Its page has loaded, scripts and all. */
     onLoaded?: () => void,
+    /** Its page has first painted something: show the frame now. */
+    onPainted?: () => void,
   ) {
     this.frame.setAttribute("sandbox", "allow-scripts");
     this.frame.className = "webview";
@@ -191,6 +193,7 @@ export class Webview {
           onLoaded?.();
         }
         if (m.type === "drawn" && m.drawn) this.status.drawn = m.drawn;
+        if (m.type === "painted") onPainted?.();
         if (m.type === "probe" && typeof m.id === "number") this.probes.get(m.id)?.(m);
         if (m.type === "pong" && m.id === alive) alive += 0.5;
       };

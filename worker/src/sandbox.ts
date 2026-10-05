@@ -44,7 +44,9 @@ export function sandboxCsp(origin: string, kind: "host" | "webview"): string {
 
 /** A sandbox shell page: one script from this route, nothing else. */
 export function shellPage(origin: string, kind: "host" | "webview"): Response {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${kind === "host" ? "Extension host" : "Webview"}</title></head><body><script src="${SANDBOX_PREFIX}${kind}.js"></script></body></html>`;
+  // A webview is transparent from the first byte, in the app's color schemes: it never paints white while it boots.
+  const look = kind === "webview" ? `<meta name="color-scheme" content="light dark"><style>html, body { background: transparent; }</style>` : "";
+  const html = `<!doctype html><html><head><meta charset="utf-8">${look}<title>${kind === "host" ? "Extension host" : "Webview"}</title></head><body><script src="${SANDBOX_PREFIX}${kind}.js"></script></body></html>`;
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
