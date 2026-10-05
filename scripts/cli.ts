@@ -8,6 +8,8 @@
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
+//   common-ink reset [scenario]        test levers only (a Preview, npm run dev): empty the workspace and
+//                                      seed it again, from a scenario (test/scenarios/) or its own seed
 //
 // COMMON_INK_URL is the workspace (default http://localhost:8787). Changes are by the agent named in
 // COMMON_INK_AGENT (default "CLI"), working for you. Behind Cloudflare Access, set CF_ACCESS_CLIENT_ID
@@ -117,11 +119,18 @@ const commands: Record<string, () => Promise<void>> = {
     const { data } = await api<UndoResult[]>("POST", "/api/undo", { revisions: positional().map(Number) });
     print(data, () => data.map((r) => `${r.revision}: ${r.status}`).join("\n"));
   },
+  async reset() {
+    const scenario = positional()[0];
+    const { data } = await api<{ scenario: { name: string } }>("POST", "/api/levers/reset", scenario ? { scenario } : {}).catch((err: Error) => {
+      throw new Error(/No route/.test(err.message) ? `${base} has no test levers: it's production, or a Worker without LEVERS` : err.message);
+    });
+    print(data, () => `Reset ${base} to ${data.scenario.name || "its own seed"}`);
+  },
 };
 
 const run = commands[command ?? ""];
 if (!run) {
-  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...>  [--json]");
+  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | reset [scenario]  [--json]");
   process.exit(2);
 }
 await run().catch((err: Error) => {

@@ -1,0 +1,101 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "common-ink",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8787"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "common-ink-lists",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8788",
+        "--scenario",
+        "lists"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "common-ink-todos",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8789",
+        "--scenario",
+        "todos"
+      ],
+      "port": 8789
+    },
+    {
+      "name": "common-ink-embeds",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8790",
+        "--scenario",
+        "embeds"
+      ],
+      "port": 8790
+    },
+    {
+      "name": "common-ink-extensions",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8791",
+        "--scenario",
+        "extensions"
+      ],
+      "port": 8791
+    },
+    {
+      "name": "common-ink-history",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8792",
+        "--scenario",
+        "history"
+      ],
+      "port": 8792
+    },
+    {
+      "name": "common-ink-empty",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "scripts/dev.ts",
+        "--port",
+        "8793",
+        "--scenario",
+        "empty"
+      ],
+      "port": 8793
+    }
+  ]
+}
