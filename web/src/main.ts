@@ -21,11 +21,12 @@ import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { ExtensionRuntime } from "./extension-runtime.ts";
-import { builtInSourceView, extensionsView } from "./extensions-view.ts";
+import { builtInSourceView, extensionsView, originOf } from "./extensions-view.ts";
 import { modalOpen } from "./modal.ts";
+import { changeIn } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
-import { askPermission, confirmDialog, textDialog } from "./dialog.ts";
+import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
@@ -94,6 +95,8 @@ const workbench = new Workbench(
     mode: (mode) => (modeLine.textContent = mode),
     focus(path) {
       if (path) window.history.replaceState(null, "", addressFor(path));
+      // Switching notes is something extensions act on; focus coming back to the same one isn't.
+      if (path && path !== lastFile) extensions.youDid({ kind: "opened", path });
       if (path) lastFile = path;
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
@@ -405,9 +408,17 @@ const extensions = new ExtensionRuntime({
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
     await loadSettings();
   },
-  prompt: askPermission,
+  prompt: (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger),
+  // It tried something it never asked for: say so once, with where to see what it does ask for.
+  undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
 });
+/** Who's asking, for a permission prompt: its name, where it's from and who made it, and its details. */
+function askerOf(id: string): Asker {
+  const r = extensions.host.records.find((x) => x.id === id);
+  return { name: r?.manifest.name ?? id, origin: r ? originOf(r) : "Workspace", publisher: r?.manifest.publisher, showDetails: () => extensionsUi.showDetails(id) };
+}
+
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
 focusListeners.push((path) => extensions.broadcast("focus", path));
@@ -503,6 +514,11 @@ const extensionsUi = extensionsView({
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
     await loadSettings();
   },
+  async resetAnswers(r) {
+    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await loadSettings();
+  },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
   async setTrusted(r, trusted) {
     if (trusted) {
@@ -541,7 +557,7 @@ async function setTrust(id: string, trusted: boolean) {
   await loadSettings();
 }
 
-const activityUi = activityView(extensions.broker, (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id);
+const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
 panels.register(activityUi);
 workbench.registerView(activityUi);
 // The Extensions view is the app's own, not an extension: turning extensions off can't lock you out of it.

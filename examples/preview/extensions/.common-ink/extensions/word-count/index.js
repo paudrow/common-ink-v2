@@ -7,7 +7,8 @@ export default {
     const views = [];
     const count = async () => {
       const path = await ctx.workbench.focusedPath();
-      if (!path) return "No note on show.";
+      // It counts notes, and only asks to read notes: settings and other files aren't its business.
+      if (!path || !path.endsWith(".md")) return "No note on show.";
       try {
         const { text } = await ctx.files.read(path);
         return `${text.split(/\s+/).filter(Boolean).length} words in ${ctx.util.label(path)}`;

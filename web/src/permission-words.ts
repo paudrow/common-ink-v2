@@ -3,6 +3,7 @@
 // files it names ("User settings", never .common-ink/users/…). Names are marked, so a page can set
 // them apart; as text they read as they are.
 import { PERMISSION_KINDS, type ExtensionManifest, type PermissionKind } from "../../worker/src/extensions.ts";
+import type { Ask } from "../../worker/src/permissions.ts";
 import { isNote, type FilePath } from "../../worker/src/files.ts";
 import { docLabel } from "./describe.ts";
 
@@ -56,34 +57,28 @@ export function hostWords(host: string): Phrase {
   return [{ name: host }];
 }
 
-/** Doing something of a kind, to a scope or a thing, in lowercase: "read all your notes", "connect to api.weather.gov". */
-export function doing(kind: PermissionKind, what: Phrase = []): Phrase {
-  switch (kind) {
-    case "network":
-      return ["connect to ", ...what];
-    case "files:read":
-      return ["read ", ...what];
-    case "files:write":
-      return ["change ", ...what];
-    case "settings:write":
-      return ["change the setting ", ...what];
-    case "clipboard:read":
-      return ["read your clipboard"];
-    case "clipboard:write":
-      return ["copy to your clipboard"];
-    case "notifications":
-      return ["show notifications"];
-    case "media":
-      return ["play sound"];
-    case "history:read":
-      return ["read the history of your files"];
-    case "calendar:read":
-      return ["read your calendar"];
-    case "contacts:read":
-      return ["read your contacts"];
-    case "editor":
-      return ["change how notes are edited and drawn"];
-  }
+/** Each kind's verb, as "do it", "did it" and "doing it": what follows is what it's done to, if anything. */
+const VERBS: Record<PermissionKind, [base: string, past: string, ing: string]> = {
+  network: ["connect to", "connected to", "connecting to"],
+  "files:read": ["read", "read", "reading"],
+  "files:write": ["change", "changed", "changing"],
+  "settings:write": ["change the setting", "changed the setting", "changing the setting"],
+  "clipboard:read": ["read your clipboard", "read your clipboard", "reading your clipboard"],
+  "clipboard:write": ["copy to your clipboard", "copied to your clipboard", "copying to your clipboard"],
+  notifications: ["show notifications", "showed a notification", "showing a notification"],
+  media: ["play sound", "played sound", "playing sound"],
+  "history:read": ["read the history of your files", "read the history of your files", "reading the history of your files"],
+  "calendar:read": ["read your calendar", "read your calendar", "reading your calendar"],
+  "contacts:read": ["read your contacts", "read your contacts", "reading your contacts"],
+  editor: ["change how notes are edited and drawn", "changed how notes are edited and drawn", "changing how notes are edited and drawn"],
+};
+
+export type Tense = "base" | "past" | "ing";
+
+/** Doing something of a kind, to a scope or a thing, in lowercase: "read all your notes", "connected to api.weather.gov". */
+export function doing(kind: PermissionKind, what: Phrase = [], tense: Tense = "base"): Phrase {
+  const verb = VERBS[kind][tense === "base" ? 0 : tense === "past" ? 1 : 2];
+  return what.length ? [`${verb} `, ...what] : [verb];
 }
 
 /**
@@ -97,11 +92,14 @@ const SAID: Record<string, Partial<Record<PermissionKind, Phrase>>> = {
 /** What a declared scope lets it do: "read all your notes", "connect to any site". */
 export function scopeWords(kind: PermissionKind, scope?: string): Phrase {
   if (scope === undefined) return doing(kind);
-  const said = SAID[scope]?.[kind];
-  if (said) return said;
-  if (kind === "network") return doing(kind, hostWords(scope));
-  if (kind === "settings:write") return doing(kind, [{ name: scope }]);
-  return doing(kind, filesWords(scope));
+  return SAID[scope]?.[kind] ?? doing(kind, scopeObject(kind, scope));
+}
+
+/** What a scope reaches, as the object of its verb: "all your notes", "any site", a setting's key. */
+function scopeObject(kind: PermissionKind, scope: string): Phrase {
+  if (kind === "network") return hostWords(scope);
+  if (kind === "settings:write") return [{ name: scope }];
+  return filesWords(scope);
 }
 
 /** One declared permission, as answers are kept (its key) and as the app says it. */
@@ -125,3 +123,69 @@ export function declaredPermissions(m: ExtensionManifest): DeclaredPermission[] 
     return scopes.map((scope) => ({ key: scope === undefined ? kind : `${kind}:${scope}`, kind, scope, can: capitalized(scopeWords(kind, scope)), why: p.why }));
   });
 }
+
+/** What you can answer, as every place says it: in a prompt, the Extensions view and the activity log. */
+export const ANSWER_WORDS = { ask: "Ask", allow: "Always allow", deny: "Don't allow" } as const;
+
+/** One thing an extension wants to do now, about what it's for: "read the note This week", "connect to api.weather.gov". */
+export function askWords(ask: Ask, tense: Tense = "base"): Phrase {
+  if (ask.target !== undefined) {
+    const thing = ask.kind === "network" ? hostWords(ask.target) : ask.kind === "settings:write" ? [{ name: ask.target }] : fileWords(ask.target);
+    return doing(ask.kind, thing, tense);
+  }
+  if (ask.scope !== undefined) return tense === "base" ? scopeWords(ask.kind, ask.scope) : doing(ask.kind, scopeObject(ask.kind, ask.scope), tense);
+  return doing(ask.kind, [], tense);
+}
+
+/** What you did that an extension is acting on: why it asks now. */
+export type Trigger =
+  | { kind: "command"; title: string }
+  | { kind: "view"; name: string }
+  | { kind: "opened"; path: string }
+  | { kind: "startup" };
+
+/** Why an extension asks now, as the end of a sentence: "because you ran Show word count". */
+export function triggerWords(t: Trigger | null): Phrase {
+  if (!t) return ["on its own, not right after anything you did"];
+  switch (t.kind) {
+    case "command":
+      return ["because you ran ", { name: t.title }];
+    case "view":
+      return ["to show its ", { name: t.name }, " view"];
+    case "opened":
+      return ["because you switched to ", ...fileWords(t.path)];
+    case "startup":
+      return ["as the app started"];
+  }
+}
+
+/** Why something an extension tried was refused. */
+export type Refusal =
+  /** Your kept answer, Don't allow, for the scope it falls in. */
+  | { reason: "answer"; scope: Phrase }
+  /** Don't allow for now: Escape on its prompt. */
+  | { reason: "now" }
+  /** Its manifest doesn't ask for it: the scopes of that kind it does ask for, if any. */
+  | { reason: "undeclared"; scopes: string[] };
+
+/** "Word count can't read User settings: it only asked to read all your notes." */
+export function refusedWords(name: string, ask: Ask, refusal: Refusal): Phrase {
+  const tried: Phrase = [name, " can't ", ...askWords(ask)];
+  switch (refusal.reason) {
+    case "answer":
+      return [...tried, ": you don't allow it to ", ...refusal.scope, "."];
+    case "now":
+      return [...tried, ": you didn't allow it this time."];
+    case "undeclared":
+      if (!refusal.scopes.length) return [...tried, ": it never asked for that."];
+      return [...tried, ": it only asked to ", ...doing(ask.kind, joined(refusal.scopes.map((scope) => scopeObject(ask.kind, scope)), " or ")), "."];
+  }
+}
+
+/** Phrases one after another, with `and` (or "or") before the last. */
+function joined(phrases: Phrase[], and: string): Phrase {
+  return phrases.flatMap((p, i) => [...(i === 0 ? [] : [i === phrases.length - 1 ? and : ", "]), ...p]);
+}
+
+/** Where to change what an extension may do: "Extensions → Word count". */
+export const changeIn = (name: string) => `Extensions → ${name}`;

@@ -129,6 +129,8 @@ async function install(store: Store, raw: string, author: Author): Promise<{ id:
     if (got.status !== 200 || got.truncated) throw new InstallError(`${file} couldn't be fetched (${got.truncated ? "too big" : got.status})`);
     files.push([file, got.body]);
   }
+  // Where it came from, so the app can say so ("From URL") and you can tell its code isn't your own.
+  files.push(["installed.json", `${JSON.stringify({ from: res.url })}\n`]);
   for (const [file, text] of files) {
     const path = extensionFilePath(id, file);
     const current = await store.read(path);

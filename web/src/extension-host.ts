@@ -55,6 +55,21 @@ export interface ExtensionRecord {
   error?: string;
   /** Its extension.json couldn't be read, so `manifest` is a stand-in. */
   broken?: true;
+  /** Where it was installed from, for a workspace extension installed from a URL (its installed.json). */
+  installedFrom?: string;
+}
+
+/** The file Install from URL leaves in an extension's folder, saying where it came from. */
+export const installedPath = (id: string) => `.common-ink/extensions/${id}/installed.json` as FilePath;
+
+/** The address an installed.json names, if it names one. */
+function installedFrom(text: string): string | undefined {
+  try {
+    const from = (JSON.parse(text) as { from?: unknown }).from;
+    return typeof from === "string" ? from : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The workspace extensions among the files: a folder with an extension.json. */
@@ -130,6 +145,7 @@ export class ExtensionHost {
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
       const record: ExtensionRecord = { id: w.id, tier, manifest: typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest, builtIn, workspace: w, state: "inactive" };
+      if (w.files.includes(installedPath(w.id))) record.installedFrom = installedFrom((await read(installedPath(w.id))).text);
       records.push(record);
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
       else if (safe) record.state = "safe";

@@ -3,12 +3,14 @@
 // what it adds and may ask for, what went wrong, and what you can do with it. All of that is read from
 // its manifest, so it shows before the extension's code has run. Turning one on or off writes
 // "extensions.disabled"; Customize copies a built-in into the workspace, and Revert or Uninstall
-// deletes the workspace's copy. Each is an ordinary change, and each applies after a reload.
+// deletes the workspace's copy. Each is an ordinary change, and each applies after a reload. Each
+// permission shows your answer (Ask, Always allow or Don't allow), in the words prompts use.
 import type { EditorView } from "@codemirror/view";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
+import type { Answer } from "../../worker/src/permissions.ts";
 import { isSelfContained, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { openModal, type Modal } from "./modal.ts";
-import { declaredPermissions, plain } from "./permission-words.ts";
+import { ANSWER_WORDS, declaredPermissions, plain } from "./permission-words.ts";
 
 export interface ExtensionsViewDeps {
   records(): readonly ExtensionRecord[];
@@ -25,6 +27,17 @@ export interface ExtensionsViewDeps {
   /** Delete the workspace's files for it: a customized built-in goes back to the built-in, a workspace extension goes. */
   remove(record: ExtensionRecord): Promise<void>;
   reload(safe?: boolean): void;
+  /** Your answer kept for one of its declared permissions, by key ("network:api.weather.gov"). */
+  answer(record: ExtensionRecord, key: string): Answer | undefined;
+  /** Keep an answer, or forget it (undefined) so it asks again. */
+  setAnswer(record: ExtensionRecord, key: string, answer: Answer | undefined): Promise<void>;
+  /** Forget every answer kept for it, so it asks again: one change, by you. */
+  resetAnswers(record: ExtensionRecord): Promise<void>;
+  /** Whether you trust it to run in the page (workspace extensions only). */
+  isTrusted(record: ExtensionRecord): boolean;
+  setTrusted(record: ExtensionRecord, trusted: boolean): Promise<void>;
+  install(): Promise<void>;
+  showActivity(): void;
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string | false | null | undefined)[]): T {
@@ -40,9 +53,10 @@ function focusable<T extends HTMLElement>(node: T, id: string): T {
   return node;
 }
 
-/** Where an extension comes from, as the view says it. */
-export function originOf(r: Pick<ExtensionRecord, "builtIn" | "workspace">): "Built-in" | "Workspace" | "Customized" {
-  return r.builtIn && r.workspace ? "Customized" : r.workspace ? "Workspace" : "Built-in";
+/** Where an extension comes from, as the view and its prompts say it. */
+export function originOf(r: Pick<ExtensionRecord, "builtIn" | "workspace" | "installedFrom">): "Built-in" | "Customized" | "From URL" | "Workspace" {
+  if (r.builtIn) return r.workspace ? "Customized" : "Built-in";
+  return r.installedFrom ? "From URL" : "Workspace";
 }
 
 const STATE_TEXT: Record<ExtensionRecord["state"], string> = { active: "On", inactive: "On, starts when used", off: "Off", failed: "Failed", safe: "Not loaded: safe mode" };
@@ -127,7 +141,13 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         ? el("p", { className: "banner" }, "Safe mode: only built-in extensions are running. ", focusable(el("button", { textContent: "Leave safe mode", onclick: () => deps.reload(false) }), "leave-safe"))
         : "",
       reload.size ? el("p", { className: "banner" }, "Extension changes apply after reload. ", focusable(el("button", { textContent: "Reload", onclick: () => deps.reload() }), "reload")) : "",
-      el("div", { className: "extensions-top" }, search),
+      el(
+        "div",
+        { className: "extensions-top" },
+        search,
+        focusable(el("button", { textContent: "Install from URL…", onclick: () => void deps.install() }), "install"),
+        focusable(el("button", { textContent: "Activity", title: "What extensions have reached and asked for this session", onclick: () => deps.showActivity() }), "activity"),
+      ),
       section("Installed", records.filter((r) => r.workspace && !r.builtIn).map((r) => row(r, reload.has(r.id)))),
       section("Built-in", records.filter((r) => r.builtIn).map((r) => row(r, reload.has(r.id)))),
     );
@@ -202,9 +222,21 @@ export function extensionsView(deps: ExtensionsViewDeps) {
           : el("button", { textContent: "Customize", disabled: true, title: `${name} uses the app's own modules, so a copy of it can't run on its own yet` })
         : null,
       r.workspace ? focusable(el("button", { textContent: b ? "Revert to built-in" : "Uninstall", title: "Delete the workspace's files for it, as changes undo can take back", onclick: () => void deps.remove(r) }), `remove:${id}`) : null,
+      r.workspace
+        ? focusable(
+            el("button", {
+              textContent: deps.isTrusted(r) ? "Stop trusting" : "Trust…",
+              title: deps.isTrusted(r) ? "Run it sandboxed again, after a reload" : "Let it run in the app's page, with access to note editors",
+              onclick: () => void deps.setTrusted(r, !deps.isTrusted(r)),
+            }),
+            `trust:${id}`,
+          )
+        : null,
     ];
     const adds = contributionLines(r.manifest);
     const asks = declaredPermissions(r.manifest);
+    const builtIn = !!b && !r.workspace;
+    const kept = asks.some((p) => deps.answer(r, p.key));
     return [
       el(
         "header",
@@ -231,11 +263,42 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         ? el(
             "section",
             {},
-            el("h3", { textContent: "May ask to" }),
-            el("ul", { className: "extension-perms" }, ...asks.map((p) => el("li", {}, el("span", { className: "perm-can", textContent: plain(p.can) }), el("p", { className: "perm-why", textContent: `${name} says: “${p.why}”` })))),
+            el("h3", { textContent: "Permissions" }),
+            el(
+              "p",
+              { className: "perm-about" },
+              builtIn ? "It came with the app, so it has these without asking. Choose Don't allow to take one back." : "It asks before it uses each one. Your answers are kept in your user settings.",
+            ),
+            el(
+              "ul",
+              { className: "extension-perms" },
+              ...asks.map((p) => el("li", {}, el("span", { className: "perm-can", textContent: plain(p.can) }), answerPicker(r, p.key, plain(p.can), builtIn), el("p", { className: "perm-why", textContent: `${name} says: “${p.why}”` }))),
+            ),
+            kept ? focusable(el("button", { textContent: "Reset permissions", title: `Forget your answers, so ${name} asks again`, onclick: () => void deps.resetAnswers(r) }), `reset:${id}`) : null,
           )
         : null,
     ].filter((x): x is HTMLElement => !!x);
+  }
+
+  /** Your answer for one permission: Ask (none kept), Always allow or Don't allow. A built-in has it unless you say Don't allow. */
+  function answerPicker(r: ExtensionRecord, key: string, can: string, builtIn: boolean): HTMLElement {
+    const now = deps.answer(r, key) ?? "";
+    const choices: Array<[Answer | "", string]> = builtIn
+      ? [
+          ["", ANSWER_WORDS.allow],
+          ["deny", ANSWER_WORDS.deny],
+        ]
+      : [
+          ["", ANSWER_WORDS.ask],
+          ["allow", ANSWER_WORDS.allow],
+          ["deny", ANSWER_WORDS.deny],
+        ];
+    const pick = focusable(
+      el<HTMLSelectElement>("select", { className: "answer", ariaLabel: `${r.manifest.name}: ${can}` }, ...choices.map(([value, text]) => el("option", { value, textContent: text, selected: value === now || (builtIn && value === "" && now === "allow") }))),
+      `answer:${r.id}:${key}`,
+    );
+    pick.addEventListener("change", () => void deps.setAnswer(r, key, (pick.value || undefined) as Answer | undefined));
+    return pick;
   }
 
   return view;
