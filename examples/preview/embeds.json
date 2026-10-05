@@ -12,7 +12,7 @@
     "Play the background noise. A mini player appears in the corner, with pause, volume and stop; the status bar names what's playing, and the keyboard's media keys pause and play it. It's made in the browser: nothing is fetched.",
     "History shows the timers' state as changes by the Timers extension, in `.common-ink/extensions/timers/state.json`.",
     "In Embeds tour, the Pomodoro block says \"This needs Pomodoro from the Catalog · Install\". Install: it draws at once, with no reload, and runs sandboxed. Start it and the status bar shows its phase; the first time it changes phase, it asks to show notifications.",
-    "⌘⇧P, Show extensions: a row each, under Installed, Built-in and Catalog, with a search box. Click one for its details (in a tab): what it adds, what it may ask for, Source and Customize. Installing from the Catalog keeps your place in the list, and a sandboxed extension starts at once.",
+    "⌘⇧P, Show extensions: a row each, under Installed, Built-in and Catalog, with a search box. Click one for its details: what it adds, what it may ask for, Source and Customize. Installing from the Catalog keeps your place in the list, and a sandboxed extension starts at once.",
     "Agents: the list_embeds tool lists every embed type with its arguments and an example, and docs/embeds.md is the guide."
   ]
 }

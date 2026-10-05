@@ -28,6 +28,22 @@ test("a section's notes come from its folder", () => {
   assert.deepEqual(readSections(dir), [{ slug: "notes", pr: 2, title: "Notes", steps: ["Write one"], notes: [{ path: "Ideas.md", text: "# Ideas\n" }], edits: [] }]);
 });
 
+test("a section installs the Catalog extensions it names, as installing from the Catalog would", () => {
+  const dir = examples({
+    "demo.json": JSON.stringify({ pr: 3, title: "Demo", steps: ["Try it"], install: ["clock"] }),
+    "catalog/clock/extension.json": JSON.stringify({ name: "Clock", main: "main.js" }),
+    "catalog/clock/main.js": "export default { activate() {} };",
+  });
+  assert.deepEqual(
+    readSections(dir, path.join(dir, "catalog"))[0].notes,
+    [
+      { path: ".common-ink/extensions/clock/extension.json", text: JSON.stringify({ name: "Clock", main: "main.js" }) },
+      { path: ".common-ink/extensions/clock/main.js", text: "export default { activate() {} };" },
+      { path: ".common-ink/extensions/clock/installed.json", text: '{"catalog":"Common Ink"}\n' },
+    ],
+  );
+});
+
 test("a malformed section is an error that names its file", () => {
   const dir = examples({ "broken.json": JSON.stringify({ pr: "2", title: "Broken", steps: [] }) });
   assert.throws(() => readSections(dir), /broken\.json/);
