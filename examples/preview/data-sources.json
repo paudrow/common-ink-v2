@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 35,
   "title": "Data sources: calendar events as records, with history",
   "steps": [
     "Open Calendar tour. ⌘⇧P, Show calendar: the coming two weeks from the Sample calendar. The standup repeats on weekdays (↻); tomorrow's starts late and the day after's is cancelled.",
