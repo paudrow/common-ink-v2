@@ -108,8 +108,10 @@ test("GFM, Code blocks and LaTeX: a table, highlighted code with Copy, and math 
   assert.equal(await page.locator(".cm-gfm-table th").first().textContent(), "Fruit");
   // Python arrives, then its code is highlighted: def is a keyword.
   await page.waitForFunction(() => [...document.querySelectorAll(".cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
-  await page.locator(".cm-code-tools button", { hasText: "Copy" }).first().click();
-  await page.waitForFunction(() => document.querySelector(".cm-code-tools button:nth-child(2)")?.textContent === "Copied");
+  // Each block is a card: its header (language, Wrap, Copy) in place of its opening fence.
+  assert.equal(await page.locator(".cm-code-header .cm-code-lang").first().textContent(), "python");
+  await page.locator(".cm-code-header button", { hasText: "Copy" }).first().click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".cm-code-header button")].some((b) => b.textContent === "Copied"));
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^def fib\(n: int\) -> int:/);
   await page.evaluate(() => {
     const s = document.querySelector(".cm-scroller")!;
