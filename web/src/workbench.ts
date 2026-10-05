@@ -15,6 +15,7 @@ import { Jumps, type Spot } from "./jumps.ts";
 import * as L from "./layout.ts";
 import { layoutProblems } from "./layout-problems.ts";
 import { checkInvariant } from "./invariants.ts";
+import { drawSafely } from "./boundary.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const RETRY_MS = 5000;
@@ -258,7 +259,7 @@ export class Workbench {
 
   /** Draw a view again, wherever it's showing. */
   refreshView(id: string): void {
-    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) void this.viewFor(id)?.render(box);
+    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) this.drawView(id, box);
   }
 
   /** Close a tab (`:q` closes the focused one). A file that can't be saved stays open. */
@@ -571,7 +572,7 @@ export class Workbench {
     const boxes = node.tabs.map((tab, i) => {
       const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
       const showing = i === node.active;
-      if (showing && box.hidden && "view" in tab) void this.viewFor(tab.view)?.render(box);
+      if (showing && box.hidden && "view" in tab) this.drawView(tab.view, box);
       box.hidden = !showing;
       return box;
     });
@@ -595,6 +596,12 @@ export class Workbench {
     }
     const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, file);
     return view.dom.parentElement!;
+  }
+
+  /** Draw a view in its box; one that throws says so there, and the windows carry on. */
+  private drawView(id: string, box: HTMLElement) {
+    const view = this.viewFor(id);
+    if (view) drawSafely(box, view.title, () => view.render(box));
   }
 
   private viewBox(group: L.GroupId, id: string): HTMLElement {
