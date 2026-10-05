@@ -30,7 +30,11 @@ async function titled(app: App, from: string, to: string): Promise<Array<{ title
 
 /** Where a time is in a day's column, on screen. */
 async function at(app: App, day: string, minutes: number, dx = 0.5) {
-  const r = (await app.page.locator(`.cal-day[data-day="${day}"]`).boundingBox())!;
+  // A column drawn again after an edit is briefly not on screen: wait for it.
+  const column = app.page.locator(`.cal-day[data-day="${day}"]`);
+  let r = await column.boundingBox();
+  for (let i = 0; !r && i < 20; i++) (await app.page.waitForTimeout(100), (r = await column.boundingBox()));
+  assert.ok(r, `${day}'s column is on screen`);
   return { x: r.x + r.width * dx, y: r.y + (minutes / 60) * HOUR };
 }
 
@@ -96,9 +100,8 @@ browserTest(h, "dragging an event moves it, and dragging its bottom edge changes
   await drag(app, { x: p.x + p.width / 2, y: p.y + p.height - 3 }, { x: p.x + p.width / 2, y: end.y });
   await until(app, "planning ends at 15:00", async () => (await event(app, "event:sample/work/planning"))?.end === "2026-10-05T15:00:00");
   assert.equal((await event(app, "event:sample/work/planning"))?.start, "2026-10-05T13:00:00", "its start stayed");
-  await app.page.locator(".cal-event", { hasText: "Quarterly planning" }).waitFor();
-  const after = (await app.page.locator(".cal-event", { hasText: "Quarterly planning" }).boundingBox())!;
-  assert.ok(Math.abs(after.height - 2 * HOUR) < 4, `drawn two hours tall (${after.height})`);
+  const height = async () => (await app.page.locator(".cal-event", { hasText: "Quarterly planning" }).boundingBox())?.height ?? 0;
+  await until(app, "planning is drawn two hours tall", async () => Math.abs((await height()) - 2 * HOUR) < 4);
 });
 
 browserTest(h, "a repeating event's edits ask which ones: this event, this and following, all", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
