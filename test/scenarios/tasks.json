@@ -1,0 +1,11 @@
+{
+  "about": "Tasks due yesterday, today and later, repeating ones, ::tasks lists, a Kanban board, and a week of calendar events and contacts from the recorded Google data.",
+  "sections": [
+    "tasks",
+    "tasks-v1",
+    "boards",
+    "google"
+  ],
+  "now": "2026-10-05T09:00",
+  "open": "Chores.md"
+}

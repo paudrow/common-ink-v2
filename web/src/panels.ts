@@ -2,6 +2,7 @@
 // button. Any panel also opens in a window as a tab (workbench.ts); its title says what it opens
 // (data-open), for the Workbench extension's dragging.
 import type { View as Panel } from "./workbench.ts";
+import { drawSafely } from "./boundary.ts";
 
 export class Panels {
   private panels = new Map<string, Panel>();
@@ -40,7 +41,7 @@ export class Panels {
     this.title.textContent = panel.title;
     this.title.dataset.open = JSON.stringify({ view: id });
     this.root.hidden = false;
-    void panel.render(this.body);
+    drawSafely(this.body, panel.title, () => panel.render(this.body));
   }
 
   toggle(id: string): void {
@@ -49,7 +50,8 @@ export class Panels {
   }
 
   refresh(id: string): void {
-    if (this.showing === id) void this.panels.get(id)!.render(this.body);
+    const panel = this.showing === id ? this.panels.get(id)! : null;
+    if (panel) drawSafely(this.body, panel.title, () => panel.render(this.body));
   }
 
   hide(): void {

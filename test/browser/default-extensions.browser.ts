@@ -106,8 +106,10 @@ test("GFM, Code blocks and LaTeX: a table, highlighted code with Copy, and math 
   await page.goto(`${h.base}/?file=${encodeURIComponent("Markdown extras.md")}`);
   await page.waitForSelector(".cm-gfm-table table");
   assert.equal(await page.locator(".cm-gfm-table th").first().textContent(), "Fruit");
-  // Python arrives, then its code is highlighted: def is a keyword. The block is brought into view first:
+  // Python's chunk arrives (the inspector says when), then its code is highlighted: def is a keyword. The
+  // block is brought into view first:
   // below what the editor draws (a slow machine draws less at first), its code isn't in the page at all.
+  await page.waitForFunction(() => (window as unknown as { __commonInk: { parsing(): { loaded: string[] } } }).__commonInk.parsing().loaded.includes("Python"));
   await page.evaluate(`(async () => {
     const { EditorView } = await globalThis.__commonInkLibrary("@codemirror/view");
     const view = EditorView.findFromDOM(document.querySelector(".cm-editor"));

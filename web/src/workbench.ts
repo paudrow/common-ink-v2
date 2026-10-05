@@ -13,6 +13,9 @@ import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.t
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
+import { layoutProblems } from "./layout-problems.ts";
+import { checkInvariant } from "./invariants.ts";
+import { drawSafely } from "./boundary.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const RETRY_MS = 5000;
@@ -210,6 +213,12 @@ export class Workbench {
     return [...this.files.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
   }
 
+  /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
+  pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
+    const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
+  }
+
   /**
    * Show a file in the focused group: in place of the tab on show, as Vim's `:e` does, or in a new tab.
    * The file on show is saved first; if it can't be, it stays.
@@ -258,7 +267,7 @@ export class Workbench {
 
   /** Draw a view again, wherever it's showing. */
   refreshView(id: string): void {
-    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) void this.viewFor(id)?.render(box);
+    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) this.drawView(id, box);
   }
 
   /** Close a tab (`:q` closes the focused one). A file that can't be saved stays open. */
@@ -531,6 +540,7 @@ export class Workbench {
   }
 
   private setLayout(layout: L.Layout, { save = true } = {}) {
+    checkInvariant("layout", () => layoutProblems(layout));
     const was = this.layout.focus;
     this.layout = layout;
     this.render();
@@ -544,6 +554,7 @@ export class Workbench {
 
   /** Last write wins: the layout is where you left it, not something to merge. */
   private async saveLayout() {
+    this.layoutTimer = 0;
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {
@@ -615,7 +626,7 @@ export class Workbench {
     const boxes = node.tabs.map((tab, i) => {
       const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
       const showing = i === node.active;
-      if (showing && box.hidden && "view" in tab) void this.viewFor(tab.view)?.render(box);
+      if (showing && box.hidden && "view" in tab) this.drawView(tab.view, box);
       box.hidden = !showing;
       return box;
     });
@@ -639,6 +650,12 @@ export class Workbench {
     }
     const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, file);
     return view.dom.parentElement!;
+  }
+
+  /** Draw a view in its box; one that throws says so there, and the windows carry on. */
+  private drawView(id: string, box: HTMLElement) {
+    const view = this.viewFor(id);
+    if (view) drawSafely(box, view.title, () => view.render(box));
   }
 
   private viewBox(group: L.GroupId, id: string): HTMLElement {

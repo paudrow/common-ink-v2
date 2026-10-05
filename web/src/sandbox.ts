@@ -3,6 +3,7 @@
 // when its note closes; and webviews, visible sandboxed iframes an extension draws into. Each talks to
 // the app over its own MessagePort, never by window messages anyone could send.
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
+import { leversPage } from "./dev-boot.ts";
 
 /** The app's handling of an extension's call: what it does, after checking manifest and permissions. */
 export type Dispatch = (method: string, args: unknown[]) => Promise<unknown>;
@@ -125,10 +126,29 @@ function theme(): string {
   return `<style>:root { ${vars} color-scheme: light dark; } body { margin: 0; padding: 0.5rem; background: transparent; color: var(--ink); font: 0.875rem/1.5 var(--prose); }</style>`;
 }
 
+/** What a webview's page has done, as far as test levers can tell (docs/TESTING.md): loaded, and first drawn on a canvas. */
+export interface WebviewStatus {
+  loaded: boolean;
+  /** Draw calls on its canvases by the time it first drew, by kind; zero until it draws. */
+  drawn: { webgl: number; "2d": number };
+}
+
+/** What a webview's page shows now, asked of it with test levers on: its canvases, sampled. */
+export interface WebviewProbe {
+  frames: number;
+  drawn: { webgl: number; "2d": number };
+  canvases: Array<{ kind: string; width: number; height: number; filled: number; colors: number }>;
+}
+
+/** Each webview on the page, by its frame, for test levers to report on. */
+export const webviews = new WeakMap<HTMLIFrameElement, Webview>();
+
 /** A visible sandboxed frame an extension draws into, with its own port. */
 export class Webview {
   readonly frame = document.createElement("iframe");
+  readonly status: WebviewStatus = { loaded: false, drawn: { webgl: 0, "2d": 0 } };
   private port: Promise<MessagePort>;
+  private probes = new Map<number, (answer: unknown) => void>();
 
   constructor(
     container: HTMLElement,
@@ -143,7 +163,9 @@ export class Webview {
     this.frame.setAttribute("sandbox", "allow-scripts");
     this.frame.className = "webview";
     this.frame.title = title;
-    this.frame.src = "/sandbox/webview";
+    // With test levers, the shell counts what its page draws and answers probes.
+    this.frame.src = leversPage() ? "/sandbox/webview?probe" : "/sandbox/webview";
+    webviews.set(this.frame, this);
     this.port = connect(this.frame).then((port) => {
       let alive = 0;
       // Writing its HTML loads the frame again, and so does navigating it away, which the app's
@@ -161,10 +183,15 @@ export class Webview {
         }, 1000);
       });
       port.onmessage = (e) => {
-        const m = e.data as { type: string; data?: unknown; id?: number; height?: number };
+        const m = e.data as { type: string; data?: unknown; id?: number; height?: number; drawn?: WebviewStatus["drawn"] };
         if (m.type === "message") onMessage(m.data);
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
-        if (m.type === "loaded") onLoaded?.();
+        if (m.type === "loaded") {
+          this.status.loaded = true;
+          onLoaded?.();
+        }
+        if (m.type === "drawn" && m.drawn) this.status.drawn = m.drawn;
+        if (m.type === "probe" && typeof m.id === "number") this.probes.get(m.id)?.(m);
         if (m.type === "pong" && m.id === alive) alive += 0.5;
       };
       return port;
@@ -179,5 +206,19 @@ export class Webview {
 
   async post(message: unknown): Promise<void> {
     (await this.port).postMessage({ type: "message", data: message });
+  }
+
+  /** Ask the page what it shows now (test levers only: without them, its shell doesn't answer). */
+  async probe(): Promise<WebviewProbe> {
+    const id = this.probes.size + Math.random();
+    const answer = new Promise<WebviewProbe>((resolve, reject) => {
+      this.probes.set(id, (a) => {
+        const { frames, drawn, canvases } = a as WebviewProbe;
+        resolve({ frames, drawn, canvases });
+      });
+      setTimeout(() => reject(new Error("The webview didn't answer")), 3000);
+    }).finally(() => this.probes.delete(id));
+    (await this.port).postMessage({ type: "probe", id });
+    return answer;
   }
 }

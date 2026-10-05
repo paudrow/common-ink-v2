@@ -22,9 +22,9 @@
   "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "common-ink-v2-uploads" }],
   "observability": { "enabled": true },
   // Each Preview has its own Durable Objects, so its own notes, filled from the build's seed.json. It
-  // signs you in as a dev user, so there's nothing real in it to reach.
+  // signs you in as a dev user, so there's nothing real in it to reach, and has test levers (docs/TESTING.md).
   "previews": {
-    "vars": { "SEED": "1", "DEV_USER": "preview@common-ink", "DATA_FIXTURES": "1" },
+    "vars": { "SEED": "1", "DEV_USER": "preview@common-ink", "DATA_FIXTURES": "1", "LEVERS": "1" },
     "durable_objects": { "bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }] },
     // One bucket for every Preview, apart from production's. Bytes are kept by hash and each Preview's
     // uploads file names its own, so Previews only see what they uploaded.

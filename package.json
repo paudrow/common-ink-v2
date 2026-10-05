@@ -8,7 +8,7 @@
     "common-ink": "bin/common-ink"
   },
   "scripts": {
-    "dev": "npm run build && npm run seed && wrangler dev -c worker/wrangler.jsonc --port 8787 --var DEV_USER:dev@localhost --var SEED:1 --var DATA_FIXTURES:1",
+    "dev": "node --import tsx scripts/dev.ts",
     "build": "vite build web --outDir ../dist --emptyOutDir",
     "seed": "node --import tsx scripts/write-seed.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
@@ -17,7 +17,9 @@
     "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc",
     "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc",
     "cli": "tsx scripts/cli.ts",
-    "test:browser": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test \"test/browser/*.browser.ts\""
+    "test:browser": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=${BROWSER_CONCURRENCY:-4} --test-shard=${SHARD:-1/1} \"test/browser/*.browser.ts\"",
+    "probe": "node --disable-warning=ExperimentalWarning --import tsx scripts/probe.ts",
+    "net:record": "node --disable-warning=ExperimentalWarning --import tsx scripts/net-record.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

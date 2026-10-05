@@ -8,6 +8,7 @@ import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
 import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
+import { drawSafely, showDrawError } from "./boundary.ts";
 import { PermissionBroker } from "./broker.ts";
 import type { Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
@@ -239,11 +240,11 @@ export class ExtensionRuntime {
   /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments; and links alone on their lines. */
   readonly embedHost: Omit<EmbedHost, "needs"> = {
     contributions: () => new Map(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => [e.language, e] as const))),
-    draw: (el, embed, tools) => void this.drawEmbed(el, embed, tools),
+    draw: (el, embed, tools) => drawSafely(el, `The ${embed.language} embed`, () => this.drawEmbed(el, embed, tools)),
     update: (el, embed) => this.updaters.get(el)?.(embed) ?? false,
     // The first pattern that matches, in the order extensions are listed and contribute them.
     urlEmbed: (url) => this.host.on().flatMap((m) => m.contributes.urlEmbeds).find((e) => matches(e.pattern, url))?.id ?? null,
-    drawUrl: (el, url, id) => void this.drawUrl(el, url, id),
+    drawUrl: (el, url, id) => drawSafely(el, "The link embed", () => this.drawUrl(el, url, id)),
   };
 
   private async drawUrl(el: HTMLElement, url: string, id: string): Promise<void> {
@@ -518,12 +519,12 @@ export class ExtensionRuntime {
         register: (id, renderer) => {
           if (!declaresView(id)) throw new Error(`View "${id}" isn't declared in ${m.id}'s contributes.views`);
           const draw = "resolve" in renderer ? (el: HTMLElement) => renderer.resolve(this.webviewHandle(m, id, el)) : (el: HTMLElement) => renderer.render(el);
-          this.renderers.set(id, { render: guard(draw) });
+          this.renderers.set(id, { render: (el: HTMLElement) => drawSafely(el, `${m.name}'s view`, () => draw(el), failed) });
         },
         provide: (prefix, make) =>
           app.workbench.provideViews(prefix, (id) => {
             const view = guard(make, null)(id);
-            return view && { id, title: view.title, render: guard((el: HTMLElement) => view.render(el)) };
+            return view && { id, title: view.title, render: (el: HTMLElement) => drawSafely(el, `${m.name}'s view`, () => view.render(el), failed) };
           }),
         toggle: (id) => app.panels.toggle(id),
         show: (id) => app.panels.show(id),
@@ -543,11 +544,11 @@ export class ExtensionRuntime {
               ? (el, embed, tools) =>
                   this.framed(el, m, embed, tools, (box, hooks, first) => {
                     const handle = this.webviewHandle(m, `embed:${language}`, box, hooks);
-                    guard(() => provider.resolve(handle, first))();
+                    drawSafely(box, `${m.name}'s ${language} embed`, () => provider.resolve(handle, first), failed);
                     return provider.update ? (next) => (guard(() => provider.update!(handle, next))(), true) : null;
                   })
               : (el, embed) => {
-                  guard(() => provider.render(el, embed))();
+                  drawSafely(el, `${m.name}'s ${language} embed`, () => provider.render(el, embed), failed);
                   return provider.update ? (next) => (guard(() => provider.update!(el, next))(), true) : null;
                 },
           );
@@ -557,7 +558,7 @@ export class ExtensionRuntime {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
           needsEditor();
-          this.urlDrawers.set(id, guard((el: HTMLElement, link: { url: string; match: string[] }) => provider.render(el, link)));
+          this.urlDrawers.set(id, (el: HTMLElement, link: { url: string; match: string[] }) => drawSafely(el, `${m.name}'s link embed`, () => provider.render(el, link), failed));
         },
       },
       state: {
@@ -700,7 +701,7 @@ export class ExtensionRuntime {
                 if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
                 const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
                 webviews.set(view.id, view);
-                void host.invoke(`view:${a}`, view.id).catch(failed);
+                void host.invoke(`view:${a}`, view.id).catch((err) => (failed(err), showDrawError(el, `${m.name}'s view`, err)));
               },
             });
             return;
@@ -712,7 +713,7 @@ export class ExtensionRuntime {
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
                 webviews.set(view.id, view);
-                void host.invoke(`embed:${a}`, view.id, first).catch(failed);
+                void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
             );

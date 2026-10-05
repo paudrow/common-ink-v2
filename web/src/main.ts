@@ -34,6 +34,11 @@ import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
+import { bootLevers } from "./dev-boot.ts";
+import type { Prompt } from "./dev/index.ts";
+
+// Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
+const dev = await bootLevers();
 
 // Extensions in the workspace import CodeMirror and the app's helpers as libraries: the app's copies.
 offerLibraries();
@@ -385,6 +390,7 @@ commands.register(
 const bar = new CommandBar();
 const panels = new Panels($("#panel"));
 
+const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
 const extensions = new ExtensionRuntime({
   me,
   commands,
@@ -404,7 +410,7 @@ const extensions = new ExtensionRuntime({
     await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
     await loadSettings();
   },
-  prompt: (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger),
+  prompt: dev ? dev.prompt(promptFor) : promptFor,
   // It tried something it never asked for: say so once, with where to see what it does ask for.
   undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
@@ -772,3 +778,4 @@ try {
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }
+dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings });

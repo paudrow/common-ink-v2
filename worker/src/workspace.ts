@@ -7,6 +7,7 @@ import { DataSources } from "./data-sources.ts";
 import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
 import type { Granted } from "./google.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
+import { RESET_CLOSE } from "./levers.ts";
 
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
@@ -17,21 +18,35 @@ export interface WorkspaceEnv {
   UPLOADS: R2Bucket;
 }
 
+/** The scenario a workspace was last seeded from, and whether a reset chose it (test levers, docs/TESTING.md). */
+export interface SeededScenario {
+  name: string;
+  now?: string;
+  /** Reset to it on purpose: a deploy's seed doesn't fill the workspace in again until it's reset once more. */
+  pinned: boolean;
+}
+
 export class Workspace extends DurableObject<WorkspaceEnv> {
+  private db: Db;
   private files: Files;
   private sources: DataSources;
 
   constructor(ctx: DurableObjectState, env: WorkspaceEnv) {
     super(ctx, env);
     const { sql } = ctx.storage;
-    const db: Db = {
+    this.db = {
       all: <T>(query: string, ...params: unknown[]) => sql.exec(query, ...params).toArray() as T[],
       run: (query, ...params) => void sql.exec(query, ...params),
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
-    this.files = new Files(db, Date.now, (notice) => {
+    [this.files, this.sources] = this.open();
+  }
+
+  /** The workspace's files and data sources on its database, shaping the database first if need be. */
+  private open(): [Files, DataSources] {
+    const files = new Files(this.db, Date.now, (notice) => {
       const message = JSON.stringify({ type: "change", ...notice });
-      for (const ws of ctx.getWebSockets()) {
+      for (const ws of this.ctx.getWebSockets()) {
         try {
           ws.send(message);
         } catch {
@@ -39,8 +54,8 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
         }
       }
     });
-    const google = env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET } : null;
-    this.sources = new DataSources(db, { fixtures: env.DATA_FIXTURES === "1", google });
+    const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
+    return [files, new DataSources(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google })];
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -105,8 +120,43 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return addUpload(this.files, blobs, name, data, author);
   }
 
+  /** Fill the workspace from a deploy's seed, unless a reset chose its scenario. */
   seed(seed: Seed) {
+    if (this.scenario()?.pinned) return;
     this.files.seed(seed);
+    this.keepScenario(seed, false);
+  }
+
+  scenario(): SeededScenario | null {
+    const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'scenario'");
+    return row ? (JSON.parse(row.value) as SeededScenario) : null;
+  }
+
+  private keepScenario(seed: Seed, pinned: boolean) {
+    const kept: SeededScenario = { name: seed.scenario?.name ?? "", ...(seed.scenario?.now ? { now: seed.scenario.now } : {}), pinned };
+    this.db.run("INSERT INTO meta(key, value) VALUES ('scenario', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(kept));
+  }
+
+  /**
+   * Test levers only, which the Worker checks: empty the workspace and fill it from `seed`. Revisions
+   * go on counting from where they were, so no page sees one go backwards, and open pages are told to
+   * load again. Running it twice ends the same way.
+   */
+  reset(seed: Seed, pinned: boolean) {
+    const [{ last }] = this.db.all<{ last: number | null }>("SELECT max(revision) AS last FROM changes");
+    this.db.tx(() => {
+      for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
+        this.db.run(`DROP TABLE "${name}"`);
+      }
+    });
+    [this.files, this.sources] = this.open();
+    if (last) {
+      this.db.run("DELETE FROM sqlite_sequence WHERE name = 'changes'");
+      this.db.run("INSERT INTO sqlite_sequence(name, seq) VALUES ('changes', ?)", last);
+    }
+    this.files.seed(seed);
+    this.keepScenario(seed, pinned);
+    for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
   connectGoogle(granted: Granted) {

@@ -6,14 +6,20 @@ A minimal, keyboard-first workspace for markdown notes, tasks and calendar data,
 - [ROADMAP.md](ROADMAP.md): what's being built, in order (edited by hand)
 - [CONTEXT.md](CONTEXT.md): the project's vocabulary
 - [docs/adr/](docs/adr/): architectural decisions and why they were made
+- [docs/TESTING.md](docs/TESTING.md): how people and agents test, locally and on Previews: scenarios, test levers, the inspector, the probe CLI, and regression tests
 
 ## Develop
 
 ```sh
 npm install
-npm run dev     # http://localhost:8787, signed in as dev@localhost, with the Preview's sample notes
-npm run check   # typecheck, tests and build: run before every push
+npm run dev                       # http://localhost:8787, signed in as dev@localhost, with the Preview's sample notes
+npm run dev -- --scenario lists   # or seeded from a scenario in test/scenarios/
+npm run check                     # typecheck, tests and build: run before every push
+npm run test:browser              # the app in headless Chrome against the real Worker
+npm run probe -- --scenario lists --open "Lists tour" --keys "jj>>" --dump cursor
 ```
+
+[docs/TESTING.md](docs/TESTING.md) says how to drive the app with test levers, from a test, the probe CLI or `window.__commonInk`.
 
 The Worker is in `worker/`, the web app in `web/`. Each pull request adds `examples/preview/<slug>.json` (`{"pr": 12, "title": "...", "steps": ["..."]}`) and any sample notes it needs in `examples/preview/<slug>/`; its Preview starts with them and a "Try this PR" note.
 
