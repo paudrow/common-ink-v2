@@ -94,7 +94,7 @@ export interface CommandContribution {
  */
 export type KeybindingContribution = { key: string; command: string } | { vim: string; command: string; operator?: true };
 
-export type MenuId = "commandBar" | "tabMenu" | "editorContext";
+export type MenuId = "commandBar" | "tabMenu" | "editorContext" | "quickOpen";
 
 export interface MenuContribution {
   command: string;
@@ -276,7 +276,7 @@ function contributions(v: unknown, id: string): Contributions {
   };
   const menus: Contributions["menus"] = {};
   for (const [menu, items] of Object.entries(c.menus === undefined ? {} : object(c.menus, "contributes.menus"))) {
-    if (!["commandBar", "tabMenu", "editorContext"].includes(menu)) throw new ManifestError(`contributes.menus.${menu} isn't a menu (commandBar, tabMenu, editorContext)`);
+    if (!["commandBar", "tabMenu", "editorContext", "quickOpen"].includes(menu)) throw new ManifestError(`contributes.menus.${menu} isn't a menu (commandBar, tabMenu, editorContext, quickOpen)`);
     menus[menu as MenuId] = list(items, `contributes.menus.${menu}`, (item, at) => ({ command: text(object(item, at).command, `${at}.command`) }));
   }
   let configuration: ConfigurationContribution | null = null;
