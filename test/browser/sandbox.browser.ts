@@ -84,7 +84,18 @@ test("a sandboxed extension can't read the app's cookies, storage, page or notes
   await page.close();
 });
 
-test("Word count installs from the catalog; its sandboxed view asks before reading a note, and Don't allow is kept", async () => {
+/** A prompt's lines: who, what exactly, why now, why at all, its answers, and where to change it. */
+const promptLines = (page: Page) =>
+  page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`) as Promise<string[]>;
+
+/** What Word count's status bar item says, or null while it's hidden. */
+const wordsInStatusBar = (page: Page) =>
+  page.evaluate(() => {
+    const item = document.querySelector<HTMLElement>('.status-item[data-item="wordCount.status"]');
+    return item && !item.hidden ? item.textContent : null;
+  });
+
+test("Word count installs from the catalog and counts in the status bar once you allow it; Don't allow is kept", async () => {
   const page = await h.browser.newPage();
   await page.goto(`${h.base}/?file=Welcome.md`);
   await page.waitForSelector(".cm-content");
@@ -92,24 +103,19 @@ test("Word count installs from the catalog; its sandboxed view asks before readi
   const files = await page.evaluate(() => fetch("/api/files").then((r) => r.json()));
   assert.deepEqual(
     (files.files ?? files).map((f: { path: string }) => f.path).filter((p: string) => p.includes("word-count")).sort(),
-    [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js"],
-    "its files are in the workspace",
+    [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"],
+    "its files are in the workspace, with where they came from",
   );
   await page.reload();
-  await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show extensions");
-  await page.waitForSelector(".catalog-entry");
-  assert.equal(await page.locator(".catalog-entry", { hasText: "Word count" }).locator(".extension-state").textContent(), "Installed");
-  await runCommand(page, "Show extensions");
-  await runCommand(page, "Show word count");
+  // It starts with the app, and asks before reading the note on show.
   await page.waitForSelector(".dialog");
-  // Who, what exactly, why now, and why at all, in that order; then what each button does.
+  const lines = await promptLines(page);
+  assert.equal(lines[2], "It's asking as the app started.");
   assert.deepEqual(
-    await page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`),
+    lines.filter((_, i) => i !== 2),
     [
-      "Word count Workspace wants to",
+      "Word count Catalog by Common Ink wants to",
       "Read the note Welcome",
-      "It's asking because you ran Show word count.",
       "Word count says: “Count the words in the note on show”",
       "Allow this time",
       "Always allow Word count to read all your notes",
@@ -118,17 +124,24 @@ test("Word count installs from the catalog; its sandboxed view asks before readi
     ],
   );
   assert.equal(await page.textContent(".dialog-details code"), "files:read Welcome.md", "the technical scope is behind Details");
+  await page.click("text=Allow this time");
+  await page.waitForFunction(() => /^\d[\d,]* words?$/.test(document.querySelector('.status-item[data-item="wordCount.status"]')?.textContent ?? ""));
+  // This time lasts until you reload.
+  await page.reload();
+  await page.waitForSelector(".dialog");
   await page.click("text=Don't allow");
-  const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
-  await webview!.waitForFunction(() => document.body.textContent?.includes("Word count can't read the note Welcome: you don't allow it to read all your notes."));
+  await page.waitForTimeout(1000);
+  assert.equal(await wordsInStatusBar(page), null, "nothing counted, nothing in the status bar");
   // Keeping the answer saves your settings, which Word count hears of and counts again: it isn't asked twice.
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "one Don't allow is enough");
   const settings = await page.evaluate(() => fetch("/api/file?path=.common-ink%2Fusers%2Ftester%40localhost%2Fsettings.json").then((r) => r.json()));
   assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**/*.md": "deny" } });
+  await runCommand(page, "Show word count");
+  const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
+  await webview!.waitForFunction(() => /^Word count can't read the note \S+: you don't allow it to read all your notes\. Change that in Extensions → Word count\.$/.test(document.getElementById("count")?.textContent ?? ""));
   await page.reload();
   await page.waitForSelector(".cm-content");
-  await runCommand(page, "Show word count");
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "not asked again");
   await page.close();
