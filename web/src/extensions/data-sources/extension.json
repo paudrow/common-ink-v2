@@ -1,0 +1,13 @@
+{
+  "id": "data-sources",
+  "name": "Data sources",
+  "version": "1.0.0",
+  "description": "Where your calendar and contacts come from: whether each is connected, when it last synced, what it holds, what's waiting to reach it, and what went wrong.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onView:dataSources", "onCommand:dataSources.show"],
+  "contributes": {
+    "commands": [{ "command": "dataSources.show", "title": "Show data sources" }],
+    "views": { "sidebar": [{ "id": "dataSources", "name": "Data sources" }] }
+  }
+}

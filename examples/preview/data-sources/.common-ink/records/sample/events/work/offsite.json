@@ -1,0 +1,10 @@
+{
+  "id": "offsite",
+  "calendar": "work",
+  "title": "Team offsite",
+  "status": "confirmed",
+  "allDay": true,
+  "start": "{{today+3}}",
+  "end": "{{today+5}}",
+  "location": "Lake house"
+}

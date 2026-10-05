@@ -8,6 +8,15 @@
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
+//   common-ink calendars               your calendars
+//   common-ink events [--from T] [--to T] [--days N]
+//                                      events from now (or --from) on, each occurrence with its address
+//   common-ink event <address>         one event, as stored or worked out from its series
+//   common-ink event add <title> --start T [--end T] [--calendar ID] [--location L] [--repeat R]
+//   common-ink event set <address> [--title X] [--start T] [--end T] [--location L] [--repeat R] [--scope this|following|all]
+//   common-ink event rm <address> [--scope this|following|all]
+//   common-ink event link <address> <note.md>
+//                                      times are wall times (2026-10-05T09:00) in --zone, or days for all day
 //   common-ink reset [scenario]        test levers only (a Preview, npm run dev): empty the workspace and
 //                                      seed it again, from a scenario (test/scenarios/) or its own seed
 //
@@ -16,6 +25,9 @@
 // and CF_ACCESS_CLIENT_SECRET to a service token's. --json prints what the API answered.
 import type { Change, WorkspaceFile, FileSummary, UndoResult, WriteResult } from "../worker/src/files.ts";
 import { ago, describeAuthor, diffLines, diffStat } from "../web/src/describe.ts";
+import type { Calendar, Occurrence } from "../worker/src/calendar.ts";
+import type { EditResult } from "../worker/src/data-sources.ts";
+import type { EventFound } from "../worker/src/operations.ts";
 
 const base = (process.env.COMMON_INK_URL ?? "http://localhost:8787").replace(/\/+$/, "");
 const args = process.argv.slice(2);
@@ -30,6 +42,9 @@ function take(flag: string, withValue = false): string | true | undefined {
   const [, value] = args.splice(at, withValue ? 2 : 1);
   return withValue ? value : true;
 }
+
+/** Times are read and shown in this zone: --zone, or this computer's. */
+const zone = (take("--zone", true) as string | undefined) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 async function api<T>(method: string, route: string, body?: unknown): Promise<{ status: number; data: T }> {
   const headers: Record<string, string> = { "X-Common-Ink-Agent": process.env.COMMON_INK_AGENT ?? "CLI", "Content-Type": "application/json" };
@@ -48,6 +63,14 @@ const q = (params: Record<string, string | undefined>) => {
 
 function print(data: unknown, text: () => string) {
   console.log(json ? JSON.stringify(data, null, 2) : text());
+}
+
+/** "Mon Oct 5  09:00–09:15  Team standup ↻  event:…", in --zone. */
+function occurrenceLine(o: Occurrence) {
+  const fmt = (iso: string, opts: Intl.DateTimeFormatOptions) => new Date(iso).toLocaleString("en-US", { timeZone: zone, ...opts });
+  const day = o.allDay ? new Date(`${o.start}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : fmt(o.start, { weekday: "short", month: "short", day: "numeric" });
+  const time = o.allDay ? "all day    " : `${fmt(o.start, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}–${fmt(o.end, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
+  return `${day.padEnd(11)} ${time}  ${o.title}${o.series ? " ↻" : ""}${o.location ? ` (${o.location})` : ""}  ${o.address}`;
 }
 
 function changeLine(c: Change) {
@@ -119,6 +142,47 @@ const commands: Record<string, () => Promise<void>> = {
     const { data } = await api<UndoResult[]>("POST", "/api/undo", { revisions: positional().map(Number) });
     print(data, () => data.map((r) => `${r.revision}: ${r.status}`).join("\n"));
   },
+  async calendars() {
+    const { data } = await api<Calendar[]>("GET", "/api/calendars");
+    print(data, () => data.map((c) => `${c.id.padEnd(24)} ${c.title}${c.primary ? " (primary)" : ""}${c.writable ? "" : " (read-only)"}`).join("\n"));
+  },
+  async events() {
+    const days = Number(take("--days", true) ?? 7);
+    const from = (take("--from", true) as string | undefined) ?? new Date().toISOString();
+    const to = (take("--to", true) as string | undefined) ?? new Date(Date.parse(from) + days * 86_400_000).toISOString();
+    const { data } = await api<Occurrence[]>("GET", `/api/events${q({ from, to, zone })}`);
+    print(data, () => data.map(occurrenceLine).join("\n") || "No events.");
+  },
+  async event() {
+    const verb = positional()[0];
+    const fields = () => {
+      const out: Record<string, unknown> = {};
+      for (const [flag, key] of [["--title", "title"], ["--start", "start"], ["--end", "end"], ["--calendar", "calendar"], ["--location", "location"], ["--description", "description"], ["--repeat", "recurrence"], ["--scope", "scope"], ["--time-zone", "timeZone"]]) {
+        const v = take(flag, true);
+        if (typeof v === "string") out[key] = v;
+      }
+      if (take("--all-day")) out.allDay = true;
+      return out;
+    };
+    const done = (data: EditResult) => print(data, () => `${data.status === "queued" ? `queued (${data.error})` : "saved"} ${data.address}`);
+    if (verb === "add") {
+      const f = fields();
+      done((await api<EditResult>("POST", "/api/events", { ...f, title: positional()[1], zone })).data);
+    } else if (verb === "set") {
+      const f = fields();
+      done((await api<EditResult>("PATCH", "/api/event", { ...f, address: positional()[1], zone })).data);
+    } else if (verb === "rm") {
+      const f = fields();
+      done((await api<EditResult>("DELETE", "/api/event", { ...f, address: positional()[1], zone })).data);
+    } else if (verb === "link") {
+      const [, address, path] = positional();
+      const { data } = await api<{ path: string; link: string }>("POST", "/api/event/link", { address, path });
+      print(data, () => `linked ${data.path}: ${data.link}`);
+    } else {
+      const { data } = await api<EventFound>("GET", `/api/event${q({ address: verb, zone })}`);
+      print(data, () => JSON.stringify(data.event, null, 2) + (data.path ? `\nhistory: common-ink history ${data.path}` : `\nan occurrence of ${data.series?.id}; nobody has changed it on its own`));
+    }
+  },
   async reset() {
     const scenario = positional()[0];
     const { data } = await api<{ scenario: { name: string } }>("POST", "/api/levers/reset", scenario ? { scenario } : {}).catch((err: Error) => {
@@ -130,7 +194,9 @@ const commands: Record<string, () => Promise<void>> = {
 
 const run = commands[command ?? ""];
 if (!run) {
-  console.error("Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | reset [scenario]  [--json]");
+  console.error(
+    "Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | calendars | events [--from T] [--to T] [--days N] | event <address> | event add <title> --start T | event set <address> [--start T] [--scope S] | event rm <address> [--scope S] | event link <address> <note> | reset [scenario]  [--json] [--zone Z]",
+  );
   process.exit(2);
 }
 await run().catch((err: Error) => {

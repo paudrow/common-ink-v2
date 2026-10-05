@@ -1,8 +1,10 @@
 // The Worker's files API, as the web app calls it.
 import type { CatalogEntry } from "../../worker/src/catalog.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
-import type { SourceStatus } from "../../worker/src/data-sources.ts";
-import type { Contact, Event } from "../../worker/src/sources.ts";
+import type { EditResult, SourceStatus } from "../../worker/src/data-sources.ts";
+import type { Calendar, Occurrence } from "../../worker/src/calendar.ts";
+import type { EventFound } from "../../worker/src/operations.ts";
+import type { Contact } from "../../worker/src/sources.ts";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
 import type { Upload } from "../../worker/src/uploads.ts";
 
@@ -90,16 +92,34 @@ export const api = {
     return (await ok(await fetch("/api/sources"))).json();
   },
   /** Data source answers: the list, or the reason there isn't one (such as Google not being connected). */
-  async events(from: Date, to: Date): Promise<Event[]> {
-    return sourceList(await fetch(`/api/events?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })}`));
+  async calendars(): Promise<Calendar[]> {
+    return answer(await fetch("/api/calendars"));
+  },
+  async events(from: Date, to: Date, calendars?: string[]): Promise<Occurrence[]> {
+    return answer(await fetch(`/api/events?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), zone: ZONE, ...(calendars ? { calendars: calendars.join(",") } : {}) })}`));
+  },
+  async event(address: string): Promise<EventFound | null> {
+    const res = await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`);
+    return res.status === 404 ? null : answer(res);
+  },
+  /** Add, change or delete an event. An extension other than a built-in is named as the change's author, acting for you. */
+  async editEvent(method: "POST" | "PATCH" | "DELETE", body: Record<string, unknown>, extension?: string): Promise<EditResult> {
+    const route = method === "POST" ? "/api/events" : "/api/event";
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...(extension ? { "X-Common-Ink-Extension": extension } : {}) };
+    return answer(await fetch(route, { method, headers, body: JSON.stringify({ ...body, zone: ZONE }) }));
   },
   async contacts(query = ""): Promise<Contact[]> {
     return sourceList(await fetch(`/api/contacts?${new URLSearchParams({ query })}`));
   },
 };
 
-async function sourceList<T>(res: Response): Promise<T[]> {
+/** The person's time zone: how floating times and all-day events are read. */
+const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+async function answer<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error((body as { error?: string } | null)?.error ?? `${res.status}`);
-  return body as T[];
+  return body as T;
 }
+
+const sourceList = <T>(res: Response) => answer<T[]>(res);

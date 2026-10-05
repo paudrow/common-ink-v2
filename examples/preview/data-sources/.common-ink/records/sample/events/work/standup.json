@@ -1,0 +1,12 @@
+{
+  "id": "standup",
+  "calendar": "work",
+  "title": "Team standup",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today-21}}T09:00:00",
+  "end": "{{today-21}}T09:15:00",
+  "recurrence": [
+    "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "review",
+  "calendar": "work",
+  "title": "Weekly review",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today-7}}T15:00:00",
+  "end": "{{today-7}}T15:30:00",
+  "recurrence": [
+    "RRULE:FREQ=WEEKLY"
+  ]
+}

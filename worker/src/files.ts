@@ -31,12 +31,26 @@ export const isNote = (path: FilePath) => path.endsWith(".md");
 const EXTENSION_SCRIPT = /^\.common-ink\/extensions\/[a-zA-Z0-9][\w.-]{0,63}\/([\w.-]+\/)*[\w.-]+\.js$/;
 export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path);
 
-/** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
-/** Who made a change: a person, an agent (perhaps working for a person), or an extension acting for the person using it. */
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string };
+/**
+ * Who made a change: a person, an agent (perhaps working for a person, as the CLI and MCP do), an
+ * extension acting for the person using it, or a data source's sync bringing in what changed there
+ * ("google-calendar").
+ */
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string };
 
 /** One string per author, for filtering history by who made a change. */
-export const authorKey = (a: Author) => (a.kind === "user" ? `user:${a.email}` : a.kind === "extension" ? `extension:${a.id}` : `agent:${a.name}${a.by ? `:${a.by}` : ""}`);
+export function authorKey(a: Author): string {
+  switch (a.kind) {
+    case "user":
+      return `user:${a.email}`;
+    case "extension":
+      return `extension:${a.id}`;
+    case "sync":
+      return `sync:${a.source}`;
+    case "agent":
+      return `agent:${a.name}${a.by ? `:${a.by}` : ""}`;
+  }
+}
 
 /** Revisions are change numbers, counted across the workspace. 0 is "before the file existed". */
 export type Revision = number;
@@ -192,13 +206,21 @@ export class Files {
     private now: () => number = Date.now,
     /** Told of every change once it's recorded. */
     private announce: (notice: ChangeNotice) => void = () => {},
+    /** Told of every file's new text (null: deleted) inside the change's transaction, to keep indexes of files. */
+    private observe: (path: FilePath, text: string | null) => void = () => {},
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
   }
 
+  /** Every file but data sources' records, which are listed by their kind (records.ts). */
   list(): FileSummary[] {
-    return this.db.all<FileSummary>("SELECT path, revision FROM files ORDER BY path");
+    return this.db.all<FileSummary>("SELECT path, revision FROM files WHERE path NOT LIKE '.common-ink/records/%' ORDER BY path");
+  }
+
+  /** Every file under a folder, with its text: what an index of them is made from. */
+  under(prefix: string): WorkspaceFile[] {
+    return this.db.all<WorkspaceFile>("SELECT path, text, revision FROM files WHERE substr(path, 1, ?) = ?", prefix.length, prefix);
   }
 
   read(path: FilePath): WorkspaceFile | null {
@@ -326,6 +348,15 @@ export class Files {
     return this.db.tx(() => this.apply(w));
   }
 
+  /** Several writes in one transaction, with `also` run in it after them: all of it happens, or none. */
+  writeAll(ws: readonly Write[], also: () => void = () => {}): WriteResult[] {
+    return this.db.tx(() => {
+      const results = ws.map((w) => this.apply(w));
+      also();
+      return results;
+    });
+  }
+
   /** A random secret by name, made the first time it's asked for and kept from then on. */
   secret(name: string): string {
     return this.db.tx(() => {
@@ -406,6 +437,7 @@ export class Files {
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
+      this.observe(path, null);
       this.announce({ path, revision, author });
       return { status, file: { path, text: "", revision } };
     }
@@ -413,6 +445,7 @@ export class Files {
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
+    this.observe(path, next);
     this.announce({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }

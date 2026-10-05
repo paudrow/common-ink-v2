@@ -3,8 +3,8 @@
 // of every change as it's recorded; the sockets use the Hibernation API, so idle ones cost nothing. It also keeps data source
 // connections.
 import { DurableObject } from "cloudflare:workers";
-import { DataSources } from "./data-sources.ts";
-import { Files, type Author, type Db, type FilePath, type HistoryQuery, type Revision, type Seed, type Write } from "./files.ts";
+import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
+import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
 import type { Granted } from "./google.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { RESET_CLOSE } from "./levers.ts";
@@ -12,7 +12,7 @@ import { RESET_CLOSE } from "./levers.ts";
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  /** "1" in Previews and local development: data sources answer with recorded fixtures. */
+  /** "1" in Previews and local development: the Sample calendar and recorded contacts stand in for Google. */
   DATA_FIXTURES?: string;
   /** Uploads' bytes, by hash. */
   UPLOADS: R2Bucket;
@@ -44,7 +44,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
   private open(): [Files, DataSources] {
-    const files = new Files(this.db, Date.now, (notice) => {
+    const announce = (notice: ChangeNotice) => {
       const message = JSON.stringify({ type: "change", ...notice });
       for (const ws of this.ctx.getWebSockets()) {
         try {
@@ -53,9 +53,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
           // A socket that's closing: it reconnects and catches up.
         }
       }
-    });
+    };
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
-    return [files, new DataSources(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google })];
+    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google }, announce);
+    return [files, sources];
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -89,8 +90,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.recent(q);
   }
 
+  /** Undo changes; a data source's records are put back through the source (data-sources.ts). */
   undo(revisions: Revision[], author: Author) {
-    return this.files.undo(revisions, author);
+    return undoChanges(this.files, this.sources, revisions, author);
   }
 
   combined(revisions: Revision[]) {
@@ -101,8 +103,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
-    return this.files.restore(path, at, author);
+    return restoreFile(this.files, this.sources, path, at, author);
   }
 
   /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
@@ -171,8 +174,24 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.sources.status(email);
   }
 
-  events(email: string, from: string, to: string) {
-    return this.sources.events(email, from, to);
+  calendars() {
+    return this.sources.calendars();
+  }
+
+  events(from: number, to: number, zone: string, calendars?: string[]) {
+    return this.sources.events(from, to, zone, calendars);
+  }
+
+  event(address: string, zone?: string) {
+    return this.sources.event(address, zone);
+  }
+
+  editEvent(edit: EventEdit, author: Author, zone?: string) {
+    return this.sources.edit(edit, author, zone);
+  }
+
+  outbox() {
+    return this.sources.outbox(this.sources.calendarSource);
   }
 
   contacts(email: string, query: string) {

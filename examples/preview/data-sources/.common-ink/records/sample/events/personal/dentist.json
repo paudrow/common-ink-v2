@@ -1,0 +1,10 @@
+{
+  "id": "dentist",
+  "calendar": "personal",
+  "title": "Dentist",
+  "status": "confirmed",
+  "allDay": false,
+  "start": "{{today+1}}T14:30:00",
+  "end": "{{today+1}}T15:15:00",
+  "location": "12 High Street"
+}

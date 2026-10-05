@@ -39,8 +39,10 @@ Uploads are kept in R2: production in the bucket `common-ink-v2-uploads`, every 
 
 Agents use the same operations as the app: list, read, write and delete files, read history, undo, and upload.
 
-- **CLI.** `bin/common-ink ls | cat <path> | write <path> | rm <path> | upload <file> | history [path] | show <revision> | undo <revision...>` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token. Production's `/api/` isn't behind Access, so the CLI reaches only local servers and Previews for now.
-- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are the workspace operations (`worker/src/operations.ts`): `list_files`, `read_file`, `write_file`, `delete_file`, `history`, `undo`, `diff`, `read_version`, `restore`, labels, data sources, `list_uploads` and `upload_file`.
+- **CLI.** `bin/common-ink ls | cat <path> | write <path> | rm <path> | upload <file> | history [path] | show <revision> | undo <revision...>`, and for the calendar `calendars | events | event <address> | event add | event set | event rm | event link` (`npm link` puts `common-ink` on your PATH). It talks to `COMMON_INK_URL` (default `http://localhost:8787`) as the agent named in `COMMON_INK_AGENT` (default `CLI`). Behind Access, set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` to an Access service token. Production's `/api/` isn't behind Access, so the CLI reaches only local servers and Previews for now.
+- **MCP.** `<workspace URL>/mcp` is an MCP server over HTTP. Add `?agent=<name>` to name the agent in history. Its tools are the workspace operations (`worker/src/operations.ts`): `list_files`, `read_file`, `write_file`, `delete_file`, `history`, `undo`, `diff`, `read_version`, `restore`, labels, `list_uploads` and `upload_file`, and for data sources `data_sources`, `list_calendars`, `list_events`, `read_event`, `create_event`, `update_event`, `delete_event`, `link_event` and `list_contacts`.
+
+Calendar events are records of a data source, not notes (ADR 0007): each is a JSON file under `.common-ink/records/` with its own history, changed only through the event operations, which send the change on to Google.
 
 ## Google sign-in, calendar and contacts
 

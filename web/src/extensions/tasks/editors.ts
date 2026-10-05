@@ -2,7 +2,7 @@
 // repeat from quick picks or the full rule form, a person from the people already on tasks. Each sends
 // one patch, and the token writer (editTask) changes that token in place and leaves the rest of the line.
 import { avatar, el, icon } from "./dom.ts";
-import { DAY_NAMES, endsLabel, formatRule, isInterval, MONTH_NAMES, nth, occurrences, parseRule, recLabel, ruleLabel, ruleProblem, type Freq, type Rule } from "./recurrence.ts";
+import { DAY_NAMES, endsLabel, formatRule, isInterval, MONTH_NAMES, nth, occurrences, parseRule, recLabel, ruleLabel, ruleProblem, type Freq, type Rule } from "common-ink/recurrence";
 import { dayLabel, today, type ChipField } from "./chips.ts";
 import { cleanTag, normalizeTag } from "./tags.ts";
 import { addDays, endsOf, skipPatch, type TaskMeta, type TaskPatch } from "./tasks.ts";
