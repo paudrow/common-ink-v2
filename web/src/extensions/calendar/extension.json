@@ -1,25 +1,31 @@
 {
   "id": "calendar",
   "name": "Calendar",
-  "version": "2.0.0",
-  "description": "Your calendar's events: the coming days, recurring events included, from Google Calendar or, in Previews, the Sample calendar.",
+  "version": "3.0.0",
+  "description": "Your calendar: agenda, 3 days, week, month and year, scrolling sideways through dates, with events to make, move and change, repeating ones too. From Google Calendar, or in Previews the Sample calendar.",
   "main": "index.ts",
-  "files": ["index.ts"],
-  "activationEvents": ["onView:calendar", "onCommand:calendar.show", "onCommand:google.connect"],
+  "files": ["index.ts", "model.ts", "dom.ts", "views.ts", "editor.ts", "grid.ts", "months.ts", "agenda.ts", "page.ts"],
+  "activationEvents": ["onView:calendar", "onCommand:calendar.open", "onCommand:calendar.show", "onCommand:google.connect"],
   "permissions": {
-    "data:calendar:read": { "why": "Show your events" }
+    "data:calendar:read": { "why": "Show your events" },
+    "data:calendar:write": { "why": "Add, move and change events when you do" }
   },
   "contributes": {
     "commands": [
+      { "command": "calendar.open", "title": "Open calendar" },
       { "command": "calendar.show", "title": "Show calendar" },
       { "command": "google.connect", "title": "Connect Google calendar and contacts" }
     ],
+    "menus": { "quickOpen": [{ "command": "calendar.open" }] },
     "views": { "sidebar": [{ "id": "calendar", "name": "Calendar" }] },
     "dataSources": [{ "id": "calendar", "kind": "calendar", "title": "Calendar", "description": "Events from Google Calendar, kept as records with history." }],
     "configuration": {
       "title": "Calendar",
       "properties": {
-        "calendar.days": { "type": "integer", "default": 14, "minimum": 1, "maximum": 60, "description": "How many days ahead the Calendar view shows." }
+        "calendar.days": { "type": "integer", "default": 14, "minimum": 1, "maximum": 60, "description": "How many days ahead the Calendar side panel shows." },
+        "calendar.view": { "type": "string", "default": "week", "enum": ["agenda", "3day", "week", "month", "year"], "description": "The view the Calendar tab opens on, the first time." },
+        "calendar.weekStart": { "type": "string", "default": "monday", "enum": ["monday", "sunday"], "description": "The day weeks start on." },
+        "calendar.startHour": { "type": "integer", "default": 7, "minimum": 0, "maximum": 23, "description": "The hour the time grid opens scrolled to." }
       }
     }
   }

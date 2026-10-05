@@ -1,0 +1,13 @@
+{
+  "pr": 0,
+  "title": "The Calendar view: agenda, 3 days, week, month and year, with drag to make and move events",
+  "steps": [
+    "⌘P, Calendar (or ⌘⇧P, Open calendar): the week, in a tab. Click an empty half hour to make an event there; drag down a column to make one as long as the drag. Type a title and press Enter.",
+    "Drag an event to another time or day; drag its bottom edge to change when it ends. Dragging a repeating one (the standup) asks: This event, This and following events, or All events.",
+    "Scroll sideways (or swipe) to go back and on through the weeks for as long as you like; it stops on a week. In 3 days it stops on a day, in Month on a month, in Year on a year.",
+    "Keys, with the calendar focused: h and l back and on, t today, j and k through the events, Enter to open one, n for a new one, Delete to delete one, and a, 3, w, m, y for the views.",
+    "Open an event: change its title, times, calendar, place, notes or repeat (quick picks, or Custom… for the whole rule). Save asks which occurrences for a repeating one.",
+    "Calendars (top right) hides and shows each calendar. Holidays can't be changed: its events open read-only.",
+    "Go offline (⌘⇧P, Test levers: Go offline), move an event, and come back: it waits in this browser, the status bar counts it, and it goes once you're back."
+  ]
+}
