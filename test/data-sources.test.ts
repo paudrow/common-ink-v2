@@ -140,3 +140,13 @@ test("the records index is made from the files, the same however often", () => {
   assert.deepEqual(store.db.all("SELECT * FROM records ORDER BY path"), before);
   assert.equal(before.length, 4);
 });
+
+test("a create sent again with its id makes one event, and a bad id says what one is", async () => {
+  const store = sampleWorkspace();
+  const lunch = { id: "lunch0000000000000000000a", title: "Lunch", start: "2026-10-06T12:00", timeZone: "UTC" };
+  const first = (await op(store, "create_event", lunch)) as { address: string; status: string };
+  const again = (await op(store, "create_event", lunch)) as { address: string; status: string };
+  assert.deepEqual([first.address, again.address, again.status], ["event:sample/work/lunch0000000000000000000a", "event:sample/work/lunch0000000000000000000a", "saved"]);
+  assert.deepEqual(((await op(store, "list_events", { ...week, zone: "UTC" })) as Occurrence[]).filter((o) => o.title === "Lunch").length, 1);
+  assert.deepEqual(await runOperation("create_event", { ...lunch, id: "Lunch!" }, store, ada), { ok: false, error: '"id" is 5 to 1024 of 0-9 and a-v, or left out for a new one' });
+});

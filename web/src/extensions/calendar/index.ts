@@ -1,8 +1,9 @@
-// Calendar, a built-in extension on the data source API (ADR 0007): the coming days' events in the
-// side panel, kept up to date as records change, and a command to connect Google.
+// Calendar, a built-in extension on the data source API (ADR 0007). In a tab it's the whole calendar
+// (page.ts); in the side panel, the coming days' events. Both keep up as records change.
 import type { Occurrence } from "../../../../worker/src/calendar.ts";
 import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
+import { CalendarPage, type PageState } from "./page.ts";
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -50,9 +51,19 @@ const calendar: ExtensionModule = {
       synced = Date.now();
       void ctx.data.sync().catch(() => {});
     };
+    const pages = new Set<CalendarPage>();
     ctx.views.register("calendar", {
       async render(root) {
         sync();
+        if (!root.closest("#panel")) {
+          // In a tab: the whole calendar. One page per tab, kept until the tab draws something else.
+          for (const p of pages) if (!document.contains(p.root)) (p.destroy(), pages.delete(p));
+          const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState);
+          pages.add(page);
+          root.replaceChildren(page.root);
+          page.root.focus({ preventScroll: true });
+          return;
+        }
         const DAYS = ctx.settings.get<number>("calendar.days");
         const start = new Date();
         start.setHours(0, 0, 0, 0);
@@ -103,7 +114,12 @@ const calendar: ExtensionModule = {
         );
       },
     });
-    ctx.data.calendar.onChange(() => ctx.views.refresh("calendar"));
+    ctx.data.calendar.onChange(() => {
+      for (const p of pages) p.refresh();
+      // The side panel draws again; a tab's page loads what changed without drawing from nothing.
+      if (ctx.views.shown() === "calendar") ctx.views.show("calendar");
+    });
+    ctx.commands.register("calendar.open", () => ctx.views.open("calendar", { newTab: true }));
     ctx.commands.register("calendar.show", () => ctx.views.toggle("calendar"));
     ctx.commands.register("google.connect", () => ctx.data.connect());
   },

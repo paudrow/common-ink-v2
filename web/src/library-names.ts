@@ -31,6 +31,10 @@ export const APP_MODULES = {
     file: "worker/src/recurrence.ts",
     exports: ["DAY_NAMES", "MONTH_NAMES", "daysBetween", "endsLabel", "formatRule", "isInterval", "nextDue", "nth", "occurrences", "parseRule", "recLabel", "ruleDays", "ruleLabel", "ruleProblem", "shiftDate", "toRRule"],
   },
+  "common-ink/calendar": {
+    file: "worker/src/calendar.ts",
+    exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
+  },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {
     file: "worker/src/uploads.ts",

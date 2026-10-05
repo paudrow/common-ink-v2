@@ -294,11 +294,24 @@ export const OPERATIONS = {
       "Add an event. `start` and `end` are wall times (2026-10-05T09:00) in `timeZone` (IANA; leave it out for one that floats with the viewer), or days (2026-10-05) for an all-day event, whose `end` is the day after its last. Without `end` it lasts 30 minutes, or one day. `recurrence` repeats it: a rule as tasks write it (weekly, 2w, mon,thu, 1st-tue, last-fri) or RRULE lines. It goes in your primary calendar unless `calendar` names another. The change is yours.",
     input: {
       type: "object",
-      properties: { title: { type: "string" }, start: TIME, end: TIME, allDay: { type: "boolean" }, timeZone: ZONE, calendar: { type: "string" }, location: { type: "string" }, description: { type: "string" }, recurrence: RECURRENCE, zone: ZONE },
+      properties: {
+        id: { type: "string", description: "Its id, for sending the same create again safely: 5 to 1024 of 0-9 and a-v. Left out, it gets a new one." },
+        title: { type: "string" },
+        start: TIME,
+        end: TIME,
+        allDay: { type: "boolean" },
+        timeZone: ZONE,
+        calendar: { type: "string" },
+        location: { type: "string" },
+        description: { type: "string" },
+        recurrence: RECURRENCE,
+        zone: ZONE,
+      },
       required: ["title", "start"],
     },
     parse: (a) => {
       if (typeof a.title !== "string" || !a.title.trim()) return fail('"title" is the event\'s name');
+      if (a.id !== undefined && (typeof a.id !== "string" || !/^[0-9a-v]{5,1024}$/.test(a.id))) return fail('"id" is 5 to 1024 of 0-9 and a-v, or left out for a new one');
       const timing = timingWithEnd(a);
       if (typeof timing === "string") return fail(timing);
       const recurrence = recurrenceFrom(a.recurrence);
@@ -309,6 +322,7 @@ export const OPERATIONS = {
         zone,
         edit: {
           op: "create",
+          ...(typeof a.id === "string" ? { id: a.id } : {}),
           title: a.title.trim(),
           timing,
           ...(typeof a.calendar === "string" && a.calendar ? { calendar: a.calendar } : {}),

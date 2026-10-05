@@ -96,8 +96,8 @@ export interface ExtensionContext {
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
     keybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }>;
-    /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext"), with their titles. */
-    menu(menu: "commandBar" | "tabMenu" | "editorContext"): Array<{ command: string; title: string }>;
+    /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext", or "quickOpen", which ⌘P lists with files), with their titles. */
+    menu(menu: "commandBar" | "tabMenu" | "editorContext" | "quickOpen"): Array<{ command: string; title: string }>;
   };
   /**
    * The layout of windows and tabs: the core's model (layout.ts), changed with common-ink/layout's

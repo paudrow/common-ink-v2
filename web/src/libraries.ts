@@ -21,6 +21,7 @@ const LOADERS: Record<LibraryName, () => Promise<unknown>> = {
   "common-ink/layout": () => import("./layout.ts"),
   "common-ink/files": () => import("../../worker/src/files.ts"),
   "common-ink/recurrence": () => import("../../worker/src/recurrence.ts"),
+  "common-ink/calendar": () => import("../../worker/src/calendar.ts"),
   "common-ink/uploads": () => import("../../worker/src/uploads.ts"),
 };
 

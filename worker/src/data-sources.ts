@@ -48,7 +48,7 @@ const sample: Adapter = { source: "sample", title: "Sample calendar", push: asyn
 
 /** An edit to events, as people and agents ask for one. */
 export type EventEdit =
-  | { op: "create"; calendar?: string; title: string; timing: EventTiming; location?: string; description?: string; recurrence?: string[] }
+  | { op: "create"; id?: string; calendar?: string; title: string; timing: EventTiming; location?: string; description?: string; recurrence?: string[] }
   | { op: "update"; address: string; change: EventChange; scope: Scope }
   | { op: "delete"; address: string; scope: Scope };
 
@@ -245,8 +245,13 @@ export class DataSources {
       const calendar = edit.calendar ? calendars.find((c) => c.id === edit.calendar) : (calendars.find((c) => c.primary && c.writable) ?? calendars.find((c) => c.writable));
       if (!calendar) throw new EditError(edit.calendar ? `There's no calendar "${edit.calendar}"` : "There's no calendar to add events to");
       if (!calendar.writable) throw new EditError(`${calendar.title} can't be changed here`);
+      const id = edit.id ?? newEventId();
+      const address = addressOf({ source, collection: calendar.id, id });
+      // Sent again (its answer was lost, say): it's made already.
+      const made = this.files.read(recordPath({ source, kind: "event", collection: calendar.id, id }));
+      if (made) return { status: "saved", address, written: [readEvent(made.text)].filter((e): e is CalendarEvent => !!e), deleted: [] };
       const fields = {
-        id: newEventId(),
+        id,
         calendar: calendar.id,
         title: edit.title,
         status: "confirmed" as const,
@@ -255,7 +260,7 @@ export class DataSources {
         ...edit.timing,
       };
       const event: CalendarEvent = edit.recurrence?.length ? { ...fields, recurrence: edit.recurrence } : fields;
-      return this.apply(source, [{ op: "put", event, created: true }], author, addressOf({ source, collection: calendar.id, id: event.id }));
+      return this.apply(source, [{ op: "put", event, created: true }], author, address);
     }
     const key = parseAddress(edit.address);
     if (!key) throw new EditError(`"${edit.address}" isn't an event's address, like event:google/primary/abc123`);
