@@ -67,9 +67,18 @@ export function tryThisPr(sections: Section[], pr: PullRequest): string {
   ].join("\n");
 }
 
-export function buildSeed(sections: Section[], pr: PullRequest): Seed {
+/** "{{today}}", "{{today+3}}" and "{{today-1}}" in sample notes become dates, so due dates stay near the day the Preview deploys. */
+export function fillDates(text: string, today: string): string {
+  return text.replace(/\{\{today(?:([+-])(\d+))?\}\}/g, (_, sign: string | undefined, days: string | undefined) => {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + (sign === "-" ? -1 : 1) * Number(days ?? 0));
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
   const notes = [
-    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, replace: false }))),
+    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: false }))),
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
   const edits = sections.flatMap((s) => s.edits);

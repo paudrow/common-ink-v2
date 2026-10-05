@@ -33,6 +33,10 @@ The Worker serves `index.js` at `/plugins/<id>/index.js` from the workspace, so 
 `ctx` is a `PluginContext` (`web/src/plugins.ts`):
 
 - `ctx.commands.register({ id, title, run })` adds a command. It shows in ⌘⇧P, keybindings in settings can call it by id, and other plugins can `ctx.commands.run(id)` it. `ctx.commands.shortcut(id)` is its shortcut as shown.
+- `ctx.keybindings.add({ key, command })` gives a plugin's command a default shortcut. Settings can rebind or unbind it.
+- `ctx.keybindings.vim(keys, command)` maps a Vim normal-mode sequence, such as `gx`, to a command.
+- `ctx.editor.extend(extension)` adds a CodeMirror extension to every note's editor, such as decorations. Built-ins draw live previews with `livePreview(source)` from `web/src/live-preview.ts`: widgets in place of markdown, with the raw text back on the cursor's line.
+- `ctx.changes.describe(fn)` puts words to changes in history, such as "Completed 'Pay rent' (due Oct 1)".
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
 - `ctx.panels.register({ id, title, render(el) })` adds a side panel, which also opens in a window. `toggle`, `show` and `refresh` control it.
 - `ctx.workbench.provideViews(prefix, make)` adds views made from their id, such as `version:<rev>:<path>`, and `ctx.workbench.openView(id)` opens one in a window.

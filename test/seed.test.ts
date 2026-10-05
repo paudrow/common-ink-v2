@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { buildSeed, readSections, tryThisPr } from "../scripts/seed.ts";
+import { buildSeed, fillDates, readSections, tryThisPr } from "../scripts/seed.ts";
 
 function examples(files: Record<string, string>) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "common-ink-seed-"));
@@ -77,4 +77,8 @@ test("the seed keeps sample notes and replaces Try this PR, and its id follows i
   );
   assert.equal(buildSeed(sections, { number: 4 }).id, seed.id);
   assert.notEqual(buildSeed(sections, { number: 4, sha: "abc" }).id, seed.id);
+});
+
+test("sample notes can say dates relative to the day the Preview deploys", () => {
+  assert.equal(fillDates("due:{{today}} due:{{today+3}} due:{{today-1}}", "2026-12-30"), "due:2026-12-30 due:2027-01-02 due:2026-12-29");
 });

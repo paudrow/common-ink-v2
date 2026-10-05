@@ -18,6 +18,11 @@ export interface Contributions {
   commands: string[];
   views: string[];
   commandBar: string[];
+  keybindings: string[];
+  /** What it adds to note editors. */
+  editor: string[];
+  /** What it adds to history, such as words for the changes it knows. */
+  history: string[];
 }
 
 export type PluginState =
@@ -118,6 +123,29 @@ export function recording(ctx: PluginContext, adds: Contributions, failed: (err:
         ctx.commands.register(...commands.map((c) => ({ ...c, run: guard(() => c.run()) })));
       },
     },
+    keybindings: {
+      add: (...bindings) => {
+        adds.keybindings.push(...bindings.map((b) => `${b.key} → ${b.command ?? "nothing"}`));
+        ctx.keybindings.add(...bindings);
+      },
+      vim: (keys, command) => {
+        adds.keybindings.push(`${keys} (Vim) → ${command}`);
+        ctx.keybindings.vim(keys, command);
+      },
+    },
+    changes: {
+      ...ctx.changes,
+      describe: (describer) => {
+        adds.history.push("describes changes in history");
+        ctx.changes.describe(guard(describer, null));
+      },
+    },
+    editor: {
+      extend: (extension) => {
+        adds.editor.push("decorations or behavior in note editors");
+        ctx.editor.extend(extension);
+      },
+    },
     commandBar: {
       ...ctx.commandBar,
       provide: (p) => {
@@ -154,7 +182,7 @@ const inert: PluginContext = new Proxy(function () {}, { get: () => inert, apply
 
 /** What a plugin would add, found by starting it where nothing it does takes effect. For built-ins that are off. */
 export function dryRun(module: PluginModule): Contributions | null {
-  const adds: Contributions = { commands: [], views: [], commandBar: [] };
+  const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [] };
   try {
     module.activate(recording(inert, adds, () => {}));
     return adds;
@@ -183,7 +211,7 @@ export async function startPlugins(o: StartOptions): Promise<PluginEntry[]> {
   const entries: PluginEntry[] = [];
 
   const start = (entry: PluginEntry, module: PluginModule) => {
-    const adds: Contributions = { commands: [], views: [], commandBar: [] };
+    const adds: Contributions = { commands: [], views: [], commandBar: [], keybindings: [], editor: [], history: [] };
     const failed = (err: unknown) => {
       console.error(`Plugin ${entry.manifest.id}:`, err);
       entry.error = message(err);

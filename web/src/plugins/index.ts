@@ -8,6 +8,8 @@ import notesBar from "./command-bar-notes.js";
 import notesBarSource from "./command-bar-notes.js?raw";
 import { historyPlugin } from "./history.ts";
 import historySource from "./history.ts?raw";
+import { todosPlugin } from "./todos/index.ts";
+import todosSource from "./todos/index.ts?raw";
 
 export const BUILT_IN: BuiltIn[] = [
   {
@@ -33,5 +35,13 @@ export const BUILT_IN: BuiltIn[] = [
     module: historyPlugin,
     source: historySource,
     file: "web/src/plugins/history.ts",
+  },
+  {
+    id: "todos",
+    name: "Todos",
+    description: "Todos: checkbox lines with due:YYYY-MM-DD and every:week. ⌘Enter checks one off; Show todos lists them all.",
+    module: todosPlugin,
+    source: todosSource,
+    file: "web/src/plugins/todos/index.ts",
   },
 ];

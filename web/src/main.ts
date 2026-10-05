@@ -1,10 +1,10 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
 import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
@@ -49,8 +49,10 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
+const pluginKeybindings: Keybinding[] = [];
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
+const describers: Array<(change: Change) => string | null> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const me = await fetch("/api/me")
@@ -121,7 +123,7 @@ async function loadSettings() {
   // Half-typed JSON that saved keeps the settings the file had, rather than dropping them all.
   if (!u.broken) lastGood.user = u.settings;
   if (!w.broken) lastGood.workspace = w.settings;
-  settings = combine(lastGood.user, lastGood.workspace);
+  settings = combine(lastGood.user, lastGood.workspace, pluginKeybindings);
   workbench.applySettings(settings);
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
@@ -317,6 +319,12 @@ const plugins: PluginContext = {
     },
   },
   util: { fuzzyFilter, notePathFor: (name) => notePathFor(name) },
+  keybindings: { add: (...b) => void pluginKeybindings.push(...b), vim: (keys, command) => vimKey(keys, command) },
+  changes: {
+    describe: (d) => void describers.push(d),
+    summary: (change) => describers.map((d) => d(change)).find((s) => s) ?? null,
+  },
+  editor: { extend: (e) => void workbench.noteExtensions.push(e) },
   commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
   panels: {
     // A panel is also a view that opens in a window: drag its title there, or use its command.
@@ -333,7 +341,7 @@ const plugins: PluginContext = {
       workbench.refreshView(id);
     },
   },
-  files: { list: () => files, read: api.read, write: (path, text, base) => api.write(path, text, base) },
+  files: { list: () => files, fetchList: api.list, read: api.read, write: (path, text, base) => api.write(path, text, base) },
   workbench: {
     open: (path, how) => workbench.open(path, how),
     openPicked: openFromBar,
@@ -585,6 +593,8 @@ try {
   });
   statesAtStart = pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE);
   reloadSettingsAtStart = reloadSettingsNow();
+  // Plugins have added their keybindings; settings come after them.
+  await loadSettings();
   const { missing } = await workbench.start(asked);
   const failed = pluginEntries.find((e) => e.state === "failed");
   if (failed) {

@@ -142,12 +142,15 @@ export function parseSettings(text: string): { settings: Partial<Settings>; prob
   return { settings: settings as Partial<Settings>, problems };
 }
 
-/** Defaults, then user settings, then workspace settings. Keybindings add up; the rest override. */
-export function combine(user: Partial<Settings>, workspace: Partial<Settings>): Settings {
+/**
+ * Defaults, then user settings, then workspace settings. Keybindings add up: the app's, then plugins',
+ * then the user's, then the workspace's. The rest override.
+ */
+export function combine(user: Partial<Settings>, workspace: Partial<Settings>, pluginKeybindings: Keybinding[] = []): Settings {
   return {
     ...DEFAULTS,
     ...user,
     ...workspace,
-    keybindings: [...DEFAULT_KEYBINDINGS, ...(user.keybindings ?? []), ...(workspace.keybindings ?? [])],
+    keybindings: [...DEFAULT_KEYBINDINGS, ...pluginKeybindings, ...(user.keybindings ?? []), ...(workspace.keybindings ?? [])],
   };
 }

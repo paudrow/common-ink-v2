@@ -6,7 +6,7 @@
 import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isPluginScript, type FilePath } from "../../worker/src/files.ts";
+import { isNote, isPluginScript, type FilePath } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
@@ -75,6 +75,8 @@ export class Workbench {
   private layoutSaving = false;
   private shownView: EditorView | null = null;
   private settings: Settings = DEFAULTS;
+  /** Plugins' editor extensions, for every note's editor. */
+  readonly noteExtensions: Extension[] = [];
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
 
@@ -159,7 +161,7 @@ export class Workbench {
    * Show a file in the focused group: in place of the tab on show, as Vim's `:e` does, or in a new tab.
    * The file on show is saved first; if it can't be, it stays.
    */
-  async open(path: FilePath, how: { newTab?: boolean; pos?: number; jump?: boolean } = {}): Promise<void> {
+  async open(path: FilePath, how: { newTab?: boolean; pos?: number; line?: number; jump?: boolean } = {}): Promise<void> {
     const from = this.here();
     // The preview tab is the one a newly opened file replaces: save what it shows first.
     const preview = this.focusedGroup.tabs.find((t) => t.preview);
@@ -169,8 +171,9 @@ export class Workbench {
     const layout = how.newTab ? L.openTab(this.layout, path) : L.showInTab(this.layout, path);
     if (from && from.path !== path && how.jump !== false) this.jumpsFor(this.layout.focus).visit(from, path);
     this.setLayout(layout);
-    if (how.pos !== undefined) {
-      const view = this.focusedView!;
+    const view = this.focusedView;
+    if (view && how.line !== undefined) how.pos = view.state.doc.line(Math.min(how.line + 1, view.state.doc.lines)).from;
+    if (view && how.pos !== undefined) {
       view.dispatch({ selection: EditorSelection.cursor(Math.min(how.pos, view.state.doc.length)), scrollIntoView: true });
     }
   }
@@ -383,7 +386,7 @@ export class Workbench {
         code: isPluginScript(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
-        extensions: this.extensionsFor(file.path),
+        extensions: [...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),
       }),

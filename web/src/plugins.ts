@@ -2,9 +2,10 @@
 // history panel are plugins, and settings can turn any plugin off ("plugins.disabled"). Workspace
 // plugins are files, `.common-ink/plugins/<id>/plugin.json` and `index.js`, on the same API (ADR 0005).
 // See docs/plugins.md for writing one.
+import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
-import type { Settings } from "../../worker/src/settings.ts";
+import type { Change, WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
+import type { Keybinding, Settings } from "../../worker/src/settings.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { Command } from "./commands.ts";
 
@@ -29,6 +30,23 @@ export interface PluginContext {
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
   };
+  /** Default keybindings for a plugin's commands. Settings can rebind or unbind them. */
+  keybindings: {
+    add(...bindings: Keybinding[]): void;
+    /** A Vim normal-mode key sequence for a command, such as "gx". */
+    vim(keys: string, command: string): void;
+  };
+  /** What changes mean, in words, for history: each plugin describes the changes it knows about. */
+  changes: {
+    /** Add a describer: a few words for a change ("Completed 'Pay rent'"), or null if it isn't one this plugin knows. */
+    describe(describer: (change: Change) => string | null): void;
+    /** What the describers say about a change, or null if none of them knows it. */
+    summary(change: Change): string | null;
+  };
+  editor: {
+    /** A CodeMirror extension for every note's editor. Add it while activating. */
+    extend(extension: Extension): void;
+  };
   commandBar: {
     provide(provider: Provider): void;
     open(text?: string): void;
@@ -47,6 +65,8 @@ export interface PluginContext {
   files: {
     /** Every file, as last listed. */
     list(): FileSummary[];
+    /** Every file, asked of the server now. */
+    fetchList(): Promise<FileSummary[]>;
     read(path: FilePath): Promise<WorkspaceFile>;
     write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
   };
@@ -55,8 +75,8 @@ export interface PluginContext {
     openView(id: string, how?: { newTab?: boolean }): void;
     /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
     provideViews(prefix: string, make: (id: string) => Panel | null): void;
-    /** Open a file in place of the tab on show, or in a new tab. */
-    open(path: FilePath, how?: { newTab?: boolean }): Promise<void>;
+    /** Open a file in place of the tab on show, or in a new tab, optionally at a line (0-based). */
+    open(path: FilePath, how?: { newTab?: boolean; line?: number }): Promise<void>;
     /** Open a file picked from the command bar, the way the command that opened the bar asked (here, a tab, a split). */
     openPicked(path: FilePath): void;
     focusedPath(): FilePath | null;
