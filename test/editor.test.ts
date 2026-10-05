@@ -9,9 +9,10 @@ Object.assign(globalThis, { window, document: window.document, MutationObserver:
 const { EditorView } = await import("@codemirror/view");
 const { EditorSelection } = await import("@codemirror/state");
 const { createState, replaceText } = await import("../web/src/editor.ts");
+const { DEFAULTS } = await import("../worker/src/settings.ts");
 
 test("text from the server lands line by line, and the cursor stays on the line it was on", () => {
-  const view = new EditorView({ state: createState("one\ntwo\nthree\nfour\n", () => {}, () => {}), parent: document.body });
+  const view = new EditorView({ state: createState("one\ntwo\nthree\nfour\n", { json: false, readOnly: false, settings: DEFAULTS, extensions: [], onUpdate: () => {}, onBlur: () => {} }), parent: document.body });
   const pos = view.state.doc.line(3).from + 2;
   view.dispatch({ selection: EditorSelection.cursor(pos) });
   replaceText(view, "ONE\nadded\ntwo\nthree\nfour\n", true);

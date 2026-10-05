@@ -8,10 +8,8 @@ export interface Command {
   run(): unknown;
 }
 
-export interface Keybinding {
-  key: string;
-  command: string;
-}
+export type { Keybinding } from "../../worker/src/settings.ts";
+import type { Keybinding } from "../../worker/src/settings.ts";
 
 export class Commands {
   private byId = new Map<string, Command>();
@@ -33,13 +31,13 @@ export class Commands {
   }
 }
 
-/** The command a key press is bound to, if any. A later binding for the same key wins. */
+/** The command a key press is bound to, if any. A later binding for the same key wins, and a null command unbinds it. */
 export function commandForKey(e: KeyLike, bindings: readonly Keybinding[], mac?: boolean): string | null {
   for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac)) return bindings[i].command;
   return null;
 }
 
-/** The first key bound to a command, for showing next to it. */
+/** A key bound to a command and not rebound later, for showing next to it. */
 export function keyFor(command: string, bindings: readonly Keybinding[]): string | undefined {
-  return bindings.find((b) => b.command === command)?.key;
+  return bindings.find((b, i) => b.command === command && !bindings.slice(i + 1).some((later) => later.key === b.key))?.key;
 }

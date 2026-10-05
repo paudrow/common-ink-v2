@@ -3,19 +3,20 @@
 // and an edit in one tab is copied to the others. Tabs and notes drag into windows (dnd.ts), the
 // borders between windows drag to resize them, and the layout is saved as a JSON file a moment after
 // it changes.
-import { EditorSelection, Transaction } from "@codemirror/state";
+import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
-import { createState, fromServer, replaceText, synced } from "./editor.ts";
+import { docLabel } from "./describe.ts";
+import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
+import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
 import { dragged, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import * as L from "./layout.ts";
 import { syncTabs } from "./tabbar.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
-const PAUSE_MS = 1000;
 const RETRY_MS = 5000;
 const LAYOUT_SAVE_MS = 1500;
 
@@ -43,6 +44,8 @@ export interface WorkbenchEvents {
   focus(path: FilePath | null): void;
   /** A file was saved for the first time, so lists of files are out of date. */
   created(path: FilePath): void;
+  /** A file's text on the server changed. */
+  saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
   /** A tab was right-clicked (or its menu key pressed): it's selected, and its menu goes at x, y. */
@@ -50,7 +53,7 @@ export interface WorkbenchEvents {
 }
 
 const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
-const label = (path: FilePath) => (isNote(path) ? path.replace(/\.md$/, "") : path);
+const label = docLabel;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
@@ -65,10 +68,13 @@ export class Workbench {
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
+  /** Editor extensions for one file's editors, such as help in a settings file. */
+  extensionsFor: (path: FilePath) => Extension[] = () => [];
   private layoutTimer = 0;
   /** A layout save is on its way, so news of it coming back isn't someone else's change. */
   private layoutSaving = false;
   private shownView: EditorView | null = null;
+  private settings: Settings = DEFAULTS;
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
 
@@ -273,6 +279,14 @@ export class Workbench {
     return this.focusedSession?.save(explicit);
   }
 
+  /** Use new settings in every editor, open now or later. */
+  applySettings(settings: Settings): void {
+    this.settings = settings;
+    for (const view of this.views.values()) reconfigure(view, settings);
+    // Empty windows list shortcuts, which settings may have rebound.
+    for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyHint());
+  }
+
   focus(): void {
     this.focusedView?.focus();
   }
@@ -341,6 +355,7 @@ export class Workbench {
       file.exists = true;
       this.on.created(file.path);
     }
+    if (status === "saved") this.on.saved(file.path);
     this.renderTabs();
     if (file.path === this.focusedPath) this.on.status(status);
   }
@@ -357,17 +372,20 @@ export class Workbench {
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
-    file.timer = window.setTimeout(() => void file.session.save(), PAUSE_MS);
+    file.timer = window.setTimeout(() => void file.session.save(), this.settings["editor.saveDelay"]);
   }
 
   private makeEditor(group: L.GroupId, file: OpenFile): EditorView {
     const text = this.primary(file)?.state.doc.toString() ?? file.session.savedText;
     const view: EditorView = new EditorView({
-      state: createState(
-        text,
-        (u) => this.viewUpdate(file, view, u),
-        () => void file.session.save(),
-      ),
+      state: createState(text, {
+        json: !isNote(file.path),
+        readOnly: isReadOnly(file.path),
+        settings: this.settings,
+        extensions: this.extensionsFor(file.path),
+        onUpdate: (u) => this.viewUpdate(file, view, u),
+        onBlur: () => void file.session.save(),
+      }),
     });
     // CodeMirror's own styles fix the editor's display and position, so each sits in a box of ours.
     const box = document.createElement("div");

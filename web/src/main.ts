@@ -4,9 +4,12 @@ import { getCM, Vim } from "@replit/codemirror-vim";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { api } from "./api.ts";
 import { CommandBar, type Provider } from "./commandbar.ts";
-import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
+import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings } from "../../worker/src/settings.ts";
+import { settingsEditor, SETTINGS_VIEW, type Level } from "./settings-ui.ts";
+import { settingsJson } from "./settings-json.ts";
+import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
-import { describeAuthor } from "./describe.ts";
+import { describeAuthor, docLabel } from "./describe.ts";
 import { HistoryPanel } from "./history.ts";
 import { connectLive } from "./live.ts";
 import { VERSION_PREFIX, versionView, versionViewId } from "./version.ts";
@@ -19,17 +22,12 @@ import { noteLinkAt, notePathFor } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
 import { Workbench } from "./workbench.ts";
 
-const KEYBINDINGS: Keybinding[] = [
-  { key: "Mod-p", command: "quickOpen" },
-  { key: "Mod-Shift-p", command: "commandBar" },
-  { key: "Mod-s", command: "note.save" },
-  { key: "Mod-\\", command: "window.splitRight" },
-];
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const list = $<HTMLUListElement>("#notes ul");
 const modeLine = $("#mode");
 const saveLine = $("#save");
+const problemsLine = $("#problems");
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -40,17 +38,19 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 };
 
 let files: FileSummary[] = [];
-let historyTimer = 0;
-const name = (path: FilePath) => path.replace(/\.md$/, "");
+let settings: Settings = DEFAULTS;
+
+const me = await fetch("/api/me")
+  .then((r) => r.json())
+  .then((who: { kind: string; email?: string }) => who.email)
+  .catch(() => undefined);
+const USER_SETTINGS = me ? userSettingsPath(me) : null;
+const name = docLabel;
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {
     saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
     saveLine.dataset.status = status ?? "";
-    if (status === "saved") {
-      clearTimeout(historyTimer);
-      historyTimer = window.setTimeout(() => void history.refresh(), 300);
-    }
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
@@ -60,8 +60,12 @@ const workbench = new Workbench($("#workbench"), {
     renderList();
   },
   created: () => void refreshList(),
+  saved(path) {
+    void history.refresh();
+    if (isSettingsFile(path)) void loadSettings();
+  },
   shortcut: (command) => {
-    const key = keyFor(command, KEYBINDINGS);
+    const key = keyFor(command, settings.keybindings);
     return key && formatKeys(key);
   },
   tabMenu: (x, y) => showMenu(x, y, tabMenuItems()),
@@ -72,7 +76,7 @@ function tabMenuItems(): Array<MenuItem | null> {
   const g = L.focused(workbench.layout);
   const tab = g.tabs[g.active];
   const item = (command: string, label: string, disabled = false): MenuItem => {
-    const key = keyFor(command, KEYBINDINGS);
+    const key = keyFor(command, settings.keybindings);
     return { label, detail: key && formatKeys(key), disabled, run: () => commands.run(command) };
   };
   return [
@@ -90,6 +94,56 @@ function tabMenuItems(): Array<MenuItem | null> {
     item("window.splitRight", "Split Right"),
     item("window.splitDown", "Split Down"),
   ];
+}
+
+/** Each settings file's settings the last time it could be read. */
+const lastGood: { user: Partial<Settings>; workspace: Partial<Settings> } = { user: {}, workspace: {} };
+
+/** Read user and workspace settings, apply them, and say what in them was ignored. */
+async function loadSettings() {
+  const [user, workspace] = await Promise.all([USER_SETTINGS ? api.read(USER_SETTINGS) : null, api.read(WORKSPACE_SETTINGS)]);
+  const u = parseSettings(user?.text ?? "");
+  const w = parseSettings(workspace.text);
+  // Half-typed JSON that saved keeps the settings the file had, rather than dropping them all.
+  if (!u.broken) lastGood.user = u.settings;
+  if (!w.broken) lastGood.workspace = w.settings;
+  settings = combine(lastGood.user, lastGood.workspace);
+  workbench.applySettings(settings);
+  const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
+  problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
+  problemsLine.title = problems.join("\n");
+  workbench.refreshView(SETTINGS_VIEW);
+}
+
+const settingsPath = (level: Level) => (level === "user" ? USER_SETTINGS : WORKSPACE_SETTINGS);
+const isSettingsFile = (path: FilePath) => path === USER_SETTINGS || path === WORKSPACE_SETTINGS;
+
+const settingsUi = settingsEditor({
+  pathFor: settingsPath,
+  read: (path) => api.read(path),
+  write: (path, text, base) => api.write(path, text, base),
+  effective: () => settings,
+  openJson: (level) => void openSettings(settingsPath(level)),
+  changed: () => void loadSettings(),
+});
+workbench.registerView(settingsUi);
+
+/** Open the settings editor at user or workspace settings. */
+function openSettingsUi(level: Level) {
+  settingsUi.level = level;
+  workbench.openView(SETTINGS_VIEW, { newTab: true });
+  workbench.refreshView(SETTINGS_VIEW);
+}
+
+// A settings file's editor helps with its keys and values, and leads back to the settings editor.
+workbench.extensionsFor = (path) =>
+  isSettingsFile(path) || path === DEFAULT_SETTINGS ? [settingsJson({ readOnly: isReadOnly(path), openUi: () => openSettingsUi(path === WORKSPACE_SETTINGS ? "workspace" : "user") })] : [];
+
+/** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
+async function openSettings(path: FilePath | null) {
+  if (!path) return;
+  if (path !== DEFAULT_SETTINGS && (await api.read(path)).revision === 0) await api.write(path, SETTINGS_TEMPLATE, 0);
+  await workbench.open(path, { newTab: true });
 }
 
 async function refreshList() {
@@ -215,6 +269,11 @@ commands.register(
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
   { id: "history.note", title: "Show history of this note", run: () => history.toggle("file") },
   { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
+  { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
+  { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
+  { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
+  { id: "settings.workspaceJson", title: "Open workspace settings (JSON)", run: () => openSettings(WORKSPACE_SETTINGS) },
+  { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
   { id: "history.addLabel", title: "Add label to this note…", run: () => history.addLabel() },
   { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
   { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
@@ -245,7 +304,7 @@ const commandsProvider: Provider = {
   placeholder: "Run a command",
   items: (query) =>
     fuzzyFilter(query, commands.all(), (c) => c.title).map((c) => {
-      const key = keyFor(c.id, KEYBINDINGS);
+      const key = keyFor(c.id, settings.keybindings);
       return { label: c.title, detail: key && formatKeys(key), run: () => commands.run(c.id) };
     }),
 };
@@ -255,7 +314,7 @@ const bar = new CommandBar([notesProvider, commandsProvider]);
 window.addEventListener(
   "keydown",
   (e) => {
-    const id = commandForKey(e, KEYBINDINGS);
+    const id = commandForKey(e, settings.keybindings);
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
@@ -348,10 +407,6 @@ window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
-const me = await fetch("/api/me")
-  .then((r) => r.json())
-  .then((who: { kind: string; email?: string }) => who.email)
-  .catch(() => undefined);
 const history = new HistoryPanel($("#history"), {
   me,
   focusedPath: () => workbench.focusedPath,
@@ -369,6 +424,7 @@ connectLive({
       saveLine.dataset.status = "remote";
     }
     if (!files.some((f) => f.path === notice.path)) void refreshList();
+    if (isSettingsFile(notice.path)) void loadSettings();
     clearTimeout(historyTimer2);
     historyTimer2 = window.setTimeout(() => void history.refresh(), 400);
   },
@@ -388,6 +444,7 @@ try {
   files = await api.list();
   const asked = fileFromUrl(location.search);
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
+  await loadSettings();
   const { missing } = await workbench.start(asked);
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.

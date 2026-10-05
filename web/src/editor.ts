@@ -1,12 +1,14 @@
-// The CodeMirror 6 editor: vim first, markdown highlighting, and nothing else on screen.
+// The CodeMirror 6 editor: vim first, markdown (or JSON) highlighting, and nothing else on screen.
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { json } from "@codemirror/lang-json";
 import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, EditorState, StateEffect, StateField, Transaction } from "@codemirror/state";
-import { Decoration, drawSelection, EditorView, keymap, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
+import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
 import { diffPatch } from "node-diff3";
+import type { Settings } from "../../worker/src/settings.ts";
 
 /** Marks text that came from the server, so it isn't saved back as an edit. */
 export const fromServer = Annotation.define<boolean>();
@@ -24,6 +26,7 @@ const theme = EditorView.theme({
   ".cm-panels": { backgroundColor: "var(--bg)", color: "var(--ink)", borderTop: "1px solid var(--line)" },
   ".cm-vim-panel": { padding: "0.25rem 1rem", fontFamily: "var(--mono)" },
   ".cm-vim-panel input": { color: "var(--ink)", fontFamily: "var(--mono)" },
+  ".cm-gutters": { backgroundColor: "transparent", color: "var(--muted)", border: "none", fontFamily: "var(--mono)", fontSize: "0.8em" },
   ".cm-remote-change": { backgroundColor: "var(--accent-soft)", transition: "background-color 600ms" },
 });
 
@@ -42,23 +45,49 @@ const highlight = HighlightStyle.define([
 /** Marks a change copied over from another view of the same file. */
 export const synced = Annotation.define<boolean>();
 
-export function createState(doc: string, onUpdate: (u: ViewUpdate) => void, onBlur: () => void): EditorState {
+/** The parts of the editor that settings change, each in its own compartment so it can change live. */
+const slots = { vim: new Compartment(), lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment() };
+
+export type EditorSettings = Pick<Settings, "editor.vim" | "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize">;
+
+const extensionsFor = (s: EditorSettings) => ({
+  vim: s["editor.vim"] ? vim() : [],
+  lineNumbers: s["editor.lineNumbers"] ? lineNumbers() : [],
+  wrapping: s["editor.lineWrapping"] ? EditorView.lineWrapping : [],
+  fontSize: EditorView.theme({ ".cm-scroller": { fontSize: `${s["editor.fontSize"]}px` } }),
+});
+
+/** Apply new settings to an open editor. */
+export function reconfigure(view: EditorView, settings: EditorSettings) {
+  const next = extensionsFor(settings);
+  view.dispatch({ effects: (Object.keys(slots) as Array<keyof typeof slots>).map((k) => slots[k].reconfigure(next[k])) });
+}
+
+export function createState(
+  doc: string,
+  opts: { json: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
+): EditorState {
+  const s = extensionsFor(opts.settings);
   return EditorState.create({
     doc,
     extensions: [
-      vim(), // before other keymaps, so vim sees keys first
+      slots.vim.of(s.vim), // before other keymaps, so vim sees keys first
+      slots.lineNumbers.of(s.lineNumbers),
+      slots.wrapping.of(s.wrapping),
+      slots.fontSize.of(s.fontSize),
       history(),
       drawSelection(),
       remoteFlash,
-      EditorView.lineWrapping,
-      keymap.of([...markdownKeymap, ...defaultKeymap, ...historyKeymap]),
+      keymap.of([...(opts.json ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
-      new LanguageSupport(markdownLanguage),
+      opts.json ? [json(), EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })] : new LanguageSupport(markdownLanguage),
       syntaxHighlighting(highlight),
       theme,
-      EditorView.contentAttributes.of({ spellcheck: "true", autocapitalize: "sentences" }),
-      EditorView.updateListener.of(onUpdate),
-      EditorView.domEventHandlers({ blur: () => void onBlur() }),
+      EditorState.readOnly.of(opts.readOnly),
+      opts.extensions,
+      EditorView.contentAttributes.of(opts.json ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
+      EditorView.updateListener.of(opts.onUpdate),
+      EditorView.domEventHandlers({ blur: () => void opts.onBlur() }),
     ],
   });
 }
