@@ -4,7 +4,7 @@
   "steps": [
     "The status bar's right end shows the test levers in effect. This Preview's workspace starts as every Preview's notes, on the real clock.",
     "⌘⇧P, Test levers: Reset the workspace to a scenario…, and pick tasks. The page reloads with just that scenario's notes, on 2026-10-05 at 09:00: Water the plants is due Today.",
-    "Add ?now=2026-10-07T09:00 to the address and open Chores: the same task now says Overdue 2d. Reload: the clock keeps running from where it was. ?now=real puts the real clock back.",
+    "Add ?now=2026-10-07T09:00 to the address and open Chores: the same task is now due Oct 5, two days ago. Reload: the clock keeps running from where it was. ?now=real puts the real clock back.",
     "Open the browser's console. await __commonInk.state() is the app's state as data. await __commonInk.keys(\"/Pay<CR>A!<Esc>\") presses keys through Vim, and await __commonInk.check.overlaps() lists any chip sitting over text (none).",
     "Reset to the extensions scenario, add ?permissions=allow, and run Show word count: it counts without a prompt, and nothing is kept in your settings. ?permissions=ask brings the prompt back.",
     "⌘⇧P, Test levers: Go offline, or back online. Edit a note: the status bar says Offline and 1 unsent change. Run it again: the edit is sent.",
