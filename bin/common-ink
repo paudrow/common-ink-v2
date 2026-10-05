@@ -1,0 +1,4 @@
+#!/bin/sh
+# The Common Ink CLI (scripts/cli.ts), run from this checkout. `npm link` puts it on your PATH.
+ROOT="$(dirname "$(realpath "$0")")/.."
+exec "$ROOT/node_modules/.bin/tsx" "$ROOT/scripts/cli.ts" "$@"

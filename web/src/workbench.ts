@@ -60,10 +60,14 @@ export class Workbench {
   /** Each view tab's box, by group and view. */
   private viewBoxes = new Map<string, HTMLElement>();
   private registered = new Map<string, View>();
+  /** Views made on demand from their id, such as a file at an old revision. */
+  private providers: Array<{ prefix: string; make(id: string): View | null }> = [];
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
   private layoutTimer = 0;
+  /** A layout save is on its way, so news of it coming back isn't someone else's change. */
+  private layoutSaving = false;
   private shownView: EditorView | null = null;
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
@@ -176,9 +180,22 @@ export class Workbench {
     this.registered.set(view.id, view);
   }
 
+  /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
+  provideViews(prefix: string, make: (id: string) => View | null): void {
+    this.providers.push({ prefix, make });
+  }
+
+  private viewFor(id: string): View | undefined {
+    const known = this.registered.get(id);
+    if (known) return known;
+    const made = this.providers.find((p) => id.startsWith(p.prefix))?.make(id);
+    if (made) this.registered.set(id, made);
+    return made ?? undefined;
+  }
+
   /** Draw a view again, wherever it's showing. */
   refreshView(id: string): void {
-    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) void this.registered.get(id)?.render(box);
+    for (const [k, box] of this.viewBoxes) if (k.endsWith(`\nview:${id}`) && !box.hidden) void this.viewFor(id)?.render(box);
   }
 
   /** Close a tab (`:q` closes the focused one). A file that can't be saved stays open. */
@@ -220,6 +237,36 @@ export class Workbench {
     const file = path && this.files.get(path);
     if (!file) return;
     file.session.reload(await api.read(file.path));
+  }
+
+  /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
+  async refreshFromServer(paths: FilePath[]): Promise<void> {
+    await Promise.all(
+      paths.map(async (path) => {
+        const file = this.files.get(path);
+        if (file && !file.session.dirty) file.session.reload(await api.read(path));
+      }),
+    );
+  }
+
+  /**
+   * Someone else changed a file (an agent, another tab or device). An open file takes in the new
+   * version, merged with any typing not yet saved; the layout takes in the new arrangement. Returns
+   * whether the file is open here.
+   */
+  async remoteChange(path: FilePath, revision: number): Promise<boolean> {
+    if (path === L.LAYOUT_PATH) {
+      if (revision <= this.layoutRevision || this.layoutSaving) return false;
+      const saved = await api.read(L.LAYOUT_PATH);
+      const layout = L.parseLayout(safeJson(saved.text));
+      this.layoutRevision = saved.revision;
+      if (layout) this.setLayout(layout, { save: false });
+      return false;
+    }
+    const file = this.files.get(path);
+    if (!file || revision <= file.session.revision) return !!file;
+    await file.session.absorb(await api.read(path));
+    return true;
   }
 
   save(explicit = false): Promise<void> | undefined {
@@ -268,9 +315,9 @@ export class Workbench {
         fetched,
         {
           text: () => this.primary(file)?.state.doc.toString() ?? fetched.text,
-          replace: (text) => {
+          replace: (text, remote) => {
             const view = this.primary(file);
-            if (view) replaceText(view, text);
+            if (view) replaceText(view, text, remote);
           },
         },
         api.write,
@@ -353,12 +400,15 @@ export class Workbench {
   /** Last write wins: the layout is where you left it, not something to merge. */
   private async saveLayout() {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
+    this.layoutSaving = true;
     try {
       let result = await api.write(L.LAYOUT_PATH, text, this.layoutRevision);
       if (result.status === "conflict" && result.file) result = await api.write(L.LAYOUT_PATH, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
+    } finally {
+      this.layoutSaving = false;
     }
   }
 
@@ -413,7 +463,7 @@ export class Workbench {
     const boxes = node.tabs.map((tab, i) => {
       const box = "file" in tab ? this.editorBox(node.id, tab.file) : this.viewBox(node.id, tab.view);
       const showing = i === node.active;
-      if (showing && box.hidden && "view" in tab) void this.registered.get(tab.view)?.render(box);
+      if (showing && box.hidden && "view" in tab) void this.viewFor(tab.view)?.render(box);
       box.hidden = !showing;
       return box;
     });
@@ -437,7 +487,7 @@ export class Workbench {
       // Hidden until shown, so the first showing draws it.
       box.hidden = true;
       box.tabIndex = -1;
-      if (!this.registered.has(id)) box.textContent = `Nothing to show: no plugin draws "${id}". Is it turned off in settings?`;
+      if (!this.viewFor(id)) box.textContent = `Nothing to show: no plugin draws "${id}". Is it turned off in settings?`;
       this.viewBoxes.set(k, box);
     }
     return box;
@@ -602,7 +652,7 @@ export class Workbench {
   }
 
   private tabLabel(tab: L.Openable): string {
-    return "file" in tab ? label(tab.file) : (this.registered.get(tab.view)?.title ?? tab.view);
+    return "file" in tab ? label(tab.file) : (this.viewFor(tab.view)?.title ?? tab.view);
   }
 
   private renderTabs() {

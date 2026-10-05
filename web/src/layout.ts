@@ -395,7 +395,8 @@ function parseOpenable(v: unknown): Openable | null {
     const path = parseFilePath(o.file);
     return path ? { file: path } : null;
   }
-  return typeof o.view === "string" && /^[\w.-]{1,60}$/.test(o.view) ? { view: o.view } : null;
+  // A view's id names it, and for views made on demand also what they show (such as a file and revision).
+  return typeof o.view === "string" && /^[^\n]{1,400}$/.test(o.view) ? { view: o.view } : null;
 }
 
 /** A layout read from its JSON file, or null if it isn't one. Tabs that aren't openable are dropped. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { patch } from "node-diff3";
-import { Files, parseFilePath, SEED_AUTHOR, type Author, type FilePath, type Seed } from "../worker/src/files.ts";
+import { authorKey, Files, parseFilePath, SEED_AUTHOR, type Author, type FilePath, type Seed } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const ada: Author = { kind: "user", email: "ada@example.com" };
@@ -165,6 +165,93 @@ test("a database from the first deploy, with a notes table, keeps its notes and 
   assert.equal(files.history(PLAN).length, 2);
 });
 
+test("undoing a change merges its reverse into the file as it is now, keeping later edits", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "one\ntwo\nthree\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "one\nTWO\nthree\n", base: 1, author: bot });
+  files.write({ path: PLAN, text: "one\nTWO\nthree\nfour\n", base: 2, author: ada });
+  const [result] = files.undo([2], ada);
+  assert.equal(result.status, "undone");
+  assert.equal(files.read(PLAN)?.text, "one\ntwo\nthree\nfour\n");
+  const last = files.history(PLAN).at(-1)!;
+  assert.deepEqual([last.revision, last.author, last.undoes], [4, ada, 2]);
+});
+
+test("undoing an undo is a redo, and undoing twice changes nothing more", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "a\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "a\nb\n", base: 1, author: bot });
+  files.undo([2], ada);
+  assert.equal(files.recent().find((c) => c.revision === 2)?.undoneBy, 3);
+  assert.equal(files.undo([2], ada)[0].status, "unchanged");
+  files.undo([3], ada);
+  assert.equal(files.read(PLAN)?.text, "a\nb\n");
+  assert.equal(files.recent().find((c) => c.revision === 2)?.undoneBy, null);
+  assert.equal(files.recent().find((c) => c.revision === 3)?.undoneBy, 4);
+});
+
+test("an undo that would clash with a later edit to the same lines does nothing", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "one\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "uno\n", base: 1, author: bot });
+  files.write({ path: PLAN, text: "ein\n", base: 2, author: ada });
+  assert.equal(files.undo([2], ada)[0].status, "conflict");
+  assert.equal(files.undo([99], ada)[0].status, "missing");
+  assert.equal(files.read(PLAN)?.text, "ein\n");
+});
+
+test("undoing everything an agent did, newest first, across files", () => {
+  const files = workspace();
+  const other = "Other.md" as FilePath;
+  files.write({ path: PLAN, text: "mine\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "mine\nagent 1\n", base: 1, author: bot });
+  files.write({ path: other, text: "agent 2\n", base: 0, author: bot });
+  files.write({ path: PLAN, text: "mine\nagent 1\nagent 3\n", base: 2, author: bot });
+  const byBot = files.recent({ author: authorKey(bot) }).map((c) => c.revision);
+  assert.deepEqual(byBot, [4, 3, 2]);
+  const results = files.undo(byBot, ada);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["undone", "undone", "undone"],
+  );
+  assert.equal(files.read(PLAN)?.text, "mine\n");
+  assert.equal(files.read(other)?.text, "");
+});
+
+test("recent lists changes newest first, by file, and pages with before", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "1", base: 0, author: ada });
+  files.write({ path: "Other.md" as FilePath, text: "2", base: 0, author: ada });
+  files.write({ path: PLAN, text: "3", base: 1, author: ada });
+  assert.deepEqual(
+    files.recent().map((c) => c.revision),
+    [3, 2, 1],
+  );
+  assert.deepEqual(
+    files.recent({ path: PLAN }).map((c) => c.revision),
+    [3, 1],
+  );
+  assert.deepEqual(
+    files.recent({ before: 3, limit: 1 }).map((c) => c.revision),
+    [2],
+  );
+});
+
+test("a seed's agent edits apply to notes it just added, as changes by those agents", () => {
+  const files = workspace();
+  const seed: Seed = {
+    id: "e",
+    notes: [{ path: "Garden.md", text: "a\n", replace: false }],
+    edits: [{ path: "Garden.md", text: "a\nb\n", agent: "Gardener" }],
+  };
+  files.seed(seed);
+  const path = "Garden.md" as FilePath;
+  assert.equal(files.read(path)?.text, "a\nb\n");
+  assert.deepEqual(files.history(path).map((c) => c.author), [SEED_AUTHOR, { kind: "agent", name: "Gardener" }]);
+  files.seed({ ...seed, id: "f" });
+  assert.equal(files.history(path).length, 2);
+});
+
 test("a Preview database from before the File rename (a docs table, schema 1) keeps its files", () => {
   const db = memoryDb();
   db.run("CREATE TABLE docs(path TEXT PRIMARY KEY, text TEXT NOT NULL, revision INTEGER NOT NULL)");
@@ -185,4 +272,62 @@ test("starting twice, or from an empty database, ends in the same shape", () => 
   new Files(db);
   assert.deepEqual(tables(), first);
   assert.deepEqual(first, ["changes", "files", "meta"]);
+});
+
+test("a Preview database with an undo column already, and no record of it, starts fine", () => {
+  const db = memoryDb();
+  new Files(db);
+  db.run("DELETE FROM meta");
+  const files = new Files(db);
+  assert.deepEqual(files.write({ path: PLAN, text: "a", base: 0, author: ada }).file?.revision, 1);
+  assert.equal(files.undo([1], ada)[0].status, "undone");
+});
+
+test("chosen changes show together, and a change left out splits them into runs without its edits", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "a\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "a\nb\n", base: 1, author: bot });
+  files.write({ path: PLAN, text: "a\nb\nc\n", base: 2, author: ada });
+  files.write({ path: PLAN, text: "a\nb\nc\nd\n", base: 3, author: bot });
+  files.write({ path: "Other.md" as FilePath, text: "x\n", base: 0, author: bot });
+  assert.deepEqual(files.combined([2, 3]), [{ path: PLAN, runs: [{ revisions: [2, 3], before: "a\n", after: "a\nb\nc\n" }] }]);
+  assert.deepEqual(files.combined([2, 4, 5]), [
+    { path: "Other.md", runs: [{ revisions: [5], before: "", after: "x\n" }] },
+    {
+      path: PLAN,
+      runs: [
+        { revisions: [2], before: "a\n", after: "a\nb\n" },
+        { revisions: [4], before: "a\nb\nc\n", after: "a\nb\nc\nd\n" },
+      ],
+    },
+  ]);
+});
+
+test("a file can be read at any of its revisions, and restored to one as a new change that can be undone", () => {
+  const files = workspace();
+  files.write({ path: PLAN, text: "first\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "second\n", base: 1, author: bot });
+  assert.equal(files.versionAt(PLAN, 1), "first\n");
+  assert.equal(files.versionAt(PLAN, 99), null);
+  const restored = files.restore(PLAN, { revision: 1 }, ada);
+  assert.deepEqual(restored, { status: "saved", file: { path: PLAN, text: "first\n", revision: 3 } });
+  files.undo([3], ada);
+  assert.equal(files.read(PLAN)?.text, "second\n", "nothing is lost");
+  files.restore(PLAN, { before: 2 }, ada);
+  assert.equal(files.read(PLAN)?.text, "first\n", "before a change is the version just before it");
+  files.restore(PLAN, { before: 1 }, ada);
+  assert.equal(files.read(PLAN)?.text, "", "before the first change, the file was empty");
+});
+
+test("a seed edit can carry a label, which lands in the labels file at that edit's revision", () => {
+  const files = workspace();
+  files.seed({
+    id: "l",
+    notes: [{ path: "Garden.md", text: "a\n", replace: false }],
+    edits: [
+      { path: "Garden.md", text: "a\nb\n", agent: "Gardener", label: "Spring" },
+      { path: "Garden.md", text: "a\nb\nc\n", agent: "Gardener" },
+    ],
+  });
+  assert.deepEqual(JSON.parse(files.read(".common-ink/labels.json" as FilePath)!.text), { labels: [{ name: "Spring", path: "Garden.md", revision: 2 }] });
 });

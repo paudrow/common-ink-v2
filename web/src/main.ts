@@ -6,6 +6,10 @@ import { api } from "./api.ts";
 import { CommandBar, type Provider } from "./commandbar.ts";
 import { commandForKey, Commands, keyFor, type Keybinding } from "./commands.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { describeAuthor } from "./describe.ts";
+import { HistoryPanel } from "./history.ts";
+import { connectLive } from "./live.ts";
+import { VERSION_PREFIX, versionView, versionViewId } from "./version.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import { endDrag, startDrag } from "./dnd.ts";
@@ -36,16 +40,22 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 };
 
 let files: FileSummary[] = [];
+let historyTimer = 0;
 const name = (path: FilePath) => path.replace(/\.md$/, "");
 
 const workbench = new Workbench($("#workbench"), {
   status(status, message) {
     saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
     saveLine.dataset.status = status ?? "";
+    if (status === "saved") {
+      clearTimeout(historyTimer);
+      historyTimer = window.setTimeout(() => void history.refresh(), 300);
+    }
   },
   mode: (mode) => (modeLine.textContent = mode),
   focus(path) {
-    if (path) history.replaceState(null, "", urlForFile(path));
+    if (path) window.history.replaceState(null, "", urlForFile(path));
+    void history.refresh();
     document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
     renderList();
   },
@@ -75,6 +85,7 @@ function tabMenuItems(): Array<MenuItem | null> {
     SEPARATOR,
     item("tab.keepOpen", "Keep Open", !tab?.preview),
     item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
+    item("history.addLabel", "Add Label…", !tab || !("file" in tab)),
     SEPARATOR,
     item("window.splitRight", "Split Right"),
     item("window.splitDown", "Split Down"),
@@ -202,6 +213,9 @@ commands.register(
   { id: "window.right", title: "Focus window to the right", run: () => workbench.change((l) => L.focusDirection(l, "right")) },
   { id: "window.up", title: "Focus window above", run: () => workbench.change((l) => L.focusDirection(l, "up")) },
   { id: "window.down", title: "Focus window below", run: () => workbench.change((l) => L.focusDirection(l, "down")) },
+  { id: "history.note", title: "Show history of this note", run: () => history.toggle("file") },
+  { id: "history.all", title: "Show history of everything", run: () => history.toggle("all") },
+  { id: "history.addLabel", title: "Add label to this note…", run: () => history.addLabel() },
   { id: "tab.moveLeft", title: "Move tab to the window to the left", run: () => workbench.change((l) => L.moveTabDirection(l, "left")) },
   { id: "tab.moveRight", title: "Move tab to the window to the right", run: () => workbench.change((l) => L.moveTabDirection(l, "right")) },
   { id: "tab.moveUp", title: "Move tab to the window above", run: () => workbench.change((l) => L.moveTabDirection(l, "up")) },
@@ -333,6 +347,42 @@ for (const [keys, command] of [
 window.addEventListener("pagehide", () => {
   for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
+
+const me = await fetch("/api/me")
+  .then((r) => r.json())
+  .then((who: { kind: string; email?: string }) => who.email)
+  .catch(() => undefined);
+const history = new HistoryPanel($("#history"), {
+  me,
+  focusedPath: () => workbench.focusedPath,
+  undone: (paths) => void workbench.refreshFromServer(paths),
+  openVersion: (path, revision) => workbench.openView(versionViewId(path, revision), { newTab: true }),
+});
+// Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
+let historyTimer2 = 0;
+connectLive({
+  async change(notice) {
+    const open = await workbench.remoteChange(notice.path, notice.revision);
+    const mine = notice.author.kind === "user" && notice.author.email === me;
+    if (open && !mine && notice.path === workbench.focusedPath) {
+      saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
+      saveLine.dataset.status = "remote";
+    }
+    if (!files.some((f) => f.path === notice.path)) void refreshList();
+    clearTimeout(historyTimer2);
+    historyTimer2 = window.setTimeout(() => void history.refresh(), 400);
+  },
+  // Back after a gap: catch up on files that changed meanwhile.
+  async open() {
+    const latest = await api.list().catch(() => null);
+    if (!latest) return;
+    files = latest;
+    renderList();
+    for (const f of latest) await workbench.remoteChange(f.path, f.revision);
+  },
+});
+
+workbench.provideViews(VERSION_PREFIX, (id) => versionView(id, (path) => void workbench.refreshFromServer([path]).then(() => history.refresh())));
 
 try {
   files = await api.list();

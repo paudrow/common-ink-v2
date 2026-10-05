@@ -10,6 +10,8 @@ export interface Section {
   pr: number;
   title: string;
   steps: string[];
+  /** Later versions of the section's notes, by named agents, so history has something to show. */
+  edits: Array<{ path: string; text: string; agent: string; label?: string }>;
   notes: Array<{ path: string; text: string }>;
 }
 
@@ -30,9 +32,11 @@ export function readSections(dir: string): Section[] {
     .map((file) => {
       const slug = file.slice(0, -".json".length);
       const data = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
-      const { pr, title, steps } = data ?? {};
+      const { pr, title, steps, edits = [] } = data ?? {};
       const valid = Number.isInteger(pr) && typeof title === "string" && Array.isArray(steps) && steps.every((s) => typeof s === "string");
       if (!valid) throw new Error(`${file} must look like {"pr": 1, "title": "...", "steps": ["..."]}`);
+      const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
+      if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}`);
       const notesDir = path.join(dir, slug);
       const notes = fs.existsSync(notesDir)
         ? fs
@@ -40,7 +44,7 @@ export function readSections(dir: string): Section[] {
             .filter((f) => f.endsWith(".md"))
             .map((f) => ({ path: f, text: fs.readFileSync(path.join(notesDir, f), "utf8") }))
         : [];
-      return { slug, pr, title, steps, notes };
+      return { slug, pr, title, steps, notes, edits };
     });
 }
 
@@ -66,6 +70,7 @@ export function buildSeed(sections: Section[], pr: PullRequest): Seed {
     ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, replace: false }))),
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
-  const id = createHash("sha256").update(JSON.stringify(notes)).digest("hex").slice(0, 16);
-  return { id, notes };
+  const edits = sections.flatMap((s) => s.edits);
+  const id = createHash("sha256").update(JSON.stringify({ notes, edits })).digest("hex").slice(0, 16);
+  return { id, notes, edits };
 }

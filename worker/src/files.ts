@@ -25,7 +25,11 @@ export function parseFilePath(value: unknown): FilePath | null {
 
 export const isNote = (path: FilePath) => path.endsWith(".md");
 
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string };
+/** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };
+
+/** One string per author, for filtering history by who made a change. */
+export const authorKey = (a: Author) => (a.kind === "user" ? `user:${a.email}` : `agent:${a.name}${a.by ? `:${a.by}` : ""}`);
 
 /** Revisions are change numbers, counted across the workspace. 0 is "before the file existed". */
 export type Revision = number;
@@ -49,6 +53,39 @@ export interface Change {
   base: Revision;
   diff: Diff;
   time: number;
+  /** The change this one undid, if it's an undo. Undoing an undo is a redo. */
+  undoes: Revision | null;
+  /** The undo in effect for this change, if it's undone (and that undo hasn't itself been undone). Set by `recent`. */
+  undoneBy?: Revision | null;
+}
+
+/** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
+export interface UndoResult {
+  revision: Revision;
+  status: "undone" | "unchanged" | "conflict" | "missing";
+  file?: WorkspaceFile;
+}
+
+/** What a stretch of changes next to each other in a file's history did: its text before and after them. */
+export interface DiffRun {
+  revisions: Revision[];
+  before: string;
+  after: string;
+}
+
+/** What chosen changes did to one file. Changes left out split it into runs, so their edits don't show. */
+export interface FileDiff {
+  path: FilePath;
+  runs: DiffRun[];
+}
+
+export interface HistoryQuery {
+  path?: FilePath;
+  /** An authorKey. */
+  author?: string;
+  /** Only changes older than this revision, for paging. */
+  before?: Revision;
+  limit?: number;
 }
 
 /**
@@ -63,12 +100,18 @@ export interface Write {
   text: string;
   base: Revision;
   author: Author;
+  undoes?: Revision;
 }
 
-/** Notes a Preview starts with. `replace` rewrites a note that exists; otherwise only missing notes are added. */
+/**
+ * Notes a Preview starts with. `replace` rewrites a note that exists; otherwise only missing notes are
+ * added. `edits` are later versions of notes the seed just added, by named agents, for history to show.
+ */
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
+  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
+  edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
 }
 
 export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
@@ -76,6 +119,10 @@ export const SEED_AUTHOR: Author = { kind: "agent", name: "Preview seed" };
 const lines = (text: string) => text.split("\n");
 
 const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
+
+/** Whether a table's definition has a column. ALTER TABLE ADD COLUMN writes it as ", name TYPE" or "name TYPE". */
+const hasColumn = (db: Db, table: string, column: string) =>
+  new RegExp(`[(,\\s]${column}\\s`).test(db.all<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table)[0]?.sql ?? "");
 
 /**
  * The database's shape. Each step looks at what's there before it changes anything, so the whole list
@@ -93,12 +140,29 @@ const SCHEMA: Array<(db: Db) => void> = [
     );
     db.run("CREATE INDEX IF NOT EXISTS changes_by_path ON changes(path, revision)");
   },
+  // 2. Undo and redo are changes that record which change they undid.
+  (db) => {
+    if (!hasColumn(db, "changes", "undoes")) db.run("ALTER TABLE changes ADD COLUMN undoes INTEGER");
+  },
 ];
+
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null };
+const toChange = (row: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) });
+const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
+
+/** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
+export interface ChangeNotice {
+  path: FilePath;
+  revision: Revision;
+  author: Author;
+}
 
 export class Files {
   constructor(
     private db: Db,
     private now: () => number = Date.now,
+    /** Told of every change once it's recorded. */
+    private announce: (notice: ChangeNotice) => void = () => {},
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
@@ -114,12 +178,115 @@ export class Files {
 
   /** The file's changes, oldest first. */
   history(path: FilePath): Change[] {
-    return this.db
-      .all<{ revision: number; path: FilePath; author: string; base: number; diff: string; time: number }>(
-        "SELECT * FROM changes WHERE path = ? ORDER BY revision",
-        path,
-      )
-      .map((row) => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff) }));
+    return this.db.all<ChangeRow>("SELECT * FROM changes WHERE path = ? ORDER BY revision", path).map(toChange);
+  }
+
+  /** Changes across the workspace, newest first, optionally for one file or one author. */
+  recent(q: HistoryQuery = {}): Change[] {
+    const limit = Math.min(Math.max(1, q.limit ?? 50), 500);
+    const rows = this.db.all<ChangeRow>(
+      `SELECT * FROM changes WHERE (?1 IS NULL OR path = ?1) AND (?2 IS NULL OR revision < ?2) ORDER BY revision DESC`,
+      q.path ?? null,
+      q.before ?? null,
+    );
+    const undoneBy = this.undoneBy();
+    const out: Change[] = [];
+    for (const row of rows) {
+      const change = toChange(row);
+      if (q.author && authorKey(change.author) !== q.author) continue;
+      out.push({ ...change, undoneBy: undoneBy(change.revision) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /** Which undo, if any, is in effect for a change: the latest undo of it that hasn't been undone itself. */
+  private undoneBy(): (revision: Revision) => Revision | null {
+    const undos = new Map<Revision, Revision[]>();
+    for (const { revision, undoes } of this.db.all<{ revision: number; undoes: number }>("SELECT revision, undoes FROM changes WHERE undoes IS NOT NULL ORDER BY revision")) {
+      undos.set(undoes, [...(undos.get(undoes) ?? []), revision]);
+    }
+    const memo = new Map<Revision, Revision | null>();
+    const find = (revision: Revision): Revision | null => {
+      if (!memo.has(revision)) memo.set(revision, [...(undos.get(revision) ?? [])].reverse().find((u) => find(u) === null) ?? null);
+      return memo.get(revision)!;
+    };
+    return find;
+  }
+
+  /**
+   * Undo changes, newest first, each as a new change by `author`. A change is undone by merging its
+   * reverse into the file as it is now, so later edits elsewhere in the file stay.
+   */
+  undo(revisions: Revision[], author: Author): UndoResult[] {
+    return this.db.tx(() =>
+      [...new Set(revisions)]
+        .sort((a, b) => b - a)
+        .map((revision) => {
+          const [row] = this.db.all<ChangeRow>("SELECT * FROM changes WHERE revision = ?", revision);
+          if (!row) return { revision, status: "missing" as const };
+          const change = toChange(row);
+          const after = this.textAt(change.path, revision) ?? "";
+          const before = patch(lines(after), invert(change.diff)).join("\n");
+          const current = this.read(change.path);
+          const undone = merge(current?.text ?? "", after, before);
+          if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
+          if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
+          const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
+          return { revision, status: "undone" as const, file: result.file ?? undefined };
+        }),
+    );
+  }
+
+  /**
+   * What chosen changes did together, file by file. Within a file, chosen changes that sit next to each
+   * other in its history make one run, from the text before the first to the text after the last; a
+   * change that wasn't chosen ends a run, so its edits are left out.
+   */
+  combined(revisions: Revision[]): FileDiff[] {
+    const chosen = new Set(revisions);
+    const paths = [...new Set(this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${[...chosen].map(() => "?").join(",") || "NULL"})`, ...chosen).map((r) => r.path))];
+    return paths.sort().map((path) => {
+      const history = this.history(path);
+      const runs: DiffRun[] = [];
+      let run: Revision[] = [];
+      const close = () => {
+        if (!run.length) return;
+        const first = history.findIndex((c) => c.revision === run[0]);
+        const before = first > 0 ? this.textAt(path, history[first - 1].revision)! : "";
+        runs.push({ revisions: run, before, after: this.textAt(path, run.at(-1)!)! });
+        run = [];
+      };
+      for (const c of history) {
+        if (chosen.has(c.revision)) run.push(c.revision);
+        else close();
+      }
+      close();
+      return { path, runs };
+    });
+  }
+
+  /** A file's text at one of its revisions, or null if it never had that revision. */
+  versionAt(path: FilePath, revision: Revision): string | null {
+    return this.textAt(path, revision);
+  }
+
+  /**
+   * Put a file back the way it was at one of its revisions (or just before one of its changes), as a
+   * new change by `author`. Nothing is
+   * lost: the changes since stay in history, and this one can be undone like any other.
+   */
+  restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): WriteResult | null {
+    return this.db.tx(() => {
+      const revision =
+        "revision" in at
+          ? at.revision
+          : (this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, at.before)[0]?.r ?? 0);
+      const text = this.textAt(path, revision);
+      if (text === null) return null;
+      const current = this.read(path);
+      return this.apply({ path, text, base: current?.revision ?? 0, author });
+    });
   }
 
   /**
@@ -135,17 +302,39 @@ export class Files {
     this.db.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
       if (applied?.value === seed.id) return;
+      const added = new Set<string>();
       for (const { path: raw, text, replace } of seed.notes) {
         const path = parseFilePath(raw);
         if (!path) throw new Error(`Not a file path: ${raw}`);
         const current = this.read(path);
+        if (!current) added.add(path);
         if (!current || replace) this.apply({ path, text, base: current?.revision ?? 0, author: SEED_AUTHOR });
+      }
+      const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
+      for (const { path, text, agent, label } of seed.edits ?? []) {
+        const current = added.has(path) ? this.read(path as FilePath) : null;
+        if (!current) continue;
+        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        if (label && result.file) labels.push({ name: label, path: current.path, revision: result.file.revision });
+      }
+      if (labels.length) {
+        // The labels file's own format (labels.ts), written here so seeding doesn't depend on it.
+        const path = ".common-ink/labels.json" as FilePath;
+        const file = this.read(path);
+        const existing = (() => {
+          try {
+            return (JSON.parse(file?.text ?? "{}").labels as unknown[]) ?? [];
+          } catch {
+            return [];
+          }
+        })();
+        this.apply({ path, text: `${JSON.stringify({ labels: [...existing, ...labels] }, null, 2)}\n`, base: file?.revision ?? 0, author: SEED_AUTHOR });
       }
       this.db.run("INSERT INTO meta(key, value) VALUES ('seed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", seed.id);
     });
   }
 
-  private apply({ path, text, base, author }: Write): WriteResult {
+  private apply({ path, text, base, author, undoes }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
     let next = text;
@@ -159,14 +348,15 @@ export class Files {
     if (current && next === currentText) return { status, file: current };
     const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
     this.db.run(
-      "INSERT INTO changes(path, author, base, diff, time) VALUES (?, ?, ?, ?, ?)",
-      path, JSON.stringify(author), base, diff, this.now(),
+      "INSERT INTO changes(path, author, base, diff, time, undoes) VALUES (?, ?, ?, ?, ?, ?)",
+      path, JSON.stringify(author), base, diff, this.now(), undoes ?? null,
     );
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     this.db.run(
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
+    this.announce({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }
 
@@ -178,7 +368,7 @@ export class Files {
     let text = lines(this.read(path)?.text ?? "");
     for (const c of changes.reverse()) {
       if (c.revision === revision) break;
-      text = patch(text, c.diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 })));
+      text = patch(text, invert(c.diff));
     }
     return text.join("\n");
   }

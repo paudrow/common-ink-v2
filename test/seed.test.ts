@@ -25,7 +25,7 @@ test("a section's notes come from its folder", () => {
     "notes/Ideas.md": "# Ideas\n",
     "notes/picture.png": "not a note",
   });
-  assert.deepEqual(readSections(dir), [{ slug: "notes", pr: 2, title: "Notes", steps: ["Write one"], notes: [{ path: "Ideas.md", text: "# Ideas\n" }] }]);
+  assert.deepEqual(readSections(dir), [{ slug: "notes", pr: 2, title: "Notes", steps: ["Write one"], notes: [{ path: "Ideas.md", text: "# Ideas\n" }], edits: [] }]);
 });
 
 test("a malformed section is an error that names its file", () => {
@@ -35,9 +35,9 @@ test("a malformed section is an error that names its file", () => {
 
 test("Try this PR lists this PR's steps first, then the rest newest first", () => {
   const sections = [
-    { slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [] },
-    { slug: "b", pr: 5, title: "Storage", steps: ["Save", "Reload"], notes: [] },
-    { slug: "c", pr: 6, title: "Editor", steps: ["Type"], notes: [] },
+    { slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [], edits: [] },
+    { slug: "b", pr: 5, title: "Storage", steps: ["Save", "Reload"], notes: [], edits: [] },
+    { slug: "c", pr: 6, title: "Editor", steps: ["Type"], notes: [], edits: [] },
   ];
   assert.equal(
     tryThisPr(sections, { number: 5, title: "Storage", url: "https://github.com/o/r/pull/5", sha: "0123456789abcdef" }),
@@ -66,7 +66,7 @@ test("Try this PR lists this PR's steps first, then the rest newest first", () =
 });
 
 test("the seed keeps sample notes and replaces Try this PR, and its id follows its content", () => {
-  const sections = [{ slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [{ path: "Welcome.md", text: "# Welcome\n" }] }];
+  const sections = [{ slug: "a", pr: 4, title: "Scaffold", steps: ["Open it"], notes: [{ path: "Welcome.md", text: "# Welcome\n" }], edits: [] }];
   const seed = buildSeed(sections, { number: 4 });
   assert.deepEqual(
     seed.notes.map((n) => [n.path, n.replace]),

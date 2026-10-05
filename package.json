@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "A minimal, keyboard-first workspace for markdown notes, built for people and agents.",
+  "bin": {
+    "common-ink": "bin/common-ink"
+  },
   "scripts": {
     "dev": "npm run build && npm run seed && wrangler dev -c worker/wrangler.jsonc --port 8787 --var DEV_USER:dev@localhost --var SEED:1",
     "build": "vite build web --outDir ../dist --emptyOutDir",
@@ -12,7 +15,8 @@
     "test": "node --disable-warning=ExperimentalWarning --import tsx --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test && npm run build",
     "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc",
-    "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc"
+    "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc",
+    "cli": "tsx scripts/cli.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -1,7 +1,9 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
-import { identify, type Identity } from "./auth.ts";
-import { parseFilePath, type Seed } from "./files.ts";
+import { authorFor, identify, type Identity } from "./auth.ts";
+import type { Seed } from "./files.ts";
+import { mcp } from "./mcp.ts";
+import { runOperation, type OperationName, type Store } from "./operations.ts";
 import type { Workspace } from "./workspace.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -37,37 +39,42 @@ export default {
     const who = await identify(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD, devUser: env.DEV_USER });
     if (!who) return secure(new Response("Sign in through Cloudflare Access to use Common Ink.\n", { status: 401 }));
     const url = new URL(req.url);
-    if (!url.pathname.startsWith("/api/")) return secure(await env.ASSETS.fetch(req));
+    if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") return secure(await env.ASSETS.fetch(req));
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
+    const store = workspace as unknown as Store;
+    // The live connection goes straight to the workspace: a WebSocket's response can't be rewrapped.
+    if (url.pathname === "/api/live") return workspace.fetch(req);
+    if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
     await seedOnce(env, workspace);
-    return secure(await api(req, url, who, workspace));
+    return secure(await api(req, url, who, store));
   },
 } satisfies ExportedHandler<Env>;
 
-/** Files are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
-const MAX_FILE_BYTES = 1_000_000;
+/** The API routes, each running one workspace operation with its arguments from the query and the body. */
+const ROUTES: Record<string, OperationName> = {
+  "GET /api/files": "list_files",
+  "GET /api/file": "read_file",
+  "PUT /api/file": "write_file",
+  "GET /api/history": "history",
+  "POST /api/undo": "undo",
+  "POST /api/diff": "diff",
+  "GET /api/version": "read_version",
+  "POST /api/restore": "restore",
+  "GET /api/labels": "labels",
+  "POST /api/labels": "add_label",
+};
 
-async function api(req: Request, url: URL, who: Identity, workspace: DurableObjectStub<Workspace>): Promise<Response> {
+async function api(req: Request, url: URL, who: Identity, store: Store): Promise<Response> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/me") return json(who);
-  if (route === "GET /api/files") return json(await workspace.list());
-  if (route === "GET /api/file") {
-    const path = parseFilePath(url.searchParams.get("path"));
-    if (!path) return json({ error: "?path= must be a path ending in .md or .json" }, 400);
-    const file = await workspace.read(path);
-    return file ? json(file) : json({ error: `Nothing at ${path}` }, 404);
-  }
-  if (route === "PUT /api/file") {
-    const body = (await req.json().catch(() => null)) as { path?: unknown; text?: unknown; base?: unknown } | null;
-    const path = parseFilePath(body?.path);
-    const { text, base } = body ?? {};
-    if (!path) return json({ error: '"path" must be a path ending in .md or .json' }, 400);
-    if (typeof text !== "string" || new TextEncoder().encode(text).length > MAX_FILE_BYTES) return json({ error: '"text" must be a string under 1 MB' }, 400);
-    if (!Number.isSafeInteger(base) || (base as number) < 0) return json({ error: '"base" must be the revision you started from, or 0 for a new file' }, 400);
-    const result = await workspace.write({ path, text, base: base as number, author: { kind: "user", email: who.email } });
-    return json(result, result.status === "conflict" ? 409 : 200);
-  }
-  return json({ error: `No route for ${route}` }, 404);
+  const name = ROUTES[route];
+  if (!name) return json({ error: `No route for ${route}` }, 404);
+  const body = req.method === "GET" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
+  const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
+  const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+  if (!result.ok) return json({ error: result.error }, 400);
+  if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
+  return json(result.value, (result.value as { status?: string }).status === "conflict" ? 409 : 200);
 }
 
 let seeded = false;
