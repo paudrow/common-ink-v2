@@ -1,9 +1,11 @@
-// The CodeMirror 6 editor, as plain as it comes: markdown (or JSON) highlighting and standard keys.
-// Everything else (Vim keys, live preview, todos) comes from extensions, through `extensions`.
+// The CodeMirror 6 editor, as plain as it comes: CommonMark (or JSON) highlighting and standard keys.
+// Everything else (Vim keys, live preview, todos) comes from extensions, through `extensions`, and what
+// they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
-import { markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
-import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
+import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
+import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
+import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
@@ -46,8 +48,26 @@ const mono = EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })
 /** Marks a change copied over from another view of the same file. */
 export const synced = Annotation.define<boolean>();
 
+/** What extensions have added to the markdown language, in the order they added it. */
+const markdownSyntax: MarkdownExtension[] = [];
+let markdownSupport = new LanguageSupport(commonmarkLanguage);
+
+/**
+ * Add to the markdown language: new syntax (GFM's tables, math) or how code blocks parse. Editors made
+ * after this have it; reconfigure() gives it to editors already open.
+ */
+export function addMarkdownSyntax(extension: MarkdownExtension): void {
+  markdownSyntax.push(extension);
+  const parser = (commonmarkLanguage.parser as MarkdownParser).configure(markdownSyntax);
+  // As lang-markdown makes its languages, without markdown(), which would bring HTML, CSS and JavaScript parsers.
+  markdownSupport = new LanguageSupport(new Language(commonmarkLanguage.data, parser, [], "markdown"));
+}
+
+/** The markdown language notes are parsed with now, with what extensions have added. */
+export const markdownLanguageSupport = (): LanguageSupport => markdownSupport;
+
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
-const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment() };
+const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment(), markdown: new Compartment() };
 
 export type EditorSettings = Pick<Settings, "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize" | "editor.livePreview">;
 
@@ -56,6 +76,8 @@ const extensionsFor = (s: EditorSettings) => ({
   wrapping: s["editor.lineWrapping"] ? EditorView.lineWrapping : [],
   fontSize: EditorView.theme({ ".cm-scroller": { fontSize: `${s["editor.fontSize"]}px` } }),
   livePreview: previewEnabled.of(s["editor.livePreview"]),
+  // Only in markdown editors: elsewhere the compartment isn't there, and reconfiguring it does nothing.
+  markdown: markdownSupport,
 });
 
 /** Apply new settings to an open editor. */
@@ -80,9 +102,9 @@ export function createState(
       drawSelection(),
       remoteFlash,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
-      // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
+      // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
-      opts.json ? [json(), mono] : opts.code ? mono : new LanguageSupport(markdownLanguage),
+      opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),

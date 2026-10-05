@@ -1,0 +1,46 @@
+{
+  "id": "code-blocks",
+  "name": "Code blocks",
+  "version": "1.0.0",
+  "description": "Syntax highlighting in fenced code blocks (```python, ```js, and over a hundred more), each language loaded the first time a block uses it. A block reads as a card with its language, Wrap and Copy (⌘⇧C copies the block the cursor is in); click into it to edit, and its fences show.",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "highlight.ts"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": {
+    "editor": {
+      "why": "Highlight code in notes, and add each block's Copy and Wrap"
+    },
+    "clipboard:write": {
+      "why": "Copy a code block's code"
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Code blocks",
+      "properties": {
+        "code-blocks.wrap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Wrap long lines in code blocks, as the rest of the note wraps. Wrap on a block changes it for that block while the note is open."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "code-blocks.copy",
+        "title": "Copy the code block the cursor is in"
+      }
+    ],
+    "keybindings": [
+      {
+        "key": "Mod-Shift-c",
+        "command": "code-blocks.copy"
+      }
+    ]
+  }
+}

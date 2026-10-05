@@ -146,6 +146,18 @@ export class PermissionBroker {
     }
   }
 
+  /**
+   * Whether `ask` is allowed now, without asking or waiting: declared, and allowed by your answer, for
+   * this session, or as a built-in's. For what a browser allows only while it handles a click (the
+   * clipboard), which can't wait for a check.
+   */
+  granted(extension: ExtensionManifest, ask: Ask): boolean {
+    const d = decide(extension, ask, this.o.grants(), { builtIn: this.o.isBuiltIn(extension.id), once: this.once });
+    if (d.outcome !== "allow") return false;
+    this.record(extension.id, ask, "allowed");
+    return true;
+  }
+
   /** Whether `ask` was allowed only for this session, for telling the Worker so. */
   allowedOnce(extension: ExtensionManifest, ask: Ask): boolean {
     const d = decide(extension, ask, this.o.grants(), { builtIn: this.o.isBuiltIn(extension.id) });

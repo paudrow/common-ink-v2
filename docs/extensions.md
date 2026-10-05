@@ -9,7 +9,7 @@ A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a 
 
 ## Libraries
 
-Trusted code that changes editors needs CodeMirror, and it must be the app's own copy. An extension may import these by name, and nothing else outside its folder: `@codemirror/state`, `@codemirror/view`, `@codemirror/language`, `@codemirror/commands`, `@lezer/highlight`, `@replit/codemirror-vim`, and the app's `common-ink/live-preview` (the live-preview mechanism todos and markdown use), `common-ink/describe`, `common-ink/keys`, `common-ink/files` and `common-ink/uploads`. In a workspace extension, the Worker points those imports at `/lib/<name>.js`, which hands over the app's instance. The list is `web/src/library-names.ts`.
+Trusted code that changes editors needs CodeMirror, and it must be the app's own copy. An extension may import these by name, and nothing else outside its folder: `@codemirror/state`, `@codemirror/view`, `@codemirror/language`, `@codemirror/language-data`, `@codemirror/commands`, `@lezer/highlight`, `@lezer/markdown`, `@replit/codemirror-vim`, `katex`, and the app's `common-ink/live-preview` (the live-preview mechanism todos, markdown, tables and math use: `livePreview` for what a line draws, `blockPreview` for widgets that stand in for whole lines), `common-ink/describe`, `common-ink/keys`, `common-ink/files` and `common-ink/uploads`. In a workspace extension, the Worker points those imports at `/lib/<name>.js`, which hands over the app's instance. The list is `web/src/library-names.ts`.
 
 ## Where it runs
 
@@ -64,13 +64,14 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
 - `ctx.files` lists, reads and writes files, each checked against `files:read` and `files:write`. Writes are changes in history by the extension, acting for you.
+- `ctx.clipboard.read()` and `write(text)`, and `ctx.notifications.show(title, body)`, each checked against its permission.
 - `ctx.net.fetch(url, init)` fetches through the Worker: only hosts the manifest declares and you've allowed, with no cookies or referrer, at most 1 MB. A sandboxed extension has no other way out.
 - `ctx.workbench` opens files, says which file is focused and whether it has unsaved changes, splits a window (`split(direction, path?)`), reads and moves the focused window's tabs (`tabs()`, `moveTab(by)`), and shows a notice.
 - `ctx.changes.describe(fn)` puts words to changes in history, such as "Completed 'Pay rent' (due Oct 1)".
 - `ctx.events.onSaved` and `ctx.events.onFocus` say when a file saved and when focus moved.
 - `ctx.settings.get(key)` reads any setting in effect.
 - `ctx.util.fuzzyFilter`, `notePathFor` and `label` are the helpers the built-ins use.
-- `ctx.editor.extend(extension)` adds a CodeMirror extension to every note's editor, and with `{ everywhere: true }` to every editor, settings and code too (as Vim does). `ctx.editor.focused()` is the focused editor. They need the `editor` permission, and only trusted extensions get it.
+- `ctx.editor.extend(extension)` adds a CodeMirror extension to every note's editor, and with `{ everywhere: true }` to every editor, settings and code too (as Vim does). `ctx.editor.focused()` is the focused editor. `ctx.editor.markdown(extension)` adds a `@lezer/markdown` extension to the language notes are parsed with: new syntax (GFM, math) or how code blocks parse. The core's markdown is CommonMark. They need the `editor` permission, and only trusted extensions get it.
 
 ## Customizing a built-in
 
@@ -78,7 +79,7 @@ In the Extensions view, Customize copies a built-in's folder into the workspace 
 
 ## The default extensions, and the Catalog
 
-The core is the file store and sync, history, the layout, commands and the command bar, settings, the Extensions view, permissions, safe mode, and a plain editor with markdown highlighting and standard keys. On by default, as extensions: Vim, Live preview, Todos, History, Calendar, Contacts, Uploads, and the command bar's Open by name and Command list. Each loads only when one of its activation events happens, so it isn't in the app's first download.
+The core is the file store and sync, history, the layout, commands and the command bar, settings, the Extensions view, permissions, safe mode, and a plain editor with markdown highlighting and standard keys. On by default, as extensions: Vim, Live preview, GFM, Code blocks, LaTeX, Todos, History, Calendar, Contacts, Uploads, and the command bar's Open by name and Command list. Each loads only when one of its activation events happens, so it isn't in the app's first download.
 
 The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default, from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
 

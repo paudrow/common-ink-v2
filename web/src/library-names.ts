@@ -7,11 +7,21 @@
 /** Packages, whose exports are read at build time. */
 // Not @codemirror/lang-markdown: offering all of it would keep its markdown(), which brings HTML, CSS and
 // JavaScript parsers, in the app's first download. Extensions add to the markdown language through the API.
-export const PACKAGES = ["@codemirror/state", "@codemirror/view", "@codemirror/language", "@codemirror/commands", "@lezer/highlight", "@replit/codemirror-vim"] as const;
+export const PACKAGES = [
+  "@codemirror/state",
+  "@codemirror/view",
+  "@codemirror/language",
+  "@codemirror/language-data",
+  "@codemirror/commands",
+  "@lezer/highlight",
+  "@lezer/markdown",
+  "@replit/codemirror-vim",
+  "katex",
+] as const;
 
 /** The app's own modules, by the name extensions import them as, with what they export. */
 export const APP_MODULES = {
-  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["livePreview", "previewEnabled", "revealedLines"] },
+  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockHeight", "blockPreview", "collapsedBlockAt", "livePreview", "measureBlock", "previewEnabled", "revealedLines"] },
   "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
   "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },

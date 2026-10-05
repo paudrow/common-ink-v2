@@ -1,0 +1,13 @@
+{
+  "id": "gfm",
+  "name": "GFM",
+  "version": "1.0.0",
+  "description": "GitHub Flavored Markdown: tables, ~~strikethrough~~, task lists, and bare addresses like https://example.com as links. A table is drawn as a table until the cursor is in it. Off, notes are plain CommonMark.",
+  "main": "index.ts",
+  "files": ["index.ts", "tables.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Parse GFM in notes, and draw its tables and links" }
+  },
+  "contributes": {}
+}

@@ -1,0 +1,13 @@
+{
+  "pr": 20,
+  "title": "GFM, code blocks and LaTeX",
+  "steps": [
+    "Open Markdown extras. The table is drawn as a table, with its columns aligned as its second line says. Click it: its markdown shows, to edit; move off and it's drawn again.",
+    "The code blocks are highlighted in their languages. Each language loads the first time a block uses it: with dev tools open, reload, and see Python, TypeScript and Rust arrive as their own small files. A block naming a language Common Ink doesn't know stays plain.",
+    "Each block's first line has Wrap and Copy. Copy puts the block's code on the clipboard (the first time, it's allowed with the app, as Code blocks declares clipboard:write). Wrap is pressed while long lines wrap: press it on the plain block and its long line runs past the edge; press it again to wrap. The choice lasts while the note is open; the code-blocks.wrap setting (in Code blocks' section of settings) sets it for every block.",
+    "The math is drawn with KaTeX, loaded the first time a note has math, with its fonts from Common Ink itself. Put the cursor on a line with inline math, or in the displayed equation: its TeX shows. \"$5 and $10\" stays text.",
+    "Write your own: `$a^2 + b^2 = c^2$` in a sentence, a `$$` line, a line of TeX, and another `$$`.",
+    "In the Extensions view, turn GFM off and reload: the table is plain text, ~~ is just tildes, and the address is plain. Turn LaTeX off: the dollars are text. Turn Code blocks off: the code is plain monospace. Turn them back on.",
+    "A ```markdown block is parsed as markdown, in the notes' own language."
+  ]
+}

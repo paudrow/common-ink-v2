@@ -4,6 +4,7 @@
 // command bar lists. Built-in features use exactly this API; see docs/extensions.md for writing one.
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import type { MarkdownExtension } from "@lezer/markdown";
 import type { SourceStatus } from "../../worker/src/data-sources.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResult } from "../../worker/src/files.ts";
@@ -101,6 +102,8 @@ export interface ExtensionContext {
   editor: {
     /** A CodeMirror extension for every note's editor, or with `everywhere`, every editor (settings and code too). Add it while activating. */
     extend(extension: Extension, where?: { everywhere?: boolean }): void;
+    /** Add to the markdown language notes are parsed with: a @lezer/markdown extension (new syntax, or how code blocks parse). */
+    markdown(extension: MarkdownExtension): void;
     /** The focused note's editor, if a note has focus. */
     focused(): EditorView | null;
   };
@@ -113,6 +116,15 @@ export interface ExtensionContext {
     write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
     /** Upload a file (an image, a PDF…); its address goes in notes as /uploads/<name>. Throws if it can't be uploaded. */
     upload(name: string, data: Blob): Promise<UploadDone>;
+  };
+  /** The clipboard, with the clipboard:read and clipboard:write permissions. */
+  clipboard: {
+    read(): Promise<string>;
+    write(text: string): Promise<void>;
+  };
+  /** System notifications, with the notifications permission. */
+  notifications: {
+    show(title: string, body?: string): Promise<void>;
   };
   /** The network, through the Worker: only hosts the manifest declares and you've allowed. */
   net: {

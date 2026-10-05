@@ -10,7 +10,7 @@ const sources = import.meta.glob<string>("./*/*.{js,ts,json}", { query: "?raw", 
 const code = import.meta.glob<{ default: ExtensionModule }>("./*/index.{js,ts}");
 
 /** The order they're listed in the Extensions view, and start in when several start together. */
-const ORDER = ["quick-open", "command-list", "vim", "live-preview", "history", "todos", "calendar", "contacts", "uploads"];
+const ORDER = ["quick-open", "command-list", "vim", "live-preview", "gfm", "code-blocks", "latex", "history", "todos", "calendar", "contacts", "uploads"];
 
 function builtIn(id: string): BuiltIn {
   const manifest = parseManifest(manifests[`./${id}/extension.json`], id, { builtIn: true });

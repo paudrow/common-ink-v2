@@ -95,3 +95,36 @@ test("with Vim off, the editor has standard keys and no mode; with Live preview 
   assert.equal(await drawn(), true, "both back on: markdown is drawn");
   await page.close();
 });
+
+test("GFM, Code blocks and LaTeX: a table, highlighted code with Copy, and math drawn with KaTeX's own fonts", async () => {
+  const context = await h.browser.newContext();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: h.base });
+  const page = await context.newPage();
+  const blocked: string[] = [];
+  page.on("console", (m) => /Content Security Policy|Refused/.test(m.text()) && blocked.push(m.text()));
+  page.on("pageerror", (e) => blocked.push(e.message));
+  await page.goto(`${h.base}/?file=${encodeURIComponent("Markdown extras.md")}`);
+  await page.waitForSelector(".cm-gfm-table table");
+  assert.equal(await page.locator(".cm-gfm-table th").first().textContent(), "Fruit");
+  // Python arrives, then its code is highlighted: def is a keyword. The block is brought into view first:
+  // below what the editor draws (a slow machine draws less at first), its code isn't in the page at all.
+  await page.evaluate(`(async () => {
+    const { EditorView } = await globalThis.__commonInkLibrary("@codemirror/view");
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor"));
+    view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.toString().indexOf("def fib"), { y: "center" }) });
+  })()`);
+  await page.waitForFunction(() => [...document.querySelectorAll(".cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
+  // Each block is a card: its header (language, Wrap, Copy) in place of its opening fence.
+  assert.equal(await page.locator(".cm-code-header .cm-code-lang").first().textContent(), "python");
+  await page.locator(".cm-code-header button", { hasText: "Copy" }).first().click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".cm-code-header button")].some((b) => b.textContent === "Copied"));
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^def fib\(n: int\) -> int:/);
+  await page.evaluate(() => {
+    const s = document.querySelector(".cm-scroller")!;
+    s.scrollTop = s.scrollHeight;
+  });
+  await page.waitForSelector(".cm-math-display .katex");
+  await page.waitForFunction(() => [...document.fonts].some((f) => f.family.includes("KaTeX") && f.status === "loaded"));
+  assert.deepEqual(blocked, [], "KaTeX's styles and fonts come from the app, within its policy");
+  await context.close();
+});
