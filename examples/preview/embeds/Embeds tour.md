@@ -36,11 +36,14 @@ These come from the Catalog, and run sandboxed. This Preview comes with HTML app
   import uPlot from "uplot";
   const days = [1, 2, 3, 4, 5, 6, 7].map((d) => Date.UTC(2026, 9, d) / 1000);
   const words = [420, 980, 610, 1250, 300, 1720, 860];
-  new uPlot(
-    { width: document.body.clientWidth - 16, height: 200, series: [{}, { label: "Words", stroke: "#2f5fd0", fill: "rgba(47, 95, 208, 0.12)", width: 2 }] },
+  const box = document.getElementById("chart");
+  const chart = new uPlot(
+    { width: box.clientWidth || 600, height: 200, series: [{}, { label: "Words", stroke: "#2f5fd0", fill: "rgba(47, 95, 208, 0.12)", width: 2 }] },
     [days, words],
-    document.getElementById("chart"),
+    box,
   );
+  // As wide as the note, whenever that changes.
+  new ResizeObserver(() => box.clientWidth && chart.setSize({ width: box.clientWidth, height: 200 })).observe(box);
 </script>
 ```
 
