@@ -1,5 +1,5 @@
-// Todos in a real browser against the real Worker: chips sit clear of a task's words and of each other,
-// a chip's editor changes just its token, a ::tasks list ticks a task in its note, and the Todos view
+// Tasks in a real browser against the real Worker: chips sit clear of a task's words and of each other,
+// a chip's editor changes just its token, a ::tasks list ticks a task in its note, and the Tasks view
 // puts what's overdue or due today at the top.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -81,16 +81,16 @@ test("a ::tasks list ticks a task in its note; a repeating one moves on to its n
   const page = await h.browser.newPage({ viewport: { width: 1100, height: 1000 } });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`${h.base}/?file=${encodeURIComponent("Todos tour.md")}`);
+  await page.goto(`${h.base}/?file=${encodeURIComponent("Tasks tour.md")}`);
   const list = page.locator('.cm-embed[data-embed="tasks"]').first();
   const row = list.locator(".qt-row", { hasText: "Plan the offsite" });
   await row.waitFor();
   await row.locator(".cm-checkbox").click();
-  await until(page, "Todos tour.md", (text) => /- \[x\] Plan the offsite with @sam due:\S+ #work done:\d{4}-\d{2}-\d{2}/.test(text));
+  await until(page, "Tasks tour.md", (text) => /- \[x\] Plan the offsite with @sam due:\S+ #work done:\d{4}-\d{2}-\d{2}/.test(text));
   const invoice = list.locator(".qt-row", { hasText: "Send the Q4 invoice" });
-  const before = /Send the Q4 invoice to Acme due:(\S+)/.exec((await note(page, "Todos tour.md")).text)![1];
+  const before = /Send the Q4 invoice to Acme due:(\S+)/.exec((await note(page, "Tasks tour.md")).text)![1];
   await invoice.locator(".cm-checkbox").click();
-  await until(page, "Todos tour.md", (text) => {
+  await until(page, "Tasks tour.md", (text) => {
     const due = /- \[ \] Send the Q4 invoice to Acme due:(\S+) rec:monthly/.exec(text)?.[1];
     return !!due && due > before;
   });
@@ -98,17 +98,17 @@ test("a ::tasks list ticks a task in its note; a repeating one moves on to its n
   await page.close();
 });
 
-test("Show todos puts what's overdue and due today at the top, then the rest", async () => {
+test("Show tasks puts what's overdue and due today at the top, then the rest", async () => {
   const page = await h.browser.newPage({ viewport: { width: 1200, height: 900 } });
   await page.goto(`${h.base}/?file=Chores.md`);
   await page.waitForSelector(".cm-line .tk");
-  await runCommand(page, "Show todos");
+  await runCommand(page, "Show tasks");
   const today = page.locator(".td-block");
   await today.locator(".qt-row").first().waitFor();
   assert.ok(await today.locator(".td-section.is-overdue .qt-row", { hasText: "Take out the recycling" }).count());
   assert.ok(await today.locator(".td-section.is-due .qt-row", { hasText: "Water the plants" }).count());
   // Below it, the rest, not again what Today has.
-  const rest = page.locator(".todos-view .qt-list");
+  const rest = page.locator(".tasks-view .qt-list");
   await rest.locator(".qt-row", { hasText: "Pay rent" }).waitFor();
   assert.equal(await rest.locator(".qt-row", { hasText: "Water the plants" }).count(), 0);
   await page.close();

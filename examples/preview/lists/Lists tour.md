@@ -29,4 +29,4 @@ Lists edit like an outliner. Put the cursor on an item and try the keys below. T
 - Alt-Up and Alt-Down, or [e and ]e in Vim: move an item, with its children, past the one above or below.
 - Enter carries the list on; Enter on an empty item steps out a level, then out of the list.
 - za in Vim, or a click on a bullet that has children: fold them away, and back.
-- ⌘⇧P, Make bullets, Make a numbered list, Make todos: convert the items you're on.
+- ⌘⇧P, Make bullets, Make a numbered list, Make tasks: convert the items you're on.

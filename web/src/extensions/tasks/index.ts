@@ -1,6 +1,6 @@
-// Todos, a built-in extension: tasks are checkbox lines with todo.txt-style tokens (due:, start:, rec:,
+// Tasks, a built-in extension: tasks are checkbox lines with todo.txt-style tokens (due:, start:, rec:,
 // until:, times:, !high, @person, #tag). In notes, the box ticks and each token is a chip that opens
-// its own editor; ⌘. opens the line's field menu, and tokens complete as you type them. The Todos view
+// its own editor; ⌘. opens the line's field menu, and tokens complete as you type them. The Tasks view
 // and the ::tasks embed list tasks from across the notes, in the same rows. Ticking a repeating task
 // moves it on to its next date, on the same line.
 import { isNote } from "common-ink/files";
@@ -12,10 +12,10 @@ import { mountTaskList, type ListArgs } from "./list.ts";
 import type { RowEnv } from "./rows.ts";
 import { TaskStore } from "./store.ts";
 import { describeTaskEdit } from "./tasks.ts";
-import { TodosView } from "./view.ts";
+import { TasksView } from "./view.ts";
 import { openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
 
-const todos: ExtensionModule = {
+const extension: ExtensionModule = {
   activate(ctx) {
     const store = new TaskStore(ctx);
     const rowEnv: Omit<RowEnv, "reload" | "openTag" | "openPerson"> = {
@@ -23,14 +23,14 @@ const todos: ExtensionModule = {
       open: (path, line, side) => void open(ctx, path as FilePath, line, side),
       notice: (message, actions) => ctx.workbench.notice(message, actions),
     };
-    const view = new TodosView({ ...rowEnv, tasks: () => store.all() });
+    const view = new TasksView({ ...rowEnv, tasks: () => store.all() });
     const showPerson = (name: string) => {
       view.showPerson(name);
-      ctx.views.show("todos");
+      ctx.views.show("tasks");
     };
     const env: TaskEnv = {
       today,
-      chips: () => ctx.settings.get<boolean>("todos.chips") !== false,
+      chips: () => ctx.settings.get<boolean>("tasks.chips") !== false,
       people: () => store.people(),
       tags: () => store.tags(),
       showPerson,
@@ -38,16 +38,16 @@ const todos: ExtensionModule = {
       path: () => ctx.workbench.focusedPath() ?? "",
     };
 
-    ctx.commands.register("todos.toggle", () => {
+    ctx.commands.register("tasks.toggle", () => {
       const view = ctx.editor.focused();
       return !!view && toggleTaskAt(view, view.state.selection.main.head, env);
     });
-    ctx.commands.register("todos.menu", () => {
+    ctx.commands.register("tasks.menu", () => {
       const view = ctx.editor.focused();
       return !!view && openMenuAt(view, env);
     });
-    ctx.commands.register("todos.show", () => ctx.views.toggle("todos"));
-    ctx.views.register("todos", { render: (root) => view.render(root) });
+    ctx.commands.register("tasks.show", () => ctx.views.toggle("tasks"));
+    ctx.views.register("tasks", { render: (root) => view.render(root) });
     ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);
 
@@ -58,8 +58,8 @@ const todos: ExtensionModule = {
         const host = document.createElement("div");
         host.className = "qw-tasks is-embed";
         el.replaceChildren(host);
-        // A tag or person chip in an embed narrows the Todos view, which has room for it.
-        lists.set(el, mountTaskList(host, embed.args, { ...rowEnv, tasks: () => store.all(), openTag: () => ctx.views.show("todos"), openPerson: showPerson }));
+        // A tag or person chip in an embed narrows the Tasks view, which has room for it.
+        lists.set(el, mountTaskList(host, embed.args, { ...rowEnv, tasks: () => store.all(), openTag: () => ctx.views.show("tasks"), openPerson: showPerson }));
       },
       update(el: HTMLElement, embed: Embed) {
         lists.get(el)?.set(embed.args);
@@ -72,14 +72,14 @@ const todos: ExtensionModule = {
       if (!isNote(path)) return;
       clearTimeout(timer);
       timer = window.setTimeout(() => {
-        ctx.views.refresh("todos");
+        ctx.views.refresh("tasks");
         for (const [el, list] of lists) el.isConnected ? void list.load() : lists.delete(el);
       }, 150);
     });
   },
 };
 
-export default todos;
+export default extension;
 
 /** Open a task's note at its line (1-based): here, or in a new window to the right. */
 async function open(ctx: ExtensionContext, path: FilePath, line: number, side?: boolean) {

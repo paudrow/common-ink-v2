@@ -3,7 +3,7 @@
 // children along so they stay its children. Every function takes the note's lines and gives back new
 // ones; nothing here knows about editors.
 
-export type Kind = "bullet" | "number" | "todo";
+export type Kind = "bullet" | "number" | "task";
 
 export interface Item {
   /** The column its marker starts at (tabs count as 4). */
@@ -13,7 +13,7 @@ export interface Item {
   kind: Kind;
   /** Its number, for a numbered item. */
   number?: number;
-  /** Where its text starts: after the marker, its spaces, and a todo's box. */
+  /** Where its text starts: after the marker, its spaces, and a task's box. */
   contentStart: number;
   /** Where the marker and its spaces end: children are indented at least this far. */
   markerEnd: number;
@@ -38,7 +38,7 @@ export function parseItem(line: string): Item | null {
   return {
     indent: columns(m[1]),
     marker: m[2],
-    kind: box ? "todo" : m[3] ? "number" : "bullet",
+    kind: box ? "task" : m[3] ? "number" : "bullet",
     number: m[3] ? Number(m[3]) : undefined,
     markerEnd: m[0].length,
     contentStart: m[0].length + (box ? box[0].length : 0),
@@ -198,7 +198,7 @@ export function moveDown(lines: readonly string[], i: number): Edit | null {
   return { lines: moved.lines, at: i + (subtreeEnd(lines, next) - next) + (next - subtreeEnd(lines, i)) };
 }
 
-/** Items `from` to `to` (line numbers) made bullets ("- "), numbered ("1. ") or todos ("- [ ] "), keeping their text. */
+/** Items `from` to `to` (line numbers) made bullets ("- "), numbered ("1. ") or tasks ("- [ ] "), keeping their text. */
 export function convert(lines: readonly string[], from: number, to: number, kind: Kind): string[] {
   let out = [...lines];
   for (let i = from; i <= to; i++) {
@@ -206,7 +206,7 @@ export function convert(lines: readonly string[], from: number, to: number, kind
     if (!item || item.kind === kind) continue;
     const line = spaced(out[i]);
     // The box goes or comes first, with the marker as it is; then the marker changes, children with it.
-    out[i] = `${line.slice(0, item.indent)}${item.marker} ${kind === "todo" ? "[ ] " : ""}${line.slice(item.contentStart)}`;
+    out[i] = `${line.slice(0, item.indent)}${item.marker} ${kind === "task" ? "[ ] " : ""}${line.slice(item.contentStart)}`;
     const delim = /[.)]$/.exec(item.marker)?.[0] ?? ".";
     out = setMarker(out, i, kind === "number" ? `${item.number ?? 1}${delim}` : "-");
   }
@@ -222,7 +222,7 @@ export function renumberAround(lines: readonly string[], touched: readonly numbe
   const near = new Set(touched.flatMap((t) => [t - 1, t, t + 1]));
   for (let i = 0; i < out.length; i++) {
     const item = parseItem(out[i]);
-    if (item?.kind !== "number" && !(item?.kind === "todo" && item.number !== undefined)) continue;
+    if (item?.kind !== "number" && !(item?.kind === "task" && item.number !== undefined)) continue;
     // The first item of a run of numbered siblings starts it.
     const prev = previousSibling(out, i);
     if (prev !== null && parseItem(out[prev])?.number !== undefined) continue;

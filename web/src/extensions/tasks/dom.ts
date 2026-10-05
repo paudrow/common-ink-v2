@@ -1,4 +1,4 @@
-// Small DOM helpers for the Todos extension's chips, editors and lists: an element with its attributes
+// Small DOM helpers for the Tasks extension's chips, editors and lists: an element with its attributes
 // and children, a line icon, and a person's initials in a coloured circle.
 
 type Child = Node | string | null | undefined | false;

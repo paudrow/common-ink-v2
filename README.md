@@ -1,6 +1,6 @@
 # common-ink-v2
 
-A minimal, keyboard-first workspace for markdown notes, todos and calendar data, built for both people and agents.
+A minimal, keyboard-first workspace for markdown notes, tasks and calendar data, built for both people and agents.
 
 - [PRINCIPLES.md](PRINCIPLES.md): the rules every feature has to follow
 - [ROADMAP.md](ROADMAP.md): what's being built, in order (edited by hand)

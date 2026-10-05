@@ -12,7 +12,7 @@
       "id": "boards",
       "name": "Boards",
       "version": "1.0.0",
-      "description": "Task lists gathered live from your notes' todos, and Kanban boards drawn from markdown, where dragging a card rewrites the note. It runs sandboxed.",
+      "description": "Kanban boards drawn from markdown, where dragging a card rewrites the note. It runs sandboxed.",
       "path": "boards/",
       "embeds": [
         "tasks",

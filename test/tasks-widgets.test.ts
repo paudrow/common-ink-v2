@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { TaskEnv } from "../web/src/extensions/todos/widgets.ts";
+import type { TaskEnv } from "../web/src/extensions/tasks/widgets.ts";
 
 const { window } = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
 // CodeMirror needs a page around it; Node's own navigator stays.
@@ -24,8 +24,8 @@ Object.assign(window.Range.prototype, { getClientRects: () => [], getBoundingCli
 const { EditorView } = await import("@codemirror/view");
 const { EditorSelection } = await import("@codemirror/state");
 const { undo, history } = await import("@codemirror/commands");
-const { tasksPreview, CHECKED_FOR_MS } = await import("../web/src/extensions/todos/widgets.ts");
-const { dayPicks } = await import("../web/src/extensions/todos/complete.ts");
+const { tasksPreview, CHECKED_FOR_MS } = await import("../web/src/extensions/tasks/widgets.ts");
+const { dayPicks } = await import("../web/src/extensions/tasks/complete.ts");
 
 const TODAY = "2026-10-04";
 const NOTE = ["# Chores", "- [ ] Call mum due:2026-10-05 !high", "- [ ] Water the plants due:2026-10-04 rec:3d", "- [x] Fix the bike light done:2026-10-01", "Some text"].join("\n");

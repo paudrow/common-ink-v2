@@ -8,6 +8,6 @@
     "Open Boards tour. Boards comes from the Catalog and runs sandboxed.",
     "Drag \"Book the venue\" to Doing (or use the → on the card). Boards asks first: to read the note, then to change it. Choose Always allow. It moves at once, with no flash: the board's frame stays, and its markdown in the note is rewritten to match. Put the cursor in it to see it. Undo takes it back, and the board follows, in the same frame.",
     "History shows the move as Boards'.",
-    "Write your own: `:::kanban` on a line, then ## columns with - cards, then `:::` on a line. list_embeds tells agents the same. (Task lists, `::tasks`, are the Todos extension's now: see Todos tour.)"
+    "Write your own: `:::kanban` on a line, then ## columns with - cards, then `:::` on a line. list_embeds tells agents the same. (Task lists, `::tasks`, are the Tasks extension's now: see Tasks tour.)"
   ]
 }

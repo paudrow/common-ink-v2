@@ -1,6 +1,6 @@
 // A list of tasks from across the notes (or a folder, a note, a tag, a person, a due date), grouped by
 // note or by due date, priority, tag or person: the ::tasks embed, and the list under Today in the
-// Todos view. Ticking one, or changing its details, edits the note it lives in.
+// Tasks view. Ticking one, or changing its details, edits the note it lives in.
 import { el, icon } from "./dom.ts";
 import { taskRow, redrawRows, type RowEnv } from "./rows.ts";
 import { normalizeTag, tagMatches } from "./tags.ts";

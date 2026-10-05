@@ -19,7 +19,7 @@ export const CHECKED_FOR_MS = 450;
 /** What the editor's task tools need from the app: the day, the chips setting, and the people and tags to offer. */
 export interface TaskEnv {
   today(): string;
-  /** The "todos.chips" setting: tokens as chips, or as the text they are. */
+  /** The "tasks.chips" setting: tokens as chips, or as the text they are. */
   chips(): boolean;
   people(): Promise<string[]>;
   tags(): Promise<string[]>;

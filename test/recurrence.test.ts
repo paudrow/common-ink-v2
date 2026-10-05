@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { endsLabel, formatRule, nextDue, occurrences, parseRule, ruleLabel, ruleProblem } from "../web/src/extensions/todos/recurrence.ts";
+import { endsLabel, formatRule, nextDue, occurrences, parseRule, ruleLabel, ruleProblem } from "../web/src/extensions/tasks/recurrence.ts";
 
 const next = (token: string, due: string | null, done = "2026-01-01") => nextDue(parseRule(token)!, due, done);
 const three = (token: string, from: string) => occurrences(parseRule(token)!, from, 3);
