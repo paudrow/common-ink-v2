@@ -90,7 +90,8 @@ export function fillDates(text: string, today: string): string {
 
 export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
   const notes = [
-    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: false }))),
+    // Notes you edit while reviewing are kept; a sample extension's files are the PR's code, so they follow it.
+    ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, text: fillDates(n.text, today), replace: n.path.startsWith(".common-ink/extensions/") }))),
     { path: TRY_THIS_PR, text: tryThisPr(sections, pr), replace: true },
   ];
   const edits = sections.flatMap((s) => s.edits);
