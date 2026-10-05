@@ -21,7 +21,7 @@ export const PACKAGES = [
 
 /** The app's own modules, by the name extensions import them as, with what they export. */
 export const APP_MODULES = {
-  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockPreview", "livePreview", "previewEnabled", "revealedLines"] },
+  "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockHeight", "blockPreview", "collapsedBlockAt", "livePreview", "measureBlock", "previewEnabled", "revealedLines"] },
   "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
   "common-ink/layout": { file: "web/src/layout.ts", exports: ["LAYOUT_PATH", "activeFile", "activeTab", "closeTab", "closeTabs", "cycleGroup", "cycleTab", "emptyLayout", "equalize", "fileTab", "focusDirection", "focusGroup", "focused", "groups", "insertTab", "keepFile", "keepTab", "moveTab", "moveTabDirection", "neighbor", "only", "openTab", "openableKey", "openableOf", "parseLayout", "rects", "resizeFocused", "resizeSplit", "selectTab", "shiftTab", "showInTab", "split", "splitAt"] },
   "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
