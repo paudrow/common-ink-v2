@@ -1,9 +1,9 @@
-// Uploads, a built-in plugin: paste or drop files into a note, or run "Upload a file…", and a link to
+// Uploads, a built-in extension: paste or drop files into a note, or run "Upload a file…", and a link to
 // each goes where you were: ![photo](/uploads/photo.png) for images, [notes.pdf](/uploads/notes.pdf)
 // for anything else. The Uploads view lists them all.
 import { EditorView } from "@codemirror/view";
-import { isImage, parseUploads, UPLOADS_PATH, uploadUrl, type Upload } from "../../../worker/src/uploads.ts";
-import type { PluginContext, PluginModule } from "../plugins.ts";
+import { isImage, parseUploads, UPLOADS_PATH, uploadUrl, type Upload } from "../../../../worker/src/uploads.ts";
+import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 
 /** The markdown that links to an upload: an image shows, anything else is a link. */
 export function uploadMarkdown(u: Pick<Upload, "name" | "type">, url = uploadUrl(u.name)): string {
@@ -17,7 +17,7 @@ let pending = 0;
  * Upload files and put their links at `pos`, one per line. Each shows as "Uploading …" where it goes
  * until it's up, so typing meanwhile is fine; one that fails is taken out again and said why.
  */
-export async function uploadInto(ctx: Pick<PluginContext, "files" | "workbench">, view: EditorView, pos: number, files: File[]): Promise<void> {
+export async function uploadInto(ctx: Pick<ExtensionContext, "files" | "workbench">, view: EditorView, pos: number, files: File[]): Promise<void> {
   if (!files.length) return;
   const markers = files.map((f) => `![Uploading ${f.name.replace(/[[\]]/g, "")}… ${++pending}]()`);
   const at = Math.min(pos, view.state.doc.length);
@@ -54,7 +54,7 @@ function pickFiles(): Promise<File[]> {
 
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
-export const uploadsPlugin: PluginModule = {
+const uploads: ExtensionModule = {
   activate(ctx) {
     // Files pasted or dropped into a note upload, and their links go where they landed.
     ctx.editor.extend(
@@ -76,28 +76,24 @@ export const uploadsPlugin: PluginModule = {
         },
       }),
     );
-    ctx.commands.register(
-      {
-        id: "uploads.file",
-        title: "Upload a file…",
-        run: async () => {
-          const files = await pickFiles();
-          const view = ctx.workbench.focusedView();
-          if (view && !view.state.readOnly) return uploadInto(ctx, view, view.state.selection.main.head, files);
-          // No note to link from: upload, and show them in the Uploads view.
-          for (const f of files) await ctx.files.upload(f.name, f).catch((err) => ctx.workbench.notice(`${f.name} wasn't uploaded: ${(err as Error).message}`));
-          ctx.panels.show("uploads");
-        },
-      },
-      { id: "uploads.show", title: "Show uploads", run: () => ctx.panels.toggle("uploads") },
-    );
-    ctx.panels.register({ id: "uploads", title: "Uploads", render: (root) => renderUploads(ctx, root) });
-    ctx.events.onSaved((path) => path === UPLOADS_PATH && ctx.panels.refresh("uploads"));
+    ctx.commands.register("uploads.file", async () => {
+      const files = await pickFiles();
+      const view = ctx.editor.focused();
+      if (view && !view.state.readOnly) return uploadInto(ctx, view, view.state.selection.main.head, files);
+      // No note to link from: upload, and show them in the Uploads view.
+      for (const f of files) await ctx.files.upload(f.name, f).catch((err) => ctx.workbench.notice(`${f.name} wasn't uploaded: ${(err as Error).message}`));
+      ctx.views.show("uploads");
+    });
+    ctx.commands.register("uploads.show", () => ctx.views.toggle("uploads"));
+    ctx.views.register("uploads", { render: (root) => renderUploads(ctx, root) });
+    ctx.events.onSaved((path) => path === UPLOADS_PATH && ctx.views.refresh("uploads"));
   },
 };
 
+export default uploads;
+
 /** Every upload, newest first: a thumbnail for images, its name (which opens it), size, and a way to link it from the note you're in. */
-async function renderUploads(ctx: PluginContext, root: HTMLElement) {
+async function renderUploads(ctx: ExtensionContext, root: HTMLElement) {
   const uploads = parseUploads((await ctx.files.read(UPLOADS_PATH)).text).reverse();
   const add = document.createElement("button");
   add.className = "upload-add";
@@ -136,7 +132,7 @@ async function renderUploads(ctx: PluginContext, root: HTMLElement) {
       insert.textContent = "Link here";
       insert.title = "Put a link to it at the cursor in the note you're in";
       insert.addEventListener("click", () => {
-        const view = ctx.workbench.focusedView();
+        const view = ctx.editor.focused();
         if (!view || view.state.readOnly) return ctx.workbench.notice("Open a note to link it from.");
         const at = view.state.selection.main.head;
         view.dispatch({ changes: { from: at, insert: uploadMarkdown(u) }, selection: { anchor: at + uploadMarkdown(u).length } });

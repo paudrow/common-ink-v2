@@ -1,0 +1,20 @@
+{
+  "id": "uploads",
+  "name": "Uploads",
+  "version": "1.0.0",
+  "description": "Paste or drop files into a note to upload them, with a link where they landed; Show uploads lists them.",
+  "main": "index.ts",
+  "files": ["index.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "files:write": { "paths": [".common-ink/uploads.json"], "why": "Upload files you paste or drop into notes" },
+    "editor": { "why": "Upload files pasted or dropped into a note" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "uploads.file", "title": "Upload a file…" },
+      { "command": "uploads.show", "title": "Show uploads" }
+    ],
+    "views": { "sidebar": [{ "id": "uploads", "name": "Uploads" }] }
+  }
+}

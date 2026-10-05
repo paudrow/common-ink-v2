@@ -17,8 +17,8 @@ export type FilePath = string & { readonly __brand: "FilePath" };
 
 export function parseFilePath(value: unknown): FilePath | null {
   if (typeof value !== "string" || value.length > 300) return null;
-  // Notes and JSON anywhere; JavaScript only as a workspace plugin's code.
-  if (!/\.(md|json)$/.test(value) && !PLUGIN_SCRIPT.test(value)) return null;
+  // Notes and JSON anywhere; JavaScript only as a workspace extension's code.
+  if (!/\.(md|json)$/.test(value) && !EXTENSION_SCRIPT.test(value)) return null;
   if (/[\u0000-\u001f\u007f\\]/.test(value)) return null;
   const parts = value.split("/");
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.trim() !== p)) return null;
@@ -27,9 +27,9 @@ export function parseFilePath(value: unknown): FilePath | null {
 
 export const isNote = (path: FilePath) => path.endsWith(".md");
 
-/** A workspace plugin's code: `.common-ink/plugins/<id>/index.js`. */
-const PLUGIN_SCRIPT = /^\.common-ink\/plugins\/[a-zA-Z0-9][\w.-]*\/index\.js$/;
-export const isPluginScript = (path: FilePath) => PLUGIN_SCRIPT.test(path);
+/** A workspace extension's code: any `.js` file in `.common-ink/extensions/<id>/`. */
+const EXTENSION_SCRIPT = /^\.common-ink\/extensions\/[a-zA-Z0-9][\w.-]{0,63}\/([\w.-]+\/)*[\w.-]+\.js$/;
+export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path);
 
 /** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
 export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };

@@ -1,10 +1,11 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { getCM, Vim } from "@replit/codemirror-vim";
-import { isNote, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { extensionFilePath } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
-import { combine, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, schema, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Keybinding, type Settings } from "../../worker/src/settings.ts";
+import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
@@ -18,17 +19,16 @@ import * as L from "./layout.ts";
 import { linkAt, linkTarget, notePathFor, type LinkTarget } from "./links.ts";
 import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
-import type { PluginContext } from "./plugins.ts";
-import { changedPlugins, manifestText, pluginPaths, pluginStates, startPlugins, type BuiltIn, type PluginEntry } from "./plugin-host.ts";
-import { builtInSourceView, pluginsView } from "./plugins-view.ts";
-import { BUILT_IN } from "./plugins/index.ts";
-import { fuzzyFilter } from "./fuzzy.ts";
+import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
+import { ExtensionRuntime } from "./extension-runtime.ts";
+import { builtInSourceView, extensionsView } from "./extensions-view.ts";
+import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 
-/** Safe mode (?safe=1): only built-in plugins start, for when a workspace plugin breaks the app. */
+/** Safe mode (?safe=1): only built-in extensions start, for when a workspace extension breaks the app. */
 const SAFE = new URLSearchParams(location.search).get("safe") === "1";
 /** This page's address in or out of safe mode. */
 const addressFor = (path: FilePath | null, safe = SAFE) => `${path ? urlForFile(path) : "?"}${safe ? `${path ? "&" : ""}safe=1` : ""}`;
@@ -51,10 +51,10 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
 
 let files: FileSummary[] = [];
 let settings: Settings = DEFAULTS;
-const pluginKeybindings: Keybinding[] = [];
+/** Every setting there is: the app's, and each installed extension's, once their manifests are read. */
+let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
-const describers: Array<(change: Change) => string | null> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const offline = new Offline(idbKV(), api);
@@ -125,7 +125,8 @@ function tabMenuItems(): Array<MenuItem | null> {
     SEPARATOR,
     item("tab.keepOpen", "Keep Open", !tab?.preview),
     item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
-    item("history.addLabel", "Add Label…", !tab || !("file" in tab)),
+    // Extensions' items, for the file on show.
+    ...extensions.menu("tabMenu").map((i) => item(i.command, i.title, !tab || !("file" in tab))),
     SEPARATOR,
     item("window.splitRight", "Split Right"),
     item("window.splitDown", "Split Down"),
@@ -138,17 +139,17 @@ const lastGood: { user: Partial<Settings>; workspace: Partial<Settings> } = { us
 /** Read user and workspace settings, apply them, and say what in them was ignored. */
 async function loadSettings() {
   const [user, workspace] = await Promise.all([USER_SETTINGS ? offline.read(USER_SETTINGS) : null, offline.read(WORKSPACE_SETTINGS)]);
-  const u = parseSettings(user?.text ?? "");
-  const w = parseSettings(workspace.text);
+  const u = parseSettings(user?.text ?? "", catalog);
+  const w = parseSettings(workspace.text, catalog);
   // Half-typed JSON that saved keeps the settings the file had, rather than dropping them all.
   if (!u.broken) lastGood.user = u.settings;
   if (!w.broken) lastGood.workspace = w.settings;
-  settings = combine(lastGood.user, lastGood.workspace, pluginKeybindings);
+  settings = combine(lastGood.user, lastGood.workspace, extensions.keybindings(), catalog);
   workbench.applySettings(settings);
   const problems = [...u.problems.map((p) => `User settings: ${p}`), ...w.problems.map((p) => `Workspace settings: ${p}`)];
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
   problemsLine.title = problems.join("\n");
-  pluginsChanged();
+  extensionsChanged();
   workbench.refreshView(SETTINGS_VIEW);
 }
 
@@ -160,21 +161,23 @@ const settingsUi = settingsEditor({
   read: (path) => offline.read(path),
   write: (path, text, base) => offline.write(path, text, base),
   effective: () => settings,
+  catalog: () => catalog,
   openJson: (level) => void openSettings(settingsPath(level)),
   changed: () => void loadSettings(),
 });
 workbench.registerView(settingsUi);
 
-/** Open the settings editor at user or workspace settings. */
-function openSettingsUi(level: Level) {
+/** Open the settings editor at user or workspace settings, searching for `query` if given. */
+function openSettingsUi(level: Level, query = "") {
   settingsUi.level = level;
+  settingsUi.query = query;
   workbench.openView(SETTINGS_VIEW, { newTab: true });
   workbench.refreshView(SETTINGS_VIEW);
 }
 
 // A settings file's editor helps with its keys and values, and leads back to the settings editor.
 workbench.extensionsFor = (path) =>
-  isSettingsFile(path) || path === DEFAULT_SETTINGS ? [settingsJson({ readOnly: isReadOnly(path), openUi: () => openSettingsUi(path === WORKSPACE_SETTINGS ? "workspace" : "user") })] : [];
+  isSettingsFile(path) || path === DEFAULT_SETTINGS ? [settingsJson({ readOnly: isReadOnly(path), catalog: () => catalog, openUi: () => openSettingsUi(path === WORKSPACE_SETTINGS ? "workspace" : "user") })] : [];
 
 /** Open a settings file in a new tab, starting it from a template if there isn't one yet. */
 async function openSettings(path: FilePath | null) {
@@ -187,7 +190,7 @@ async function refreshList() {
   files = await offline.list();
   renderList();
   if (offline.online) void offline.warm(files);
-  pluginsChanged();
+  extensionsChanged();
 }
 
 /** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
@@ -377,86 +380,48 @@ commands.register(
 const bar = new CommandBar();
 const panels = new Panels($("#panel"));
 
-const plugins: PluginContext = {
+const extensions = new ExtensionRuntime({
   me,
+  commands,
+  bar,
+  panels,
+  workbench,
+  offline,
   settings: () => settings,
-  commands: {
-    register: (...c) => commands.register(...c),
-    run: (id) => commands.run(id),
-    all: () => commands.all(),
-    shortcut: (id) => {
-      const key = keyFor(id, settings.keybindings);
-      return key && formatKeys(key);
-    },
-  },
-  util: { fuzzyFilter, notePathFor: (name) => notePathFor(name) },
-  keybindings: { add: (...b) => void pluginKeybindings.push(...b), vim: (keys, command) => vimKey(keys, command) },
-  changes: {
-    describe: (d) => void describers.push(d),
-    summary: (change) => describers.map((d) => d(change)).find((s) => s) ?? null,
-  },
-  editor: { extend: (e) => void workbench.noteExtensions.push(e) },
-  commandBar: { provide: (p) => bar.provide(p), open: (text) => bar.open(text) },
-  panels: {
-    // A panel is also a view that opens in a window: drag its title there, or use its command.
-    register: (p) => {
-      panels.register(p);
-      workbench.registerView(p);
-      commands.register({ id: `${p.id}.openInWindow`, title: `Open ${p.title} in a window`, run: () => workbench.openView(p.id, { newTab: true }) });
-    },
-    toggle: (id) => panels.toggle(id),
-    show: (id) => panels.show(id),
-    shown: () => panels.shown(),
-    refresh: (id) => {
-      panels.refresh(id);
-      workbench.refreshView(id);
-    },
-  },
-  sources: {
-    status: api.sources,
-    events: api.events,
-    contacts: api.contacts,
-    connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
-  },
-  files: { list: () => files, fetchList: () => offline.list(), read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base), upload: (name, data) => api.upload(name, data) },
-  workbench: {
-    open: (path, how) => workbench.open(path, how),
-    openPicked: openFromBar,
-    // With a view focused (History in a window, say), the file is the one focused last.
-    focusedPath: () => workbench.focusedPath ?? lastFile,
-    focusedView: () => workbench.focusedView,
-    openView: (id, how) => workbench.openView(id, how),
-    provideViews: (prefix, make) => workbench.provideViews(prefix, make),
-    refreshFromServer: (paths) => workbench.refreshFromServer(paths),
-    label: docLabel,
-    notice: (message, actions) => workbench.notice(message, actions),
-  },
-  events: { onSaved: (fn) => void savedListeners.push(fn), onFocus: (fn) => void focusListeners.push(fn) },
-};
+  files: () => files,
+  openFromBar,
+  lastFile: () => lastFile,
+  vimKey: (keys, command) => vimKey(keys, command),
+  onSaved: savedListeners,
+  onFocus: focusListeners,
+  changed: () => extensionsChanged(),
+});
 
-// Plugins start once, as the app loads. Turning one on or off, or changing its files, applies after a
-// reload (ADR 0005 says why), and until then the status bar and the Plugins view say so.
-let pluginEntries: PluginEntry[] = [];
+// Extensions' manifests are read once, as the app loads. Turning one on or off, or changing its files,
+// applies after a reload (ADR 0006 says why), and until then the status bar and the Extensions view say so.
 let statesAtStart = new Map<string, string>();
 /** The settings that apply after a reload, as they were at start. */
 let reloadSettingsAtStart: string | null = null;
-const RELOAD_SETTINGS = Object.entries(schema.properties as Record<string, { appliesAfterReload?: boolean }>).filter(([, p]) => p.appliesAfterReload).map(([k]) => k);
-const reloadSettingsNow = () => JSON.stringify(RELOAD_SETTINGS.map((k) => (settings as unknown as Record<string, unknown>)[k]));
-const pluginsNeedReload = () => changedPlugins(statesAtStart, pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE));
+const reloadSettingsNow = () =>
+  JSON.stringify(
+    [...catalog.values()].filter((d) => d.reload).map((d) => settings[d.key]),
+  );
+const extensionsNeedReload = () => changedExtensions(statesAtStart, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE));
 
 function updateReloadLine() {
   if (reloadSettingsAtStart === null) return;
-  const plugins = pluginsNeedReload().size > 0;
+  const changed = extensionsNeedReload().size > 0;
   const settingsChanged = reloadSettingsNow() !== reloadSettingsAtStart;
-  reloadLine.hidden = !plugins && !settingsChanged;
+  reloadLine.hidden = !changed && !settingsChanged;
   const button = document.createElement("button");
   button.textContent = "Reload";
   button.addEventListener("click", () => reloadWindow());
-  reloadLine.replaceChildren(`${plugins ? "Plugin" : "Settings"} changes apply after reload · `, button);
+  reloadLine.replaceChildren(`${changed ? "Extension" : "Settings"} changes apply after reload · `, button);
 }
 
-function pluginsChanged() {
-  plugins.panels.refresh("plugins");
+function extensionsChanged() {
+  panels.refresh("extensions");
+  workbench.refreshView("extensions");
   updateReloadLine();
 }
 
@@ -465,24 +430,22 @@ function reloadWindow(safe = SAFE) {
   location.assign(addressFor(workbench.focusedPath ?? lastFile, safe));
 }
 
-function openPluginSource(e: PluginEntry) {
-  if (e.workspace) void workbench.open(e.workspace.scriptPath, { newTab: true });
-  else workbench.openView(`plugin-source:${e.manifest.id}`, { newTab: true });
+function openExtensionSource(r: ExtensionRecord) {
+  if (r.workspace) void workbench.open(extensionFilePath(r.id, r.manifest.main), { newTab: true });
+  else workbench.openView(`extension-source:${r.id}`, { newTab: true });
 }
 
-/** Copy a built-in into the workspace, where it runs in its place after a reload, and open the copy. */
+/** Copy a built-in into the workspace, file for file, where it runs in its place after a reload, and open its code. */
 async function customize(b: BuiltIn) {
-  const { manifestPath, scriptPath } = pluginPaths(b.id);
-  await api.write(manifestPath, manifestText(b), 0);
-  await api.write(scriptPath, b.source, 0);
+  for (const [file, text] of Object.entries(b.sources)) await api.write(extensionFilePath(b.manifest.id, file), text, 0);
   await refreshList();
-  await workbench.open(scriptPath, { newTab: true });
+  await workbench.open(extensionFilePath(b.manifest.id, b.manifest.main), { newTab: true });
 }
 
-/** Delete a workspace plugin's files, as changes that undo can take back. */
-async function revertPlugin(e: PluginEntry) {
-  if (!e.workspace) return;
-  const paths = [e.workspace.scriptPath, e.workspace.manifestPath];
+/** Delete a workspace extension's files, as changes that undo can take back. */
+async function removeExtension(r: ExtensionRecord) {
+  if (!r.workspace) return;
+  const paths = [...r.workspace.files];
   workbench.forget(paths);
   for (const path of paths) {
     const file = await api.read(path);
@@ -491,39 +454,42 @@ async function revertPlugin(e: PluginEntry) {
   await refreshList();
 }
 
-plugins.panels.register(
-  pluginsView({
-    entries: () => pluginEntries,
-    needsReload: pluginsNeedReload,
-    isOn: (id) => !settings["plugins.disabled"].includes(id),
-    async setOn(id, on) {
-      const others = settings["plugins.disabled"].filter((x) => x !== id);
-      await writeSetting(api, WORKSPACE_SETTINGS, "plugins.disabled", on ? others : [...others, id]);
-      await loadSettings();
-    },
-    safe: SAFE,
-    openSource: openPluginSource,
-    customize,
-    revert: revertPlugin,
-    reload: reloadWindow,
-  }),
-);
-workbench.provideViews("plugin-source:", (id) => {
-  const b = BUILT_IN.find((x) => `plugin-source:${x.id}` === id);
+const extensionsUi = extensionsView({
+  records: () => extensions.host.records,
+  needsReload: extensionsNeedReload,
+  isOn: (id) => !settings["extensions.disabled"].includes(id),
+  async setOn(id, on) {
+    const others = settings["extensions.disabled"].filter((x) => x !== id);
+    await writeSetting(api, WORKSPACE_SETTINGS, "extensions.disabled", on ? others : [...others, id]);
+    await loadSettings();
+  },
+  safe: SAFE,
+  openSource: openExtensionSource,
+  openSettings: (r) => openSettingsUi("user", r.manifest.contributes.configuration?.title || r.manifest.name),
+  customize,
+  remove: removeExtension,
+  reload: reloadWindow,
+});
+// The Extensions view is the app's own, not an extension: turning extensions off can't lock you out of it.
+panels.register(extensionsUi);
+workbench.registerView(extensionsUi);
+workbench.provideViews("extension-source:", (id) => {
+  const b = BUILT_IN.find((x) => `extension-source:${x.manifest.id}` === id);
   if (!b) return null;
   const editor = (text: string) =>
     new EditorView({ state: createState(text, { json: false, code: true, readOnly: true, settings, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
   return builtInSourceView(b, { editor, customize: (x) => void customize(x) });
 });
 commands.register(
-  { id: "plugins.show", title: "Show plugins", run: () => plugins.panels.toggle("plugins") },
+  { id: "extensions.show", title: "Show extensions", run: () => panels.toggle("extensions") },
+  { id: "extensions.openInWindow", title: "Open Extensions in a window", run: () => workbench.openView("extensions", { newTab: true }) },
   {
-    id: "plugins.openSource",
-    title: "Open plugin source…",
+    id: "extensions.openSource",
+    title: "Open extension source…",
     run: () =>
       bar.pick(
-        "Open a plugin's source",
-        pluginEntries.map((e) => ({ label: e.manifest.name, detail: e.manifest.id, run: () => openPluginSource(e) })),
+        "Open an extension's source",
+        extensions.host.records.map((r) => ({ label: r.manifest.name, detail: r.id, run: () => openExtensionSource(r) })),
       ),
   },
   { id: "window.reload", title: "Reload window", run: () => reloadWindow() },
@@ -637,10 +603,10 @@ connectLive({
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
     }
-    // A new file, or a plugin's (which may have been deleted): list them again.
-    if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/plugins/")) void refreshList();
+    // A new file, or an extension's (which may have been deleted): list them again.
+    if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/extensions/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
-    // Plugins hear of it as of any change to a file (the history panel redraws, say).
+    // Extensions hear of it as of any change to a file (the history view redraws, say).
     clearTimeout(historyTimer2);
     historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
   },
@@ -663,27 +629,21 @@ try {
   if (offline.online) void offline.warm(files);
   const asked = fileFromUrl(location.search);
   const fallback = files.find((d) => d.path === "Try this PR.md")?.path ?? files.find((d) => isNote(d.path))?.path ?? notePathFor("Welcome")!;
+  // The app's settings first, for which extensions are off; then every manifest, whose settings join
+  // the catalog; then settings again, read against it.
   await loadSettings();
-  pluginEntries = await startPlugins({
-    builtIns: BUILT_IN,
-    files,
-    read: (path) => offline.read(path),
-    // From the Worker, so `script-src 'self'` allows it; the version makes each change a new address.
-    load: (w) => import(/* @vite-ignore */ `/plugins/${w.id}/index.js?v=${encodeURIComponent(w.version)}`),
-    ctx: plugins,
-    disabled: settings["plugins.disabled"],
-    safe: SAFE,
-    changed: pluginsChanged,
-  });
-  statesAtStart = pluginStates(BUILT_IN, files, settings["plugins.disabled"], SAFE);
+  await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE);
+  catalog = extensions.catalog();
+  extensions.declare();
+  await loadSettings();
+  statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE);
   reloadSettingsAtStart = reloadSettingsNow();
-  // Plugins have added their keybindings; settings come after them.
-  await loadSettings();
+  await extensions.start();
   const { missing } = await workbench.start(asked);
-  const failed = pluginEntries.find((e) => e.state === "failed");
+  const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {
-    workbench.notice(`Plugin ${failed.manifest.name} didn't start: ${failed.error}`, [
-      { label: "Show plugins", run: () => plugins.panels.show("plugins") },
+    workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [
+      { label: "Show extensions", run: () => panels.show("extensions") },
       ...(failed.workspace ? [{ label: "Open in safe mode", run: () => reloadWindow(true) }] : []),
     ]);
   }

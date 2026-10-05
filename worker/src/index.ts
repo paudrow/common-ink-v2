@@ -1,7 +1,7 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
 import { authorFor, identify, type Identity } from "./auth.ts";
-import type { FilePath, Seed } from "./files.ts";
+import { isExtensionScript, parseFilePath, type Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
@@ -71,11 +71,11 @@ export default {
     if (req.method !== "GET" && origin && origin !== url.origin && cookie(req, SESSION_COOKIE)) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
-    // A workspace plugin's code, from its file, so the page can import it under `script-src 'self'`.
-    const plugin = /^\/plugins\/([a-zA-Z0-9][\w.-]*)\/index\.js$/.exec(url.pathname);
-    if (plugin && req.method === "GET") {
-      const file = await (workspace as unknown as Store).read(`.common-ink/plugins/${plugin[1]}/index.js` as FilePath);
-      if (!file) return secure(new Response("No such plugin\n", { status: 404 }));
+    // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
+    const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
+    if (code && isExtensionScript(code)) {
+      const file = await (workspace as unknown as Store).read(code);
+      if (!file) return secure(new Response("No such file\n", { status: 404 }));
       return secure(new Response(file.text, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
@@ -169,6 +169,15 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   );
   out.headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
   return out;
+}
+
+/** A URL's path, decoded, or "" if it can't be. */
+function decodedPath(url: URL): string {
+  try {
+    return decodeURIComponent(url.pathname);
+  } catch {
+    return "";
+  }
 }
 
 let seeded = false;

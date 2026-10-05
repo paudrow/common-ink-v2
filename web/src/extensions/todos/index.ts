@@ -1,30 +1,28 @@
-// Todos, a built-in plugin: todos drawn as checkboxes with due-date and recurrence chips, checked off
+// Todos, a built-in extension: todos drawn as checkboxes with due-date and recurrence chips, checked off
 // with a click, ⌘Enter or gx (recurring ones move to their next due date), and every open todo in the
 // Todos view.
 import { isNote, type Change, type FilePath, type Revision } from "../../../../worker/src/files.ts";
-import type { PluginContext, PluginModule } from "../../plugins.ts";
+import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import { describeTodoEdit, localToday, parseTodo, todosIn, toggleLine, when, type Todo, type When } from "./model.ts";
 import { checkboxEl, CHECKED_FOR_MS, dueChipEl, everyChipEl, todosPreview, toggleTodoAt } from "./widgets.ts";
 
-export const todosPlugin: PluginModule = {
+const todos: ExtensionModule = {
   activate(ctx) {
     const panel = new TodosPanel(ctx);
-    ctx.commands.register(
-      { id: "todos.toggle", title: "Check off todo (or uncheck it)", run: () => toggle(ctx) },
-      { id: "todos.show", title: "Show todos", run: () => ctx.panels.toggle("todos") },
-    );
-    ctx.keybindings.add({ key: "Mod-Enter", command: "todos.toggle" });
-    ctx.keybindings.vim("gx", "todos.toggle");
-    ctx.panels.register({ id: "todos", title: "Todos", render: (root) => panel.render(root) });
-    ctx.events.onSaved((path) => isNote(path) && ctx.panels.refresh("todos"));
-    ctx.editor.extend(todosPreview(localToday));
+    ctx.commands.register("todos.toggle", () => toggle(ctx));
+    ctx.commands.register("todos.show", () => ctx.views.toggle("todos"));
+    ctx.views.register("todos", { render: (root) => panel.render(root) });
+    ctx.events.onSaved((path) => isNote(path) && ctx.views.refresh("todos"));
+    ctx.editor.extend(todosPreview(localToday, () => ctx.settings.get<boolean>("todos.chips")));
     ctx.changes.describe(describeChange);
   },
 };
 
+export default todos;
+
 /** Check off the todo under the cursor, in place. */
-function toggle(ctx: PluginContext) {
-  const view = ctx.workbench.focusedView();
+function toggle(ctx: ExtensionContext) {
+  const view = ctx.editor.focused();
   if (!view || view.state.readOnly) return;
   toggleTodoAt(view, view.state.selection.main.head, localToday());
 }
@@ -48,7 +46,7 @@ const GROUPS: Array<[When, string]> = [
 class TodosPanel {
   private cache = new Map<FilePath, { revision: Revision; todos: Todo[] }>();
 
-  constructor(private ctx: PluginContext) {}
+  constructor(private ctx: ExtensionContext) {}
 
   async render(root: HTMLElement) {
     const notes = (await this.ctx.files.fetchList()).filter((d) => isNote(d.path));
@@ -103,7 +101,7 @@ class TodosPanel {
     meta.className = "meta";
     if (t.due) meta.append(dueChipEl(t.due, today));
     if (t.every) meta.append(everyChipEl(t.every));
-    meta.append(this.ctx.workbench.label(t.path));
+    meta.append(this.ctx.util.label(t.path));
     open.append(title, meta);
     open.addEventListener("click", () => void this.ctx.workbench.open(t.path, { line: t.line }));
     const li = document.createElement("li");
@@ -127,6 +125,6 @@ class TodosPanel {
       await this.ctx.files.write(t.path, lines.join("\n"), file.revision);
       await this.ctx.workbench.refreshFromServer([t.path]);
     }
-    this.ctx.panels.refresh("todos");
+    this.ctx.views.refresh("todos");
   }
 }

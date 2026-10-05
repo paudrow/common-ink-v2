@@ -1,9 +1,7 @@
-// Calendar and contacts, built-in plugins on the data source API: each is a panel (and so also opens
-// in a window), with a command to show it and one to connect Google.
-import type { Event } from "../../../worker/src/sources.ts";
-import type { PluginContext, PluginModule } from "../plugins.ts";
-
-const DAYS = 14;
+// Calendar, a built-in extension on the data source API: a view of the coming days' events, with a
+// command to show it and one to connect Google.
+import type { Event } from "../../../../worker/src/sources.ts";
+import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -12,7 +10,7 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<stri
 }
 
 /** What to show when a source can't answer: the reason, and a way to connect when that's what's missing. */
-async function trouble(ctx: PluginContext, root: HTMLElement, err: unknown) {
+async function trouble(ctx: ExtensionContext, root: HTMLElement, err: unknown) {
   const status = await ctx.sources.status().catch(() => null);
   const message = el("p", { className: "message", textContent: (err as Error).message });
   const connect =
@@ -32,12 +30,11 @@ function dayName(day: string, today: string, tomorrow: string): string {
 
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-export const calendarPlugin: PluginModule = {
+const calendar: ExtensionModule = {
   activate(ctx) {
-    ctx.panels.register({
-      id: "calendar",
-      title: "Calendar",
+    ctx.views.register("calendar", {
       async render(root) {
+        const DAYS = ctx.settings.get<number>("calendar.days");
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date(start.getTime() + DAYS * 86_400_000);
@@ -83,50 +80,11 @@ export const calendarPlugin: PluginModule = {
         );
       },
     });
-    ctx.commands.register(
-      { id: "calendar.show", title: "Show calendar", run: () => ctx.panels.toggle("calendar") },
-      { id: "google.connect", title: "Connect Google calendar and contacts", run: () => ctx.sources.connect() },
-    );
+    ctx.commands.register("calendar.show", () => ctx.views.toggle("calendar"));
+    ctx.commands.register("google.connect", () => ctx.sources.connect());
   },
 };
 
-export const contactsPlugin: PluginModule = {
-  activate(ctx) {
-    let query = "";
-    ctx.panels.register({
-      id: "contacts",
-      title: "Contacts",
-      async render(root) {
-        const search = el<HTMLInputElement>("input", { type: "search", placeholder: "Search contacts", value: query, className: "search" });
-        const list = el("ul", {});
-        const fill = async () => {
-          try {
-            const contacts = await ctx.sources.contacts(query);
-            list.replaceChildren(
-              ...contacts.map((c) =>
-                el(
-                  "li",
-                  { className: "contact" },
-                  el("span", { className: "what", textContent: c.name }),
-                  c.organization ? el("span", { className: "where", textContent: c.organization }) : "",
-                  ...c.emails.map((e) => el("a", { href: `mailto:${e}`, textContent: e })),
-                  ...c.phones.map((p) => el("a", { href: `tel:${p.replace(/[^\d+]/g, "")}`, textContent: p })),
-                ),
-              ),
-              ...(contacts.length ? [] : [el("li", { className: "empty", textContent: query ? "No one matches." : "No contacts." })]),
-            );
-          } catch (err) {
-            await trouble(ctx, root, err);
-          }
-        };
-        search.addEventListener("input", () => {
-          query = search.value;
-          void fill();
-        });
-        root.replaceChildren(search, list);
-        await fill();
-      },
-    });
-    ctx.commands.register({ id: "contacts.show", title: "Show contacts", run: () => ctx.panels.toggle("contacts") });
-  },
-};
+export default calendar;
+
+

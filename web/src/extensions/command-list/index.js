@@ -1,7 +1,7 @@
-// ⌘⇧P, or > in the command bar: run any command, with its shortcut. A built-in plugin; "Customize" in
-// the Plugins view copies this file into the workspace as it is, where it runs in place of this one.
+// ⌘⇧P, or > in the command bar: run any command, with its shortcut. A built-in extension; "Customize" in
+// the Extensions view copies this file into the workspace as it is, where it runs in place of this one.
 
-/** @type {import("../plugins.ts").PluginModule} */
+/** @type {import("../../extension-api.ts").ExtensionModule} */
 export default {
   activate(ctx) {
     ctx.commandBar.provide({

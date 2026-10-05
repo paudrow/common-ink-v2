@@ -1,0 +1,8 @@
+{
+  "id": "command-list",
+  "name": "Command list",
+  "version": "1.0.0",
+  "description": "⌘⇧P, or > in the command bar: run any command, with its shortcut shown.",
+  "main": "index.js",
+  "activationEvents": ["onStartup"]
+}

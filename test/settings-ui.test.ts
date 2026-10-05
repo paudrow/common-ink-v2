@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { FilePath, Revision } from "../worker/src/files.ts";
-import { DEFAULTS } from "../worker/src/settings.ts";
+import { CORE_CATALOG, DEFAULTS } from "../worker/src/settings.ts";
 
 const { window } = new JSDOM("<!doctype html><body></body>");
 Object.assign(globalThis, { document: window.document, CSS: { escape: (s: string) => s.replace(/["\\]/g, "\\$&") } });
@@ -36,6 +36,7 @@ function setup(text: string) {
       return { status: "saved", revision: file.revision } as never;
     },
     effective: () => DEFAULTS,
+    catalog: () => CORE_CATALOG,
     openJson: () => writes.push("open json"),
     changed: () => {},
   });
@@ -98,6 +99,7 @@ test("a change that can't reach the server says so", async () => {
       throw new TypeError("Failed to fetch");
     },
     effective: () => DEFAULTS,
+    catalog: () => CORE_CATALOG,
     openJson: () => {},
     changed: () => void ui.render(root),
   });

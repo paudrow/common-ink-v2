@@ -1,6 +1,9 @@
 // Settings: JSON at two levels, user and workspace, over built-in defaults. Workspace settings override
-// user settings. Every setting is declared once here, which gives the defaults, the published JSON
-// Schema (/schema/settings.json) and the checks that tell you what in a settings file was ignored.
+// user settings. The app's own settings are declared once here, and each extension declares its own
+// in its manifest (contributes.configuration). Together they make a catalog, which gives the
+// defaults, the JSON Schema, the settings editor's sections and the checks that tell you what in a
+// settings file was ignored.
+import type { ExtensionManifest, SettingSchema } from "./extensions.ts";
 import { parseFilePath, type FilePath } from "./files.ts";
 
 export interface Keybinding {
@@ -78,13 +81,112 @@ export const SETTINGS = {
   "editor.livePreview": bool("Show markdown as it reads: headings, emphasis and links drawn, todos as checkboxes, images shown. The line you're on always shows its raw text.", true),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
-  "plugins.disabled": { ...strings('Plugins to turn off, by id, such as "history" or "commandBar.notes".'), reload: true as const },
+  "extensions.disabled": { ...strings('Extensions to turn off, by id, such as "history" or "quick-open".'), reload: true as const },
 };
 
 export type SettingName = keyof typeof SETTINGS;
-export type Settings = { [K in SettingName]: (typeof SETTINGS)[K]["default"] };
+/** The app's settings, typed, and any extension's, by key. */
+export type Settings = { [K in SettingName]: (typeof SETTINGS)[K]["default"] } & { readonly [key: string]: unknown };
+
+/** One setting, wherever it's declared: the app's own, or an extension's. */
+export interface SettingDeclaration {
+  key: string;
+  /** Where the settings editor lists it: a section of the app's, or the extension's title. */
+  section: string;
+  /** The extension that declares it, if it isn't the app's. */
+  extension?: string;
+  description: string;
+  default: unknown;
+  /** The value's JSON Schema. */
+  schema: Record<string, unknown>;
+  /** What a good value is, in words, for problems: "true or false". */
+  expects: string;
+  /** A change only takes effect when the app reloads. */
+  reload: boolean;
+  check(value: unknown): boolean;
+}
+
+/** Every setting there is, by key. */
+export type SettingsCatalog = ReadonlyMap<string, SettingDeclaration>;
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+const CORE: SettingDeclaration[] = Object.entries(SETTINGS as Record<string, Declared<unknown>>).map(([key, d]) => ({
+  key,
+  section: capitalize(key.split(".")[0]),
+  description: d.description,
+  default: d.default,
+  schema: d.schema,
+  expects: d.expects,
+  reload: !!d.reload,
+  check: d.check,
+}));
+
+/** Whether a value fits a setting's schema: its type, enum and limits. Enough JSON Schema for settings. */
+export function fitsSchema(schema: SettingSchema, value: unknown): boolean {
+  if (schema.enum && !schema.enum.some((v) => JSON.stringify(v) === JSON.stringify(value))) return false;
+  switch (schema.type) {
+    case "boolean":
+      return typeof value === "boolean";
+    case "string":
+      return typeof value === "string";
+    case "integer":
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value) || (schema.type === "integer" && !Number.isInteger(value))) return false;
+      return !(value < (schema.minimum ?? -Infinity)) && !(value > (schema.maximum ?? Infinity));
+    case "array":
+      return Array.isArray(value) && (!schema.items || value.every((v) => fitsSchema({ type: schema.items!.type }, v)));
+    case "object":
+      return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+}
+
+/** A schema's good values, in words. */
+export function describeSchema(schema: SettingSchema): string {
+  if (schema.enum) return `one of ${schema.enum.map((v) => JSON.stringify(v)).join(", ")}`;
+  if (schema.type === "boolean") return "true or false";
+  if (schema.type === "integer" || schema.type === "number") {
+    const what = schema.type === "integer" ? "a whole number" : "a number";
+    if (schema.minimum !== undefined && schema.maximum !== undefined) return `${what} from ${schema.minimum} to ${schema.maximum}`;
+    if (schema.minimum !== undefined) return `${what} of at least ${schema.minimum}`;
+    if (schema.maximum !== undefined) return `${what} of at most ${schema.maximum}`;
+    return what;
+  }
+  if (schema.type === "array") return schema.items ? `a list of ${schema.items.type}s` : "a list";
+  return schema.type === "string" ? "text" : "an object";
+}
+
+/** The catalog: the app's settings, then each extension's, in the section named for it. */
+export function settingsCatalog(extensions: readonly ExtensionManifest[] = []): SettingsCatalog {
+  const all = new Map(CORE.map((d) => [d.key, d]));
+  for (const m of extensions) {
+    const conf = m.contributes.configuration;
+    if (!conf) continue;
+    for (const [key, schema] of Object.entries(conf.properties)) {
+      if (all.has(key)) continue;
+      const { description = "", default: value, appliesAfterReload, ...rest } = schema;
+      all.set(key, {
+        key,
+        section: conf.title || m.name,
+        extension: m.id,
+        description,
+        default: value ?? null,
+        schema: rest as Record<string, unknown>,
+        expects: describeSchema(schema),
+        reload: !!appliesAfterReload,
+        check: (v) => fitsSchema(schema, v),
+      });
+    }
+  }
+  return all;
+}
+
+export const CORE_CATALOG = settingsCatalog();
 
 export const DEFAULTS = Object.fromEntries(Object.entries(SETTINGS).map(([k, d]) => [k, d.default])) as Settings;
+
+/** Every setting's default, extensions' included. */
+export const defaultsOf = (catalog: SettingsCatalog) => Object.fromEntries([...catalog.values()].map((d) => [d.key, d.default])) as Settings;
 
 export const WORKSPACE_SETTINGS = parseFilePath(".common-ink/settings.json")!;
 export const DEFAULT_SETTINGS = parseFilePath(".common-ink/defaults/settings.json")!;
@@ -95,17 +197,23 @@ export const isReadOnly = (path: FilePath) => path.startsWith(".common-ink/defau
 
 export const SCHEMA_URL = "/schema/settings.json";
 
-export const schema = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: SCHEMA_URL,
-  title: "Common Ink settings",
-  type: "object",
-  properties: {
-    $schema: { type: "string" },
-    ...Object.fromEntries(Object.entries(SETTINGS).map(([k, d]) => [k, { ...d.schema, description: d.description, default: d.default, ...((d as Declared<unknown>).reload ? { appliesAfterReload: true } : {}) }])),
-  },
-  additionalProperties: false,
-};
+/** A catalog as one JSON Schema, as editors outside the app and the JSON editor's help read it. */
+export function schemaOf(catalog: SettingsCatalog) {
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: SCHEMA_URL,
+    title: "Common Ink settings",
+    type: "object",
+    properties: {
+      $schema: { type: "string" },
+      ...Object.fromEntries([...catalog.values()].map((d) => [d.key, { ...d.schema, description: d.description, default: d.default, ...(d.reload ? { appliesAfterReload: true } : {}) }])),
+    },
+    additionalProperties: false,
+  };
+}
+
+/** The app's own settings' schema, published at /schema/settings.json. */
+export const schema = schemaOf(CORE_CATALOG);
 
 /** The defaults as a read-only settings file. Each setting's description is in the schema. */
 export function defaultsText(): string {
@@ -115,15 +223,15 @@ export function defaultsText(): string {
 export const SETTINGS_TEMPLATE = `{\n  "$schema": "${SCHEMA_URL}"\n}\n`;
 
 /** What's wrong with one setting in a settings file, or null if it's fine. */
-export function settingProblem(key: string, value: unknown): string | null {
+export function settingProblem(key: string, value: unknown, catalog: SettingsCatalog = CORE_CATALOG): string | null {
   if (key === "$schema") return null;
-  const declared = (SETTINGS as Record<string, Declared<unknown>>)[key];
+  const declared = catalog.get(key);
   if (!declared) return `Unknown setting "${key}"`;
   return declared.check(value) ? null : `"${key}" must be ${declared.expects}`;
 }
 
 /** One settings file's settings, and what in it was ignored and why. `broken` if none of it could be read. */
-export function parseSettings(text: string): { settings: Partial<Settings>; problems: string[]; broken?: true } {
+export function parseSettings(text: string, catalog: SettingsCatalog = CORE_CATALOG): { settings: Partial<Settings>; problems: string[]; broken?: true } {
   if (!text.trim()) return { settings: {}, problems: [] };
   let data: unknown;
   try {
@@ -136,7 +244,7 @@ export function parseSettings(text: string): { settings: Partial<Settings>; prob
   const problems: string[] = [];
   for (const [key, value] of Object.entries(data)) {
     if (key === "$schema") continue;
-    const problem = settingProblem(key, value);
+    const problem = settingProblem(key, value, catalog);
     if (problem) problems.push(problem);
     else settings[key] = value;
   }
@@ -144,14 +252,14 @@ export function parseSettings(text: string): { settings: Partial<Settings>; prob
 }
 
 /**
- * Defaults, then user settings, then workspace settings. Keybindings add up: the app's, then plugins',
- * then the user's, then the workspace's. The rest override.
+ * Defaults, then user settings, then workspace settings. Keybindings add up: the app's, then
+ * extensions', then the user's, then the workspace's. The rest override.
  */
-export function combine(user: Partial<Settings>, workspace: Partial<Settings>, pluginKeybindings: Keybinding[] = []): Settings {
+export function combine(user: Partial<Settings>, workspace: Partial<Settings>, extensionKeybindings: Keybinding[] = [], catalog: SettingsCatalog = CORE_CATALOG): Settings {
   return {
-    ...DEFAULTS,
+    ...defaultsOf(catalog),
     ...user,
     ...workspace,
-    keybindings: [...DEFAULT_KEYBINDINGS, ...pluginKeybindings, ...(user.keybindings ?? []), ...(workspace.keybindings ?? [])],
-  };
+    keybindings: [...DEFAULT_KEYBINDINGS, ...extensionKeybindings, ...(user.keybindings ?? []), ...(workspace.keybindings ?? [])],
+  } as Settings;
 }

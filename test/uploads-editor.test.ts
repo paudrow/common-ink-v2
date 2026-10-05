@@ -12,7 +12,7 @@ Object.assign(globalThis, {
 });
 
 const { EditorView } = await import("@codemirror/view");
-const { uploadInto, uploadMarkdown } = await import("../web/src/plugins/uploads.ts");
+const { uploadInto, uploadMarkdown } = await import("../web/src/extensions/uploads/index.ts");
 
 test("an image upload is an image in markdown; anything else is a link", () => {
   assert.equal(uploadMarkdown({ name: "Garden plan.png", type: "image/png" }), "![Garden plan](/uploads/Garden%20plan.png)");

@@ -14,7 +14,7 @@ Object.assign(globalThis, {
 
 const { EditorView } = await import("@codemirror/view");
 const { EditorSelection } = await import("@codemirror/state");
-const { todosPreview, CHECKED_FOR_MS } = await import("../web/src/plugins/todos/widgets.ts");
+const { todosPreview, CHECKED_FOR_MS } = await import("../web/src/extensions/todos/widgets.ts");
 
 const TODAY = "2026-10-04";
 const NOTE = ["# Chores", "- [ ] Call mum due:2026-10-05", "- [ ] Water the plants due:2026-10-04 every:3days", "- [x] Fix the bike light", "Some text"].join("\n");

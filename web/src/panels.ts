@@ -1,7 +1,7 @@
-// The side panel: one plugin view at a time (History, and later others), with a title and a close
+// The side panel: one extension view at a time (History, and later others), with a title and a close
 // button. Any panel also opens in a window as a tab (workbench.ts).
 import { endDrag, startDrag } from "./dnd.ts";
-import type { Panel } from "./plugins.ts";
+import type { View as Panel } from "./workbench.ts";
 
 export class Panels {
   private panels = new Map<string, Panel>();

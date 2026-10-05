@@ -351,9 +351,11 @@ test("deleting a file is a change that undo takes back", () => {
   assert.equal(files.write({ path: "Gone.md" as FilePath, text: "", base: 1, author: ada, delete: true }).status, "conflict", "nothing to delete");
 });
 
-test("JavaScript is a file only as a workspace plugin's code", () => {
-  assert.ok(parseFilePath(".common-ink/plugins/word-count/index.js"));
+test("JavaScript is a file only as a workspace extension's code", () => {
+  assert.ok(parseFilePath(".common-ink/extensions/word-count/index.js"));
+  assert.ok(parseFilePath(".common-ink/extensions/word-count/lib/model.js"), "any file in its folder");
   assert.equal(parseFilePath("notes/script.js"), null);
-  assert.equal(parseFilePath(".common-ink/plugins/word-count/other.js"), null);
-  assert.equal(parseFilePath(".common-ink/plugins/../index.js"), null);
+  assert.equal(parseFilePath(".common-ink/plugins/word-count/index.js"), null);
+  assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
+  assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
 });

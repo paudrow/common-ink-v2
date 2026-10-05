@@ -59,7 +59,9 @@ export function livePreview(source: PreviewSource): Extension {
         const switched = u.startState.facet(previewEnabled) !== u.state.facet(previewEnabled);
         // The parser finishing more of a long note counts too: sources may read its syntax tree.
         const parsed = syntaxTree(u.startState) !== syntaxTree(u.state);
-        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed) this.decorations = build(u.view, source);
+        // Settings applied (a reconfiguration) can change what a source draws, so they redraw too.
+        const reconfigured = u.transactions.some((tr) => tr.reconfigured);
+        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed || reconfigured) this.decorations = build(u.view, source);
       }
     },
     { decorations: (v) => v.decorations },

@@ -38,7 +38,7 @@ One recorded edit to the workspace, with its author, a diff and the revision it 
 _Avoid_: Commit, event, op
 
 **Author**:
-Who made a change: the user, a named agent, a plugin or sync.
+Who made a change: the user, a named agent, an extension or sync.
 
 **Label**:
 A name given to a note's state at one revision, so it can be found, opened and restored later.
@@ -54,9 +54,21 @@ _Avoid_: Log, timeline, versions
 JSON that configures behavior, at either user or workspace level. Workspace settings override user settings.
 _Avoid_: Preferences, config
 
-**Plugin**:
-A unit of functionality that adds commands, views, data sources or settings through the public plugin API. Built-in features are plugins. A workspace plugin is files in the workspace (`.common-ink/plugins/<id>/`), and one with a built-in's id runs in its place: that's a customized built-in.
-_Avoid_: Extension, add-on
+**Extension**:
+A unit of functionality that adds commands, views, settings, embeds and more through the public extension API, declared in its `extension.json`. Built-in features are extensions. A workspace extension is a folder of files in the workspace (`.common-ink/extensions/<id>/`), and one with a built-in's id runs in its place: that's a customized built-in.
+_Avoid_: Plugin, add-on
+
+**Contribution**:
+Something an extension's manifest declares it adds: a command, keybinding, menu item, settings section, view, status bar item or embed. The app shows contributions before the extension's code runs.
+
+**Activation event**:
+What starts an extension's code: the app starting, or one of its commands running, views showing or embeds drawing for the first time.
+
+**Permission**:
+Something an extension may ask to do beyond running and drawing, such as reaching a host or reading notes. Its manifest declares the most it can ask for, with why; you're asked the first time it's used, and your answer is kept in settings.
+
+**Trusted extension**:
+One that runs in the app's page, with access to note editors: the built-ins, and any you mark trusted. Every other extension runs sandboxed.
 
 **Safe mode**:
-The app with only built-in plugins running, for when a workspace plugin breaks it. Open the app with `?safe=1`.
+The app with only built-in extensions running, for when a workspace extension breaks it. Open the app with `?safe=1`.

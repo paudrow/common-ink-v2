@@ -6,7 +6,7 @@ import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
 export type GroupId = string;
 
-/** Anything that opens in a window: a file, or a view that a plugin draws (such as History). */
+/** Anything that opens in a window: a file, or a view that an extension draws (such as History). */
 export type Openable = { file: FilePath } | { view: string };
 
 /**

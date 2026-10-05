@@ -1,41 +1,37 @@
-// The history panel, a built-in plugin: the changes to the note on show (or to everything), who made
+// History, a built-in extension: the changes to the note on show (or to everything), who made
 // each and what it changed. Select changes to see what they did together; revert just those, or
 // restore a note to how it was. Labels name a note's state at one revision. Filtering to one author and
 // undoing everything shown is "undo what the agent did".
-import { authorKey, type Change, type FileDiff, type FilePath, type Revision, type UndoResult, type WriteResult } from "../../../worker/src/files.ts";
-import type { Label } from "../../../worker/src/labels.ts";
-import { ago, describeAuthor, diffStat, runLines } from "../describe.ts";
-import { matchKeys } from "../keys.ts";
-import type { PluginContext, PluginModule } from "../plugins.ts";
-import { VERSION_PREFIX, versionView, versionViewId } from "../version.ts";
+import { authorKey, type Change, type FileDiff, type FilePath, type Revision, type UndoResult, type WriteResult } from "../../../../worker/src/files.ts";
+import type { Label } from "../../../../worker/src/labels.ts";
+import { ago, describeAuthor, diffStat, runLines } from "../../describe.ts";
+import { matchKeys } from "../../keys.ts";
+import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
+import { VERSION_PREFIX, versionView, versionViewId } from "../../version.ts";
 
-export const historyPlugin: PluginModule = {
+const history: ExtensionModule = {
   activate(ctx) {
     const panel = new HistoryPanel(ctx);
-    ctx.panels.register({ id: "history", title: "History", render: (root) => panel.render(root) });
-    ctx.workbench.provideViews(VERSION_PREFIX, (id) => versionView(id, (path) => void ctx.workbench.refreshFromServer([path]).then(() => ctx.panels.refresh("history"))));
+    ctx.views.register("history", { render: (root) => panel.render(root) });
+    ctx.views.provide(VERSION_PREFIX, (id) => versionView(id, (path) => void ctx.workbench.refreshFromServer([path]).then(() => ctx.views.refresh("history"))));
     const show = (scope: "file" | "all") => {
-      if (ctx.panels.shown() === "history" && panel.scope === scope) return ctx.panels.toggle("history");
+      if (ctx.views.shown() === "history" && panel.scope === scope) return ctx.views.toggle("history");
       panel.scope = scope;
-      ctx.panels.show("history");
+      ctx.views.show("history");
     };
-    ctx.commands.register(
-      { id: "history.note", title: "Show history of this note", run: () => show("file") },
-      { id: "history.all", title: "Show history of everything", run: () => show("all") },
-      {
-        id: "history.addLabel",
-        title: "Add label to this note…",
-        run: () => {
-          panel.scope = "file";
-          panel.labelling = true;
-          ctx.panels.show("history");
-        },
-      },
-    );
-    ctx.events.onSaved(() => ctx.panels.refresh("history"));
-    ctx.events.onFocus(() => ctx.panels.refresh("history"));
+    ctx.commands.register("history.note", () => show("file"));
+    ctx.commands.register("history.all", () => show("all"));
+    ctx.commands.register("history.addLabel", () => {
+      panel.scope = "file";
+      panel.labelling = true;
+      ctx.views.show("history");
+    });
+    ctx.events.onSaved(() => ctx.views.refresh("history"));
+    ctx.events.onFocus(() => ctx.views.refresh("history"));
   },
 };
+
+export default history;
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -84,7 +80,7 @@ class HistoryPanel {
   private diff: FileDiff[] = [];
   private message = "";
 
-  constructor(private ctx: PluginContext) {}
+  constructor(private ctx: ExtensionContext) {}
 
   /** Draw into the panel or window it shows in. */
   async render(root: HTMLElement): Promise<void> {
@@ -107,7 +103,7 @@ class HistoryPanel {
   private async refresh(): Promise<void> {
     if (!this.root) return;
     const path = this.scope === "file" ? this.ctx.workbench.focusedPath() : null;
-    const params = new URLSearchParams({ limit: "200" });
+    const params = new URLSearchParams({ limit: String(this.ctx.settings.get<number>("history.pageSize")) });
     if (path) params.set("path", path);
     if (this.author) params.set("author", this.author);
     const [changes, labels] = await Promise.all([
@@ -269,7 +265,7 @@ class HistoryPanel {
         el("span", { className: "when", textContent: ago(c.time), title: new Date(c.time).toLocaleString() }),
         el("span", { className: "stat", textContent: c.deleted ? "Deleted" : diffStat(c) }),
       ),
-      // What the change means, from the plugins that know (todos: "Completed 'Pay rent' (due Oct 1)").
+      // What the change means, from the extensions that know (todos: "Completed 'Pay rent' (due Oct 1)").
       ...[this.ctx.changes.summary(c)].filter((s) => s).map((s) => el("div", { className: "described", textContent: s })),
       el(
         "div",
@@ -283,7 +279,7 @@ class HistoryPanel {
           "div",
           { className: "label" },
           el("span", { className: "label-tag", textContent: l.name, title: `Label at #${l.revision}` }),
-          el("button", { textContent: "Open", title: "Open the note as it was at this label, read-only", onclick: stop(() => this.ctx.workbench.openView(versionViewId(l.path, l.revision), { newTab: true })) }),
+          el("button", { textContent: "Open", title: "Open the note as it was at this label, read-only", onclick: stop(() => this.ctx.views.open(versionViewId(l.path, l.revision), { newTab: true })) }),
           el("button", { textContent: "Restore", title: "Put the note back as it was at this label, as a new change", onclick: stop(() => this.restore(l.path, { revision: l.revision }, `“${l.name}”`)) }),
         ),
       ),

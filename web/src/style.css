@@ -577,7 +577,7 @@ body {
   font-size: 0.75rem;
 }
 
-/* A todo's checkbox and chips, in the editor and the Todos view (plugins/todos/widgets.ts). */
+/* A todo's checkbox and chips, in the editor and the Todos view (extensions/todos/widgets.ts). */
 .todo-box {
   display: inline-block;
   flex: none;
@@ -637,7 +637,7 @@ body {
   border-color: var(--accent);
 }
 
-/* History: what a change means, from plugins that know. */
+/* History: what a change means, from extensions that know. */
 :is(#panel, .tab-view) .change .described {
   margin-top: 0.125rem;
   font-size: 0.8125rem;
@@ -1032,20 +1032,20 @@ body {
   text-decoration: underline;
 }
 
-/* The Plugins view (plugins-view.ts), in the side panel or a window. */
-.plugins-view {
+/* The Extensions view (extensions-view.ts), in the side panel or a window. */
+.extensions-view {
   font-family: var(--prose);
   font-size: 0.875rem;
 }
 
-.plugins-view .banner {
+.extensions-view .banner {
   margin: 0 0 0.75rem;
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   background: var(--accent-soft);
 }
 
-.plugins-view button {
+.extensions-view button {
   font: inherit;
   color: var(--accent);
   background: none;
@@ -1055,48 +1055,48 @@ body {
   cursor: pointer;
 }
 
-.plugins-view button:disabled {
+.extensions-view button:disabled {
   color: var(--muted);
   cursor: default;
 }
 
-.plugins-view :focus-visible {
+.extensions-view :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.plugin {
+.extension {
   padding: 0.75rem 0;
   border-bottom: 1px solid var(--line);
 }
 
-.plugin-head {
+.extension-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.5rem;
 }
 
-.plugin-toggle {
+.extension-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
 }
 
-.plugin-toggle input {
+.extension-toggle input {
   accent-color: var(--accent);
 }
 
-.plugin-name {
+.extension-name {
   font-weight: 600;
 }
 
-.plugin-id {
+.extension-id {
   font: 0.75rem var(--mono);
   color: var(--muted);
 }
 
-.plugins-view .badge,
+.extensions-view .badge,
 .settings-editor .badge.reload {
   font-size: 0.75rem;
   color: var(--muted);
@@ -1105,32 +1105,32 @@ body {
   padding: 0 0.4rem;
 }
 
-.plugins-view .badge.reload {
+.extensions-view .badge.reload {
   color: var(--accent);
   border-color: var(--accent);
 }
 
-.plugin-state {
+.extension-state {
   font-size: 0.75rem;
   color: var(--muted);
 }
 
-.plugin.state-off .plugin-name,
-.plugin.state-safe .plugin-name {
+.extension.state-off .extension-name,
+.extension.state-safe .extension-name {
   color: var(--muted);
 }
 
-.plugin.state-failed .plugin-state,
-.plugin-error {
+.extension.state-failed .extension-state,
+.extension-error {
   color: #c2410c;
 }
 
-.plugin-desc,
-.plugin-error {
+.extension-desc,
+.extension-error {
   margin: 0.25rem 0;
 }
 
-.plugin-adds {
+.extension-adds {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 0.125rem 0.75rem;
@@ -1138,31 +1138,31 @@ body {
   font-size: 0.8125rem;
 }
 
-.plugin-adds dt {
+.extension-adds dt {
   color: var(--muted);
 }
 
-.plugin-adds dd {
+.extension-adds dd {
   margin: 0;
 }
 
-p.plugin-adds.muted {
+p.extension-adds.muted {
   display: block;
   color: var(--muted);
 }
 
-.plugin-actions {
+.extension-actions {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.375rem;
 }
 
-.plugin-source {
+.extension-source {
   display: flex;
   flex-direction: column;
 }
 
-/* The Uploads view (plugins/uploads.ts). */
+/* The Uploads view (extensions/uploads/index.ts). */
 :is(#panel, .tab-view) .upload-add {
   margin-bottom: 0.75rem;
 }
@@ -1199,4 +1199,13 @@ p.plugin-adds.muted {
 :is(#panel, .tab-view) .upload button {
   grid-column: 2;
   grid-row: span 2;
+}
+
+.extension-asks dt.full {
+  grid-column: 1 / -1;
+  margin-top: 0.25rem;
+}
+
+.extension-asks dt:not(.full) {
+  font: 0.75rem var(--mono);
 }
