@@ -22,7 +22,8 @@ import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type Ext
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
-import type { Offline } from "./offline.ts";
+import { unreachable, type HeldOp, type Offline } from "./offline.ts";
+import type { EditResult } from "../../worker/src/data-sources.ts";
 import type { Panels } from "./panels.ts";
 import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
@@ -63,9 +64,19 @@ type DataApi = Omit<ExtensionContext["data"], "connect" | "calendar"> & { calend
  * Data sources for an extension (ADR 0007), each call checked against its permissions first. A
  * built-in changes records as you; any other extension, as itself acting for you.
  */
-function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined): DataApi {
+function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined, offline: Offline): DataApi {
   const read = async <T>(kind: "data:calendar:read" | "data:contacts:read", run: () => Promise<T>) => (await check({ kind }), run());
-  const write = async <T>(run: () => Promise<T>) => (await check({ kind: "data:calendar:write" }), run());
+  /** A write, sent now, or kept to send once the server can be reached (offline.ts). */
+  const send = async (method: HeldOp["method"], body: Record<string, unknown>, what: string): Promise<EditResult> => {
+    await check({ kind: "data:calendar:write" });
+    try {
+      return await api.editEvent(method, body, author);
+    } catch (err) {
+      if (!unreachable(err)) throw err;
+      await offline.holdOp({ method, body, ...(author ? { extension: author } : {}), what });
+      return { status: "queued", address: String(body.address ?? ""), written: [], deleted: [], error: "you're offline, so it goes when you're back" };
+    }
+  };
   return {
     status: api.sources,
     sync: (force) => read("data:calendar:read", () => api.sync(force)),
@@ -73,9 +84,9 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined)
       calendars: () => read("data:calendar:read", api.calendars),
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
-      create: (event) => write(() => api.editEvent("POST", { ...event }, author)),
-      update: (address, change, scope) => write(() => api.editEvent("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, author)),
-      remove: (address, scope) => write(() => api.editEvent("DELETE", { address, ...(scope ? { scope } : {}) }, author)),
+      create: (event) => send("POST", { ...event }, `Add ${event.title}`),
+      update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
+      remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },
     contacts: { search: (query) => read("data:contacts:read", () => api.contacts(query)) },
   };
@@ -664,7 +675,7 @@ export class ExtensionRuntime {
       },
       notifications: { show: (title, body) => this.notify(services, title, body) },
       data: (() => {
-        const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id);
+        const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
         return { ...data, connect: connectGoogle, calendar: { ...data.calendar, onChange: (fn: () => void) => void app.onRecords.push(guard(fn)) } };
       })(),
       workbench: {
@@ -696,7 +707,7 @@ export class ExtensionRuntime {
     const m = record.manifest;
     const app = this.app;
     const services = this.services(m);
-    const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id);
+    const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);

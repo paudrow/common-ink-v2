@@ -1,7 +1,8 @@
 // Offline mode (ADR 0001). The server is the only source of truth; this browser keeps a disposable
 // cache of the files it has read, and holds edits it couldn't send as unsent changes, each with the
 // revision it was based on. When the server can be reached again, they're sent and merged there like
-// any other write, and the cache takes the server's answer.
+// any other write, and the cache takes the server's answer. Edits of a data source's records (ADR
+// 0007), which go to the server as operations rather than files, wait the same way, in order.
 import type { FilePath, FileSummary, Revision, WorkspaceFile, WriteResult } from "../../worker/src/files.ts";
 
 /** A small key-value store: IndexedDB in the browser, a Map in tests. */
@@ -12,7 +13,19 @@ export interface KV {
   all<T>(store: Store): Promise<T[]>;
 }
 
-type Store = "files" | "unsent" | "meta";
+type Store = "files" | "unsent" | "meta" | "ops";
+
+/** An edit of records the server didn't get: the request to send again, as it was made. */
+export interface HeldOp {
+  /** When it was made, which is also the order they're sent in. */
+  id: string;
+  method: "POST" | "PATCH" | "DELETE";
+  body: Record<string, unknown>;
+  /** The extension that made it, if it's named as the author. */
+  extension?: string;
+  /** What it was, in words, for the status bar. */
+  what: string;
+}
 
 /** An edit that hasn't reached the server: the file's whole text and the revision it was based on. */
 export interface Unsent {
@@ -35,6 +48,7 @@ export const unreachable = (err: unknown) => err instanceof TypeError || (err as
 export class Offline {
   /** Whether the last request reached the server. */
   online = true;
+  private held = 0;
   private listeners: Array<() => void> = [];
 
   constructor(
@@ -134,6 +148,44 @@ export class Offline {
     return this.kv.all<Unsent>("unsent");
   }
 
+  /** Keep an edit of records that couldn't be sent, to send once the server can be reached. */
+  async holdOp(op: Omit<HeldOp, "id">): Promise<HeldOp> {
+    // The time, then a count for edits made in the same millisecond, so ids sort in the order they were made.
+    const held = { ...op, id: `${String(Date.now()).padStart(15, "0")}-${String(++this.held).padStart(6, "0")}` };
+    await this.kv.set("ops", held.id, held);
+    this.changed();
+    return held;
+  }
+
+  async ops(): Promise<HeldOp[]> {
+    return (await this.kv.all<HeldOp>("ops")).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Send held edits of records, oldest first, stopping if the server can't be reached. One the server
+   * refuses (the event's gone, say) is dropped, and its reason returned.
+   */
+  async flushOps(send: (op: HeldOp) => Promise<unknown>): Promise<{ sent: number; refused: Array<{ op: HeldOp; error: string }> }> {
+    let sent = 0;
+    const refused: Array<{ op: HeldOp; error: string }> = [];
+    for (const op of await this.ops()) {
+      try {
+        await send(op);
+        sent++;
+        this.reached(true);
+      } catch (err) {
+        if (unreachable(err)) {
+          this.reached(false);
+          break;
+        }
+        refused.push({ op, error: (err as Error).message });
+      }
+      await this.kv.del("ops", op.id);
+    }
+    if (sent || refused.length) this.changed();
+    return { sent, refused };
+  }
+
   unsentFor(path: FilePath): Promise<Unsent | undefined> {
     return this.kv.get<Unsent>("unsent", path);
   }
@@ -182,9 +234,10 @@ export function memoryKV(): KV {
 export function idbKV(name = "common-ink"): KV {
   if (typeof indexedDB === "undefined") return memoryKV();
   const db = new Promise<IDBDatabase>((resolve, reject) => {
-    const open = indexedDB.open(name, 1);
+    // Version 2 adds "ops"; upgrading makes whichever stores are missing.
+    const open = indexedDB.open(name, 2);
     open.onupgradeneeded = () => {
-      for (const store of ["files", "unsent", "meta"]) open.result.createObjectStore(store);
+      for (const store of ["files", "unsent", "meta", "ops"]) if (!open.result.objectStoreNames.contains(store)) open.result.createObjectStore(store);
     };
     open.onsuccess = () => resolve(open.result);
     open.onerror = () => reject(open.error);

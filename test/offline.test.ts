@@ -77,3 +77,23 @@ test("warming keeps a copy of every file, so ones never opened still open offlin
   setUp(false);
   assert.equal((await offline.read("Other.md" as FilePath)).text, "# Other\n");
 });
+
+test("edits of records made offline wait in order, go once the server's back, and one it refuses is dropped with why", async () => {
+  const kv = memoryKV();
+  const offline = new Offline(kv, { list: async () => [], read: async (path) => ({ path, text: "", revision: 0 }), write: async () => ({ status: "saved", file: { path: "x.md" as never, text: "", revision: 1 } }) });
+  await offline.holdOp({ method: "PATCH", body: { address: "event:sample/work/a", title: "A" }, what: "Change A" });
+  await offline.holdOp({ method: "DELETE", body: { address: "event:sample/work/gone" }, what: "Delete gone" });
+  await offline.holdOp({ method: "POST", body: { title: "C", start: "2026-10-05T09:00" }, what: "Add C" });
+  const down = await offline.flushOps(async () => {
+    throw new TypeError("Failed to fetch");
+  });
+  assert.deepEqual([down.sent, (await offline.ops()).length, offline.online], [0, 3, false]);
+  const sent: string[] = [];
+  const back = await offline.flushOps(async (op) => {
+    if (op.method === "DELETE") throw new Error("There's no event at event:sample/work/gone");
+    sent.push(op.what);
+  });
+  assert.deepEqual(sent, ["Change A", "Add C"]);
+  assert.deepEqual(back.refused.map((r) => [r.op.what, r.error]), [["Delete gone", "There's no event at event:sample/work/gone"]]);
+  assert.deepEqual(await offline.ops(), []);
+});

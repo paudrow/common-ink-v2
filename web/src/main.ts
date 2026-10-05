@@ -260,11 +260,13 @@ async function refreshList() {
 /** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
 async function renderUnsent() {
   const unsent = await offline.unsent();
+  const ops = await offline.ops();
+  const waiting = unsent.length + ops.length;
   const clashing = unsent.filter((u) => u.conflict);
-  const parts = [offline.online ? "" : "Offline", unsent.length ? `${unsent.length} unsent ${unsent.length === 1 ? "change" : "changes"}` : ""].filter(Boolean);
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : ""].filter(Boolean);
   unsentLine.textContent = parts.join(" · ") + (clashing.length ? ` (${clashing.length} can't be merged: open ${docLabel(clashing[0].path)})` : "");
-  unsentLine.title = unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`).join("\n");
-  unsentLine.dataset.state = clashing.length ? "conflict" : unsent.length || !offline.online ? "waiting" : "";
+  unsentLine.title = [...unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
+  unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
 offline.onChange(() => void renderUnsent());
 unsentLine.addEventListener("click", async () => {
@@ -274,6 +276,9 @@ unsentLine.addEventListener("click", async () => {
 
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
+  // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
+  const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
+  for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`);
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
     await refreshList();
