@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { syncTabs, type TabActions, type TabModel } from "../web/src/tabbar.ts";
+import { syncTabs, type TabActions, type TabModel } from "../web/src/extensions/workbench/tabbar.ts";
 
 const { window } = new JSDOM("<!doctype html><div id=bar></div>");
 Object.assign(globalThis, { document: window.document });

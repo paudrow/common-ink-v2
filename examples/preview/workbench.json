@@ -1,0 +1,11 @@
+{
+  "pr": 21,
+  "title": "Window chrome as the Workbench extension",
+  "steps": [
+    "Nothing should look or work differently. Try the windows as you use them: click a note for its preview tab, double-click to keep it, drag a note or a tab to a window's edge to split it, drag the border between windows, right-click a tab for its menu, and close a window's last tab to see the empty window.",
+    "⌘⇧P, Show extensions: Workbench is first, a built-in. It lists the commands it adds (split, focus, resize, move and close tabs and windows) and its ⌘\\ for Split right.",
+    "Turn Workbench off and reload. Each window shows its tab on show, with no tab bar, and a line between windows. Open notes from the list or ⌘P: they replace what the window shows. ⌘⇧P, ⌘, (settings) and Show extensions all work. Split right isn't there: it's Workbench's. Turn it back on and reload.",
+    "Vim's Ctrl-W h, j, k, l, s, v and o and gt and gT still work: they're Vim's keys for Workbench's commands. With Workbench off they say the command isn't available.",
+    "Customize Workbench: its JavaScript is copied in and trusted. In `index.js`, change `\"No note open\"` to something of your own, reload, and close every tab. Revert to built-in."
+  ]
+}

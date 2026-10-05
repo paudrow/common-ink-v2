@@ -16,6 +16,7 @@ const LOADERS: Record<LibraryName, () => Promise<unknown>> = {
   "common-ink/live-preview": () => import("./live-preview.ts"),
   "common-ink/describe": () => import("./describe.ts"),
   "common-ink/keys": () => import("./keys.ts"),
+  "common-ink/layout": () => import("./layout.ts"),
   "common-ink/files": () => import("../../worker/src/files.ts"),
   "common-ink/uploads": () => import("../../worker/src/uploads.ts"),
 };

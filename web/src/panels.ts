@@ -1,6 +1,6 @@
 // The side panel: one extension view at a time (History, and later others), with a title and a close
-// button. Any panel also opens in a window as a tab (workbench.ts).
-import { endDrag, startDrag } from "./dnd.ts";
+// button. Any panel also opens in a window as a tab (workbench.ts); its title says what it opens
+// (data-open), for the Workbench extension's dragging.
 import type { View as Panel } from "./workbench.ts";
 
 export class Panels {
@@ -17,13 +17,9 @@ export class Panels {
     close.addEventListener("click", () => this.hide());
     const header = document.createElement("header");
     header.append(this.title, close);
-    // Drag the title into a window to open the panel there.
+    // Drag the title into a window to open the panel there (with the Workbench extension).
     this.title.draggable = true;
     this.title.title = "Drag into a window to open it there";
-    this.title.addEventListener("dragstart", (e) => {
-      if (this.showing) startDrag(e, { item: { view: this.showing } }, this.title.textContent ?? "");
-    });
-    this.title.addEventListener("dragend", endDrag);
     this.body.className = "panel-body";
     root.append(header, this.body);
     root.hidden = true;
@@ -42,6 +38,7 @@ export class Panels {
     if (!panel) return;
     this.showing = id;
     this.title.textContent = panel.title;
+    this.title.dataset.open = JSON.stringify({ view: id });
     this.root.hidden = false;
     void panel.render(this.body);
   }

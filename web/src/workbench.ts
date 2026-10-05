@@ -1,8 +1,9 @@
-// The windows on screen: the layout (layout.ts) drawn as split groups of tabs. A file's tab holds an
-// editor; a view's tab holds whatever its extension draws. A file open in several tabs has one Session,
-// and an edit in one tab is copied to the others. Tabs and notes drag into windows (dnd.ts), the
-// borders between windows drag to resize them, and the layout is saved as a JSON file a moment after
-// it changes.
+// The windows on screen: the layout model (layout.ts) drawn as split windows of tabs. A file's tab holds
+// an editor; a view's tab holds whatever its extension draws. A file open in several tabs has one
+// Session, and an edit in one tab is copied to the others. The layout is saved as a JSON file a moment
+// after it changes. This is the core of it (ADR 0006): on its own it draws each window's tab on show,
+// and nothing else. The chrome (tab bars, dragging, the borders that resize windows, what an empty
+// window says) is drawn by an extension, the default Workbench extension, through setChrome.
 import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
@@ -11,9 +12,7 @@ import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Jumps, type Spot } from "./jumps.ts";
-import { dragged, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import * as L from "./layout.ts";
-import { syncTabs } from "./tabbar.ts";
 import { Session, type SaveStatus } from "./session.ts";
 
 const RETRY_MS = 5000;
@@ -37,6 +36,33 @@ export interface View {
   render(el: HTMLElement): void | Promise<void>;
 }
 
+/** A window's tab, as its chrome shows it. */
+export interface TabInfo {
+  /** Stable for as long as the tab shows the same thing (layout.openableKey). */
+  key: string;
+  label: string;
+  title: string;
+  selected: boolean;
+  preview: boolean;
+  /** A save status other than saved. */
+  status?: string;
+}
+
+/**
+ * What draws around the windows: an extension's (the Workbench extension's). Each part is optional;
+ * without one, the core's plain version stands in, or nothing does.
+ */
+export interface WorkbenchChrome {
+  /** A window was made (a `section.group` holding `.editors`): add a tab bar, drop targets. Elements the chrome adds in `.editors` need the class `chrome`. */
+  window?(el: HTMLElement, group: L.GroupId): void;
+  /** A window's tabs, or their titles or save status, changed. */
+  tabs?(el: HTMLElement, group: L.GroupId, tabs: TabInfo[]): void;
+  /** The border between two windows of the split at `path` (child indexes from the root), before child `index`. */
+  divider?(container: HTMLElement, path: number[], index: number): HTMLElement;
+  /** What an empty window shows. */
+  empty?(): HTMLElement;
+}
+
 export interface WorkbenchEvents {
   /** The focused tab's save status, or a message about it. */
   status(status: SaveStatus | null, message?: string): void;
@@ -48,8 +74,6 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
-  /** A tab was right-clicked (or its menu key pressed): it's selected, and its menu goes at x, y. */
-  tabMenu(x: number, y: number): void;
 }
 
 const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
@@ -83,6 +107,7 @@ export class Workbench {
   readonly allExtensions: Extension[] = [];
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
+  private chrome: WorkbenchChrome | null = null;
 
   constructor(
     private host: HTMLElement,
@@ -114,6 +139,14 @@ export class Workbench {
     if (this.pendingNotice) this.notice(...this.pendingNotice);
     this.pendingNotice = null;
     return { missing };
+  }
+
+  /** Draw the windows with this chrome from now on (the Workbench extension's), rebuilding them. */
+  setChrome(chrome: WorkbenchChrome | null): void {
+    this.chrome = chrome;
+    this.groupEls.clear();
+    this.shape = "";
+    if (this.started) this.render();
   }
 
   /** A message in the focused window, with buttons, until its tabs change. */
@@ -239,8 +272,11 @@ export class Workbench {
     this.setLayout(L.split(this.layout, where, path));
   }
 
+  /** Change the arrangement. A change that changes nothing (selecting the tab on show) only focuses it. */
   change(fn: (layout: L.Layout) => L.Layout): void {
-    this.setLayout(fn(this.layout));
+    const next = fn(this.layout);
+    if (JSON.stringify(next) === JSON.stringify(this.layout)) this.afterFocus();
+    else this.setLayout(next);
   }
 
   /** Back or forward through the files this group has shown (Ctrl-O and Ctrl-I past Vim's own jumps). */
@@ -298,7 +334,7 @@ export class Workbench {
     this.settings = settings;
     for (const view of this.views.values()) reconfigure(view, settings);
     // Empty windows list shortcuts, which settings may have rebound.
-    for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyHint());
+    for (const el of this.groupEls.values()) el.querySelector(".window-empty")?.replaceWith(this.emptyState());
   }
 
   focus(): void {
@@ -474,7 +510,7 @@ export class Workbench {
   /** Bring the windows up to date in place: split sizes, and each window's contents. */
   private refreshNode(node: L.Node, el: HTMLElement) {
     if (node.kind === "group") return this.fillGroup(node);
-    const children = [...el.children].filter((c) => !c.classList.contains("resizer")) as HTMLElement[];
+    const children = [...el.children].filter((c) => !c.hasAttribute("data-divider")) as HTMLElement[];
     node.children.forEach((c, i) => {
       children[i].style.flex = `${node.sizes[i]} 1 0`;
       this.refreshNode(c, children[i]);
@@ -486,7 +522,11 @@ export class Workbench {
       const el = document.createElement("div");
       el.className = `split ${node.dir}`;
       node.children.forEach((c, i) => {
-        if (i > 0) el.append(this.resizer(el, path, i));
+        const divider = i > 0 && this.chrome?.divider?.(el, path, i);
+        if (divider) {
+          divider.dataset.divider = "";
+          el.append(divider);
+        }
         const child = this.renderNode(c, [...path, i]);
         child.style.flex = `${node.sizes[i]} 1 0`;
         el.append(child);
@@ -507,14 +547,25 @@ export class Workbench {
       box.hidden = !showing;
       return box;
     });
-    const wanted = [...(node.tabs.length ? [] : [this.emptyHint()]), ...boxes, el.querySelector<HTMLElement>(".drop")!];
+    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
+    const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
+    const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
+    const wanted = [...empty, ...boxes, ...chrome];
     const same = wanted.length === editors.children.length && wanted.every((n, i) => editors.children[i] === n);
     if (!same) editors.replaceChildren(...wanted);
     return el;
   }
 
   private editorBox(group: L.GroupId, path: FilePath): HTMLElement {
-    const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, this.files.get(path)!);
+    const file = this.files.get(path);
+    if (!file) {
+      // A change to the layout (a drop, say) brought in a file not loaded yet: draw it once it is.
+      void this.load(path).then(() => this.render());
+      const box = document.createElement("div");
+      box.className = "tab-editor";
+      return box;
+    }
+    const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, file);
     return view.dom.parentElement!;
   }
 
@@ -533,143 +584,34 @@ export class Workbench {
     return box;
   }
 
-  /** A window: its tab bar, its tabs' contents, and the overlay that shows where a drop will land. */
+  /** A window: its tabs' contents, and whatever the chrome adds (a tab bar, drop targets). */
   private makeGroup(id: L.GroupId): HTMLElement {
     const el = document.createElement("section");
     el.className = "group";
-    const tabs = document.createElement("div");
-    tabs.className = "tabs";
-    tabs.setAttribute("role", "tablist");
-    const marker = document.createElement("div");
-    marker.className = "insert";
-    marker.hidden = true;
     const editors = document.createElement("div");
     editors.className = "editors";
-    const drop = document.createElement("div");
-    drop.className = "drop";
-    drop.hidden = true;
-    editors.append(drop);
-    el.append(tabs, marker, editors);
+    el.append(editors);
     el.addEventListener("focusin", () => {
       if (this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
     });
-    const hide = () => {
-      drop.hidden = true;
-      marker.hidden = true;
-    };
-    const target = (e: DragEvent): { zone: Zone | null; index: number } => {
-      const tabEls = [...tabs.querySelectorAll<HTMLElement>(".tab")];
-      if (tabs.contains(e.target as Node) || e.target === tabs) {
-        return { zone: null, index: tabIndexAt(tabEls.map((t) => t.getBoundingClientRect()), e.clientX) };
-      }
-      return { zone: dropZone(editors.getBoundingClientRect(), e.clientX, e.clientY), index: -1 };
-    };
-    el.addEventListener("dragover", (e) => {
-      const what = dragged(e);
-      if (!what) return;
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = what.from ? "move" : "copy";
-      const { zone, index } = target(e);
-      if (zone) {
-        drop.hidden = false;
-        drop.dataset.zone = zone;
-        marker.hidden = true;
-      } else {
-        drop.hidden = true;
-        const tabEls = [...tabs.querySelectorAll<HTMLElement>(".tab")];
-        const bar = tabs.getBoundingClientRect();
-        const at = tabEls[index]?.getBoundingClientRect().left ?? (tabEls.at(-1)?.getBoundingClientRect().right ?? bar.left);
-        marker.hidden = false;
-        marker.style.left = `${at - el.getBoundingClientRect().left - 1}px`;
-      }
-    });
-    el.addEventListener("dragleave", (e) => {
-      if (!el.contains(e.relatedTarget as Node)) hide();
-    });
-    el.addEventListener("drop", (e) => {
-      const what = dragged(e);
-      hide();
-      if (!what) return;
-      e.preventDefault();
-      const { zone, index } = target(e);
-      void this.dropped(what, id, zone, index);
-    });
     this.groupEls.set(id, el);
+    this.chrome?.window?.(el, id);
     return el;
   }
 
-  /** Something dropped on a window: a tab moves; anything else opens there. */
-  private async dropped(what: Dragged, group: L.GroupId, zone: Zone | null, index: number) {
-    endDrag();
-    if ("file" in what.item) await this.load(what.item.file);
-    if (what.from) {
-      const to = zone === null ? { group, index } : zone === "center" ? { group } : { group, side: zone };
-      this.setLayout(L.moveTab(this.layout, what.from, to));
-    } else if (zone === null) this.setLayout(L.insertTab(this.layout, what.item, group, index));
-    else if (zone === "center") this.setLayout(L.insertTab(this.layout, what.item, group));
-    else this.setLayout(L.splitAt(this.layout, group, zone, what.item));
-  }
-
-  /** The border between two windows: drag it to share their space differently. */
-  private resizer(container: HTMLElement, path: number[], index: number): HTMLElement {
-    const at = (): L.Split => path.reduce<L.Node>((n, i) => (n as L.Split).children[i], this.layout.root) as L.Split;
-    const dir = at().dir;
-    const el = document.createElement("div");
-    el.className = `resizer ${dir}`;
-    el.setAttribute("role", "separator");
-    el.setAttribute("aria-orientation", dir === "row" ? "vertical" : "horizontal");
-    el.addEventListener("pointerdown", (down) => {
-      down.preventDefault();
-      // The split as it is now: sizes may have changed since this border was drawn.
-      const split = at();
-      el.setPointerCapture(down.pointerId);
-      const box = container.getBoundingClientRect();
-      const total = split.dir === "row" ? box.width : box.height;
-      const children = [...container.children].filter((c) => !c.classList.contains("resizer")) as HTMLElement[];
-      const start = split.dir === "row" ? down.clientX : down.clientY;
-      const pair = split.sizes[index - 1] + split.sizes[index];
-      let sizes = split.sizes;
-      const move = (e: PointerEvent) => {
-        const moved = ((split.dir === "row" ? e.clientX : e.clientY) - start) / total;
-        const before = Math.min(Math.max(0.1, split.sizes[index - 1] + moved), pair - 0.1);
-        sizes = split.sizes.map((s, i) => (i === index - 1 ? before : i === index ? pair - before : s));
-        sizes.forEach((s, i) => (children[i].style.flex = `${s} 1 0`));
-      };
-      const up = () => {
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", up);
-        this.setLayout(L.resizeSplit(this.layout, path, sizes));
-      };
-      el.addEventListener("pointermove", move);
-      el.addEventListener("pointerup", up);
-    });
-    return el;
-  }
-
-  /** An empty window: what to do, centered, with the shortcuts as they're bound now. */
-  private emptyHint(): HTMLElement {
+  /** An empty window: the chrome's, or a line saying how to open something. */
+  private emptyState(): HTMLElement {
+    const made = this.chrome?.empty?.();
+    if (made) {
+      made.classList.add("window-empty");
+      return made;
+    }
     const hint = document.createElement("div");
     hint.className = "window-empty";
-    const title = document.createElement("p");
-    title.textContent = "No note open";
-    const list = document.createElement("dl");
-    for (const [label, command] of [
-      ["Open note", "quickOpen"],
-      ["All commands", "commandBar"],
-      ["Split right", "window.splitRight"],
-    ]) {
-      const key = this.on.shortcut(command);
-      if (!key) continue;
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      dd.textContent = key;
-      list.append(dt, dd);
-    }
-    const drag = document.createElement("p");
-    drag.className = "drag";
-    drag.textContent = "or drag a note here";
-    hint.append(title, list, drag);
+    const p = document.createElement("p");
+    const bar = this.on.shortcut("quickOpen");
+    p.textContent = bar ? `No note open. ${bar} opens one.` : "No note open.";
+    hint.append(p);
     return hint;
   }
 
@@ -700,8 +642,25 @@ export class Workbench {
     return !("file" in tab) || !this.files.get(tab.file)?.session.dirty;
   }
 
-  private tabLabel(tab: L.Openable): string {
+  /** What a tab shows as its title: a file's name, or a view's title. */
+  title(tab: L.Openable): string {
     return "file" in tab ? label(tab.file) : (this.viewFor(tab.view)?.title ?? tab.view);
+  }
+
+  /** A window's tabs, as its chrome shows them. */
+  tabs(group: L.GroupId): TabInfo[] {
+    const g = L.groups(this.layout).find((x) => x.id === group);
+    return (g?.tabs ?? []).map((item, i) => {
+      const status = "file" in item ? this.files.get(item.file)?.session.status : undefined;
+      return {
+        key: L.openableKey(item),
+        label: this.title(item),
+        title: "file" in item ? item.file : this.title(item),
+        selected: i === g!.active,
+        preview: !!item.preview,
+        status: status && status !== "saved" ? status : undefined,
+      };
+    });
   }
 
   private renderTabs() {
@@ -709,51 +668,8 @@ export class Workbench {
       const el = this.groupEls.get(g.id);
       if (!el) continue;
       el.classList.toggle("focused", g.id === this.layout.focus);
-      syncTabs(
-        el.querySelector<HTMLElement>(".tabs")!,
-        g.tabs.map((item, i) => {
-          const status = "file" in item ? this.files.get(item.file)?.session.status : undefined;
-          return {
-            key: L.openableKey(item),
-            label: this.tabLabel(item),
-            title: "file" in item ? item.file : this.tabLabel(item),
-            selected: i === g.active,
-            preview: !!item.preview,
-            status: status && status !== "saved" ? status : undefined,
-          };
-        }),
-        this.tabActions(g.id),
-      );
+      this.chrome?.tabs?.(el, g.id, this.tabs(g.id));
     }
-  }
-
-  /** What a tab's clicks, drags and menu do. Tabs are found by key when the event happens, so a tab that moved still acts on itself. */
-  private tabActions(group: L.GroupId) {
-    const index = (key: string) => L.groups(this.layout).find((g) => g.id === group)?.tabs.findIndex((t) => L.openableKey(t) === key) ?? -1;
-    const withIndex = (fn: (i: number) => void) => (key: string) => {
-      const i = index(key);
-      if (i >= 0) fn(i);
-    };
-    return {
-      select: withIndex((i) => {
-        const g = L.groups(this.layout).find((x) => x.id === group);
-        if (g && (g.active !== i || this.layout.focus !== group)) this.setLayout(L.selectTab(this.layout, group, i));
-        else this.afterFocus();
-      }),
-      close: withIndex((i) => void this.closeTab(group, i)),
-      keep: withIndex((i) => this.setLayout(L.keepTab(this.layout, group, i))),
-      menu: (key: string, x: number, y: number) =>
-        withIndex((i) => {
-          this.setLayout(L.selectTab(this.layout, group, i));
-          this.on.tabMenu(x, y);
-        })(key),
-      dragStart: (key: string, e: DragEvent) =>
-        withIndex((i) => {
-          const tab = L.groups(this.layout).find((g) => g.id === group)!.tabs[i];
-          startDrag(e, { item: L.openableOf(tab), from: { group, index: i } }, this.tabLabel(tab));
-        })(key),
-      dragEnd: endDrag,
-    };
   }
 
   /** After the layout changes: focus the right editor. */
