@@ -84,6 +84,8 @@ const even = (n: number) => Array.from({ length: n }, () => 1 / n);
 
 function normalize(sizes: number[]): number[] {
   const total = sizes.reduce((a, b) => a + b, 0);
+  // Sizes that add up to 1, give or take a float's rounding, are kept as they are: a layout read back is the one written.
+  if (Math.abs(total - 1) < 1e-9) return sizes;
   return total > 0 ? sizes.map((s) => s / total) : even(sizes.length);
 }
 
