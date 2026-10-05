@@ -26,8 +26,10 @@ for (const dark of [false, true]) {
 
   browserTest(h, `markdown extras and two windows side by side look as they did (${theme})`, { scenario: "embeds", viewport, dark, open: "Markdown extras" }, async (app) => {
     await app.page.waitForSelector(".cm-gfm-table table");
+    await app.codeShown("Python");
     await app.page.waitForFunction(() => [...document.querySelectorAll(".cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
     await app.editor.at(1);
+    await app.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!.scrollTo(0, 0));
     await app.idle();
     await matchSnapshot(app.page, `markdown-${theme}`);
     await app.keys(":vs Embeds tour<CR>");

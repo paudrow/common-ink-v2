@@ -2,6 +2,8 @@
 // that go through the editor as real ones do, a wait for the app to settle, and the geometry checks.
 // For browser tests, the probe CLI, and agents driving the app from a console.
 import { getCM } from "@replit/codemirror-vim";
+import { syntaxParserRunning, syntaxTree } from "@codemirror/language";
+import { languages as codeLanguages } from "@codemirror/language-data";
 import { EditorView } from "@codemirror/view";
 import { authorKey, type Change, type FilePath } from "../../../worker/src/files.ts";
 import { leverInstant, type Levers, type LeversPage } from "../../../worker/src/levers.ts";
@@ -175,6 +177,20 @@ export function makeInspector(app: DevApp, kept: Kept) {
         layoutShifts: kept.shifts.slice(-50),
         notices: [...document.querySelectorAll(".notice p")].map((p) => p.textContent ?? ""),
         dialogs: [...document.querySelectorAll(".dialog h2, dialog h2")].map((h) => h.textContent ?? ""),
+      };
+    },
+
+    /**
+     * Code languages and parsing: which of language-data's languages have loaded (each is a chunk
+     * fetched the first time a block names it), and how far the focused editor's syntax tree reaches.
+     */
+    parsing() {
+      const view = focusedEditor();
+      return {
+        loaded: codeLanguages.filter((l) => l.support).map((l) => l.name),
+        parsedTo: view ? syntaxTree(view.state).length : 0,
+        length: view?.state.doc.length ?? 0,
+        running: view ? syntaxParserRunning(view) : false,
       };
     },
 

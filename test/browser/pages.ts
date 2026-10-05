@@ -100,6 +100,15 @@ export class App {
     for (const k of parseKeys(seq, process.platform === "darwin")) await this.page.keyboard.press(playwrightKey(k));
   }
 
+  /**
+   * Wait for a code language's chunk to load, and bring the first block on screen. CodeMirror draws
+   * only the lines near the screen, so a block below it has no highlighted text to find.
+   */
+  async codeShown(language: string) {
+    await this.page.waitForFunction((l) => (window as unknown as { __commonInk: { parsing(): { loaded: string[] } } }).__commonInk.parsing().loaded.includes(l), language);
+    await this.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-code-header")?.scrollIntoView({ block: "start" }));
+  }
+
   async readFile(path: string): Promise<string> {
     const res = await this.page.context().request.get(`${this.base}/api/file?path=${encodeURIComponent(path)}`);
     return res.ok() ? ((await res.json()) as { text: string }).text : "";

@@ -106,7 +106,10 @@ test("GFM, Code blocks and LaTeX: a table, highlighted code with Copy, and math 
   await page.goto(`${h.base}/?file=${encodeURIComponent("Markdown extras.md")}`);
   await page.waitForSelector(".cm-gfm-table table");
   assert.equal(await page.locator(".cm-gfm-table th").first().textContent(), "Fruit");
-  // Python arrives, then its code is highlighted: def is a keyword.
+  // Python's chunk arrives, then its code is highlighted: def is a keyword. CodeMirror draws only lines
+  // near the screen, and a slow runner may leave the block's code below them, so it's brought on screen.
+  await page.waitForFunction(() => (window as unknown as { __commonInk: { parsing(): { loaded: string[] } } }).__commonInk.parsing().loaded.includes("Python"));
+  await page.evaluate(() => document.querySelector(".cm-code-header")!.scrollIntoView({ block: "start" }));
   await page.waitForFunction(() => [...document.querySelectorAll(".cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
   // Each block is a card: its header (language, Wrap, Copy) in place of its opening fence.
   assert.equal(await page.locator(".cm-code-header .cm-code-lang").first().textContent(), "python");
