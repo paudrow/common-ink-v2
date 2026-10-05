@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 34,
   "title": "A playing video floats while its note is out of sight",
   "steps": [
     "Open Floating video and play the video. Then ⌘-click another note in the sidebar to open it in a new tab: the video floats in a small window in the bottom right, still playing, named with its note. Drag it by its bar.",
