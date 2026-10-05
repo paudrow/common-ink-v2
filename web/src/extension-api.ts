@@ -226,6 +226,14 @@ export interface ExtensionContext {
     /** A file's name as people see it: "Projects/Plan", "User settings". */
     label(path: FilePath): string;
   };
+  /** Other extensions. */
+  extensions: {
+    /**
+     * The API another extension offers (what its activate returned), starting it if it hasn't
+     * started. Undefined if it's off, sandboxed, failed or not there: the caller does without.
+     */
+    api<T>(id: string): Promise<T | undefined>;
+  };
   events: {
     /** After a file's text on the server changes, from here or anywhere else. */
     onSaved(fn: (path: FilePath) => void): void;
@@ -234,7 +242,7 @@ export interface ExtensionContext {
   };
 }
 
-/** An extension's code: its main module's default export. */
+/** An extension's code: its main module's default export. What activate returns is the API it offers other extensions (ctx.extensions.api). */
 export interface ExtensionModule {
-  activate(ctx: ExtensionContext): void | Promise<void>;
+  activate(ctx: ExtensionContext): unknown;
 }

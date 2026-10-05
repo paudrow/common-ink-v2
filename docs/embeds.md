@@ -111,6 +111,8 @@ A task is a checkbox line, `- [ ] Send the invoice`, with todo.txt-style tokens 
 
 Typed in words, in the quick-add bar (⌘⇧.) or a task's inline edit, phrases become tokens: "Pay rent every month on the 1st" is `- [ ] Pay rent due:… rec:1st`, and so are "tomorrow", "next fri", "in 3 days", "every weekday", "the last friday of every month", "until dec 1", "for 6 months" and "10 times". In a note, Tab right after such a phrase on a task line does the same.
 
+When a repeating task moves on, its completion is logged under `## Done` in that day's daily note (`Journal/YYYY-MM-DD.md`, from the Daily notes extension), as `- [x] Water the plants done:2026-10-05 ([[Chores]])`: its words, people and tags, the day, and its note. The `tasks.completionLog` setting chooses: `"daily"` (the default), `"inline"` (a ticked copy stays in its note, with the next one below it), or `"none"` (only history). Plain tasks are ticked with `done:` where they are, and logged too with `tasks.logPlainTasks`. Agents tick tasks with the `complete_task` tool, which logs the same way.
+
 Ticking a repeating task doesn't tick it: it moves on to its next date, on the same line (and `times:` counts down). Its last time, it's ticked with `done:`.
 
 ```markdown
