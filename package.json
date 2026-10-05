@@ -19,7 +19,8 @@
     "cli": "tsx scripts/cli.ts",
     "test:browser": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=${BROWSER_CONCURRENCY:-4} --test-shard=${SHARD:-1/1} \"test/browser/*.browser.ts\"",
     "probe": "node --disable-warning=ExperimentalWarning --import tsx scripts/probe.ts",
-    "net:record": "node --disable-warning=ExperimentalWarning --import tsx scripts/net-record.ts"
+    "net:record": "node --disable-warning=ExperimentalWarning --import tsx scripts/net-record.ts",
+    "test:real": "npm run build && npm run seed && node --disable-warning=ExperimentalWarning --import tsx --test \"test/real/*.real.ts\""
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

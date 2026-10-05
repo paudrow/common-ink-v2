@@ -633,9 +633,11 @@ export class Workbench {
     // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
-    const wanted = [...empty, ...boxes, ...chrome];
-    const same = wanted.length === editors.children.length && wanted.every((n, i) => editors.children[i] === n);
-    if (!same) editors.replaceChildren(...wanted);
+    // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
+    // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
+    const wanted = new Set<Node>([...empty, ...boxes]);
+    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }
 

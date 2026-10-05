@@ -53,3 +53,63 @@ browserTest(h, "a video's frame stays the same iframe, shown, while the cursor c
   assert.equal(await rawLink(app), false);
   assert.deepEqual(await kept(app), { element: true, page: true, shown: true }, "after edits elsewhere");
 });
+
+/** Watch the video's iframe: its load events after now, writes to its src, and its leaving the page or moving in it. */
+const WATCH = `(() => {
+  const f = document.querySelector('.cm-url-embed[data-url-embed="youtube"] iframe');
+  const w = (window.watched = { loads: 0, srcWrites: 0, moves: 0, frame: f });
+  f.addEventListener("load", () => w.loads++);
+  new MutationObserver((rs) => rs.forEach((r) => r.attributeName === "src" && w.srcWrites++)).observe(f, { attributes: true });
+  new MutationObserver((rs) => rs.forEach((r) => [...r.removedNodes, ...r.addedNodes].forEach((n) => (n === f || n.contains?.(f)) && w.moves++))).observe(document.documentElement, { childList: true, subtree: true });
+})()`;
+const watched = (app: App) =>
+  app.page.evaluate(() => {
+    const w = (window as unknown as { watched: { loads: number; srcWrites: number; moves: number; frame: Element } }).watched;
+    return { loads: w.loads, srcWrites: w.srcWrites, moves: w.moves, same: document.querySelector('.cm-url-embed[data-url-embed="youtube"] iframe') === w.frame };
+  });
+const untouched = { loads: 0, srcWrites: 0, moves: 0, same: true };
+
+browserTest(h, "a link embed's iframe never loads again, has its src written or moves in the page: typing above it, a new tab, a split, the cursor on its line", {}, async (app) => {
+  await app.writeFile("Video.md", "# Video\n\nA paragraph above it.\n\nhttps://www.youtube.com/watch?v=aqz-KE-bpKQ\n\nBelow\n");
+  await app.goto({}, "Video");
+  await app.page.locator(FRAME).waitFor();
+  await app.page.waitForTimeout(500);
+  await app.page.evaluate(WATCH);
+  await app.call("cursor", 3, 1);
+  await app.keys("<Esc>A and more<Esc>");
+  assert.deepEqual(await watched(app), untouched, "typing in a paragraph above it");
+  // A word on the blank line right above joins the link to a paragraph for now: its frame waits, hidden.
+  await app.keys("jAx<Esc>");
+  await app.page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility === "hidden", FRAME);
+  await app.keys("x");
+  await app.page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility === "visible", FRAME);
+  assert.deepEqual(await watched(app), untouched, "typing on the line right above it, and taking it out");
+  await app.keys("jj");
+  await app.keys("jj");
+  assert.deepEqual(await watched(app), untouched, "the cursor on its line and off");
+  await app.page.locator("#notes a", { hasText: "Welcome" }).click({ modifiers: ["ControlOrMeta"] });
+  await app.page.waitForFunction(() => document.title.startsWith("Welcome"));
+  assert.equal(await app.page.evaluate((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility, FRAME), "hidden", "hidden with its tab");
+  await app.page.locator(".tab", { hasText: "Video" }).first().click();
+  await app.page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility === "visible", FRAME);
+  assert.deepEqual(await watched(app), untouched, "⌘-click opening a note in a new tab, and back");
+  await app.command("Split right");
+  await app.page.waitForFunction(() => document.querySelectorAll('.cm-url-embed[data-url-embed="youtube"] iframe').length === 2);
+  assert.deepEqual(await watched(app), untouched, "splitting the window");
+  // Each window's video shows over its own slot.
+  await app.page.waitForTimeout(300);
+  const over = await app.page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.embed-scroller .cm-url-embed[data-url-embed="youtube"]')].map((box) => {
+      const f = box.getBoundingClientRect();
+      const slots = [...document.querySelectorAll(".cm-embed-slot")].map((x) => x.getBoundingClientRect());
+      return slots.some((x) => Math.abs(x.top - f.top) < 2 && Math.abs(x.left - f.left) < 2);
+    }),
+  );
+  const debug = await app.page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.embed-scroller .cm-url-embed[data-url-embed="youtube"]')].map((box) => {
+    const sc = box.closest<HTMLElement>(".embed-scroller")!;
+    const content = sc.firstElementChild as HTMLElement;
+    return { kids: [...sc.children].map((c) => c.className + "@" + (c as HTMLElement).offsetTop), contentRect: Math.round(content.getBoundingClientRect().top), display: getComputedStyle(sc).display, pos: getComputedStyle(sc).position, cpos: getComputedStyle(content).position, boxTop: box.style.top, boxRect: Math.round(box.getBoundingClientRect().top), sc: sc.getAttribute("style"), scTop: sc.scrollTop, scH: sc.scrollHeight, content: (sc.firstElementChild as HTMLElement).style.height };
+  }));
+  const slots = await app.page.evaluate(() => [...document.querySelectorAll(".cm-embed-slot")].map((x) => { const r = x.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; }));
+  assert.deepEqual(over, [true, true], JSON.stringify({ debug, slots }));
+});

@@ -55,7 +55,6 @@ function siteFrame(src: string, title: string, look: Look): { box: HTMLElement; 
   const f = document.createElement("iframe");
   f.src = src;
   f.title = title;
-  f.loading = "lazy";
   f.referrerPolicy = "strict-origin-when-cross-origin";
   f.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox");
   f.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";

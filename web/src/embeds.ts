@@ -456,18 +456,21 @@ function keepAlive(host: EmbedHost) {
     EditorView.updateListener.of((u) => {
       const lives = livesOf(u.view);
       if ((u.docChanged || u.transactions.some((tr) => tr.reconfigured)) && syntaxTreeAvailable(u.state, u.state.doc.length)) {
-        lives.prune(new Set([...findEmbeds(u.state, host.contributions()).found.map((f) => f.embed.key), ...findUrlEmbeds(u.state, host).map(urlKey)]));
+        const embeds = new Set(findEmbeds(u.state, host.contributions()).found.map((f) => f.embed.key));
+        const links = new Set(findUrlEmbeds(u.state, host).map(urlKey));
+        // A link that's only stopped being alone on its line for now (a word typed on the line above
+        // joins them into one paragraph) keeps its frame, hidden, while its URL is still in the note.
+        const text = u.state.doc.toString();
+        lives.prune((key) => embeds.has(key) || links.has(key) || (key.startsWith("url:") && text.includes(key.split(":").slice(3).join(":"))));
       }
       lives.place();
+      lives.settle();
     }),
     EditorView.theme({
-      ".cm-scroller": { position: "relative" },
-      ".cm-embed-layer": { position: "absolute", top: "0", left: "0", width: "0", height: "0", zIndex: "1" },
-      ".cm-embed-layer > .cm-embed": { position: "absolute", boxSizing: "border-box" },
-      ".cm-embed-layer > .cm-embed.is-hidden": { visibility: "hidden", pointerEvents: "none" },
+
       ".cm-embed-slot": { display: "block" },
       // Not ready yet: a quiet card in the board's background, as tall as it was last time.
-      ".cm-embed-layer > .cm-embed:is(:has([data-pending]), [data-pending])": { minHeight: "var(--embed-height, 0px)" },
+
       ".cm-embed-body[data-pending]": { minHeight: "calc(var(--embed-height, 0px) - 0.85em)", borderRadius: "6px", background: "var(--code-bg)" },
       ".cm-embed-frame": { transition: "opacity 100ms ease-out" },
       ".cm-embed-frame.is-pending": { opacity: "0", borderColor: "transparent" },

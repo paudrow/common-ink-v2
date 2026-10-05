@@ -1843,3 +1843,15 @@ iframe.webview {
 .task-toast-action:hover, .task-toast-action:focus-visible { background: var(--accent-soft); outline: none; }
 .task-toast-close { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
 .task-toast-close:hover { background: var(--hover); color: var(--ink); }
+
+/* Embeds' boxes (lives.ts): one layer of the document, above the editors and below menus, the command
+   bar and dialogs; a scroller laid over each editor's, scrolled with it, its scrollbar the editor's. */
+.embed-layer { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+.embed-scroller { position: absolute; overflow: auto; scrollbar-width: none; pointer-events: none; }
+.embed-scroller::-webkit-scrollbar { display: none; }
+.embed-content { position: relative; }
+/* It carries the editor's theme classes, whose rules for the editor itself mustn't lay it out. */
+.embed-scroller .embed-themes { position: absolute !important; inset: 0 !important; display: block !important; width: auto !important; height: auto !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: visible !important; background: none !important; outline: none !important; }
+.embed-themes > .cm-embed { position: absolute; box-sizing: border-box; pointer-events: auto; }
+.embed-themes > .cm-embed.is-hidden { visibility: hidden; pointer-events: none; }
+.embed-themes > .cm-embed:is(:has([data-pending]), [data-pending]) { min-height: var(--embed-height, 0px); }
