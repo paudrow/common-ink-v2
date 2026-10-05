@@ -1,38 +1,56 @@
 # Embeds: a guide for agents
 
-An embed is a fenced code block that an extension draws in place in a note: a timer, background noise, a small app. Write the language on the opening fence, then `key=value` arguments (quote values with spaces), and the body inside if the embed takes one:
+An embed is markdown that an extension draws in place in a note: a timer, background noise, a small app. Each is written one of three ways, which `list_embeds` says for each embed (its `syntax`):
 
-````markdown
-```timer duration=25m label="Deep work"
-```
-````
+- **Leaf:** one line of its own, with nothing to close. Two colons, the embed's name, and `key=value` arguments in braces (quote values with spaces):
 
-The person sees it drawn, and its markdown when their cursor is in it. Ask the `list_embeds` tool (MCP) what this workspace has: it lists every embed with its arguments, what its body holds, an example, and whether its extension is on. Notes stay plain markdown: anywhere embeds aren't drawn, they're code blocks.
+  ```markdown
+  ::timer{duration=25m label="Deep work"}
+  ```
+
+- **Container:** markdown wrapped in a directive, for embeds whose content is markdown. The content stays real markdown, so its todos, links and tags keep working. Close it with `:::` on a line of its own; one left open shows as text, with a note saying so.
+
+  ```markdown
+  :::kanban{done="Shipped"}
+  ## To do
+  - Write the outline
+  :::
+  ```
+
+- **Fence:** a fenced code block, for embeds whose content is code (an `html-app`'s HTML), with the name and arguments on the opening fence:
+
+  ````markdown
+  ```html-app height=240 title="A chart"
+  <div id="chart"></div>
+  ```
+  ````
+
+The person sees it drawn, and its markdown when their cursor is on it. Hovering it shows Settings, a form for its arguments that writes them back into the markdown, and Edit markdown. Ask the `list_embeds` tool (MCP) what this workspace has: it lists every embed with its syntax, its arguments, what its body holds, an example, and whether its extension is on. Notes stay plain markdown: anywhere embeds aren't drawn, they read as text and code blocks.
 
 ## Rules of thumb
 
 - Copy `list_embeds`'s example and change the arguments. Leave out an argument to get its default.
-- Leave an `id=` argument as it is. An embed's state (a running timer, a volume) is kept by its note and its `id`, or by which block of its kind it is in the note, so moving blocks around can lose it unless they have ids. Give an embed an `id` (short, unique in the note) if the person will move it.
-- One embed per block. Put a blank line before and after it.
+- Leave an `id=` argument as it is. An embed's state (a running timer, a volume) is kept by its note and its `id`, or by which embed of its kind it is in the note, so moving embeds around can lose it unless they have ids. Give an embed an `id` (short, unique in the note) if the person will move it.
+- One embed per line or block. Put a blank line before and after it.
 - Embeds don't run anything for you. A timer runs when the person starts it.
 
 ## Built in
 
-| Embed | What it is | Arguments |
-|---|---|---|
-| `timer` | A countdown that rings and notifies when it's done | `duration` (90s, 25m, 1h30m), `label`, `id` |
-| `stopwatch` | Counts up | `label`, `id` |
-| `alarm` | Rings and notifies at a time of day while Common Ink is open | `at` (07:30), `label`, `id` |
-| `noise` | White, pink or brown noise, made in the browser | `color`, `volume` (0 to 1), `label` |
+| Embed | Syntax | What it is | Arguments |
+|---|---|---|---|
+| `timer` | leaf | A countdown that rings and notifies when it's done | `duration` (90s, 25m, 1h30m), `label`, `id` |
+| `stopwatch` | leaf | Counts up | `label`, `id` |
+| `alarm` | leaf | Rings and notifies at a time of day while Common Ink is open | `at` (07:30), `label`, `id` |
+| `noise` | leaf | White, pink or brown noise, made in the browser | `color`, `volume` (0 to 1), `label` |
 
 ## From the Catalog
 
 These work once the person installs them from the Catalog at the bottom of the Extensions view. They run sandboxed.
 
-| Embed | What it is | Arguments |
-|---|---|---|
-| `pomodoro` | Rounds of work and breaks | `work`, `break`, `long`, `rounds`, `label`, `id` |
-| `html-app` | An HTML page in a sandboxed frame; the body is its HTML | `height` (pixels, default 360), `title` |
+| Embed | Syntax | What it is | Arguments |
+|---|---|---|---|
+| `pomodoro` | leaf | Rounds of work and breaks | `work`, `break`, `long`, `rounds`, `label`, `id` |
+| `html-app` | fence | An HTML page in a sandboxed frame; the body is its HTML | `height` (pixels, default 360), `title` |
 
 ### Writing an html-app
 
