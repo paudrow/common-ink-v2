@@ -119,10 +119,10 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     }
   }
   if (route === "POST /api/extensions/install") {
-    const body = (await req.json().catch(() => ({}))) as { url?: string };
+    const body = (await req.json().catch(() => ({}))) as { url?: string; catalog?: unknown };
     if (typeof body.url !== "string") return json({ error: "Give the URL of an extension's folder or its extension.json" }, 400);
     try {
-      return json(await install(store, body.url, author));
+      return json(await install(store, body.url, author, typeof body.catalog === "string" ? body.catalog : undefined));
     } catch (err) {
       if (err instanceof FetchRefused || err instanceof InstallError) return json({ error: err.message }, 400);
       throw err;
@@ -134,7 +134,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
 class InstallError extends Error {}
 
 /** Copy an extension's files from where it's published into the workspace, as changes by `author`. */
-async function install(store: Store, raw: string, author: Author): Promise<{ id: string; name: string; files: string[] }> {
+async function install(store: Store, raw: string, author: Author, catalog?: string): Promise<{ id: string; name: string; files: string[] }> {
   const manifestUrl = raw.endsWith("extension.json") ? raw : `${raw.replace(/\/?$/, "/")}extension.json`;
   const res = await safeFetch(manifestUrl, { maxBytes: 64_000 });
   if (res.status !== 200) throw new InstallError(`${manifestUrl} answered ${res.status}`);
@@ -154,6 +154,8 @@ async function install(store: Store, raw: string, author: Author): Promise<{ id:
     if (got.status !== 200 || got.truncated) throw new InstallError(`${file} couldn't be fetched (${got.truncated ? "too big" : got.status})`);
     files.push([file, got.body]);
   }
+  // Where it came from, so the app can say so ("From URL") and you can tell its code isn't your own.
+  files.push(["installed.json", `${JSON.stringify({ from: res.url, ...(catalog ? { catalog } : {}) })}\n`]);
   for (const [file, text] of files) {
     const path = extensionFilePath(id, file);
     const current = await store.read(path);

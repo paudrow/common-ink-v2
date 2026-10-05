@@ -2,15 +2,17 @@
   "id": "word-count",
   "name": "Word count",
   "version": "1.0.0",
-  "description": "A Word count view for the note on show. It runs sandboxed, and asks before reading your notes.",
+  "description": "How many words the note on show has, in the status bar; click it for characters and reading time. It runs sandboxed, and asks before reading your notes.",
+  "publisher": "Common Ink",
   "main": "index.js",
   "files": ["index.js"],
-  "activationEvents": ["onView:wordCount", "onCommand:wordCount.show"],
+  "activationEvents": ["onStartup"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "Count the words in the note on show" }
+    "files:read": { "paths": ["**/*.md"], "why": "Count the words in the note on show" }
   },
   "contributes": {
     "commands": [{ "command": "wordCount.show", "title": "Show word count" }],
-    "views": { "sidebar": [{ "id": "wordCount", "name": "Word count" }] }
+    "views": { "sidebar": [{ "id": "wordCount", "name": "Word count" }] },
+    "statusBarItems": [{ "id": "wordCount.status", "alignment": "left", "priority": 10, "command": "wordCount.show" }]
   }
 }
