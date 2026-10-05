@@ -1,33 +1,28 @@
 # Embeds tour
 
-An embed is a fenced code block an extension draws in place: its language first, then key=value arguments. Put the cursor in one (click its edge, or move onto it with j and k) to see and edit its markdown.
+An embed is markdown an extension draws in place. Most are one line, a directive with nothing to close: two colons, its name, and key=value arguments in braces. Hover one for Settings, a form that writes its arguments for you, and Edit markdown; or move onto it with j and k (or click its edge) to see and edit the line itself.
 
 ## Timers
 
-```timer duration=25m label="Focus"
-```
+::timer{duration=25m label="Focus"}
 
-```stopwatch label="Run"
-```
+::stopwatch{label="Run"}
 
-```alarm at=07:30 label="Wake up"
-```
+::alarm{at=07:30 label="Wake up"}
 
 They keep going when the note closes and when the page reloads, and the status bar shows the one running.
 
 ## Background noise
 
-```noise color=brown volume=0.3
-```
+::noise{color=brown volume=0.3}
 
 Press Play: a mini player appears in the corner, and the keyboard's media keys pause and play it.
 
 ## From the Catalog
 
-These come from the Catalog, and run sandboxed. This Preview comes with HTML app; the Pomodoro block below offers to install Pomodoro, and draws as soon as it's in, with no reload.
+These come from the Catalog, and run sandboxed. This Preview comes with HTML app; the Pomodoro line below offers to install Pomodoro, and draws as soon as it's in, with no reload. An HTML app's body is code, so it's a fenced block: its HTML highlights while you edit it.
 
-```pomodoro work=25m break=5m label="Writing"
-```
+::pomodoro{work=25m break=5m label="Writing"}
 
 ```html-app height=240 title="Words this week"
 <style>body { margin: 0; padding: 0.5rem; }</style>

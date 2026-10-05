@@ -1,5 +1,5 @@
-// Boards, from the app's catalog: ```tasks (a live query over the todos in your notes) and ```kanban (a
-// board drawn from the block's own markdown). It runs sandboxed: it reads and writes notes only through
+// Boards, from the app's catalog: `::tasks` (a live query over the todos in your notes) and `:::kanban`
+// (a board drawn from the markdown inside it). It runs sandboxed: it reads and writes notes only through
 // the app, which asks you first, and each change it makes is in history as Boards'.
 
 const TODO = /^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]\s?(.*)$/;
@@ -55,7 +55,7 @@ function todosIn(path, text) {
   return out;
 }
 
-/** The todos a ```tasks block asks for, from these notes. */
+/** The todos a `::tasks` embed asks for, from these notes. */
 function query(notes, args) {
   const words = (args.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const day = today();
@@ -101,7 +101,7 @@ const STYLE = `<style>
   .problem { color: #c2410c; }
 </style>`;
 
-/** A board from a ```kanban block's lines: each ## heading a column; each - line under it a card, with any lines indented under it. */
+/** A board from a `:::kanban` container's lines: each ## heading a column; each - line under it a card, with any lines indented under it. */
 function parseBoard(body) {
   const columns = [];
   const lines = body.split("\n");
@@ -218,8 +218,12 @@ export default {
     /** Every task list on show, by its embed, to redraw when a note changes. */
     const lists = new Map();
 
+    /** How each drawn embed takes new arguments or a new body, by its webview. */
+    const updates = new WeakMap();
+
     ctx.embeds.register("tasks", {
-      resolve(webview, embed) {
+      resolve(webview, first) {
+        let embed = first;
         let shown = [];
         const draw = async () => {
           try {
@@ -233,6 +237,10 @@ export default {
           }
         };
         lists.set(embed.key, draw);
+        updates.set(webview, (next) => {
+          embed = next;
+          void draw();
+        });
         webview.onMessage(async (m) => {
           if (m.ready) return void draw();
           const t = shown[m.open ?? m.toggle];
@@ -248,6 +256,8 @@ export default {
         });
         webview.html = TASKS_PAGE;
       },
+      // New filters redraw the list in the same frame.
+      update: (webview, embed) => updates.get(webview)?.(embed),
     });
 
     ctx.embeds.register("kanban", {
@@ -257,27 +267,40 @@ export default {
           const columns = parseBoard(body);
           return webview.post({ columns: columns.map((c) => ({ name: c.name, cards: c.items.filter((i) => i.card).map((i) => i.text) })), problem });
         };
+        // Its markdown changed (someone edited it, or this board's own move came back): the board shows it, in the same frame.
+        updates.set(webview, (next) => {
+          if (next.body === body) return;
+          body = next.body;
+          void show();
+        });
         webview.onMessage(async (m) => {
           if (m.ready) return void show();
           if (!m.move || !embed.note) return;
-          const next = boardText(moveCard(parseBoard(body), m.move.from, m.move.to));
-          if (next === body) return;
-          // Rewrite this block in its note: the ```kanban block whose body is the one drawn.
+          const was = body;
+          const next = boardText(moveCard(parseBoard(was), m.move.from, m.move.to));
+          if (next === was) return;
+          // The board moves the card at once; its note follows.
+          body = next;
+          void show();
+          // Rewrite this board in its note: the :::kanban container whose markdown is the one drawn.
+          const undo = (problem) => {
+            body = was;
+            return show(problem);
+          };
           try {
             const file = await ctx.files.read(embed.note);
-            const at = file.text.indexOf(`\n${body}\n`, file.text.search(/```kanban/));
-            if (at < 0) return void show("The board changed in its note; it'll redraw from there.");
-            const text = `${file.text.slice(0, at + 1)}${next}${file.text.slice(at + 1 + body.length)}`;
+            const at = file.text.indexOf(`\n${was}\n`, file.text.search(/^:::kanban\b/m));
+            if (at < 0) return void undo("The board changed in its note; it'll redraw from there.");
+            const text = `${file.text.slice(0, at + 1)}${next}${file.text.slice(at + 1 + was.length)}`;
             const result = await ctx.files.write(embed.note, text, file.revision);
-            if (result.status === "conflict") return void show("The note changed meanwhile; try again.");
-            body = next;
-            await show();
+            if (result.status === "conflict") return void undo("The note changed meanwhile; try again.");
           } catch (err) {
-            await show(err.message);
+            await undo(err.message);
           }
         });
         webview.html = BOARD_PAGE;
       },
+      update: (webview, embed) => updates.get(webview)?.(embed),
     });
 
     // A task list redraws when any note changes, a moment after.
