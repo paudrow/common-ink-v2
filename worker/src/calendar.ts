@@ -250,27 +250,34 @@ function readRecurrence(lines: string[], timed: boolean, zone: string | undefine
   return out;
 }
 
-/**
- * The starts a series has from its first through `last` (a day in its zone), as basic starts with
- * their wall times. A rule this can't read gives only the series' own first start.
- */
-function seriesStarts(series: CalendarEvent & { recurrence: string[] }, last: Day, viewer: string): Array<{ basic: string; start: Day | WallTime }> {
-  const timed = !series.allDay;
-  const zone = series.allDay ? undefined : series.timeZone;
-  const rec = readRecurrence(series.recurrence, timed, zone, viewer);
+type Series = CalendarEvent & { recurrence: string[] };
+type Start = { basic: string; start: Day | WallTime };
+
+const zoneOf = (e: EventTiming) => (e.allDay ? undefined : e.timeZone);
+
+/** The starts a series' rule makes from its first through `last` (a day in its zone), before EXDATE and RDATE. */
+function ruleStarts(series: Series, rec: Recurrence, last: Day, viewer: string): Start[] {
+  const zone = zoneOf(series);
   const firstDay = series.start.slice(0, 10);
   const timeOfDay = series.start.slice(10);
   const rule = rec.rule ? parseRule(rec.rule) : null;
   const days = rule ? ruleDays(rule, firstDay, typeof rec.until === "string" && rec.until < last ? rec.until : last) : [firstDay];
-  const out = days.map((day) => {
-    const start = `${day}${timeOfDay}`;
-    return { basic: basicStart(start, zone), start };
-  });
+  return days
+    .map((day) => `${day}${timeOfDay}`)
+    .filter((start) => typeof rec.until !== "number" || instant(start, zone, viewer) <= rec.until)
+    .map((start) => ({ basic: basicStart(start, zone), start }));
+}
+
+/**
+ * The starts a series has from its first through `last` (a day in its zone), as basic starts with
+ * their wall times. A rule this can't read gives only the series' own first start.
+ */
+function seriesStarts(series: Series, last: Day, viewer: string): Start[] {
+  const zone = zoneOf(series);
+  const rec = readRecurrence(series.recurrence, !series.allDay, zone, viewer);
+  const out = ruleStarts(series, rec, last, viewer);
   for (const basic of rec.add) if (!out.some((o) => o.basic === basic)) out.push({ basic, start: startOfBasic(basic, zone, viewer) });
-  return out
-    .filter((o) => !rec.skip.has(o.basic))
-    .filter((o) => typeof rec.until !== "number" || o.start.length === 10 || instant(o.start, zone, viewer) <= rec.until)
-    .sort((a, b) => a.start.localeCompare(b.start));
+  return out.filter((o) => !rec.skip.has(o.basic)).sort((a, b) => a.start.localeCompare(b.start));
 }
 
 /** An occurrence's id: its series' id and its original start. */
@@ -329,8 +336,8 @@ export function occurrences(events: readonly CalendarEvent[], range: Range, addr
     const [from, to] = span(e, viewer);
     return from < range.to && (to > range.from || (from === to && from >= range.from));
   };
-  const changed = new Map<string, CalendarEvent>();
-  for (const e of events) if (e.series !== undefined) changed.set(occurrenceId(e.series, basicStart(e.originalStart, e.allDay ? undefined : e.timeZone)), e);
+  // A changed occurrence's id is the one it replaces, whatever zone it moved to.
+  const changed = new Set(events.filter((e) => e.series !== undefined).map((e) => e.id));
   const out: Occurrence[] = [];
   const lastDay = addDays(wallTimeAt(range.to, viewer).slice(0, 10), 1);
   for (const e of events) {
@@ -340,7 +347,7 @@ export function occurrences(events: readonly CalendarEvent[], range: Range, addr
       if (overlaps(e)) out.push(toOccurrence(e, at, viewer, { series: e.series, changed: true }));
     } else if (e.recurrence) {
       const length = e.allDay ? dayDiff(e.start, e.end) : naiveMs(e.end) - naiveMs(e.start);
-      for (const { basic, start } of seriesStarts(e as CalendarEvent & { recurrence: string[] }, lastDay, viewer)) {
+      for (const { basic, start } of seriesStarts(e as Series, lastDay, viewer)) {
         const id = occurrenceId(e.id, basic);
         if (changed.has(id)) continue;
         const timing: EventTiming = e.allDay
@@ -432,7 +439,7 @@ export function findTarget(events: readonly CalendarEvent[], id: string, viewer 
   if (!parts || !series?.recurrence) return null;
   const zone = series.allDay ? undefined : series.timeZone;
   const start = startOfBasic(parts.basic, zone, viewer);
-  const found = seriesStarts(series as CalendarEvent & { recurrence: string[] }, start.slice(0, 10), viewer).find((s) => s.basic === parts.basic);
+  const found = seriesStarts(series as Series, start.slice(0, 10), viewer).find((s) => s.basic === parts.basic);
   if (!found) return null;
   const s = series as CalendarEvent & { recurrence: string[] };
   const timing: EventTiming = s.allDay
@@ -442,66 +449,135 @@ export function findTarget(events: readonly CalendarEvent[], id: string, viewer 
   return { kind: "occurrence", series: s, occurrence: { ...fields, ...timing, id, series: s.id, originalStart: found.start } as CalendarEvent & { series: string; originalStart: string } };
 }
 
-/** A series' events that are changed occurrences of it. */
-const exceptionsOf = (events: readonly CalendarEvent[], series: string) => events.filter((e) => e.series === series);
+type Exception = CalendarEvent & { series: string; originalStart: Day | WallTime };
 
-/** The series cut to end just before an occurrence: COUNT shortened, or UNTIL set to just before it. */
-function endBefore(series: CalendarEvent & { recurrence: string[] }, start: Day | WallTime, viewer: string): { cut: string[]; left: number | null } {
-  const timed = !series.allDay;
-  const zone = timed ? series.timeZone : undefined;
-  const before = seriesStarts(series, start.slice(0, 10), viewer).filter((s) => s.start < start).length;
-  const cut = series.recurrence.map((line) => {
-    if (!/^RRULE:/i.test(line)) return line;
-    const parts = line.slice(6).split(";").filter((p) => !/^(UNTIL|COUNT)=/i.test(p));
-    const count = /;COUNT=(\d+)/i.exec(`;${line.slice(6)}`)?.[1];
-    if (count) return `RRULE:${[...parts, `COUNT=${before}`].join(";")}`;
-    const until = !timed ? compact(addDays(start, -1)) : zone ? zForm(instantOf(start, zone) - 1000) : compact(wallPlus(start, -1000));
-    return `RRULE:${[...parts, `UNTIL=${until}`].join(";")}`;
-  });
-  const count = series.recurrence.map((l) => /;COUNT=(\d+)/i.exec(`;${l.replace(/^RRULE:/i, "")}`)?.[1]).find(Boolean);
-  return { cut, left: count ? Number(count) - before : null };
+/** A series' events that are changed occurrences of it. */
+const exceptionsOf = (events: readonly CalendarEvent[], series: string) => events.filter((e): e is Exception => e.series === series);
+
+const sameTiming = (a: EventTiming, b: EventTiming) => a.allDay === b.allDay && a.start === b.start && a.end === b.end && zoneOf(a) === zoneOf(b);
+const sameLines = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((l, i) => l === b[i]);
+
+/** Only what a change changes: an editor sends every field, times and repeat included, as they were. */
+function differences(change: EventChange, timing: EventTiming, recurrence: readonly string[] | undefined): EventChange {
+  const out = { ...change };
+  if (out.timing && sameTiming(out.timing, timing)) delete out.timing;
+  if (out.recurrence && recurrence && sameLines(out.recurrence, recurrence)) delete out.recurrence;
+  return out;
 }
 
-/** The recurrence lines for the rest of a series split off at an occurrence. */
-function restOf(series: CalendarEvent & { recurrence: string[] }, left: number | null): string[] {
-  return series.recurrence
-    .filter((l) => /^RRULE:/i.test(l))
-    .map((l) => (left === null ? l : `RRULE:${[...l.slice(6).split(";").filter((p) => !/^COUNT=/i.test(p)), `COUNT=${left}`].join(";")}`));
+/** Where a move takes any start of a series: as far, in days or time, as the occurrence moved. */
+const shifter =
+  (from: EventTiming, to: EventTiming) =>
+  (start: Day | WallTime): Day | WallTime =>
+    moved({ ...from, start, end: start } as EventTiming, from, to).start;
+
+const WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+
+/** An RRULE moved by some days: its weekdays and days of the month go with its start. */
+function movedRule(line: string, days: number): string {
+  if (!days) return line;
+  const weekday = (w: string) => WEEKDAYS[(((WEEKDAYS.indexOf(w.toUpperCase()) + days) % 7) + 7) % 7];
+  const monthDay = (n: string) => (Number(n) > 0 && Number(n) + days >= 1 && Number(n) + days <= 31 ? String(Number(n) + days) : n);
+  return line
+    .replace(/([;:]BYDAY=)([^;]*)/i, (_, head: string, list: string) => head + list.split(",").map((d) => d.replace(/(MO|TU|WE|TH|FR|SA|SU)$/i, weekday)).join(","))
+    .replace(/([;:]BYMONTHDAY=)([^;]*)/i, (_, head: string, list: string) => head + list.split(",").map(monthDay).join(","));
+}
+
+/** Starts as an EXDATE or RDATE line, written as a series with these times writes them. */
+function datesLine(name: "EXDATE" | "RDATE", starts: Array<Day | WallTime>, timing: EventTiming): string[] {
+  return starts.length ? [`${name}${timing.allDay ? ";VALUE=DATE" : ""}:${starts.map((s) => basicStart(s, zoneOf(timing))).join(",")}`] : [];
+}
+
+/**
+ * A series' recurrence lines for its occurrences from `from` on (all, by default), moved: the rule's
+ * weekdays and days of the month by `days`, and the starts it skips or adds by `shift`, written for
+ * a series timed as `to`. `count`, if given, is the rule's new COUNT.
+ */
+function movedLines(series: Series, to: EventTiming, shift: (s: Day | WallTime) => Day | WallTime, days: number, viewer: string, from?: Day | WallTime, count?: number | null): string[] {
+  const zone = zoneOf(series);
+  const rec = readRecurrence(series.recurrence, !series.allDay, zone, viewer);
+  const kept = (basics: Iterable<string>) => [...basics].map((b) => startOfBasic(b, zone, viewer)).filter((s) => from === undefined || s >= from).map(shift);
+  const rule = series.recurrence.find((l) => /^RRULE:/i.test(l));
+  const counted = rule && count ? `RRULE:${[...rule.slice(6).split(";").filter((p) => !/^COUNT=/i.test(p)), `COUNT=${count}`].join(";")}` : rule;
+  return [...(counted ? [movedRule(counted, days)] : []), ...datesLine("EXDATE", kept(rec.skip), to), ...datesLine("RDATE", kept(rec.add), to)];
+}
+
+/** The series cut to end just before an occurrence: COUNT shortened, or UNTIL set to just before it, and no RDATE from it on. */
+function endBefore(series: Series, start: Day | WallTime, viewer: string): { cut: string[]; left: number | null } {
+  const zone = zoneOf(series);
+  const rec = readRecurrence(series.recurrence, !series.allDay, zone, viewer);
+  // COUNT counts what the rule makes, skipped or not, and not what RDATE adds.
+  const before = ruleStarts(series, rec, start.slice(0, 10), viewer).filter((s) => s.start < start).length;
+  const count = Number(/(?:^|;)COUNT=(\d+)/i.exec(rec.rule?.slice(6) ?? "")?.[1]) || null;
+  const until = series.allDay ? compact(addDays(start, -1)) : zone ? zForm(instantOf(start, zone) - 1000) : compact(wallPlus(start, -1000));
+  const cut = series.recurrence.flatMap((line) => {
+    if (/^RDATE/i.test(line)) return [];
+    if (!/^RRULE:/i.test(line)) return [line];
+    const parts = line.slice(6).split(";").filter((p) => !/^(UNTIL|COUNT)=/i.test(p));
+    return [`RRULE:${[...parts, count ? `COUNT=${before}` : `UNTIL=${until}`].join(";")}`];
+  });
+  const added = [...rec.add].map((b) => startOfBasic(b, zone, viewer)).filter((s) => s < start);
+  return { cut: [...cut, ...datesLine("RDATE", added, series)], left: count ? count - before : null };
+}
+
+/** A changed occurrence moved to where its original start goes in a series (perhaps a new one), with these times. */
+function rekeyed(e: Exception, series: CalendarEvent, shift: (s: Day | WallTime) => Day | WallTime, timing: EventTiming): RecordOp[] {
+  const originalStart = shift(e.originalStart);
+  const id = occurrenceId(series.id, basicStart(originalStart, zoneOf(series)));
+  const event = { ...e, ...timing, id, series: series.id, originalStart } as CalendarEvent;
+  if (id === e.id) return [{ op: "put", event, created: false }];
+  return [
+    { op: "delete", event: e },
+    { op: "put", event, created: true },
+  ];
 }
 
 /**
  * The records an edit writes. `scope` matters only for a series' occurrences: "this" changes that
  * one alone, "following" splits the series there and changes the new part, "all" changes the series
- * (moving every occurrence by as much as this one moved). `newId` makes ids for new records.
+ * (moving every occurrence by as much as this one moved). Occurrences changed on their own keep their
+ * changes and go where their series' starts go. `newId` makes ids for new records.
  */
 export function planUpdate(events: readonly CalendarEvent[], target: Target, change: EventChange, scope: Scope, newId: () => string, viewer = "UTC"): RecordOp[] {
   if (target.kind === "event" && target.event.series === undefined) {
-    if (scope !== "this" && target.event.recurrence && change.timing) {
-      // A series edited from itself: its first occurrence moved, so the series moves with it.
-      return [{ op: "put", event: applied(target.event, { ...change, timing: moved(timingOf(target.event), timingOf(target.event), change.timing) }), created: false }];
-    }
-    return [{ op: "put", event: applied(target.event, change), created: false }];
+    const e = target.event;
+    if (scope === "this" || !e.recurrence) return [{ op: "put", event: applied(e, differences(change, timingOf(e), e.recurrence)), created: false }];
+    // A series edited from itself: all of it, from its first occurrence.
+    const { recurrence: _, ...fields } = e;
+    return planUpdate(events, { kind: "occurrence", series: e as Series, occurrence: { ...fields, series: e.id, originalStart: e.start } as Exception }, change, "all", newId, viewer);
   }
-  const series = (target.kind === "occurrence" ? target.series : target.series) as (CalendarEvent & { recurrence: string[] }) | undefined;
-  const occurrence = target.kind === "occurrence" ? target.occurrence : (target.event as CalendarEvent & { series: string; originalStart: string });
-  if (scope === "this" || !series) return [{ op: "put", event: applied(occurrence, { ...change, recurrence: undefined }), created: target.kind === "occurrence" }];
-  const timing = change.timing ? moved(timingOf(series), timingOf(occurrence), change.timing) : undefined;
-  const isFirst = occurrence.originalStart === series.start;
-  if (scope === "all" || isFirst) {
-    const ops: RecordOp[] = [{ op: "put", event: applied(series, { ...change, timing }), created: false }];
-    // Changed times reset occurrences changed on their own, as Google does; other fields leave them be.
-    if (timing) for (const e of exceptionsOf(events, series.id)) ops.push({ op: "delete", event: e });
-    return ops;
+  const series = target.series as Series | undefined;
+  const occurrence = target.kind === "occurrence" ? target.occurrence : (target.event as Exception);
+  const own = differences(change, timingOf(occurrence), series?.recurrence);
+  if (scope === "this" || !series) return [{ op: "put", event: applied(occurrence, { ...own, recurrence: undefined }), created: target.kind === "occurrence" }];
+
+  const from = timingOf(occurrence);
+  const to = own.timing ?? from;
+  const shift = shifter(from, to);
+  const days = dayDiff(from.start.slice(0, 10), to.start.slice(0, 10));
+  // The occurrence edited, if it's a record of its own, takes the change; the others keep theirs, and move with the series unless they had their own times.
+  const self = target.kind === "event" ? [applied(occurrence, { ...own, recurrence: undefined }) as Exception] : [];
+  const others = exceptionsOf(events, series.id).filter((e) => e.id !== occurrence.id);
+  const moveAlong = (e: Exception) => (e.start === e.originalStart ? moved(timingOf(e), from, to) : timingOf(e));
+
+  if (scope === "all" || occurrence.originalStart === series.start) {
+    const timing = own.timing ? moved(timingOf(series), from, own.timing) : undefined;
+    const startsMove = !!timing && (timing.start !== series.start || timing.allDay !== series.allDay || zoneOf(timing) !== zoneOf(series));
+    const recurrence = own.recurrence !== undefined ? own.recurrence : startsMove ? movedLines(series, timing!, shift, days, viewer) : undefined;
+    const put = applied(series, { ...own, timing, recurrence });
+    if (!startsMove) return [{ op: "put", event: put, created: false }, ...self.map((e) => ({ op: "put" as const, event: e, created: false }))];
+    return [{ op: "put", event: put, created: false }, ...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))];
   }
+
   const { cut, left } = endBefore(series, occurrence.originalStart, viewer);
-  const startAt = change.timing ?? timingOf(occurrence);
-  const rest = applied({ ...series, id: newId(), ...startAt, recurrence: restOf(series, left) } as CalendarEvent, { ...change, timing: undefined, recurrence: change.recurrence });
-  const ops: RecordOp[] = [
+  const recurrence = own.recurrence !== undefined ? own.recurrence : movedLines(series, to, shift, days, viewer, occurrence.originalStart, left);
+  const rest = applied({ ...series, id: newId(), ...to, recurrence: recurrence ?? undefined } as CalendarEvent, { ...own, timing: undefined, recurrence: undefined });
+  return [
     { op: "put", event: { ...series, recurrence: cut }, created: false },
     { op: "put", event: rest, created: true },
+    ...self.flatMap((e) => rekeyed(e, rest, shift, timingOf(e))),
+    ...others.filter((e) => e.originalStart > occurrence.originalStart).flatMap((e) => rekeyed(e, rest, shift, moveAlong(e))),
   ];
-  for (const e of exceptionsOf(events, series.id)) if (e.series !== undefined && e.originalStart >= occurrence.originalStart) ops.push({ op: "delete", event: e });
-  return ops;
 }
 
 /** The records a delete writes: "this" cancels one occurrence, "following" ends the series before it, "all" deletes the series. */
