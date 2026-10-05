@@ -169,6 +169,8 @@ export interface ExtensionManifest {
   name: string;
   version: string;
   description: string;
+  /** Who made it, as its prompts and details say. */
+  publisher?: string;
   /** The module that's started, relative to the folder. */
   main: string;
   /** Every file the extension is made of, for copying it: main and what main imports. */
@@ -342,11 +344,13 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       }
       permissions[kind as PermissionKind] = out;
     }
+    const publisher = text(m.publisher, '"publisher"', true);
     return {
       id: folderId,
       name: text(m.name, '"name"', true) || folderId,
       version: text(m.version, '"version"', true) || "0.0.0",
       description: text(m.description, '"description"', true),
+      ...(publisher ? { publisher } : {}),
       main,
       files: files.includes(main) ? files : [main, ...files],
       activationEvents: activationEvents.length ? activationEvents : ["onStartup"],

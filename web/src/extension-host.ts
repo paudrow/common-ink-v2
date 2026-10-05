@@ -60,6 +60,23 @@ export interface ExtensionRecord {
   error?: string;
   /** Its extension.json couldn't be read, so `manifest` is a stand-in. */
   broken?: true;
+  /** Where it was installed from, for a workspace extension installed from a URL (its installed.json). */
+  installedFrom?: string;
+  /** The catalog it was installed from, if it was. */
+  catalog?: string;
+}
+
+/** The file Install from URL leaves in an extension's folder, saying where it came from. */
+export const installedPath = (id: string) => `.common-ink/extensions/${id}/installed.json` as FilePath;
+
+/** Where an installed.json says an extension came from: an address, and a catalog if it was one's. */
+function installedFrom(text: string): { installedFrom?: string; catalog?: string } {
+  try {
+    const { from, catalog } = JSON.parse(text) as { from?: unknown; catalog?: unknown };
+    return { ...(typeof from === "string" ? { installedFrom: from } : {}), ...(typeof catalog === "string" ? { catalog } : {}) };
+  } catch {
+    return {};
+  }
 }
 
 /** The workspace extensions among the files: a folder with an extension.json. */
@@ -136,6 +153,7 @@ export class ExtensionHost {
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
       const record: ExtensionRecord = { id: w.id, tier, manifest: typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest, builtIn, workspace: w, state: "inactive" };
+      if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
       records.push(record);
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
       else if (safe) record.state = "safe";
@@ -163,6 +181,7 @@ export class ExtensionHost {
     const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
     if (typeof manifest === "string") return null;
     const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest, workspace: w, state: "inactive" };
+    if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
     this.records = [...this.records.filter((r) => r.id !== w.id), record];
     const main = manifest.main;
     this.modules.set(w.id, async () => (await this.o.load(w, main)) as ExtensionModule);
