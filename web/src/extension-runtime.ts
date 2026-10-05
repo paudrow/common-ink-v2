@@ -12,6 +12,7 @@ import { PermissionBroker } from "./broker.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
+import { addMarkdownSyntax } from "./editor.ts";
 import type { ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { ExtensionHost, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
@@ -217,6 +218,12 @@ export class ExtensionRuntime {
     };
   }
 
+  /** A system notification, once the extension may show one and the browser lets the app. */
+  private async notify(services: Services, title: string, body = ""): Promise<void> {
+    await services.check({ kind: "notifications" });
+    if ("Notification" in window && (Notification.permission === "granted" || (await Notification.requestPermission()) === "granted")) new Notification(title, { body });
+  }
+
   private async split(direction: "left" | "right" | "up" | "down", path?: FilePath): Promise<void> {
     if (!["left", "right", "up", "down"].includes(direction)) throw new Error(`"${direction}" isn't a direction to split in`);
     if (path) await this.app.workbench.load(path);
@@ -316,6 +323,12 @@ export class ExtensionRuntime {
           needsEditor();
           (where?.everywhere ? app.workbench.allExtensions : app.workbench.noteExtensions).push(extension);
         },
+        markdown: (extension) => {
+          needsEditor();
+          addMarkdownSyntax(extension);
+          // Notes already open are parsed again with it.
+          app.workbench.applySettings(app.settings());
+        },
         focused: () => {
           needsEditor();
           return app.workbench.focusedView;
@@ -341,6 +354,17 @@ export class ExtensionRuntime {
         },
       },
       net: { fetch: services.fetch },
+      clipboard: {
+        read: async () => {
+          await services.check({ kind: "clipboard:read" });
+          return navigator.clipboard.readText();
+        },
+        write: async (text) => {
+          await services.check({ kind: "clipboard:write" });
+          await navigator.clipboard.writeText(text);
+        },
+      },
+      notifications: { show: (title, body) => this.notify(services, title, body) },
       sources: {
         status: api.sources,
         events: async (from, to) => {
@@ -455,9 +479,7 @@ export class ExtensionRuntime {
             await services.check({ kind: "clipboard:write" });
             return navigator.clipboard.writeText(a);
           case "notifications.show":
-            await services.check({ kind: "notifications" });
-            if ("Notification" in window && (Notification.permission === "granted" || (await Notification.requestPermission()) === "granted")) new Notification(a, { body: String(b ?? "") });
-            return;
+            return this.notify(services, a, String(b ?? ""));
           case "sources.events":
             await services.check({ kind: "calendar:read" });
             return api.events(new Date(a), new Date(String(b)));

@@ -1,0 +1,13 @@
+{
+  "id": "latex",
+  "name": "LaTeX",
+  "version": "1.0.0",
+  "description": "Math in notes, drawn with KaTeX: $x^2$ inline, and $$…$$ on lines of its own for a displayed equation. The cursor on it shows the TeX. KaTeX loads the first time a note has math.",
+  "main": "index.ts",
+  "files": ["index.ts", "syntax.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Parse math in notes and draw it" }
+  },
+  "contributes": {}
+}

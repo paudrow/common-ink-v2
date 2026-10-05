@@ -2,9 +2,11 @@
 // finds, line by line, what to draw: widgets that stand in for text (a checkbox for "- [ ]"), marks and
 // line styles. On any line the cursor or a selection touches, the widgets step aside and the raw text
 // shows, so typing, Vim motions (w, e, f, x, visual) and selections only ever meet real characters.
-import { Facet, type Extension, type Line, type Range } from "@codemirror/state";
+// A block preview stands in for whole lines (a table, display math, an embed) the same way: anywhere
+// in it, the cursor brings back its raw text.
+import { Facet, StateField, type EditorState, type Extension, type Line, type Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
-import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate, type WidgetType } from "@codemirror/view";
 
 /** One thing to draw on a line, at document positions. */
 export interface Preview {
@@ -61,9 +63,45 @@ export function livePreview(source: PreviewSource): Extension {
         const parsed = syntaxTree(u.startState) !== syntaxTree(u.state);
         // Settings applied (a reconfiguration) can change what a source draws, so they redraw too.
         const reconfigured = u.transactions.some((tr) => tr.reconfigured);
-        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed || reconfigured) this.decorations = build(u.view, source);
+        // So can state a source keeps (a code block's Wrap), changed by an effect.
+        const effects = u.transactions.some((tr) => tr.effects.length > 0);
+        if (u.docChanged || u.viewportChanged || u.selectionSet || switched || parsed || reconfigured || effects) this.decorations = build(u.view, source);
       }
     },
     { decorations: (v) => v.decorations },
   );
+}
+
+/** A widget that stands in for whole lines, from the start of `from`'s line to the end of `to`'s. */
+export interface BlockPreview {
+  from: number;
+  to: number;
+  widget: WidgetType;
+}
+
+/** What to draw as blocks, over the whole document. */
+export type BlockPreviewSource = (state: EditorState) => BlockPreview[];
+
+function buildBlocks(state: EditorState, source: BlockPreviewSource): DecorationSet {
+  if (!state.facet(previewEnabled)) return Decoration.none;
+  const ranges: Range<Decoration>[] = [];
+  for (const b of source(state)) {
+    const from = state.doc.lineAt(b.from).from;
+    const to = state.doc.lineAt(b.to).to;
+    // The cursor or a selection anywhere in it, or touching it, shows the raw text.
+    if (state.selection.ranges.some((r) => r.from <= to && r.to >= from)) continue;
+    ranges.push(Decoration.replace({ widget: b.widget, block: true }).range(from, to));
+  }
+  return Decoration.set(ranges, true);
+}
+
+/** Block previews drawn from `source`, redrawn as the text, the cursor or the parse changes. */
+export function blockPreview(source: BlockPreviewSource): Extension {
+  // Widgets that replace line breaks have to come from state, not a view plugin.
+  return StateField.define<DecorationSet>({
+    create: (state) => buildBlocks(state, source),
+    update: (blocks, tr) =>
+      tr.docChanged || tr.selection || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? buildBlocks(tr.state, source) : blocks,
+    provide: (field) => EditorView.decorations.from(field),
+  });
 }

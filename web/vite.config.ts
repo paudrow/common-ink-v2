@@ -1,5 +1,5 @@
 // The web app's build. Besides the app, it writes /lib/<name>.js for each library extensions may
-// import (library-names.ts), and the JavaScript a built-in is customized into.
+// import (library-names.ts), the JavaScript a built-in is customized into, and KaTeX's styles and fonts.
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
@@ -56,8 +56,35 @@ function builtinCopies(): Plugin {
   };
 }
 
+/**
+ * KaTeX's stylesheet and fonts, at /assets/katex-<version>/, for the LaTeX extension to link once KaTeX
+ * loads. Under /assets, the service worker keeps them for offline; the version keeps that safe. Only the
+ * woff2 fonts: browsers that read the stylesheet take those first.
+ */
+function katexAssets(): Plugin {
+  return {
+    name: "common-ink-katex-assets",
+    generateBundle() {
+      const dist = `${root}node_modules/katex/dist/`;
+      const { version } = JSON.parse(readFileSync(`${root}node_modules/katex/package.json`, "utf8"));
+      const at = `assets/katex-${version}/`;
+      this.emitFile({ type: "asset", fileName: `${at}katex.min.css`, source: readFileSync(`${dist}katex.min.css`) });
+      for (const font of readdirSync(`${dist}fonts`).filter((f) => f.endsWith(".woff2"))) this.emitFile({ type: "asset", fileName: `${at}fonts/${font}`, source: readFileSync(`${dist}fonts/${font}`) });
+    },
+  };
+}
+
+/** language-data's Markdown entry gets the notes' own markdown language: see web/src/code-markdown.ts. */
+function markdownInCodeBlocks(): Plugin {
+  return {
+    name: "common-ink-markdown-in-code-blocks",
+    enforce: "pre",
+    resolveId: (source, importer) => (source === "@codemirror/lang-markdown" && importer?.includes("/@codemirror/language-data/") ? `${root}web/src/code-markdown.ts` : null),
+  };
+}
+
 export default defineConfig({
-  plugins: [libraries(), builtinCopies()],
+  plugins: [libraries(), builtinCopies(), katexAssets(), markdownInCodeBlocks()],
   resolve: {
     alias: Object.fromEntries(Object.entries(APP_MODULES).map(([name, { file }]) => [name, `${root}${file}`])),
   },

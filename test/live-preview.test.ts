@@ -14,7 +14,9 @@ Object.assign(globalThis, {
 const { EditorView } = await import("@codemirror/view");
 const { Prec } = await import("@codemirror/state");
 const { getCM, Vim, vim } = await import("@replit/codemirror-vim");
-const { createState, reconfigure } = await import("../web/src/editor.ts");
+const { addMarkdownSyntax, createState, reconfigure } = await import("../web/src/editor.ts");
+// GFM, as the GFM extension adds it: strikethrough is GFM's.
+addMarkdownSyntax((await import("@lezer/markdown")).GFM);
 // The two default extensions a note's editor has: Vim keys (first, as the Vim extension adds them) and the live preview.
 const { markdownPreview } = await import("../web/src/extensions/live-preview/markdown.ts");
 const { DEFAULTS } = await import("../worker/src/settings.ts");
