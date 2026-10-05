@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 28,
   "title": "Todos, as v1 had them",
   "steps": [
     "Open Chores. Each task's tokens are chips where they're written: \"Yesterday\" in red, \"Today\" in amber, a repeat (\"Weekly\", \"1st & 3rd Tue\", \"Daily · 5 left\"), a flag for priority, a person with their initials, a #tag. Done tasks are muted and struck through, with a real checkmark.",
