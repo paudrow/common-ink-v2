@@ -29,3 +29,4 @@ Edited by hand. Agents implement items from here but don't add to it.
 8. **Google sign-in, then calendar and contacts** as data sources.
 9. **Offline mode.** Cached notes, temporary local changes, unsent-changes indicator, merge on reconnect.
 10. **Uploads to R2.**
+11. **Live preview.** Markdown shown as it reads (headings, emphasis, links, quotes, rules, code blocks, images), with the raw text on the cursor's line so Vim motions stay exact; `editor.livePreview` turns it off.

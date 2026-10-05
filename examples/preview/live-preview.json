@@ -1,0 +1,11 @@
+{
+  "pr": 16,
+  "title": "Live preview",
+  "steps": [
+    "Open Live preview. Headings show at their size without #, bold, italic, strikethrough and inline code without their markers, links as their text, a rule as a line, a quote with a bar, and code raw on a light background.",
+    "Move the cursor with j and k: the line it's on shows its raw markdown, so w, e, f and x work on the real characters. Try w across **Bold** and x on a marker.",
+    "⌘-click a link (Ctrl-click off a Mac) to follow it: the Welcome note, the Reading list, or the web page in a new browser tab. Or put the cursor on one and press gd.",
+    "Drop an image into a note (Uploads, #15): once it's up, it shows in the note. Its line shows the raw `![name](/uploads/…)` when the cursor's on it.",
+    "Open settings (⌘,) and turn off Live preview: every note shows raw markdown, todos included, at once. Turn it back on."
+  ]
+}

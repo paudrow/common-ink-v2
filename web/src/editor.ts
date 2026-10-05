@@ -9,6 +9,8 @@ import { tags as t } from "@lezer/highlight";
 import { vim } from "@replit/codemirror-vim";
 import { diffPatch } from "node-diff3";
 import type { Settings } from "../../worker/src/settings.ts";
+import { previewEnabled } from "./live-preview.ts";
+import { markdownPreview } from "./markdown-preview.ts";
 
 /** Marks text that came from the server, so it isn't saved back as an edit. */
 export const fromServer = Annotation.define<boolean>();
@@ -48,15 +50,16 @@ const mono = EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })
 export const synced = Annotation.define<boolean>();
 
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
-const slots = { vim: new Compartment(), lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment() };
+const slots = { vim: new Compartment(), lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment() };
 
-export type EditorSettings = Pick<Settings, "editor.vim" | "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize">;
+export type EditorSettings = Pick<Settings, "editor.vim" | "editor.lineNumbers" | "editor.lineWrapping" | "editor.fontSize" | "editor.livePreview">;
 
 const extensionsFor = (s: EditorSettings) => ({
   vim: s["editor.vim"] ? vim() : [],
   lineNumbers: s["editor.lineNumbers"] ? lineNumbers() : [],
   wrapping: s["editor.lineWrapping"] ? EditorView.lineWrapping : [],
   fontSize: EditorView.theme({ ".cm-scroller": { fontSize: `${s["editor.fontSize"]}px` } }),
+  livePreview: previewEnabled.of(s["editor.livePreview"]),
 });
 
 /** Apply new settings to an open editor. */
@@ -77,13 +80,14 @@ export function createState(
       slots.lineNumbers.of(s.lineNumbers),
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
+      slots.livePreview.of(s.livePreview),
       history(),
       drawSelection(),
       remoteFlash,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // Just the markdown language: markdown() also loads HTML, CSS and JavaScript for embedded HTML.
       // Code (a plugin's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
-      opts.json ? [json(), mono] : opts.code ? mono : new LanguageSupport(markdownLanguage),
+      opts.json ? [json(), mono] : opts.code ? mono : [new LanguageSupport(markdownLanguage), markdownPreview],
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),
