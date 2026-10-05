@@ -64,6 +64,8 @@ export interface ExtensionRecord {
   installedFrom?: string;
   /** The catalog it was installed from, if it was. */
   catalog?: string;
+  /** What its activate returned: the API it offers other extensions (page extensions only). */
+  exports?: unknown;
 }
 
 /** The file Install from URL leaves in an extension's folder, saying where it came from. */
@@ -209,6 +211,17 @@ export class ExtensionHost {
     await Promise.all(this.records.filter((r) => r.state === "inactive" && r.manifest.activationEvents.includes(event)).map((r) => this.activate(r)));
   }
 
+  /**
+   * The API an extension offers others (what its activate returned), starting it first if it hasn't.
+   * Undefined for one that's off, failed, sandboxed, not there, or offers none.
+   */
+  async api(id: string): Promise<unknown> {
+    const record = this.records.find((r) => r.id === id && (r.state === "inactive" || r.state === "active"));
+    if (!record || record.tier === "sandbox") return undefined;
+    await this.activate(record);
+    return record.state === "active" ? record.exports : undefined;
+  }
+
   /** Start one extension, once. */
   activate(record: ExtensionRecord): Promise<void> {
     const started = this.activations.get(record.id);
@@ -223,7 +236,7 @@ export class ExtensionHost {
         if (record.tier === "sandbox") await this.o.sandbox(record, failed);
         else {
           const module = await this.modules.get(record.id)!();
-          await module.activate(this.o.context(record, failed));
+          record.exports = await module.activate(this.o.context(record, failed));
         }
         record.state = "active";
       } catch (err) {

@@ -3,6 +3,8 @@
 // stands alone. Ticking a box here edits the note the task lives in.
 import { quickAddBar, type QuickAddOptions } from "./bar.ts";
 import { el, icon } from "./dom.ts";
+import { choose } from "./editors.ts";
+import type { Logged } from "./store.ts";
 import { mountTaskList, type ListEnv } from "./list.ts";
 import { redrawRows, taskRow, type RowEnv } from "./rows.ts";
 import { today } from "./chips.ts";
@@ -16,6 +18,8 @@ const SECTIONS = [
 
 /** What the view needs: a tag or person chip in it narrows the view itself. */
 export type ViewEnv = Omit<ListEnv, "skip" | "empty" | "openTag" | "openPerson"> & {
+  /** The note a name means (a log line's [[Note]]). */
+  notePathFor(name: string): string | null;
   /** What the quick-add bar at the top needs. */
   quickAdd(): Omit<QuickAddOptions, "added" | "escape">;
 };
@@ -60,10 +64,12 @@ export class TasksView {
 
     // Today on top of the whole list; what it shows isn't listed again below it.
     let todayTasks: Task[] = [];
+    let loggedToday: Logged[] = [];
     const drawToday = () => {
       const now = today();
       const sections = SECTIONS.map(([id, title]) => ({ id, title, tasks: todayTasks.filter((t) => !t.done && todaySection(t.meta, now) === id) })).filter((s) => s.tasks.length);
-      todayHost.hidden = !whole || !sections.length;
+      const done = doneToday(now);
+      todayHost.hidden = !whole || (!sections.length && !done.length);
       redrawRows(todayHost, () =>
         todayHost.replaceChildren(
           el("div", { class: "td-title" }, icon("sun", 14), "Today"),
@@ -75,11 +81,42 @@ export class TasksView {
               ...s.tasks.map((t) => taskRow(t, { ...rowEnv, reload: () => void load() }, t.title)),
             ),
           ),
+          ...(done.length
+            ? [
+                el(
+                  "section",
+                  { class: "td-section is-done" },
+                  el("div", { class: "qt-note is-label" }, "Done today", el("span", { class: "n" }, String(done.length))),
+                  ...done.map((d) => d.row()),
+                ),
+              ]
+            : []),
         ),
       );
     };
+    /**
+     * Done today: the completions logged in today's daily note, in the order they were done, then the
+     * plain tasks ticked today in their own notes that aren't logged too.
+     */
+    const doneToday = (now: string) => {
+      const reload = () => void load();
+      const logged = loggedToday.map((l) => {
+        const t: Task = { ...l.task, path: env.notePathFor(l.note) ?? "", raw: l.line, title: l.note, line: 1, heading: null };
+        const onBox = (anchor: HTMLElement) =>
+          choose(anchor, `Done: ${l.task.summary}`, [
+            { label: `Put it back in ${l.note}`, icon: "reset", run: () => env.store.putBack(l.line).then(reload, (e) => env.notice(e instanceof Error ? e.message : "Couldn't put it back")) },
+            { label: "Only take it out of the log", icon: "close", run: () => env.store.unlog(l.line).then(reload) },
+          ]);
+        return { key: `${l.note}|${l.task.summary}`, row: () => taskRow(t, { ...rowEnv, reload }, l.note, { onBox }) };
+      });
+      const seen = new Set(logged.map((l) => l.key));
+      const plain = todayTasks
+        .filter((t) => t.done && t.meta.done?.slice(0, 10) === now && !seen.has(`${t.title}|${t.summary}`))
+        .map((t) => ({ key: "", row: () => taskRow(t, { ...rowEnv, reload }, t.title) }));
+      return [...logged, ...plain];
+    };
     const tasks = async () => {
-      todayTasks = await env.tasks();
+      [todayTasks, loggedToday] = await Promise.all([env.tasks(), env.store.loggedToday().catch(() => [])]);
       if (whole) drawToday();
       return todayTasks;
     };

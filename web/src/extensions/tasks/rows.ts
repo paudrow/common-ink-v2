@@ -13,7 +13,7 @@ import { tagsInLine } from "./tags.ts";
 import type { Task, TaskPatch } from "./tasks.ts";
 
 export interface RowEnv {
-  store: Pick<TaskStore, "update" | "revert" | "move" | "people" | "tags" | "noteList">;
+  store: Pick<TaskStore, "update" | "revert" | "move" | "people" | "tags" | "noteList" | "loggedToday" | "putBack" | "unlog">;
   /** `side`: in a new window to the right (⌘-click). */
   open(path: string, line: number, side?: boolean): void;
   openTag(tag: string): void;
@@ -28,8 +28,12 @@ const prevent = (e: Event) => e.preventDefault();
 /** A click that opens to the side: ⌘ on a Mac, Ctrl elsewhere. */
 const sideClick = (e: MouseEvent) => (IS_MAC ? e.metaKey : e.ctrlKey);
 
-/** A task's row. `where` is the muted label on the right (its heading, or its note when grouped otherwise). */
-export function taskRow(t: Task, env: RowEnv, where: string | null): HTMLElement {
+/**
+ * A task's row. `where` is the muted label on the right (its heading, or its note when grouped
+ * otherwise). A completion from the daily note's log (`logged`) has its box ask what unticking
+ * means (`onBox`), and its words and fields aren't edited from here.
+ */
+export function taskRow(t: Task, env: RowEnv, where: string | null, logged?: { onBox(anchor: HTMLElement): void }): HTMLElement {
   const box = el("span", { class: `cm-checkbox${t.done ? " is-checked" : ""}`, role: "checkbox", tabindex: "0", "aria-checked": String(t.done), "aria-label": t.summary, title: t.done ? "Mark open" : "Mark done" });
   const words = el("span", { class: "qt-words" }, ...inline(t.summary));
   const text = el("span", { class: "qt-text", title: `${t.title}, line ${t.line}` }, words, ...metaChips(t.meta, t.done, endTags(t.summary, t.meta.tags))); // tags mid-sentence stay there
@@ -63,22 +67,23 @@ export function taskRow(t: Task, env: RowEnv, where: string | null): HTMLElement
     const chip = target.closest<HTMLElement>(".tk[data-field]");
     const tag = chip?.dataset.field === "tags" ? chip.dataset.value!.toLowerCase() : target.closest<HTMLElement>(".tag")?.dataset.tag;
     if (tag) env.openTag(tag);
-    else if (chip) openChipEditor(chip, ctx);
-    else if (target.closest(".qt-words")) editWords(t, words, save, env);
+    else if (chip && !logged) openChipEditor(chip, ctx);
+    else if (target.closest(".qt-words") && !logged) editWords(t, words, save, env);
   });
   const menu = el("button", { type: "button", class: "qt-act", title: "Priority, due, repeat, person, tags…", "aria-label": "Task fields", onmousedown: prevent }, icon("sliders", 13));
   menu.addEventListener("click", () => openTaskMenu(menu, ctx));
   const go = el("button", { type: "button", class: "qt-act", title: "Go to note", "aria-label": `Go to ${t.title}, line ${t.line}`, onmousedown: prevent, onclick: (e: MouseEvent) => env.open(t.path, t.line, sideClick(e)) }, icon("open", 13));
   const side = el("button", { type: "button", class: "qt-act", title: "Open to the side", "aria-label": `Open ${t.title} to the side`, onmousedown: prevent, onclick: () => env.open(t.path, t.line, true) }, icon("split", 13));
-  const row = el("div", { class: `qt-row${t.done ? " is-done" : ""}` }, box, text, where ? el("span", { class: "qt-where" }, where) : null, menu, go, side);
+  const row = el("div", { class: `qt-row${t.done ? " is-done" : ""}` }, box, text, where ? el("span", { class: "qt-where" }, where) : null, logged ? null : menu, go, side);
+  const press = () => (logged ? logged.onBox(box) : void toggle(t, row, box, env));
   box.addEventListener("mousedown", (e) => {
     e.preventDefault();
-    void toggle(t, row, box, env);
+    press();
   });
   box.addEventListener("keydown", (e) => {
     if (e.key !== " " && e.key !== "Enter") return;
     e.preventDefault();
-    void toggle(t, row, box, env);
+    press();
   });
   return row;
 }

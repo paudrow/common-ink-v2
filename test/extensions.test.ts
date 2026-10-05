@@ -374,3 +374,15 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });
   }
 });
+
+test("an extension's activate can return an API; another gets it by id, starting it first, and nothing from one that's off", async () => {
+  const { h } = host();
+  const daily: ExtensionModule = { activate: () => ({ pathFor: (day: string) => `Journal/${day}.md` }) };
+  await h.load([builtIn("daily", daily, { activationEvents: ["onCommand:daily.today"] }), builtIn("off", { activate: () => ({ x: 1 }) })], [], read({}), ["off"], false);
+  assert.equal(h.records[0].state, "inactive");
+  const api = (await h.api("daily")) as { pathFor(day: string): string };
+  assert.equal(h.records[0].state, "active", "asking for its API starts it");
+  assert.equal(api.pathFor("2026-10-05"), "Journal/2026-10-05.md");
+  assert.equal(await h.api("off"), undefined, "an extension that's off has none");
+  assert.equal(await h.api("nobody"), undefined);
+});

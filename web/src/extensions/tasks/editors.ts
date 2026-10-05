@@ -561,3 +561,11 @@ function movePicker(anchor: HTMLElement, ctx: ChipContext) {
   render();
   input.focus();
 }
+
+/** A small menu of choices under `anchor` (Put it back, or Remove from the log); a choice closes it and runs. */
+export function choose(anchor: HTMLElement, label: string, choices: Array<{ label: string; icon: string; run(): unknown }>, onClose?: () => void) {
+  const list = el("div", { class: "fp-list" });
+  const { close } = popover(anchor, { onClose } as ChipContext, label, el("div", { class: "fp-head chip-choose-head" }, el("span", {}, label)), list);
+  list.append(...choices.map((c) => item(c.label, c.icon, () => (close(), void c.run()))));
+  list.querySelector<HTMLElement>(".fp-item")?.focus();
+}

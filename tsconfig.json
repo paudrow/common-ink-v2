@@ -21,7 +21,8 @@
       "common-ink/keys": ["./web/src/keys.ts"],
       "common-ink/layout": ["./web/src/layout.ts"],
       "common-ink/files": ["./worker/src/files.ts"],
-      "common-ink/uploads": ["./worker/src/uploads.ts"]
+      "common-ink/uploads": ["./worker/src/uploads.ts"],
+      "common-ink/editor-file": ["./web/src/editor-file.ts"]
     }
   },
   "include": ["web/src", "scripts", "test"]
