@@ -1,0 +1,37 @@
+{
+  "id": "boards",
+  "name": "Boards",
+  "version": "1.0.0",
+  "description": "Task lists and Kanban boards in notes. ```tasks folder=Projects``` lists open todos from across your notes, live, to check off where they are; ```kanban``` draws its own markdown (## columns, - cards) as a board, and dragging a card rewrites the block. It runs sandboxed.",
+  "main": "index.js",
+  "files": ["index.js"],
+  "activationEvents": ["onEmbed:tasks", "onEmbed:kanban"],
+  "permissions": {
+    "files:read": { "paths": ["**"], "why": "List the todos in your notes, and read a board's note" },
+    "files:write": { "paths": ["**"], "why": "Check off a todo in its note, and move a board's cards in its note" }
+  },
+  "contributes": {
+    "embeds": [
+      {
+        "language": "tasks",
+        "title": "Task list",
+        "description": "Todos (- [ ] lines) from across your notes, gathered live and sorted by due date. Check one off here and it's checked off in its note; its note's name opens it.",
+        "arguments": {
+          "folder": { "type": "string", "description": "Only notes in this folder, like Projects" },
+          "note": { "type": "string", "description": "Only this note, by name" },
+          "q": { "type": "string", "description": "Only todos with these words" },
+          "due": { "type": "string", "description": "Only those due: overdue, today, week (the next 7 days), or any (with a date)" },
+          "done": { "type": "boolean", "description": "true for checked-off ones too", "default": "false" },
+          "limit": { "type": "number", "description": "At most this many", "default": "50" }
+        }
+      },
+      {
+        "language": "kanban",
+        "title": "Kanban board",
+        "description": "A board drawn from the block's markdown: each ## heading a column, each - line under it a card. Drag a card to another column or place, and the block's markdown is rewritten to match.",
+        "arguments": {},
+        "body": "## Column, then - card lines under it, for each column"
+      }
+    ]
+  }
+}

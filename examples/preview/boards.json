@@ -1,0 +1,12 @@
+{
+  "pr": 24,
+  "title": "Boards: task lists and Kanban",
+  "install": ["boards"],
+  "steps": [
+    "Open Boards tour. Boards comes from the Catalog and runs sandboxed, so it asks first: \"Boards wants to read your notes\". Choose Always allow. The task lists fill in with the open todos from every note (Chores, This week and the rest), soonest due first.",
+    "Check a todo off in the list: it's checked off in its own note (open it from its name, on the right). History shows the change as Boards'. The second list only has what's due this week.",
+    "In another window, add a todo with a due date to any note: the lists update a moment after it saves.",
+    "Drag \"Book the venue\" to Doing (or use the → on the card). The board's markdown in the note is rewritten to match: put the cursor in the block to see it. Undo takes it back.",
+    "Write your own: a ```tasks block takes folder=, note=, q=, due= (overdue, today, week, any), done=true and limit=; a ```kanban block is ## columns with - cards. list_embeds tells agents the same."
+  ]
+}

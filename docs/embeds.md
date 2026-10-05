@@ -32,6 +32,8 @@ These work once the person installs them from the Catalog at the bottom of the E
 | Embed | What it is | Arguments |
 |---|---|---|
 | `pomodoro` | Rounds of work and breaks | `work`, `break`, `long`, `rounds`, `label`, `id` |
+| `tasks` | Open todos from across the notes, live, to check off where they are | `folder`, `note`, `q`, `due` (overdue, today, week, any), `done`, `limit` |
+| `kanban` | A board drawn from the block's own markdown: `## Column`, then `- card` lines; dragging a card rewrites them | none; the body is the board |
 | `html-app` | An HTML page in a sandboxed frame; the body is its HTML | `height` (pixels, default 360), `title` |
 
 ### Writing an html-app

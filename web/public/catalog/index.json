@@ -9,6 +9,17 @@
       "path": "word-count/"
     },
     {
+      "id": "boards",
+      "name": "Boards",
+      "version": "1.0.0",
+      "description": "Task lists gathered live from your notes' todos, and Kanban boards drawn from markdown, where dragging a card rewrites the note. It runs sandboxed.",
+      "path": "boards/",
+      "embeds": [
+        "tasks",
+        "kanban"
+      ]
+    },
+    {
       "id": "pomodoro",
       "name": "Pomodoro",
       "version": "1.0.0",
