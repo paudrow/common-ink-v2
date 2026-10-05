@@ -9,6 +9,7 @@
 import type { Calendar, Occurrence, Scope } from "common-ink/calendar";
 import { wallTimeAt } from "common-ink/calendar";
 import type { ExtensionContext } from "../../extension-api.ts";
+import type { EventFound } from "../../../../worker/src/operations.ts";
 import { Agenda } from "./agenda.ts";
 import { el, icon } from "./dom.ts";
 import { chooseScope, closePopover, openEditor, type Draft } from "./editor.ts";
@@ -75,12 +76,19 @@ export class CalendarPage {
   constructor(
     private ctx: ExtensionContext,
     state: PageState,
+    /** An event to show and open, from a click on its chip in a note. */
+    reveal?: { address: string; day: Day },
   ) {
     this.weekStart = ctx.settings.get<string>("calendar.weekStart") === "sunday" ? 6 : 0;
     this.startHour = ctx.settings.get<number>("calendar.startHour") ?? 7;
     this.view = state.view && VIEWS.includes(state.view) ? state.view : ((ctx.settings.get<View>("calendar.view") as View) ?? "week");
     this.hidden = state.hidden ? new Set(state.hidden) : null;
-    this.anchor = this.today();
+    this.anchor = reveal?.day ?? this.today();
+    if (reveal) {
+      if (this.view === "agenda" || this.view === "year") this.view = "week";
+      this.focus = reveal.address;
+      this.openWhenLoaded = reveal.address;
+    }
     this.heading = el("h2", { class: "cal-title-text", "aria-live": "polite" });
     this.switcher = el("div", { class: "cal-switch", role: "group", "aria-label": "View" });
     const toolbar = el(
@@ -156,6 +164,13 @@ export class CalendarPage {
         const n = this.focusLater;
         this.focusLater = 0;
         this.focusBy(n);
+      }
+      const opening = this.openWhenLoaded && this.cache?.events.find((o) => o.address === this.openWhenLoaded);
+      if (opening) {
+        this.openWhenLoaded = null;
+        this.renderer?.reveal(opening.address);
+        const node = this.root.querySelector<HTMLElement>(`[data-address="${CSS.escape(opening.address)}"]`);
+        void this.open(opening, (node ?? this.root).getBoundingClientRect());
       }
     })();
   }
@@ -280,6 +295,9 @@ export class CalendarPage {
     return this.renderer?.visible().find((o) => o.address === this.focus) ?? null;
   }
 
+  /** An event to open once what's on screen has loaded (a click on its chip asked). */
+  private openWhenLoaded: string | null = null;
+
   /** j or k pressed while what's on screen was still loading: done once it's in. */
   private focusLater = 0;
 
@@ -350,15 +368,15 @@ export class CalendarPage {
       repeating,
       readOnly: !this.writable(o),
       link: o.link,
-      extra: await this.extra(o),
+      extra: await this.extra(o, found),
       save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, zoneFor(o)), scope)),
       remove: async (scope) => this.wrote(await this.ctx.data.calendar.remove(o.address, scope), `Deleted ${o.title || "the event"}`),
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
   }
 
-  /** What other extensions add under an event in its editor (the notes that link to it). Nothing by default. */
-  extra: (o: Occurrence) => Promise<HTMLElement | undefined> = async () => undefined;
+  /** What's added under an event in its editor (the notes that link to it). Nothing by default. */
+  extra: (o: Occurrence, found: EventFound | null) => Promise<HTMLElement | undefined> = async () => undefined;
 
   private create(slot: Slot, at: DOMRect, ghost?: HTMLElement) {
     const calendar = this.calendars.find((c) => c.primary && c.writable) ?? this.calendars.find((c) => c.writable);

@@ -218,6 +218,15 @@ export class Files {
     return this.db.all<FileSummary>("SELECT path, revision FROM files WHERE path NOT LIKE '.common-ink/records/%' ORDER BY path");
   }
 
+  /** The notes whose text has any of some strings in it, with their text. */
+  notesWith(needles: readonly string[]): WorkspaceFile[] {
+    if (!needles.length) return [];
+    return this.db.all<WorkspaceFile>(
+      `SELECT path, text, revision FROM files WHERE path LIKE '%.md' AND (${needles.map(() => "instr(text, ?) > 0").join(" OR ")}) ORDER BY path`,
+      ...needles,
+    );
+  }
+
   /** Every file under a folder, with its text: what an index of them is made from. */
   under(prefix: string): WorkspaceFile[] {
     return this.db.all<WorkspaceFile>("SELECT path, text, revision FROM files WHERE substr(path, 1, ?) = ?", prefix.length, prefix);

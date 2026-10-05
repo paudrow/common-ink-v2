@@ -1,6 +1,6 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
-import { timingFrom, type EditResult, type EventEdit, type Refused, type SourceState, type SourceStatus } from "./data-sources.ts";
+import { timingFrom, type EditResult, type EventEdit, type LinkingNote, type Refused, type SourceState, type SourceStatus } from "./data-sources.ts";
 import { isTimeZone, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type Scope } from "./calendar.ts";
 import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
@@ -39,6 +39,8 @@ export interface EventFound {
   series?: CalendarEvent;
   /** Its record file, which has its history; null for an occurrence nobody has changed. */
   path: FilePath | null;
+  /** The notes that link to it, or to its series. */
+  notes: LinkingNote[];
 }
 
 /** The person whose data sources an author reads: themselves, or whoever an agent works for. */
@@ -280,7 +282,7 @@ export const OPERATIONS = {
   }),
   read_event: op<{ address: string; zone: string }>({
     description:
-      "One event by its address: as stored, or, for an occurrence of a series nobody has changed, worked out from the series (which comes too). `path` is its record file, whose history (the history tool) shows every change to it, by whom.",
+      "One event by its address: as stored, or, for an occurrence of a series nobody has changed, worked out from the series (which comes too). `path` is its record file, whose history (the history tool) shows every change to it, by whom. `notes` are the notes that link to it, `[Title](event:…)`, or to its series (`series: true`).",
     input: { type: "object", properties: { address: ADDRESS, zone: ZONE }, required: ["address"] },
     parse: (a) => {
       const zone = zoneOf(a.zone);

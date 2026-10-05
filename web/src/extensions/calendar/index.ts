@@ -1,9 +1,13 @@
 // Calendar, a built-in extension on the data source API (ADR 0007). In a tab it's the whole calendar
-// (page.ts); in the side panel, the coming days' events. Both keep up as records change.
+// (page.ts, loaded when it's first shown); in the side panel, the coming days' events. In notes, links
+// to events are chips (links.ts), so it starts with the app. Everything keeps up as records change.
 import type { Occurrence } from "../../../../worker/src/calendar.ts";
 import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
-import { CalendarPage, type PageState } from "./page.ts";
+import type { EventFound } from "../../../../worker/src/operations.ts";
+import { EventLinks, dayOfEvent, linkTo } from "./links.ts";
+import { notesSection } from "./notes.ts";
+import type { CalendarPage, PageState } from "./page.ts";
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string)[]): T {
   const node = Object.assign(document.createElement(tag), props) as T;
@@ -52,13 +56,18 @@ const calendar: ExtensionModule = {
       void ctx.data.sync().catch(() => {});
     };
     const pages = new Set<CalendarPage>();
+    /** An event a chip's click asked the next Calendar tab to show. */
+    let reveal: { address: string; day: string } | undefined;
     ctx.views.register("calendar", {
       async render(root) {
         sync();
         if (!root.closest("#panel")) {
           // In a tab: the whole calendar. One page per tab, kept until the tab draws something else.
           for (const p of pages) if (!document.contains(p.root)) (p.destroy(), pages.delete(p));
-          const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState);
+          const { CalendarPage } = await import("./page.ts");
+          const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState, reveal);
+          reveal = undefined;
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
           pages.add(page);
           root.replaceChildren(page.root);
           page.root.focus({ preventScroll: true });
@@ -114,7 +123,40 @@ const calendar: ExtensionModule = {
         );
       },
     });
+    // Links to events in notes are chips; a click shows the event in a Calendar tab, open on it.
+    const links = new EventLinks(ctx, (address, found: EventFound | null) => {
+      reveal = { address, day: found ? dayOfEvent(found) : new Date().toISOString().slice(0, 10) };
+      ctx.views.open("calendar", { newTab: true });
+    });
+    ctx.editor.extend(links.extension());
+    // ⌘⇧P, Insert event link…: pick an event from the coming weeks (or the last one) for the note you're in.
+    ctx.commandBar.provide({
+      prefix: "event:",
+      placeholder: "Link an event: type part of its name",
+      async items(query) {
+        const editor = target;
+        const from = new Date(Date.now() - 7 * 86_400_000);
+        const events = await ctx.data.calendar.events(from, new Date(Date.now() + 30 * 86_400_000)).catch(() => [] as Occurrence[]);
+        const unique = [...new Map(events.map((o) => [o.address, o])).values()];
+        return ctx.util.fuzzyFilter(query, unique, (o) => o.title).map((o) => ({
+          label: o.title || "(No title)",
+          detail: o.allDay ? o.start : new Date(o.start).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+          run: () => {
+            if (!editor) return ctx.workbench.notice("Open a note to link an event in it");
+            const at = editor.state.selection.main;
+            editor.dispatch({ changes: { from: at.from, to: at.to, insert: linkTo(o) }, selection: { anchor: at.from + linkTo(o).length } });
+            editor.focus();
+          },
+        }));
+      },
+    });
+    let target: ReturnType<ExtensionContext["editor"]["focused"]> = null;
+    ctx.commands.register("calendar.insertLink", () => {
+      target = ctx.editor.focused();
+      ctx.commandBar.open("event:");
+    });
     ctx.data.calendar.onChange(() => {
+      links.refresh();
       for (const p of pages) p.refresh();
       // The side panel draws again; a tab's page loads what changed without drawing from nothing.
       if (ctx.views.shown() === "calendar") ctx.views.show("calendar");
