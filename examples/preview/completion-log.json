@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 30,
   "title": "Done today: repeating tasks log their completions",
   "steps": [
     "Open Chores and tick Water the plants. It moves on to its next date on the same line, as before, and a line goes under ## Done in today's daily note, Journal/<today>, made with just the date as its title if it wasn't there: `- [x] Water the plants done:<today> ([[Chores]])`. ⌘⇧P, Open today's note, to see it.",
