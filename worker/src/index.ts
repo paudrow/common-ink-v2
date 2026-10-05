@@ -1,7 +1,7 @@
 // The Worker: checks who is asking, answers /api/ from the workspace's Durable Object, and serves the
 // web app for everything else.
 import { identify, type Identity } from "./auth.ts";
-import { parseNotePath, type Seed } from "./notes.ts";
+import { parseFilePath, type Seed } from "./files.ts";
 import type { Workspace } from "./workspace.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -44,26 +44,26 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** Notes are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
-const MAX_NOTE_BYTES = 1_000_000;
+/** Files are larger than this only by mistake, and a Durable Object's SQLite rows top out at 2 MB. */
+const MAX_FILE_BYTES = 1_000_000;
 
 async function api(req: Request, url: URL, who: Identity, workspace: DurableObjectStub<Workspace>): Promise<Response> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/me") return json(who);
-  if (route === "GET /api/notes") return json(await workspace.list());
-  if (route === "GET /api/note") {
-    const path = parseNotePath(url.searchParams.get("path"));
-    if (!path) return json({ error: "?path= must be a note path ending in .md" }, 400);
-    const note = await workspace.read(path);
-    return note ? json(note) : json({ error: `No note at ${path}` }, 404);
+  if (route === "GET /api/files") return json(await workspace.list());
+  if (route === "GET /api/file") {
+    const path = parseFilePath(url.searchParams.get("path"));
+    if (!path) return json({ error: "?path= must be a path ending in .md or .json" }, 400);
+    const file = await workspace.read(path);
+    return file ? json(file) : json({ error: `Nothing at ${path}` }, 404);
   }
-  if (route === "PUT /api/note") {
+  if (route === "PUT /api/file") {
     const body = (await req.json().catch(() => null)) as { path?: unknown; text?: unknown; base?: unknown } | null;
-    const path = parseNotePath(body?.path);
+    const path = parseFilePath(body?.path);
     const { text, base } = body ?? {};
-    if (!path) return json({ error: '"path" must be a note path ending in .md' }, 400);
-    if (typeof text !== "string" || new TextEncoder().encode(text).length > MAX_NOTE_BYTES) return json({ error: '"text" must be a string under 1 MB' }, 400);
-    if (!Number.isSafeInteger(base) || (base as number) < 0) return json({ error: '"base" must be the revision you started from, or 0 for a new note' }, 400);
+    if (!path) return json({ error: '"path" must be a path ending in .md or .json' }, 400);
+    if (typeof text !== "string" || new TextEncoder().encode(text).length > MAX_FILE_BYTES) return json({ error: '"text" must be a string under 1 MB' }, 400);
+    if (!Number.isSafeInteger(base) || (base as number) < 0) return json({ error: '"base" must be the revision you started from, or 0 for a new file' }, 400);
     const result = await workspace.write({ path, text, base: base as number, author: { kind: "user", email: who.email } });
     return json(result, result.status === "conflict" ? 409 : 200);
   }

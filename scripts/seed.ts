@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { Seed } from "../worker/src/notes.ts";
+import type { Seed } from "../worker/src/files.ts";
 
 export interface Section {
   slug: string;

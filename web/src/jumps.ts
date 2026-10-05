@@ -1,8 +1,8 @@
 // Ctrl-O and Ctrl-I across notes: the notes this pane has shown, and where the cursor was in each.
-import type { NotePath } from "../../worker/src/notes.ts";
+import type { FilePath } from "../../worker/src/files.ts";
 
 export interface Spot {
-  path: NotePath;
+  path: FilePath;
   pos: number;
 }
 
@@ -15,7 +15,7 @@ export class Jumps {
   }
 
   /** Leave `from` for a new note: anything ahead of here is dropped, as in Vim. */
-  visit(from: Spot, to: NotePath): void {
+  visit(from: Spot, to: FilePath): void {
     this.spots.splice(this.at, Infinity, from, { path: to, pos: 0 });
     this.at++;
   }

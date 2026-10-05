@@ -2,9 +2,9 @@
   "pr": 5,
   "title": "Notes storage with changes and authors",
   "steps": [
-    "Open `/api/notes` in this Preview. Each note has a revision: the number of the change that last wrote it.",
-    "Open `/api/note?path=Shopping.md` to see its text and revision.",
-    "In the browser console, save an edit based on that revision: `await (await fetch('/api/note', {method: 'PUT', body: JSON.stringify({path: 'Shopping.md', text: '# Shopping\\n\\n- Eggs\\n- Bread\\n- Milk\\n- Coffee\\n', base: REVISION})})).json()`. It answers `saved` with a new revision.",
+    "Open `/api/files` in this Preview. Each note has a revision: the number of the change that last wrote it.",
+    "Open `/api/file?path=Shopping.md` to see its text and revision.",
+    "In the browser console, save an edit based on that revision: `await (await fetch('/api/file', {method: 'PUT', body: JSON.stringify({path: 'Shopping.md', text: '# Shopping\\n\\n- Eggs\\n- Bread\\n- Milk\\n- Coffee\\n', base: REVISION})})).json()`. It answers `saved` with a new revision.",
     "Send another edit with the same old revision that changes a different line, such as `- Eggs` to `- 12 eggs`. It answers `merged`, and the text has both edits.",
     "Send one more with the old revision that changes the line you already changed. It answers 409 `conflict` with the current note, and nothing is saved."
   ]

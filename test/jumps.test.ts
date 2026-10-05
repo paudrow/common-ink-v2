@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { NotePath } from "../worker/src/notes.ts";
+import type { FilePath } from "../worker/src/files.ts";
 import { Jumps } from "../web/src/jumps.ts";
 
-const [a, b, c] = ["A.md", "B.md", "C.md"] as NotePath[];
+const [a, b, c] = ["A.md", "B.md", "C.md"] as FilePath[];
 
 test("back and forward return to each note where the cursor was", () => {
   const jumps = new Jumps({ path: a, pos: 0 });

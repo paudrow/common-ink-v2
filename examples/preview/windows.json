@@ -1,0 +1,20 @@
+{
+  "pr": 8,
+  "title": "Windows, tabs and splits",
+  "steps": [
+    "`:vs Reading list` opens Reading list in a split to the right. `:sp Shopping` splits that one below.",
+    "Ctrl-W h, j, k and l move between windows; Ctrl-W w goes to the next. The focused window's tab is underlined.",
+    "`:tabe Welcome` opens a kept tab; `gt` and `gT` (or `:tabn`, `:tabp`) move between tabs.",
+    "Preview tabs, as in VSCode: ⌘P or a click in the note list opens a note in a tab whose name is in italics. Open another note the same way and it takes that tab's place. Double-click the tab, double-click the note in the list, start typing in it, or right-click → Keep Open, and its name turns upright: the next note opens beside it.",
+    "Right-click a tab (or focus it and press the menu key): Close, Close Others, Close to the Right, Close to the Left, Close Saved, Close All, Keep Open, Copy Path, Split Right, Split Down. Items that don't apply are greyed out. Arrow keys move, Enter chooses, Esc closes. Each is in ⌘⇧P too.",
+    "Close every tab in a window (Close All): the empty window shows what to do, centered, with the shortcuts as they're bound now (Ctrl instead of ⌘ off a Mac).",
+    "Open one note in two windows and type in one: the other follows. Pause, and both say Saved.",
+    "Drag a tab within its tab bar: a blue line shows where it will go. Drop it there to reorder.",
+    "Drag a tab onto another window. Over its middle, the whole window shades: drop to move the tab there. Over its left, right, top or bottom quarter, that half shades: drop to split the window that way, with the tab in the new half.",
+    "Drag a note from the list on the left the same way: onto a tab bar, a window's middle or an edge. It opens there and stays in the list.",
+    "Drag the border between two windows to resize them. Ctrl-W > and < make the window wider or narrower, Ctrl-W + and - taller or shorter, Ctrl-W = evens them out.",
+    "Everything a drag does has a command too (⌘⇧P): Split left, right, up and down; Move tab to the window to the left (Ctrl-W H, J, K, L); Move tab earlier or later (`:tabm -1`, `:tabm +1`).",
+    "`:q` closes the tab on show, Ctrl-W c the window, `:only` (Ctrl-W o) every other window. ⌘\\\\ splits right.",
+    "Reload the page: the windows, tabs and sizes come back as you left them. They're saved in `.common-ink/layout.json`, which ⌘P can open."
+  ]
+}
