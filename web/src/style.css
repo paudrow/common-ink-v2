@@ -1085,7 +1085,8 @@ button.status-item:hover {
 }
 
 /* The Extensions view (extensions-view.ts), in the side panel or a window. */
-.extensions-view {
+.extensions-view,
+.extension-details {
   font-family: var(--prose);
   font-size: 0.875rem;
 }
@@ -1097,7 +1098,7 @@ button.status-item:hover {
   background: var(--accent-soft);
 }
 
-.extensions-view button {
+:is(.extensions-view, .extension-details) button {
   font: inherit;
   color: var(--accent);
   background: none;
@@ -1107,22 +1108,17 @@ button.status-item:hover {
   cursor: pointer;
 }
 
-.extensions-view button:disabled {
+:is(.extensions-view, .extension-details) button:disabled {
   color: var(--muted);
   cursor: default;
 }
 
-.extensions-view :focus-visible {
+:is(.extensions-view, .extension-details) :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.extension {
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--line);
-}
-
-/* The list: a search box, then a row each, in sections (Installed, Built-in, Catalog). */
+/* The list: a search box, then a row each, in sections (Installed, Built-in). */
 .extensions-top {
   display: flex;
   flex-wrap: wrap;
@@ -1132,7 +1128,7 @@ button.status-item:hover {
 }
 
 .extensions-search {
-  flex: 1 1 10rem;
+  flex: 1 1 100%;
   min-width: 0;
   font: inherit;
   color: var(--ink);
@@ -1202,25 +1198,9 @@ button.status-item:hover {
 }
 
 .extension-row.state-failed .extension-state,
-.extension-row.has-error .extension-state {
+.extension-row.has-error .extension-state,
+.extension-error {
   color: #c2410c;
-}
-
-.extension-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.extension-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
-.extension-toggle input {
-  accent-color: var(--accent);
 }
 
 .extension-name {
@@ -1232,16 +1212,17 @@ button.status-item:hover {
   color: var(--muted);
 }
 
-.extensions-view .badge,
+:is(.extensions-view, .extension-details) .badge,
 .settings-editor .badge.reload {
   font-size: 0.75rem;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 0.4rem;
+  white-space: nowrap;
 }
 
-.extensions-view .badge.reload {
+:is(.extensions-view, .extension-details) .badge.reload {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -1251,27 +1232,109 @@ button.status-item:hover {
   color: var(--muted);
 }
 
-.extension.state-off .extension-name,
-.extension.state-safe .extension-name {
+.extension-source {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Modals (modal.ts): an extension's details, prompts, confirming. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.modal {
+  width: min(28rem, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 0.9375rem/1.5 var(--prose);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+}
+
+.modal:focus {
+  outline: none;
+}
+
+/* An extension's details: what it is and does, then what it adds and may ask for, each readable. */
+.modal.extension-details {
+  width: min(36rem, 100%);
+  line-height: 1.45;
+}
+
+.details-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.details-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.extension-details .modal-close {
+  margin-left: auto;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
   color: var(--muted);
 }
 
-.extension.state-failed .extension-state,
-.extension-error {
-  color: #c2410c;
+.extension-meta {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin: 0.125rem 0 0.5rem;
 }
 
-.extension-desc,
-.extension-error {
-  margin: 0.25rem 0;
+.extension-details .extension-desc,
+.extension-details .extension-error {
+  margin: 0.5rem 0;
+}
+
+.extension-details .extension-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.extension-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.extension-details .extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.extension-details h3 {
+  margin: 1rem 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 .extension-adds {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.125rem 0.75rem;
-  margin: 0.375rem 0;
-  font-size: 0.8125rem;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
 }
 
 .extension-adds dt {
@@ -1282,20 +1345,55 @@ button.status-item:hover {
   margin: 0;
 }
 
-p.extension-adds.muted {
-  display: block;
+/* Each permission on its own lines: what it can do, then the extension's reason, in full width. */
+.extension-perms {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.extension-perms li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.125rem 0.75rem;
+  padding: 0.375rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.extension-perms li:first-child {
+  border-top: none;
+}
+
+.perm-can {
+  flex: 1 1 12rem;
+  font-weight: 550;
+}
+
+.perm-why {
+  flex-basis: 100%;
+  margin: 0;
   color: var(--muted);
+  font-size: 0.8125rem;
 }
 
-.extension-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.375rem;
+.perm-about {
+  margin: 0 0 0.375rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
 }
 
-.extension-source {
-  display: flex;
-  flex-direction: column;
+.extension-details select.answer {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.extension-perms + button {
+  margin-top: 0.5rem;
 }
 
 /* The Uploads view (extensions/uploads/index.ts). */
@@ -1337,45 +1435,87 @@ p.extension-adds.muted {
   grid-row: span 2;
 }
 
-.extension-asks dt.full {
-  grid-column: 1 / -1;
-  margin-top: 0.25rem;
-}
-
-.extension-asks dt:not(.full) {
-  font: 0.75rem var(--mono);
-}
-
-/* Dialogs (dialog.ts): permission prompts, trust, install. */
-.dialog-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-  background: rgb(0 0 0 / 0.35);
-}
-
-.dialog {
-  width: min(28rem, 100%);
-  padding: 1rem 1.25rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--ink);
-  font: 0.9375rem/1.5 var(--prose);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
-}
-
+/* Dialogs (dialog.ts), in a modal: permission prompts, trust, install. */
 .dialog h2 {
   margin: 0 0 0.5rem;
   font-size: 1rem;
 }
 
+.dialog h2 .badge {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  vertical-align: 0.1em;
+}
+
+.dialog .muted {
+  font-weight: normal;
+  color: var(--muted);
+}
+
+/* A button that reads as a link: an extension's name, opening its details. */
+button.link {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 0.15em;
+}
+
 .dialog-asks {
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.5rem;
   padding-left: 1.1rem;
+  font-weight: 600;
+}
+
+.dialog-asks em,
+.dialog-why-now em,
+.activity-view em {
+  font-style: italic;
+}
+
+.dialog-details {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.dialog-details summary {
+  cursor: pointer;
+}
+
+.dialog-details ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.dialog-details code {
+  font: 0.75rem var(--mono);
+}
+
+.dialog-why-now {
+  margin: 0 0 0.5rem;
+}
+
+.dialog-why {
+  margin: 0 0 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+/* A prompt's answers say what they do, so they're long: one to a line. */
+.prompt .dialog-actions {
+  flex-direction: column;
+  align-items: stretch;
+  margin-bottom: 0.75rem;
 }
 
 .dialog-note {
@@ -1473,42 +1613,13 @@ iframe.webview {
 }
 
 .activity-view li {
-  display: grid;
-  grid-template-columns: max-content 1fr max-content;
-  gap: 0.5rem;
+  padding: 0.125rem 0;
   overflow-wrap: anywhere;
 }
 
-.activity-view .activity-denied .outcome,
-.activity-view .activity-failed .outcome {
+.activity-view .activity-denied,
+.activity-view .activity-failed {
   color: #c2410c;
-}
-
-.extensions-view .extension-actions.top {
-  margin-bottom: 0.5rem;
-}
-
-.extensions-view select.answer {
-  font: inherit;
-  font-size: 0.75rem;
-  color: var(--ink);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-/* Permissions read top to bottom: what, then why and your answer. */
-.extensions-view .extension-asks {
-  display: block;
-}
-
-.extensions-view .extension-asks dt:not(.full) {
-  margin-top: 0.25rem;
-  overflow-wrap: anywhere;
-}
-
-.extensions-view .extension-asks dd {
-  margin: 0;
 }
 
 /* The Media extension's mini player (extensions/media), in the corner while something is loaded. */
