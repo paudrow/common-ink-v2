@@ -1,5 +1,6 @@
 // The web app's build. Besides the app, it writes /lib/<name>.js for each library extensions may
-// import (library-names.ts), the JavaScript a built-in is customized into, and KaTeX's styles and fonts.
+// import (library-names.ts), the JavaScript a built-in is customized into, KaTeX's styles and fonts, and
+// the libraries webviews may load from the sandbox route (three.js, uPlot).
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
@@ -74,6 +75,33 @@ function katexAssets(): Plugin {
   };
 }
 
+/**
+ * Libraries a webview may load, served from the sandbox route (its policy allows scripts and styles from
+ * there and nowhere else): /sandbox/vendor/<name>/…. An html-app's page imports them by name through an
+ * import map (see docs/embeds.md). Scripts are minified, with their licence kept on top.
+ */
+const VENDOR: Array<{ to: string; from: string; banner?: string }> = [
+  { to: "three/three.module.js", from: "three/build/three.module.js", banner: "three.js, MIT License, Copyright 2010-2026 Three.js Authors" },
+  { to: "three/three.core.js", from: "three/build/three.core.js", banner: "three.js, MIT License, Copyright 2010-2026 Three.js Authors" },
+  { to: "three/addons/controls/OrbitControls.js", from: "three/examples/jsm/controls/OrbitControls.js", banner: "three.js, MIT License, Copyright 2010-2026 Three.js Authors" },
+  { to: "uplot/uPlot.esm.js", from: "uplot/dist/uPlot.esm.js", banner: "uPlot, MIT License, Copyright (c) 2022 Leon Sorokin" },
+  { to: "uplot/uPlot.min.css", from: "uplot/dist/uPlot.min.css" },
+];
+
+function sandboxVendor(): Plugin {
+  return {
+    name: "common-ink-sandbox-vendor",
+    async generateBundle() {
+      const { minify } = await import("rolldown/experimental");
+      for (const v of VENDOR) {
+        const source = readFileSync(`${root}node_modules/${v.from}`, "utf8");
+        const code = v.to.endsWith(".js") ? `/* ${v.banner} */\n${(await minify(v.to, source, { module: true })).code}` : source;
+        this.emitFile({ type: "asset", fileName: `sandbox/vendor/${v.to}`, source: code });
+      }
+    },
+  };
+}
+
 /** language-data's Markdown entry gets the notes' own markdown language: see web/src/code-markdown.ts. */
 function markdownInCodeBlocks(): Plugin {
   return {
@@ -84,7 +112,7 @@ function markdownInCodeBlocks(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [libraries(), builtinCopies(), katexAssets(), markdownInCodeBlocks()],
+  plugins: [libraries(), builtinCopies(), katexAssets(), markdownInCodeBlocks(), sandboxVendor()],
   resolve: {
     alias: Object.fromEntries(Object.entries(APP_MODULES).map(([name, { file }]) => [name, `${root}${file}`])),
   },

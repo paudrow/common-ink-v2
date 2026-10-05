@@ -20,7 +20,7 @@ test("MCP lists the workspace operations as tools", async () => {
   assert.equal(init.body.result.protocolVersion, "2025-06-18");
   assert.equal((await call(files, "notifications/initialized", undefined, null)).status, 202);
   const tools = (await call(files, "tools/list")).body.result.tools.map((t: { name: string }) => t.name);
-  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "list_events", "list_contacts", "diff", "read_version", "restore", "labels", "add_label", "list_uploads", "upload_file"]);
+  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "list_events", "list_contacts", "diff", "read_version", "restore", "labels", "add_label", "list_embeds", "list_uploads", "upload_file"]);
 });
 
 test("an agent's writes through MCP are its changes, and can be undone", async () => {

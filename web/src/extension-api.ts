@@ -11,10 +11,11 @@ import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResul
 import type { Contact, Event } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
+import type { Embed } from "./embeds.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { WorkbenchChrome } from "./workbench.ts";
 
-export type { Item, Provider };
+export type { Embed, Item, Provider };
 
 /** How a trusted extension draws a view straight into the page. Called when it shows, and again when it's refreshed. */
 export interface ViewRenderer {
@@ -33,6 +34,17 @@ export interface WebviewHandle {
 export interface WebviewViewProvider {
   resolve(webview: WebviewHandle): void | Promise<void>;
 }
+
+/** How an embed draws: as a webview (`resolve`), in a frame with Stop; or, for trusted extensions, in the page (`render`). Called each time it shows. */
+/**
+ * How an embed draws: in a webview it resolves (sandboxed extensions, and trusted ones that like), or
+ * straight into the page (trusted ones). `update`, if it's there, takes new arguments or body for an
+ * embed it already drew (its markdown changed, or its settings were saved), so it isn't drawn again:
+ * a frame isn't reloaded. Without it, the embed is drawn again.
+ */
+export type EmbedProvider =
+  | { resolve(webview: WebviewHandle, embed: Embed): void | Promise<void>; update?(webview: WebviewHandle, embed: Embed): void }
+  | { render(el: HTMLElement, embed: Embed): void; update?(el: HTMLElement, embed: Embed): void };
 
 /** What a brokered fetch gets back: the text, cut off past 1 MB. */
 export interface FetchResponse {
@@ -114,6 +126,19 @@ export interface ExtensionContext {
     refresh(id: string): void;
     /** Open a view in the focused window, in place of the tab on show or in a new tab. */
     open(id: string, how?: { newTab?: boolean }): void;
+  };
+  /** Embeds: markdown in notes (`::timer{duration=25m}`, `:::kanban` … `:::`, or a fenced block), drawn by the extension that declares them. */
+  embeds: {
+    /** How an embed language the manifest declares draws. */
+    register(language: string, provider: EmbedProvider): void;
+  };
+  /**
+   * The extension's state, kept in .common-ink/extensions/<id>/state.json as a change by it in history,
+   * so it's synced, and survives reloads. Its own; no permission needed.
+   */
+  state: {
+    get(): Promise<unknown>;
+    set(value: unknown): Promise<void>;
   };
   /** What changes mean, in words, for history: each extension describes the changes it knows about. */
   changes: {

@@ -1622,3 +1622,38 @@ iframe.webview {
   color: #c2410c;
 }
 
+/* The Media extension's mini player (extensions/media), in the corner while something is loaded. */
+.mini-player {
+  position: fixed;
+  right: 1rem;
+  bottom: 2.25rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  font: 0.8rem var(--prose);
+}
+
+.mini-player[hidden] {
+  display: none;
+}
+
+.mini-player button {
+  font: inherit;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+
+.mini-player input {
+  width: 6rem;
+  accent-color: var(--accent);
+}

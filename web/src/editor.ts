@@ -1,6 +1,7 @@
 // The CodeMirror 6 editor, as plain as it comes: CommonMark (or JSON) highlighting and standard keys.
 // Everything else (Vim keys, live preview, todos) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
+// Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
@@ -11,6 +12,9 @@ import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type Decora
 import { tags as t } from "@lezer/highlight";
 import { diffPatch } from "node-diff3";
 import type { Settings } from "../../worker/src/settings.ts";
+import type { FilePath } from "../../worker/src/files.ts";
+import { directiveSyntax } from "./directives.ts";
+import { editorFile } from "./embeds.ts";
 import { previewEnabled } from "./live-preview.ts";
 
 /** Marks text that came from the server, so it isn't saved back as an edit. */
@@ -48,9 +52,10 @@ const mono = EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } })
 /** Marks a change copied over from another view of the same file. */
 export const synced = Annotation.define<boolean>();
 
-/** What extensions have added to the markdown language, in the order they added it. */
-const markdownSyntax: MarkdownExtension[] = [];
-let markdownSupport = new LanguageSupport(commonmarkLanguage);
+/** The markdown language: CommonMark with directives (core, for embeds), then what extensions have added, in order. */
+const markdownSyntax: MarkdownExtension[] = [directiveSyntax];
+const withSyntax = () => new LanguageSupport(new Language(commonmarkLanguage.data, (commonmarkLanguage.parser as MarkdownParser).configure(markdownSyntax), [], "markdown"));
+let markdownSupport = withSyntax();
 
 /**
  * Add to the markdown language: new syntax (GFM's tables, math) or how code blocks parse. Editors made
@@ -58,9 +63,8 @@ let markdownSupport = new LanguageSupport(commonmarkLanguage);
  */
 export function addMarkdownSyntax(extension: MarkdownExtension): void {
   markdownSyntax.push(extension);
-  const parser = (commonmarkLanguage.parser as MarkdownParser).configure(markdownSyntax);
   // As lang-markdown makes its languages, without markdown(), which would bring HTML, CSS and JavaScript parsers.
-  markdownSupport = new LanguageSupport(new Language(commonmarkLanguage.data, parser, [], "markdown"));
+  markdownSupport = withSyntax();
 }
 
 /** The markdown language notes are parsed with now, with what extensions have added. */
@@ -88,7 +92,7 @@ export function reconfigure(view: EditorView, settings: EditorSettings) {
 
 export function createState(
   doc: string,
-  opts: { json: boolean; code?: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void },
+  opts: { json: boolean; code?: boolean; readOnly: boolean; settings: EditorSettings; extensions: Extension[]; onUpdate: (u: ViewUpdate) => void; onBlur: () => void; path?: FilePath },
 ): EditorState {
   const s = extensionsFor(opts.settings);
   return EditorState.create({
@@ -108,6 +112,7 @@ export function createState(
       syntaxHighlighting(highlight),
       theme,
       EditorState.readOnly.of(opts.readOnly),
+      editorFile.of(opts.path ?? null),
       opts.extensions,
       EditorView.contentAttributes.of(opts.json || opts.code ? { spellcheck: "false" } : { spellcheck: "true", autocapitalize: "sentences" }),
       EditorView.updateListener.of(opts.onUpdate),

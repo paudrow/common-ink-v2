@@ -19,9 +19,9 @@ import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { ExtensionRuntime } from "./extension-runtime.ts";
-import { builtInSourceView, extensionsView, originOf } from "./extensions-view.ts";
+import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } from "./extensions-view.ts";
 import { modalOpen } from "./modal.ts";
-import { changeIn } from "./permission-words.ts";
+import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
@@ -32,6 +32,7 @@ import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { offerLibraries } from "./libraries.ts";
 import { StatusItems } from "./status-items.ts";
+import { embeds } from "./embeds.ts";
 
 // Extensions in the workspace import CodeMirror and the app's helpers as libraries: the app's copies.
 offerLibraries();
@@ -412,7 +413,7 @@ async function removeExtension(r: ExtensionRecord) {
   await refreshList();
 }
 
-const extensionsUi = extensionsView({
+const extensionDeps: ExtensionsViewDeps = {
   records: () => extensions.host.records,
   needsReload: extensionsNeedReload,
   isOn: (id) => !settings["extensions.disabled"].includes(id),
@@ -420,6 +421,9 @@ const extensionsUi = extensionsView({
     const others = settings["extensions.disabled"].filter((x) => x !== id);
     await writeSetting(api, WORKSPACE_SETTINGS, "extensions.disabled", on ? others : [...others, id]);
     await loadSettings();
+    // Turning a sandboxed workspace extension on needs no reload; turning anything off does.
+    if (on && extensions.host.records.find((r) => r.id === id && r.state === "off" && r.workspace && !r.builtIn)) await goLive(id, { kind: "turnedOn" });
+    extensionsChanged();
   },
   safe: SAFE,
   openSource: openExtensionSource,
@@ -462,9 +466,10 @@ const extensionsUi = extensionsView({
     );
     if (!url) return;
     try {
-      const { name } = await api.installExtension(url);
+      const { id, name } = await api.installExtension(url);
       await refreshList();
-      workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
+      else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
     }
@@ -475,17 +480,44 @@ const extensionsUi = extensionsView({
     if (!listed && !listing) listing = loadCatalog().finally(() => extensionsChanged());
     return listed;
   },
-  async installFromCatalog(entry) {
-    try {
-      await installFromCatalog(entry);
-      await refreshList();
-      workbench.notice(`Installed ${entry.name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
-    } catch (err) {
-      workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`);
-    }
+  installFromCatalog: (entry) => installAndAnnounce(entry),
+};
+const extensionsUi = extensionsView(extensionDeps);
+
+/**
+ * Put an extension that was just installed or turned on into the running app, if it can go in without
+ * a reload (a sandboxed one can): its commands, views and embeds work at once, and embeds already on
+ * screen draw. Returns whether it went in; if not, it starts after a reload.
+ */
+async function goLive(id: string, because: Trigger): Promise<boolean> {
+  if (SAFE || !(await extensions.addLive(files, id, settings["extensions.trusted"], because))) return false;
+  statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE).get(id)!);
+  catalog = extensions.catalog();
+  // Its settings join the catalog, its keybindings the ones in effect, and editors draw its embeds.
+  await loadSettings();
+  return true;
+}
+
+/** Install a Catalog extension, put it in at once if it can be, and say so. */
+async function installAndAnnounce(entry: CatalogEntry): Promise<void> {
+  try {
+    await installFromCatalog(entry);
+    await refreshList();
+    if (await goLive(entry.id, { kind: "installed" })) workbench.notice(`Installed ${entry.name}.`);
+    else workbench.notice(`Installed ${entry.name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+  } catch (err) {
+    workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`);
+    throw err;
+  } finally {
     extensionsChanged();
-  },
-});
+  }
+}
+
+/** The Catalog extension that draws an embed language no installed extension does, for a note to offer it. */
+function embedNeeds(language: string): { name: string; install(): Promise<void> } | null {
+  const entry = listed?.entries.find((e) => e.embeds.includes(language) && !extensions.host.records.some((r) => r.id === e.id && r.state !== "off"));
+  return entry ? { name: entry.name, install: () => installAndAnnounce(entry) } : null;
+}
 
 /** What the catalogs list, read the first time the Extensions view shows. */
 let listed: { entries: CatalogEntry[]; problems: string[] } | null = null;
@@ -640,10 +672,17 @@ try {
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
   catalog = extensions.catalog();
   extensions.declare();
+  // Embeds draw in notes for the languages extensions that are on declare.
+  workbench.extend(embeds({ ...extensions.embedHost, needs: embedNeeds }));
   await loadSettings();
   statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE);
   reloadSettingsAtStart = reloadSettingsNow();
   await extensions.start();
+  // The Catalog, so a note can offer what its embeds need; editors redraw once it's read.
+  listing ??= loadCatalog().then(() => {
+    workbench.applySettings(settings);
+    extensionsChanged();
+  });
   const { missing } = await workbench.start(asked);
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {

@@ -3,7 +3,7 @@
 // first time one of its activation events happens. Trusted extensions run in the page with a context
 // object; sandboxed ones run in a host frame and call the same services over messages. Either way,
 // anything sensitive goes through the permission broker first.
-import type { ExtensionManifest, MenuId } from "../../worker/src/extensions.ts";
+import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
 import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
@@ -14,8 +14,9 @@ import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import type { Embed, EmbedHost } from "./embeds.ts";
 import type { ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
-import { ExtensionHost, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
+import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
@@ -64,12 +65,25 @@ interface Services {
 
 let webviewIds = 0;
 
+/** Give a drawn embed new arguments or body in place: false if it can't take them, and it's drawn again. */
+type Updater = (embed: Embed) => boolean;
+
+/** What a webview tells its frame: how tall its page is, and that it has loaded. */
+interface WebviewHooks {
+  onHeight?: (height: number) => void;
+  onLoaded?: () => void;
+}
+
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
   readonly broker: PermissionBroker;
   private handlers = new Map<string, () => unknown>();
   private renderers = new Map<string, ViewRenderer>();
   private describers: Array<(change: Change) => string | null> = [];
+  /** How each embed language draws, once its extension has said. */
+  private embedDrawers = new Map<string, (el: HTMLElement, embed: Embed, tools: HTMLElement) => Updater | null>();
+  /** How to give each drawn embed new arguments or body in place, for the ones whose extension can take them. */
+  private updaters = new WeakMap<HTMLElement, Updater>();
   private sandboxes = new Map<string, SandboxHost>();
 
   constructor(private app: RuntimeApp) {
@@ -119,34 +133,53 @@ export class ExtensionRuntime {
 
   /** Put in what the manifests of extensions that are on declare: commands, status bar items and views. No extension code runs. */
   declare(): void {
-    this.app.statusItems.declare(this.host.on().flatMap((m) => m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id }))));
-    for (const m of this.host.on()) {
-      for (const c of m.contributes.commands)
-        this.app.commands.register({
-          id: c.command,
-          title: c.title,
-          run: () => {
-            this.broker.cause(m.id, { kind: "command", title: c.title });
-            return this.runCommand(c.command);
-          },
-        });
-      for (const view of Object.values(m.contributes.views).flat()) {
-        const declared = {
-          id: view.id,
-          title: view.name,
-          render: async (el: HTMLElement) => {
-            this.broker.cause(m.id, { kind: "view", name: view.name });
-            await this.activateFor(`onView:${view.id}`, (x) => Object.values(x.contributes.views).flat().some((v) => v.id === view.id));
-            const renderer = this.renderers.get(view.id);
-            if (renderer) await renderer.render(el);
-            else el.textContent = `${m.name} didn't draw this view. Is it turned off, or did it fail to start? See the Extensions view.`;
-          },
-        };
-        // A view shows in the side panel, and also opens in a window: drag its title there, or use its command.
-        this.app.panels.register(declared);
-        this.app.workbench.registerView(declared);
-        this.app.commands.register({ id: `${view.id}.openInWindow`, title: `Open ${view.name} in a window`, run: () => this.app.workbench.openView(view.id, { newTab: true }) });
-      }
+    for (const m of this.host.on()) this.declareOne(m);
+  }
+
+  /**
+   * An extension installed or turned on while the app runs, put in at once when nothing about it needs a
+   * reload: a sandboxed extension, whose contributions are all declared and whose code runs in its own
+   * frame. (A trusted one changes the page and its editors, so it waits for a reload.) Returns whether it
+   * did. `because` is what you did, for its asks as it starts.
+   */
+  async addLive(files: readonly FileSummary[], id: string, trusted: readonly string[], because: Trigger): Promise<boolean> {
+    if (trusted.includes(id)) return false;
+    const w = findWorkspaceExtensions(files).find((x) => x.id === id);
+    const record = w && (await this.host.add(w, (path) => this.app.offline.read(path)));
+    if (!record) return false;
+    this.declareOne(record.manifest);
+    this.broker.cause(id, because);
+    if (record.manifest.activationEvents.includes("onStartup")) await this.host.activate(record);
+    return true;
+  }
+
+  private declareOne(m: ExtensionManifest): void {
+    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id })));
+    for (const c of m.contributes.commands)
+      this.app.commands.register({
+        id: c.command,
+        title: c.title,
+        run: () => {
+          this.broker.cause(m.id, { kind: "command", title: c.title });
+          return this.runCommand(c.command);
+        },
+      });
+    for (const view of Object.values(m.contributes.views).flat()) {
+      const declared = {
+        id: view.id,
+        title: view.name,
+        render: async (el: HTMLElement) => {
+          this.broker.cause(m.id, { kind: "view", name: view.name });
+          await this.activateFor(`onView:${view.id}`, (x) => Object.values(x.contributes.views).flat().some((v) => v.id === view.id));
+          const renderer = this.renderers.get(view.id);
+          if (renderer) await renderer.render(el);
+          else el.textContent = `${m.name} didn't draw this view. Is it turned off, or did it fail to start? See the Extensions view.`;
+        },
+      };
+      // A view shows in the side panel, and also opens in a window: drag its title there, or use its command.
+      this.app.panels.register(declared);
+      this.app.workbench.registerView(declared);
+      this.app.commands.register({ id: `${view.id}.openInWindow`, title: `Open ${view.name} in a window`, run: () => this.app.workbench.openView(view.id, { newTab: true }) });
     }
   }
 
@@ -181,8 +214,115 @@ export class ExtensionRuntime {
     return Object.fromEntries(Object.keys(settings).filter((k) => k.startsWith(`${id}.`)).map((k) => [k, settings[k]]));
   }
 
-  /** Start whichever extension declares something, by its activation event, then wait for it. */
-  private async activateFor(event: `onView:${string}` | `onCommand:${string}`, declares: (m: ExtensionManifest) => boolean): Promise<void> {
+  /** What draws embeds in notes: the embeds extensions that are on declare, drawing each by its extension, and giving it new arguments. */
+  readonly embedHost: Omit<EmbedHost, "needs"> = {
+    contributions: () => new Map(this.host.on().flatMap((m) => m.contributes.embeds.map((e) => [e.language, e] as const))),
+    draw: (el, embed, tools) => void this.drawEmbed(el, embed, tools),
+    update: (el, embed) => this.updaters.get(el)?.(embed) ?? false,
+  };
+
+  private async drawEmbed(el: HTMLElement, embed: Embed, tools: HTMLElement): Promise<void> {
+    const declares = (m: ExtensionManifest) => m.contributes.embeds.some((e) => e.language === embed.language);
+    const drawer = this.host.on().find(declares);
+    if (drawer) this.broker.cause(drawer.id, { kind: "embed", title: drawer.contributes.embeds.find((e) => e.language === embed.language)!.title, note: embed.note });
+    await this.activateFor(`onEmbed:${embed.language}`, declares);
+    const draw = this.embedDrawers.get(embed.language);
+    if (draw) {
+      const updater = draw(el, embed, tools);
+      if (updater) this.updaters.set(el, updater);
+      return;
+    }
+    const owner = this.host.on().find(declares);
+    el.classList.add("cm-embed-missing");
+    el.textContent = `${owner?.name ?? "An extension"} didn't draw this ${embed.language} embed. Did it fail to start? See the Extensions view.`;
+  }
+
+  /**
+   * Code an extension runs in an embed: a webview in a quiet frame, with Stop in the embed's toolbar.
+   * Stopping removes the frame, and with it everything running in it; Run starts it again. New
+   * arguments or body go to the running webview when its extension can take them (`start` returns how),
+   * so the frame isn't reloaded; a new `height` resizes the frame.
+   */
+  private framed(el: HTMLElement, m: ExtensionManifest, first: Embed, tools: HTMLElement, start: (box: HTMLElement, hooks: WebviewHooks, embed: Embed) => Updater | null): Updater {
+    const declared = m.contributes.embeds.find((e) => e.language === first.language);
+    const title = declared?.title ?? first.language;
+    let embed = first;
+    let box: HTMLElement | null = null;
+    let update: Updater | null = null;
+    // A height in its arguments (or their default), or else the height of what it shows.
+    const fixed = () => Number(embed.args.height ?? declared?.arguments.height?.default);
+    const clamp = (h: number) => `${Math.min(Math.max(h, 40), 2000)}px`;
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "cm-embed-stop";
+    stop.textContent = "Stop";
+    stop.title = `Stop ${title}: what it's running stops`;
+    stop.addEventListener("mousedown", (e) => e.preventDefault());
+    stop.addEventListener("click", () => {
+      [box, update, stop.hidden] = [null, null, true];
+      const stopped = document.createElement("div");
+      stopped.className = "cm-embed-stopped";
+      const again = document.createElement("button");
+      again.textContent = "Run";
+      again.addEventListener("click", run);
+      stopped.append(`${title} is stopped.`, again);
+      el.replaceChildren(stopped);
+    });
+    tools.prepend(stop);
+    const run = () => {
+      const frame = document.createElement("div");
+      frame.className = "cm-embed-frame";
+      const inner = document.createElement("div");
+      inner.style.height = clamp(fixed() || 80);
+      // Until its page has loaded (a three.js module can take a moment), it says so.
+      const loading = document.createElement("div");
+      loading.className = "cm-embed-loading";
+      loading.textContent = "Loading…";
+      const loaded = () => loading.remove();
+      window.setTimeout(loaded, 15_000);
+      frame.append(inner, loading);
+      el.replaceChildren(frame);
+      [box, stop.hidden] = [inner, false];
+      update = start(inner, { onHeight: (h) => !fixed() && (inner.style.height = clamp(h)), onLoaded: loaded }, embed);
+    };
+    run();
+    return (next) => {
+      // Stopped, it runs with the newest arguments when you press Run.
+      if (!box) {
+        embed = next;
+        return true;
+      }
+      if (!update || !update(next)) return false;
+      embed = next;
+      if (fixed()) box.style.height = clamp(fixed());
+      return true;
+    };
+  }
+
+  /** An extension's state, from its state.json: null if it has none. */
+  private async readState(m: ExtensionManifest): Promise<unknown> {
+    const file = await this.app.offline.read(statePath(m.id));
+    try {
+      return file.text ? JSON.parse(file.text) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
+  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const path = statePath(m.id);
+    const text = `${JSON.stringify(value, null, 2)}\n`;
+    for (let tries = 0; tries < 3; tries++) {
+      const current = await this.app.offline.read(path);
+      if (current.text === text) return;
+      const result = await api.writeAs(m.id, path, text, current.revision);
+      if (result.status !== "conflict") return;
+    }
+    throw new Error(`${m.name}'s state kept changing under it; try again`);
+  }
+
+  private async activateFor(event: `onView:${string}` | `onCommand:${string}` | `onEmbed:${string}`, declares: (m: ExtensionManifest) => boolean): Promise<void> {
     await this.host.fire(event);
     // Declaring it is enough to start it, whatever activation events it lists.
     const owner = this.host.owner(declares);
@@ -249,17 +389,17 @@ export class ExtensionRuntime {
   }
 
   /** A webview in `el` for one of an extension's views. Messages from its page go to `onMessage`. */
-  private webview(m: ExtensionManifest, viewId: string, el: HTMLElement, onMessage: (message: unknown) => void): Webview {
+  private webview(m: ExtensionManifest, viewId: string, el: HTMLElement, onMessage: (message: unknown) => void, hooks: WebviewHooks = {}): Webview {
     el.replaceChildren();
-    const view = new Webview(el, `${viewId}:${++webviewIds}`, `${m.name}: ${viewId}`, onMessage);
+    const view = new Webview(el, `${viewId}:${++webviewIds}`, `${m.name}: ${viewId}`, onMessage, hooks.onHeight, hooks.onLoaded);
     view.frame.dataset.view = viewId;
     return view;
   }
 
   /** A trusted extension's handle on a webview: its HTML, and messages both ways. */
-  private webviewHandle(m: ExtensionManifest, viewId: string, el: HTMLElement): WebviewHandle {
+  private webviewHandle(m: ExtensionManifest, viewId: string, el: HTMLElement, hooks: WebviewHooks = {}): WebviewHandle {
     const listeners: Array<(message: unknown) => void> = [];
-    const view = this.webview(m, viewId, el, (message) => listeners.forEach((fn) => fn(message)));
+    const view = this.webview(m, viewId, el, (message) => listeners.forEach((fn) => fn(message)), hooks);
     let html = "";
     return {
       get html() {
@@ -354,6 +494,29 @@ export class ExtensionRuntime {
         },
         open: (id, how) => app.workbench.openView(id, how),
       },
+      embeds: {
+        register: (language, provider) => {
+          if (!m.contributes.embeds.some((e) => e.language === language)) throw new Error(`Embed "${language}" isn't declared in ${m.id}'s contributes.embeds`);
+          this.embedDrawers.set(
+            language,
+            "resolve" in provider
+              ? (el, embed, tools) =>
+                  this.framed(el, m, embed, tools, (box, hooks, first) => {
+                    const handle = this.webviewHandle(m, `embed:${language}`, box, hooks);
+                    guard(() => provider.resolve(handle, first))();
+                    return provider.update ? (next) => (guard(() => provider.update!(handle, next))(), true) : null;
+                  })
+              : (el, embed) => {
+                  guard(() => provider.render(el, embed))();
+                  return provider.update ? (next) => (guard(() => provider.update!(el, next))(), true) : null;
+                },
+          );
+        },
+      },
+      state: {
+        get: () => this.readState(m),
+        set: (value) => this.writeState(m, value),
+      },
       changes: {
         describe: (d) => void this.describers.push(guard(d, null)),
         summary: (change) => this.summary(change),
@@ -361,7 +524,7 @@ export class ExtensionRuntime {
       editor: {
         extend: (extension, where) => {
           needsEditor();
-          (where?.everywhere ? app.workbench.allExtensions : app.workbench.noteExtensions).push(extension);
+          app.workbench.extend(extension, where?.everywhere);
         },
         markdown: (extension) => {
           needsEditor();
@@ -493,6 +656,24 @@ export class ExtensionRuntime {
               },
             });
             return;
+          case "embeds.register": {
+            if (!m.contributes.embeds.some((e) => e.language === a)) throw new Error(`Embed "${a}" isn't declared in ${m.id}'s contributes.embeds`);
+            // Whether its provider takes new arguments in place: said as it registers, since a change can't wait on the frame to answer.
+            const updates = b === true;
+            this.embedDrawers.set(a, (el, embed, tools) =>
+              this.framed(el, m, embed, tools, (box, hooks, first) => {
+                const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
+                webviews.set(view.id, view);
+                void host.invoke(`embed:${a}`, view.id, first).catch(failed);
+                return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
+              }),
+            );
+            return;
+          }
+          case "state.get":
+            return this.readState(m);
+          case "state.set":
+            return this.writeState(m, args[0]);
           case "views.show":
             return app.panels.show(a);
           case "views.toggle":

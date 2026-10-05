@@ -3,7 +3,7 @@
 // extension with a built-in's id runs in its place: that's how a built-in is customized. Each extension
 // starts only when one of its activation events happens, through a context that catches what it
 // throws, so one broken extension can't take the others down.
-import { extensionFileOf, manifestPath, parseManifest, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
+import { extensionFileOf, manifestPath, parseManifest, STATE_FILE, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { FilePath, FileSummary, WorkspaceFile } from "../../worker/src/files.ts";
 import type { ExtensionContext, ExtensionModule } from "./extension-api.ts";
 
@@ -84,7 +84,8 @@ export function findWorkspaceExtensions(files: readonly FileSummary[]): Workspac
   const byId = new Map<string, FileSummary[]>();
   for (const f of files) {
     const at = extensionFileOf(f.path);
-    if (at) byId.set(at.id, [...(byId.get(at.id) ?? []), f]);
+    // Its state changes as it runs; that's not a change to the extension.
+    if (at && at.file !== STATE_FILE) byId.set(at.id, [...(byId.get(at.id) ?? []), f]);
   }
   return [...byId].flatMap(([id, folder]) => {
     if (!folder.some((f) => f.path === manifestPath(id))) return [];
@@ -167,6 +168,25 @@ export class ExtensionHost {
       }
     }
     this.records = records;
+  }
+
+  /**
+   * A sandboxed workspace extension installed or turned on while the app runs: its record, ready to start
+   * on its activation events. Null for one that can't be put in live: a built-in's id, a broken manifest,
+   * or one that's on already.
+   */
+  async add(w: WorkspaceExtension, read: (path: FilePath) => Promise<WorkspaceFile>): Promise<ExtensionRecord | null> {
+    const existing = this.records.find((r) => r.id === w.id);
+    if (existing?.builtIn || (existing && existing.state !== "off")) return null;
+    const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
+    if (typeof manifest === "string") return null;
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest, workspace: w, state: "inactive" };
+    if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
+    this.records = [...this.records.filter((r) => r.id !== w.id), record];
+    const main = manifest.main;
+    this.modules.set(w.id, async () => (await this.o.load(w, main)) as ExtensionModule);
+    this.activations.delete(w.id);
+    return record;
   }
 
   /** The manifests of the extensions that are on: what they add is in effect, whether or not their code has started. */

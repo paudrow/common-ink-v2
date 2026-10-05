@@ -1,0 +1,55 @@
+{
+  "id": "timers",
+  "name": "Timers",
+  "version": "1.0.0",
+  "description": "Timers, stopwatches and alarms in notes: `::timer{duration=25m label=\"Focus\"}`, `::stopwatch` and `::alarm{at=07:30}`. They keep going when their note closes or the page reloads, show in the status bar while they run, and ring and notify when they're done.",
+  "main": "index.ts",
+  "files": ["index.ts", "clock.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Draw timers, stopwatches and alarms in notes" },
+    "notifications": { "why": "Say when a timer is done or an alarm goes off" },
+    "media": { "why": "Ring when a timer is done or an alarm goes off" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "timers.openRunning", "title": "Go to the running timer" },
+      { "command": "timers.stopAll", "title": "Stop all timers and alarms" }
+    ],
+    "statusBarItems": [{ "id": "timers.running", "alignment": "right", "priority": 10, "command": "timers.openRunning" }],
+    "embeds": [
+      {
+        "language": "timer",
+        "syntax": "leaf",
+        "title": "Timer",
+        "description": "Counts down from a duration, then rings and notifies. Start, pause and reset it in the note; it keeps going when the note closes.",
+        "arguments": {
+          "duration": { "type": "duration", "description": "How long: 90s, 25m, 1h30m", "default": "25m", "presets": ["5m", "15m", "25m", "50m", "1h"] },
+          "label": { "type": "string", "description": "What it's for, shown with it and in the status bar" },
+          "id": { "type": "string", "description": "Keeps its state when blocks move or change; leave it as it is", "hidden": true }
+        }
+      },
+      {
+        "language": "stopwatch",
+        "syntax": "leaf",
+        "title": "Stopwatch",
+        "description": "Counts up from zero. Start, pause and reset it in the note; it keeps going when the note closes.",
+        "arguments": {
+          "label": { "type": "string", "description": "What it's timing" },
+          "id": { "type": "string", "description": "Keeps its state when blocks move or change; leave it as it is", "hidden": true }
+        }
+      },
+      {
+        "language": "alarm",
+        "syntax": "leaf",
+        "title": "Alarm",
+        "description": "Rings and notifies at a time of day, every day it's on, while Common Ink is open.",
+        "arguments": {
+          "at": { "type": "string", "label": "At", "description": "The time of day, 24-hour, like 07:30", "default": "07:30", "presets": ["06:30", "07:00", "07:30", "08:00"] },
+          "label": { "type": "string", "description": "What it's for" },
+          "id": { "type": "string", "description": "Keeps its state when blocks move or change; leave it as it is", "hidden": true }
+        }
+      }
+    ]
+  }
+}

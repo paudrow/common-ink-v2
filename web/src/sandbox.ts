@@ -135,6 +135,10 @@ export class Webview {
     readonly id: string,
     title: string,
     onMessage: (message: unknown) => void,
+    /** Its page's height, as it changes, for a frame that sizes to its content. */
+    onHeight?: (height: number) => void,
+    /** Its page has loaded, scripts and all. */
+    onLoaded?: () => void,
   ) {
     this.frame.setAttribute("sandbox", "allow-scripts");
     this.frame.className = "webview";
@@ -157,8 +161,10 @@ export class Webview {
         }, 1000);
       });
       port.onmessage = (e) => {
-        const m = e.data as { type: string; data?: unknown; id?: number };
+        const m = e.data as { type: string; data?: unknown; id?: number; height?: number };
         if (m.type === "message") onMessage(m.data);
+        if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
+        if (m.type === "loaded") onLoaded?.();
         if (m.type === "pong" && m.id === alive) alive += 0.5;
       };
       return port;
@@ -166,9 +172,9 @@ export class Webview {
     container.append(this.frame);
   }
 
-  /** Show this HTML, in the app's colours and fonts. */
+  /** Show this HTML, in the app's colours and fonts, in standards mode (so its page is as tall as what's on it). */
   async setHtml(html: string): Promise<void> {
-    (await this.port).postMessage({ type: "html", html: theme() + html });
+    (await this.port).postMessage({ type: "html", html: `<!doctype html>${theme()}${html.replace(/^\s*<!doctype[^>]*>/i, "")}` });
   }
 
   async post(message: unknown): Promise<void> {

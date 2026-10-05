@@ -95,7 +95,7 @@ const wordsInStatusBar = (page: Page) =>
     return item && !item.hidden ? item.textContent : null;
   });
 
-test("Word count installs from the catalog and counts in the status bar once you allow it; Don't allow is kept", async () => {
+test("Word count installs from the catalog and runs at once, counting in the status bar once you allow it; Don't allow is kept", async () => {
   const page = await h.browser.newPage();
   await page.goto(`${h.base}/?file=Welcome.md`);
   await page.waitForSelector(".cm-content");
@@ -106,11 +106,15 @@ test("Word count installs from the catalog and counts in the status bar once you
     [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"],
     "its files are in the workspace, with where they came from",
   );
-  await page.reload();
-  // It starts with the app, and asks before reading the note on show.
+  // Installed, and listed so, with no reload: a sandboxed extension goes in at once, and starts.
+  await page.waitForSelector('.extension-section .extension-row[data-extension="word-count"]');
+  assert.equal(await page.locator('.extension-row[data-extension="word-count"] .badge').last().textContent(), "Catalog");
+  assert.equal(await page.locator(".catalog-entry", { hasText: "Word count" }).count(), 0, "it's no longer offered");
+  assert.equal(await page.locator(".banner", { hasText: "apply after reload" }).count(), 0);
+  // It asks before reading the note on show.
   await page.waitForSelector(".dialog");
   const lines = await promptLines(page);
-  assert.equal(lines[2], "It's asking as the app started.");
+  assert.equal(lines[2], "It's asking because you just installed it.");
   assert.deepEqual(
     lines.filter((_, i) => i !== 2),
     [
@@ -126,9 +130,10 @@ test("Word count installs from the catalog and counts in the status bar once you
   assert.equal(await page.textContent(".dialog-details code"), "files:read Welcome.md", "the technical scope is behind Details");
   await page.click("text=Allow this time");
   await page.waitForFunction(() => /^\d[\d,]* words?$/.test(document.querySelector('.status-item[data-item="wordCount.status"]')?.textContent ?? ""));
-  // This time lasts until you reload.
+  // This time lasts until you reload; then it starts with the app.
   await page.reload();
   await page.waitForSelector(".dialog");
+  assert.equal((await promptLines(page))[2], "It's asking as the app started.");
   await page.click("text=Don't allow");
   await page.waitForTimeout(1000);
   assert.equal(await wordsInStatusBar(page), null, "nothing counted, nothing in the status bar");

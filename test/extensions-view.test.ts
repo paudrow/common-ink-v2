@@ -56,7 +56,7 @@ function setUp() {
     setTrusted: async () => {},
     install: async () => {},
     showActivity: () => {},
-    catalog: () => ({ entries: [{ id: "pomodoro", name: "Pomodoro", version: "1.0.0", description: "Focus timer.", folder: "https://app.example/catalog/pomodoro/", catalog: "Common Ink", firstParty: true }], problems: [] }),
+    catalog: () => ({ entries: [{ id: "pomodoro", name: "Pomodoro", version: "1.0.0", description: "Focus timer.", folder: "https://app.example/catalog/pomodoro/", catalog: "Common Ink", firstParty: true, embeds: ["pomodoro"] }], problems: [] }),
     commandTitle: () => undefined,
     installFromCatalog: async () => {},
   });

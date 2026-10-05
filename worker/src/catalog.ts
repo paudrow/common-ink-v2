@@ -3,8 +3,9 @@
 // are other people's: their index comes through the Worker's safe fetch, and what they list is installed
 // like any extension from a URL, sandboxed, at your own risk.
 //
-// An index is JSON: {"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]},
-// where `path` is the extension's folder, relative to the index.
+// An index is JSON: {"name": "…", "extensions": [{"id", "name", "version", "description", "path", "embeds"}]},
+// where `path` is the extension's folder, relative to the index, and `embeds` the embed languages it
+// draws, so a note can say what it needs.
 
 /** The app's own catalog. */
 export const FIRST_PARTY_CATALOG = "/catalog/index.json";
@@ -19,6 +20,8 @@ export interface CatalogEntry {
   /** The catalog it's from. */
   catalog: string;
   firstParty: boolean;
+  /** The embed languages it draws. */
+  embeds: string[];
 }
 
 const ID = /^[a-z0-9][a-z0-9-]*$/;
@@ -30,7 +33,7 @@ export function parseCatalog(data: unknown, indexUrl: string, firstParty: boolea
   if (!Array.isArray(index.extensions)) return [];
   return index.extensions.flatMap((e: Record<string, unknown>) => {
     if (!e || typeof e !== "object") return [];
-    const { id, name, version, description, path } = e;
+    const { id, name, version, description, path, embeds } = e;
     if (typeof id !== "string" || !ID.test(id) || typeof name !== "string" || typeof path !== "string") return [];
     const base = new URL(indexUrl);
     const at = new URL(path.endsWith("/") ? path : `${path}/`, base);
@@ -46,6 +49,7 @@ export function parseCatalog(data: unknown, indexUrl: string, firstParty: boolea
         folder: at.toString(),
         catalog,
         firstParty,
+        embeds: Array.isArray(embeds) ? embeds.filter((x): x is string => typeof x === "string") : [],
       },
     ];
   });

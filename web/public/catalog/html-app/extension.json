@@ -1,0 +1,25 @@
+{
+  "id": "html-app",
+  "name": "HTML app",
+  "version": "1.0.0",
+  "publisher": "Common Ink",
+  "description": "Small apps in notes: an ```html-app block's HTML runs in a sandboxed frame, with three.js and uPlot to import by name. It can't reach the network, your notes or the app, and Stop stops it.",
+  "main": "index.js",
+  "files": ["index.js"],
+  "activationEvents": ["onEmbed:html-app"],
+  "contributes": {
+    "embeds": [
+      {
+        "language": "html-app",
+        "syntax": "fence",
+        "title": "HTML app",
+        "description": "An HTML page that runs in a sandboxed frame in the note: a canvas, a three.js scene, a chart, a little tool. Its module scripts may import \"three\", \"three/addons/controls/OrbitControls.js\" and \"uplot\" (whose stylesheet is already there). It can't fetch anything or reach your notes.",
+        "arguments": {
+          "height": { "type": "number", "description": "Its height in pixels", "default": "360", "presets": ["240", "360", "480"] },
+          "title": { "type": "string", "description": "What it is" }
+        },
+        "body": "The page's HTML: elements, <style>, and <script type=\"module\"> that imports what it needs"
+      }
+    ]
+  }
+}

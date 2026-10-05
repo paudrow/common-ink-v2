@@ -142,6 +142,8 @@ export type Trigger =
   | { kind: "command"; title: string }
   | { kind: "view"; name: string }
   | { kind: "opened"; path: string }
+  | { kind: "embed"; title: string; note: string | null }
+  | { kind: "installed" | "turnedOn" }
   | { kind: "startup" };
 
 /** Why an extension asks now, as the end of a sentence: "because you ran Show word count". */
@@ -154,6 +156,12 @@ export function triggerWords(t: Trigger | null): Phrase {
       return ["to show its ", { name: t.name }, " view"];
     case "opened":
       return ["because you switched to ", ...fileWords(t.path)];
+    case "embed":
+      return t.note ? ["to draw the ", { name: t.title }, " embed in ", ...fileWords(t.note)] : ["to draw its ", { name: t.title }, " embed"];
+    case "installed":
+      return ["because you just installed it"];
+    case "turnedOn":
+      return ["because you just turned it on"];
     case "startup":
       return ["as the app started"];
   }

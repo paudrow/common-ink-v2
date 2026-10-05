@@ -4,7 +4,7 @@
 // after it changes. This is the core of it (ADR 0006): on its own it draws each window's tab on show,
 // and nothing else. The chrome (tab bars, dragging, the borders that resize windows, what an empty
 // window says) is drawn by an extension, the default Workbench extension, through setChrome.
-import { EditorSelection, Transaction, type Extension } from "@codemirror/state";
+import { Compartment, EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
 import type { Offline } from "./offline.ts";
@@ -77,6 +77,9 @@ export interface WorkbenchEvents {
 }
 
 const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(item)}`;
+
+/** Where extensions' CodeMirror extensions go in each editor, so ones added later reach editors already open. */
+const extensionSlot = new Compartment();
 const label = docLabel;
 
 export class Workbench {
@@ -102,9 +105,9 @@ export class Workbench {
   private layoutSaving = false;
   private settings: Settings = DEFAULTS;
   /** Extensions' CodeMirror extensions, for every note's editor. */
-  readonly noteExtensions: Extension[] = [];
+  private noteExtensions: Extension[] = [];
   /** Extensions' CodeMirror extensions for every editor, notes and settings and code alike (Vim keys). */
-  readonly allExtensions: Extension[] = [];
+  private allExtensions: Extension[] = [];
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
   private chrome: WorkbenchChrome | null = null;
@@ -329,6 +332,17 @@ export class Workbench {
     return this.focusedSession?.save(explicit);
   }
 
+  /** Add an extension's CodeMirror extension to every note's editor (or with `everywhere`, every editor), open now or later. */
+  extend(extension: Extension, everywhere = false): void {
+    if (everywhere) this.allExtensions = [...this.allExtensions, extension];
+    else this.noteExtensions = [...this.noteExtensions, extension];
+    for (const file of this.files.values()) for (const view of file.views) view.dispatch({ effects: extensionSlot.reconfigure(this.extensionsOf(file.path)) });
+  }
+
+  private extensionsOf(path: FilePath): Extension[] {
+    return [...this.allExtensions, ...(isNote(path) ? this.noteExtensions : [])];
+  }
+
   /** Use new settings in every editor, open now or later. */
   applySettings(settings: Settings): void {
     this.settings = settings;
@@ -439,11 +453,12 @@ export class Workbench {
     const text = this.primary(file)?.state.doc.toString() ?? file.startText;
     const view: EditorView = new EditorView({
       state: createState(text, {
+        path: file.path,
         json: file.path.endsWith(".json"),
         code: isExtensionScript(file.path),
         readOnly: isReadOnly(file.path),
         settings: this.settings,
-        extensions: [...this.allExtensions, ...(isNote(file.path) ? this.noteExtensions : []), ...this.extensionsFor(file.path)],
+        extensions: [extensionSlot.of(this.extensionsOf(file.path)), ...this.extensionsFor(file.path)],
         onUpdate: (u) => this.viewUpdate(file, view, u),
         onBlur: () => void file.session.save(),
       }),

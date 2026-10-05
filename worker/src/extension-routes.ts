@@ -40,6 +40,14 @@ export async function sandboxRoute(req: Request, url: URL, assets: { fetch(req: 
     const res = await assets.fetch(new Request(`${url.origin}${SANDBOX_PREFIX}${path}`));
     return new Response(res.body, { status: res.status, headers: sandboxScriptHeaders });
   }
+  // Libraries webviews may load (three.js, uPlot), public like the shells. A missing one would be
+  // answered with the app's page, so a page here means there isn't one.
+  if (/^vendor\/[\w.-]+(\/[\w.-]+)*$/.test(path) && !path.includes("..")) {
+    const res = await assets.fetch(new Request(`${url.origin}${SANDBOX_PREFIX}${path}`));
+    const type = res.headers.get("Content-Type") ?? "";
+    if (!res.ok || type.startsWith("text/html")) return new Response("Not found\n", { status: 404, headers: { "Access-Control-Allow-Origin": "*" } });
+    return new Response(res.body, { headers: { "Content-Type": type, "Access-Control-Allow-Origin": "*", "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400" } });
+  }
   const code = /^code\/([^/]+)\/(.+)$/.exec(path);
   if (code) {
     const id = await verifyCodeToken(await store.sandboxKey(), code[1], Date.now());

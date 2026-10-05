@@ -6,7 +6,7 @@ import { isOperation, OPERATIONS, runOperation, type Store } from "./operations.
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS =
-  "Common Ink is a workspace of markdown notes and workspace JSON. Read a file before you write it, and pass its revision as `base`. Every change you make is recorded with you as its author; history shows them and undo reverses them.";
+  "Common Ink is a workspace of markdown notes and workspace JSON. Read a file before you write it, and pass its revision as `base`. Every change you make is recorded with you as its author; history shows them and undo reverses them. Notes can hold embeds (timers, background noise, small HTML apps and more): list_embeds says which, with examples.";
 
 interface Request {
   jsonrpc: "2.0";

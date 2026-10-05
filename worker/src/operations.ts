@@ -1,6 +1,7 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
 import type { SourceStatus } from "./data-sources.ts";
+import { listEmbeds } from "./embed-list.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact, Event } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
@@ -245,6 +246,13 @@ export const OPERATIONS = {
       }
       throw new OperationError("The labels file kept changing; try again");
     },
+  }),
+  list_embeds: op<Record<string, never>>({
+    description:
+      "The embeds notes can hold, which extensions draw in place. Each comes with its name, its syntax, what it does, its key=value arguments, what its body holds (if anything), an example to copy, and whether its extension is on here. Write each the way its syntax says: a leaf is one line, `::timer{duration=25m label=\"Focus\"}`; a container wraps markdown, `:::kanban` on a line, its markdown, then `:::` on a line; a fence is a code block, its name and arguments on the opening line. Extensions installed from the Extensions view's Catalog add more.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
   }),
   list_uploads: op<Record<string, never>>({
     description: "Uploaded files (images, PDFs and others), each with its name, size, type and the address notes link it by, like ![photo](/uploads/photo.png).",

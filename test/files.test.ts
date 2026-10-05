@@ -143,6 +143,14 @@ test("a new seed adds missing notes, keeps your edits to unchanged demos, and re
   assert.equal(notes.read("Try this PR.md" as FilePath)?.text, "# Try this PR (#2)\n");
 });
 
+test("a new seed updates the sample notes no one has changed since the last one", () => {
+  const notes = workspace();
+  notes.seed(first);
+  notes.seed({ id: "b", notes: [{ path: "Welcome.md", text: "# Welcome, updated\n", replace: false }] });
+  assert.equal(notes.read("Welcome.md" as FilePath)?.text, "# Welcome, updated\n");
+  assert.deepEqual(notes.history("Welcome.md" as FilePath)[0].author, SEED_AUTHOR);
+});
+
 test("the same seed again changes nothing", () => {
   const notes = workspace();
   notes.seed(first);
