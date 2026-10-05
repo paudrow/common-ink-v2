@@ -73,6 +73,12 @@ test("the line the cursor is on shows its raw markdown", () => {
   view.dispatch({ selection: { anchor: view.state.doc.line(2).from + 3 } });
   assert.equal(shown(view)[1], "**Pack** the *maps* and ~~skis~~ and `boots`.");
   assert.equal(shown(view)[0], "Trip plan", "the others stay drawn");
+  // A line's own style stays as the cursor comes onto it: a code line is still a code line.
+  view.dispatch({ selection: { anchor: view.state.doc.line(7).from + 2 } });
+  assert.ok(view.contentDOM.querySelectorAll(".cm-line")[6].classList.contains("cm-md-codeblock"));
+  view.dispatch({ selection: { anchor: view.state.doc.line(4).from + 2 } });
+  assert.ok(view.contentDOM.querySelectorAll(".cm-line")[3].classList.contains("cm-md-quote"));
+  assert.equal(shown(view)[3], "> Bring snacks.", "with its markers back");
   view.destroy();
 });
 
