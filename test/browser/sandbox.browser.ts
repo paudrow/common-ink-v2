@@ -103,15 +103,29 @@ test("Word count installs from the catalog; its sandboxed view asks before readi
   await runCommand(page, "Show extensions");
   await runCommand(page, "Show word count");
   await page.waitForSelector(".dialog");
-  assert.match((await page.textContent(".dialog"))!, /Word count wants to.*read your notes · Count the words in the note on show/s);
+  // Who, what exactly, why now, and why at all, in that order; then what each button does.
+  assert.deepEqual(
+    await page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`),
+    [
+      "Word count Workspace wants to",
+      "Read the note Welcome",
+      "It's asking because you ran Show word count.",
+      "Word count says: “Count the words in the note on show”",
+      "Allow this time",
+      "Always allow Word count to read all your notes",
+      "Don't allow",
+      "You can change this anytime in Extensions → Word count.",
+    ],
+  );
+  assert.equal(await page.textContent(".dialog-details code"), "files:read Welcome.md", "the technical scope is behind Details");
   await page.click("text=Don't allow");
   const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
-  await webview!.waitForFunction(() => document.body.textContent?.includes("You didn't allow"));
+  await webview!.waitForFunction(() => document.body.textContent?.includes("Word count can't read the note Welcome: you don't allow it to read all your notes."));
   // Keeping the answer saves your settings, which Word count hears of and counts again: it isn't asked twice.
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "one Don't allow is enough");
   const settings = await page.evaluate(() => fetch("/api/file?path=.common-ink%2Fusers%2Ftester%40localhost%2Fsettings.json").then((r) => r.json()));
-  assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**": "deny" } });
+  assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**/*.md": "deny" } });
   await page.reload();
   await page.waitForSelector(".cm-content");
   await runCommand(page, "Show word count");

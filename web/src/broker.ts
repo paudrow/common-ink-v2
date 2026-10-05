@@ -1,24 +1,39 @@
 // The permission broker (ADR 0006): every sensitive thing an extension does goes through here. It
 // checks the extension's manifest (an undeclared permission can never be granted), then your answers
-// in settings, and asks you the first time, with the extension's reason. Prompts come one at a time;
-// asks from the same extension while its prompt is up join that prompt. Everything decided is logged
-// for the Extension activity view.
+// in settings, and asks you the first time, with the extension's reason and what you did that it's
+// acting on. Prompts come one at a time; asks from the same extension while its prompt is up join
+// that prompt. Everything decided is logged for the Extension activity view.
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import { decide, type Answer, type Ask, type Grants } from "../../worker/src/permissions.ts";
+import { changeIn, plain, refusedWords, scopeWords, type Refusal, type Trigger } from "./permission-words.ts";
 
 /** What you chose in a prompt. "dismiss" is Escape: no, but only for now, so a stray key can't block an extension for good. */
 export type Choice = "once" | "always" | "deny" | "dismiss";
 
-export class PermissionDenied extends Error {}
+/** Something an extension tried, refused, and why: its message says so in words, naming no internal path. */
+export class PermissionDenied extends Error {
+  constructor(
+    readonly extension: ExtensionManifest,
+    readonly ask: Ask,
+    readonly refusal: Refusal,
+  ) {
+    const said = plain(refusedWords(extension.name, ask, refusal));
+    super(refusal.reason === "undeclared" ? said : `${said} Change that in ${changeIn(extension.name)}.`);
+  }
+}
 
-/** One thing in the activity log. */
+/** One thing in the activity log: what an extension did or tried, and how it went. */
 export interface Activity {
   time: number;
   extension: string;
-  kind: string;
-  detail: string;
+  ask: Ask;
+  /** A network request's address. */
+  url?: string;
   outcome: "allowed" | "denied" | "failed" | "in flight";
 }
+
+/** How long after you do something an extension's asks are still taken to be about it. */
+const CAUSE_MS = 10_000;
 
 export interface BrokerOptions {
   grants(): Grants;
@@ -29,48 +44,20 @@ export interface BrokerOptions {
    * Show a prompt for these asks, and resolve with what you chose. More asks from the same extension
    * may join while it's up: `joined` is called with each, for the prompt to show it too.
    */
-  prompt(extension: ExtensionManifest, asks: Array<{ ask: Ask; key: string }>, joined: (fn: (ask: { ask: Ask; key: string }) => void) => void): Promise<Choice>;
+  prompt(extension: ExtensionManifest, asks: Array<{ ask: Ask; key: string }>, joined: (fn: (ask: { ask: Ask; key: string }) => void) => void, trigger: Trigger | null): Promise<Choice>;
+  /** An extension tried something its manifest doesn't ask for: once per extension and kind, for you to hear of it. */
+  undeclared(denied: PermissionDenied): void;
   changed(): void;
 }
 
 interface Prompting {
   extension: ExtensionManifest;
+  trigger: Trigger | null;
   asks: Array<{ ask: Ask; key: string }>;
   answer: Promise<Choice>;
   resolve(choice: Choice): void;
   /** Told of asks that join once the prompt is showing. */
   onJoin?: (ask: { ask: Ask; key: string }) => void;
-}
-
-/** How a kind of permission reads in a prompt: "connect to api.weather.gov". */
-export function describeAsk(ask: Ask): string {
-  const target = ask.target ?? ask.scope;
-  switch (ask.kind) {
-    case "network":
-      return `connect to ${target}`;
-    case "files:read":
-      return `read ${target === "**" ? "your notes" : target}`;
-    case "files:write":
-      return `change ${target === "**" ? "your notes" : target}`;
-    case "clipboard:read":
-      return "read your clipboard";
-    case "clipboard:write":
-      return "copy to your clipboard";
-    case "notifications":
-      return "show notifications";
-    case "media":
-      return "play sound";
-    case "history:read":
-      return "read your history";
-    case "calendar:read":
-      return "read your calendar";
-    case "contacts:read":
-      return "read your contacts";
-    case "settings:write":
-      return `change the setting ${target}`;
-    case "editor":
-      return "change how notes are edited";
-  }
 }
 
 export class PermissionBroker {
@@ -88,31 +75,61 @@ export class PermissionBroker {
   private showing: Prompting | null = null;
   readonly log: Activity[] = [];
   private inFlight = new Map<string, number>();
+  /** What you did last that each extension is acting on, and when. */
+  private causes = new Map<string, { trigger: Trigger; at: number }>();
+  /** Extensions and kinds you've heard tried something undeclared, this session. */
+  private told = new Set<string>();
 
   constructor(private o: BrokerOptions) {}
+
+  /**
+   * You did something an extension acts on: its asks in the next few seconds say so. A view drawing is
+   * a weaker reason than what led to it (the command that showed it), so it doesn't replace a recent one.
+   */
+  cause(extension: string, trigger: Trigger): void {
+    if (trigger.kind === "view" && this.causeOf(extension)) return;
+    this.causes.set(extension, { trigger, at: Date.now() });
+  }
+
+  /** What you did that an extension's ask now is about, if it was just now. */
+  private causeOf(extension: string): Trigger | null {
+    const c = this.causes.get(extension);
+    return c && Date.now() - c.at < CAUSE_MS ? c.trigger : null;
+  }
 
   /** Allow `ask` for `extension`, asking you if need be. Throws PermissionDenied otherwise. */
   async check(extension: ExtensionManifest, ask: Ask): Promise<void> {
     const decision = decide(extension, ask, this.o.grants(), { builtIn: this.o.isBuiltIn(extension.id), once: this.once });
-    const record = (outcome: Activity["outcome"]) => this.record(extension.id, ask.kind, ask.target ?? ask.scope ?? "", outcome);
+    const record = (outcome: Activity["outcome"]) => this.record(extension.id, ask, outcome);
     if (decision.outcome === "undeclared") {
       record("denied");
-      throw new PermissionDenied(`${extension.name} didn't declare that it may ${describeAsk(ask)}, so it can't`);
+      const declared = extension.permissions[ask.kind];
+      const scopes = declared ? (declared.hosts ?? declared.paths ?? declared.keys ?? []) : [];
+      const denied = new PermissionDenied(extension, ask, { reason: "undeclared", scopes });
+      const told = `${extension.id} ${ask.kind}`;
+      if (!this.told.has(told)) {
+        this.told.add(told);
+        this.o.undeclared(denied);
+      }
+      throw denied;
     }
     const key = `${extension.id} ${decision.key}`;
     let outcome = decision.outcome;
-    if (outcome === "ask" && this.deniedForNow.has(key)) outcome = "deny";
     if (outcome === "ask" && this.keeping.has(key)) outcome = this.keeping.get(key)!;
+    let forNow = outcome === "ask" && this.deniedForNow.has(key);
+    if (forNow) outcome = "deny";
     if (outcome === "ask") {
       const choice = await this.ask(extension, ask, decision.key);
       if (choice === "once") this.once.add(key);
       if (choice === "dismiss") this.deniedForNow.add(key);
       if (choice === "always" || choice === "deny") await this.keep(extension.id, decision.key, choice === "always" ? "allow" : "deny");
       outcome = choice === "deny" || choice === "dismiss" ? "deny" : "allow";
+      forNow = choice === "dismiss";
     }
     if (outcome === "deny") {
       record("denied");
-      throw new PermissionDenied(`You didn't allow ${extension.name} to ${describeAsk(ask)}. Change that in the Extensions view.`);
+      const scope = decision.key.slice(ask.kind.length + 1) || undefined;
+      throw new PermissionDenied(extension, ask, forNow ? { reason: "now" } : { reason: "answer", scope: scopeWords(ask.kind, scope) });
     }
     record("allowed");
   }
@@ -147,7 +164,7 @@ export class PermissionBroker {
     }
     let resolve!: (c: Choice) => void;
     const answer = new Promise<Choice>((r) => (resolve = r));
-    this.queue.push({ extension, asks: [{ ask, key }], answer, resolve });
+    this.queue.push({ extension, trigger: this.causeOf(extension.id), asks: [{ ask, key }], answer, resolve });
     void this.pump();
     return answer;
   }
@@ -157,14 +174,14 @@ export class PermissionBroker {
     const next = this.queue.shift();
     if (!next) return;
     this.showing = next;
-    next.resolve(await this.o.prompt(next.extension, [...next.asks], (fn) => (next.onJoin = fn)));
+    next.resolve(await this.o.prompt(next.extension, [...next.asks], (fn) => (next.onJoin = fn), next.trigger));
     this.showing = null;
     void this.pump();
   }
 
   /** Note something an extension did, for the activity log. */
-  record(extension: string, kind: string, detail: string, outcome: Activity["outcome"]): Activity {
-    const entry = { time: Date.now(), extension, kind, detail, outcome };
+  record(extension: string, ask: Ask, outcome: Activity["outcome"], url?: string): Activity {
+    const entry: Activity = { time: Date.now(), extension, ask, outcome, ...(url ? { url } : {}) };
     this.log.unshift(entry);
     this.log.length = Math.min(this.log.length, 500);
     this.o.changed();
@@ -172,9 +189,9 @@ export class PermissionBroker {
   }
 
   /** Run a network request for an extension, counted as in flight while it runs. */
-  async inFlightWhile<T>(extension: string, detail: string, run: () => Promise<T>): Promise<T> {
+  async inFlightWhile<T>(extension: string, url: string, run: () => Promise<T>): Promise<T> {
     this.inFlight.set(extension, (this.inFlight.get(extension) ?? 0) + 1);
-    const entry = this.record(extension, "network", detail, "in flight");
+    const entry = this.record(extension, { kind: "network", target: hostOf(url) }, "in flight", url);
     try {
       const out = await run();
       entry.outcome = "allowed";
@@ -195,3 +212,11 @@ export class PermissionBroker {
     return [...this.inFlight.keys()];
   }
 }
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};

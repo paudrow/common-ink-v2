@@ -2,13 +2,13 @@
   "pr": 18,
   "title": "Sandboxed extensions and permissions",
   "steps": [
-    "Install Word count from the Catalog at the bottom of the Extensions view, and reload. ⌘⇧P, Show word count. Word count is a workspace extension, so it runs sandboxed: a prompt says \"Word count wants to read your notes · Count the words in the note on show\". Choose Allow once: its view (a sandboxed webview) shows the count. Reload and show it again: it asks again, since once lasts the session.",
-    "This time choose Always allow. Your answer is in your user settings under `extensions.permissions`, and in the Extensions view, where Word count's permission now says Allow. Set it to Deny there: Show word count now says you didn't allow it, without asking.",
-    "Escape on a prompt means not now: it's refused for this session only, and asked again after a reload.",
-    "⌘⇧P, Show extension activity: every read Word count asked for, allowed or not, with the time.",
-    "The Extensions view lists what each extension may ask for, with why. Built-ins have theirs already (\"allowed with the app\"), and you can deny any.",
+    "Install Word count from the Catalog at the bottom of the Extensions view, and reload. ⌘⇧P, Show word count. Word count is a workspace extension, so it runs sandboxed, and it asks first. The prompt answers four things, in order: who's asking (Word count, from the Catalog; its name opens its details), what exactly (\"Read the note Welcome\", with the technical scope under Details), why now (\"because you ran Show word count\"), and why at all (\"Word count says: …\"). Choose Allow this time: its view (a sandboxed webview) shows the count. Reload and show it again: it asks again, since this time lasts until you reload.",
+    "This time choose \"Always allow Word count to read all your notes\": the answer covers what it declared (**/*.md), not just this note. It's in your user settings under `extensions.permissions`, and in Word count's details (Extensions, then its row), where Read all your notes now says Always allow. Set it to Don't allow there: Show word count now says \"Word count can't read the note Welcome: you don't allow it to read all your notes.\", without asking. Reset permissions puts every answer back to Ask.",
+    "Escape on a prompt means not now: it's refused until you reload, and asked again after.",
+    "⌘⇧P, Show extension activity: what each extension did or tried, in the same words, newest first (\"Word count read the note Welcome · just now\"). Each name opens its details.",
+    "Built-ins don't ask: they came with the app. Their details list what they use, in plain words, each Always allow, and you can choose Don't allow for any.",
     "Trust… on Word count asks you to confirm that it may run in the page, around its permissions. Stop trusting puts it back in the sandbox after a reload.",
-    "Install from URL… copies an extension's files in from where it's published (its folder, or its extension.json). It runs sandboxed. Try it with any public extension folder you have; Common Ink refuses local addresses and built-ins' ids.",
+    "Install from URL… copies an extension's files in from where it's published (its folder, or its extension.json), and notes where from: its row says From URL. It runs sandboxed. Common Ink refuses local addresses and built-ins' ids.",
     "Customize a built-in (Command list): the copy is trusted for you, since you made it yours.",
     "Every app page now has a stricter policy: its own scripts, connections only to itself, and frames only from the sandbox route. Even code in the page can't quietly reach another site."
   ]

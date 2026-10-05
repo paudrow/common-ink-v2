@@ -9,6 +9,7 @@ import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/per
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { PermissionBroker } from "./broker.ts";
+import type { Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
@@ -44,6 +45,8 @@ export interface RuntimeApp {
   saveGrant(extension: string, key: string, answer: "allow" | "deny"): Promise<void>;
   /** Show a permission prompt. */
   prompt: ConstructorParameters<typeof PermissionBroker>[0]["prompt"];
+  /** An extension tried something it never asked for. */
+  undeclared: ConstructorParameters<typeof PermissionBroker>[0]["undeclared"];
   /** An extension's state, error or activity changed. */
   changed(): void;
 }
@@ -74,6 +77,7 @@ export class ExtensionRuntime {
       isBuiltIn: (id) => !!this.host.records.find((r) => r.id === id && r.builtIn && !r.workspace),
       save: (id, key, answer) => app.saveGrant(id, key, answer),
       prompt: app.prompt,
+      undeclared: app.undeclared,
       changed: () => app.changed(),
     });
     this.host = new ExtensionHost({
@@ -116,12 +120,21 @@ export class ExtensionRuntime {
   declare(): void {
     this.app.statusItems.declare(this.host.on().flatMap((m) => m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id }))));
     for (const m of this.host.on()) {
-      for (const c of m.contributes.commands) this.app.commands.register({ id: c.command, title: c.title, run: () => this.runCommand(c.command) });
+      for (const c of m.contributes.commands)
+        this.app.commands.register({
+          id: c.command,
+          title: c.title,
+          run: () => {
+            this.broker.cause(m.id, { kind: "command", title: c.title });
+            return this.runCommand(c.command);
+          },
+        });
       for (const view of Object.values(m.contributes.views).flat()) {
         const declared = {
           id: view.id,
           title: view.name,
           render: async (el: HTMLElement) => {
+            this.broker.cause(m.id, { kind: "view", name: view.name });
             await this.activateFor(`onView:${view.id}`, (x) => Object.values(x.contributes.views).flat().some((v) => v.id === view.id));
             const renderer = this.renderers.get(view.id);
             if (renderer) await renderer.render(el);
@@ -138,6 +151,7 @@ export class ExtensionRuntime {
 
   /** Start the extensions that start with the app. */
   start(): Promise<void> {
+    for (const m of this.host.on()) if (m.activationEvents.includes("onStartup")) this.broker.cause(m.id, { kind: "startup" });
     return this.host.fire("onStartup");
   }
 
@@ -149,6 +163,11 @@ export class ExtensionRuntime {
   /** Tell sandboxed extensions something happened. */
   broadcast(name: "saved" | "focus", arg: FilePath | null): void {
     for (const host of this.sandboxes.values()) host.event(name, arg);
+  }
+
+  /** You did something any extension may act on (switched to a note): their asks just after say so. */
+  youDid(trigger: Trigger): void {
+    for (const m of this.host.on()) this.broker.cause(m.id, trigger);
   }
 
   /** Settings changed: sandboxed extensions get their own section's new values. */
@@ -192,16 +211,10 @@ export class ExtensionRuntime {
         return api.writeAs(m.id, path, text, base);
       },
       list: async () => {
-        // Each declared scope is asked about as a whole; files in the ones allowed are listed.
-        const allowed: string[] = [];
-        for (const scope of m.permissions["files:read"]?.paths ?? []) {
-          try {
-            await check({ kind: "files:read", scope });
-            allowed.push(scope);
-          } catch {
-            // Not allowed: its files aren't listed.
-          }
-        }
+        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
+        const scopes = m.permissions["files:read"]?.paths ?? [];
+        const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
+        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
         return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
       },
       fetch: async (url, init) => {
