@@ -1,9 +1,12 @@
 // Task edits in the editor, and what the editor offers on a task line. An edit is the task line
 // rewritten by the token writer, as a transaction, so it lands in the undo history like typing does.
+// Phrases quick-add would read ("tomorrow", "every week") are only marked on the cursor's task line;
+// Tab or a click turns them into tokens.
 // No DOM here: the widgets that draw these are in widgets.ts.
 import { syntaxTree } from "@codemirror/language";
 import { StateField, type EditorState, type TransactionSpec } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet, type WidgetType } from "@codemirror/view";
+import { parseQuickAdd, type QuickKind } from "./quickadd.ts";
 import { editTaskLine, localDate, parseTask, patchProblem, TASK_LINE, type TaskPatch } from "./tasks.ts";
 
 /**
@@ -71,4 +74,57 @@ export function taskTools(widget: (missing: HintField[]) => WidgetType) {
     update: (deco, tr) => (tr.docChanged || tr.selection || tr.startState.readOnly !== tr.state.readOnly ? build(tr.state) : deco),
     provide: (f) => EditorView.decorations.from(f),
   });
+}
+
+/**
+ * The phrases quick-add would read on the cursor's task line ("tomorrow", "every week"), where they
+ * are in the document. They're only marked (a dotted underline): nothing changes until Tab or a
+ * click turns them into tokens (convertPhrases). Null off a task line, or in code.
+ */
+export function phrasesAt(state: EditorState, today: string): { line: number; phrases: Array<{ from: number; to: number; kind: QuickKind; token: string }> } | null {
+  const line = state.doc.lineAt(state.selection.main.head);
+  const m = line.text.match(TASK_LINE);
+  if (!m || state.readOnly || !inTaskText(state, line.to)) return null;
+  const at = line.to - m[4].length;
+  const q = parseQuickAdd(m[4], today, [], { targets: false });
+  return q.spans.length ? { line: line.number, phrases: q.spans.map((s) => ({ from: at + s.from, to: at + s.to, kind: s.kind, token: s.token })) } : null;
+}
+
+/** The dotted underline under the cursor's task line's phrases, titled with what each would become. */
+export function taskPhrases(today: () => string = () => localDate(Date.now())) {
+  const build = (state: EditorState): DecorationSet => {
+    const at = phrasesAt(state, today());
+    return at ? Decoration.set(at.phrases.map((p) => Decoration.mark({ class: `cm-phrase is-${p.kind}`, attributes: { title: `Tab or click: ${p.token}` } }).range(p.from, p.to))) : Decoration.none;
+  };
+  return StateField.define<DecorationSet>({
+    create: build,
+    update: (deco, tr) => (tr.docChanged || tr.selection || tr.startState.readOnly !== tr.state.readOnly ? build(tr.state) : deco),
+    provide: (f) => EditorView.decorations.from(f),
+  });
+}
+
+/**
+ * What Tab does on a task line with phrases: with the cursor in one, or just after it (a space
+ * after counts), it turns the line's phrases into tokens. Null anywhere else, so Tab does what it would.
+ */
+export function phraseTab(state: EditorState, today: string): TransactionSpec | null {
+  const at = phrasesAt(state, today);
+  const head = state.selection.main.head;
+  const touching = at?.phrases.some((p) => (head > p.from && head <= p.to) || (head === p.to + 1 && state.sliceDoc(p.to, head) === " "));
+  return at && touching && state.selection.main.empty ? convertPhrases(state, at.line, today) : null;
+}
+
+/**
+ * Turn the phrases on task line `n` into tokens (just `only`, the one clicked, if given), as one
+ * transaction: the checkbox, its indent and the rest of the line stay. Null if there's nothing to turn.
+ */
+export function convertPhrases(state: EditorState, n: number, today: string, only?: string): TransactionSpec | null {
+  const line = state.doc.line(n);
+  const m = line.text.match(TASK_LINE);
+  if (!m || !inTaskText(state, line.to)) return null;
+  const read = parseQuickAdd(m[4], today, [], { targets: false });
+  const keep = only === undefined ? [] : read.spans.map((s) => m[4].slice(s.from, s.to)).filter((p) => p.toLowerCase() !== only.toLowerCase());
+  if (!read.spans.length || keep.length === read.spans.length) return null;
+  const text = parseQuickAdd(m[4], today, keep, { targets: false }).line.match(TASK_LINE)![4];
+  return { changes: { from: line.to - m[4].length, to: line.to, insert: text }, userEvent: "input.task" };
 }

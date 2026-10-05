@@ -2,13 +2,16 @@
 // chip where it's written (its raw text while the cursor touches it), and a done task muted and struck
 // through. The cursor's task line also gets its tools at the end: a ⚙
 // that opens the task's field menu, and a faint hint of the fields it doesn't have yet
-// (`due · repeat · @ · # · !`), each word opening that field's editor. Every change goes through
-// taskLineEdit, so one undo takes it back.
-import { Decoration, EditorView, WidgetType } from "@codemirror/view";
+// (`due · repeat · @ · # · !`), each word opening that field's editor. Phrases quick-add would read
+// ("tomorrow", "every week") are underlined there; Tab right after one, or a click on one, makes them
+// tokens. Every change is one transaction, so one undo takes it back.
+import { completionStatus } from "@codemirror/autocomplete";
+import { Prec } from "@codemirror/state";
+import { Decoration, EditorView, keymap, WidgetType } from "@codemirror/view";
 import { livePreview, type Preview } from "common-ink/live-preview";
 import { tokenChip, type ChipField } from "./chips.ts";
 import { el, icon } from "./dom.ts";
-import { HINTS, isTaskLine, taskLineEdit, taskTools, taskToolsAt, type HintField } from "./edit.ts";
+import { convertPhrases, HINTS, isTaskLine, phrasesAt, phraseTab, taskLineEdit, taskPhrases, taskTools, taskToolsAt, type HintField } from "./edit.ts";
 import { openChipEditor, openFieldEditor, openTaskMenu, type ChipContext } from "./editors.ts";
 import { tagsInLine } from "./tags.ts";
 import { lineTokens, parseTask, TASK_LINE } from "./tasks.ts";
@@ -217,7 +220,54 @@ export function openMenuAt(view: EditorView, env: TaskEnv): boolean {
   return true;
 }
 
-/** The tasks live preview and line tools for note editors. */
+/** Tab right after a phrase on a task line makes the line's phrases tokens (not while a suggestion list is open), before Lists' Tab indents. */
+const phraseKey = (env: TaskEnv) =>
+  Prec.highest(
+    keymap.of([
+      {
+        key: "Tab",
+        run: (view) => {
+          if (completionStatus(view.state) === "active") return false;
+          const spec = phraseTab(view.state, env.today());
+          return !!spec && (view.dispatch(spec), true);
+        },
+      },
+    ]),
+  );
+
+/** A click on an underlined phrase makes just that one a token; a drag across it only selects. */
+function phraseClick(env: TaskEnv) {
+  /** The phrase a press started on, if it was underlined then. */
+  let pressed: { line: number; text: string } | null = null;
+  return EditorView.domEventHandlers({
+    mousedown(e, view) {
+      pressed = null;
+      const mark = (e.target as HTMLElement).closest?.(".cm-phrase");
+      if (!mark || e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return false;
+      const pos = view.posAtDOM(mark);
+      const at = phrasesAt(view.state, env.today());
+      const p = at?.phrases.find((x) => pos >= x.from && pos < x.to);
+      if (at && p) pressed = { line: at.line, text: view.state.sliceDoc(p.from, p.to) };
+      return false;
+    },
+    click(_e, view) {
+      const p = pressed;
+      pressed = null;
+      if (!p || !view.state.selection.main.empty) return false;
+      const spec = convertPhrases(view.state, p.line, env.today(), p.text);
+      if (spec) view.dispatch(spec);
+      return false;
+    },
+  });
+}
+
+/** The tasks live preview, line tools and phrases for note editors. */
 export function tasksPreview(env: TaskEnv) {
-  return [livePreview((line, view) => (isTaskLine(view.state, line.from) ? taskPreviews(line.text, line.from, env) : [])), taskTools((missing) => new ToolsWidget(missing, env))];
+  return [
+    livePreview((line, view) => (isTaskLine(view.state, line.from) ? taskPreviews(line.text, line.from, env) : [])),
+    taskTools((missing) => new ToolsWidget(missing, env)),
+    taskPhrases(env.today),
+    phraseKey(env),
+    phraseClick(env),
+  ];
 }

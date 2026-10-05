@@ -6,7 +6,8 @@ import type { FilePath, Revision } from "../../../../worker/src/files.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
 import { today } from "./chips.ts";
 import { tagsInLine } from "./tags.ts";
-import { editTaskLine, parseTask, patchProblem, tasksIn, withTasksAdded, type Task, type TaskPatch } from "./tasks.ts";
+import { parseQuickAdd } from "./quickadd.ts";
+import { editTaskLine, parseTask, patchProblem, TASK_LINE, tasksIn, withTasksAdded, type Task, type TaskPatch } from "./tasks.ts";
 
 interface Note {
   revision: Revision;
@@ -84,6 +85,26 @@ export class TaskStore {
     const { file, lines, at } = await this.find(now);
     lines[at] = was.raw;
     await this.save(now.path, lines.join("\n"), file.revision);
+  }
+
+  /**
+   * Add a task typed in words (the quick-add bar) to a note: one named with `→ [[Note]]` or `named`
+   * (it must exist), `path` (made if it's missing), as one change. A daily note (`daily`) gets a
+   * `## Tasks` section for it if it has none, and is made with its date as its title.
+   */
+  async add(text: string, ignore: string[], to: { named: string | null; path: string | null; daily?: boolean }): Promise<{ path: FilePath; line: number; text: string }> {
+    const q = parseQuickAdd(text, today(), ignore);
+    if (!q.words) throw new Error("Say what the task is: once its dates and repeats are taken out, there are no words left");
+    const name = q.target ?? to.named;
+    const path = name ? this.ctx.util.notePathFor(name) : (to.path as FilePath | null);
+    if (!path) throw new Error(`"${name ?? to.path}" isn't a note's name`);
+    const file = await this.ctx.files.read(path);
+    if (name && file.revision === 0) throw new Error(`There's no note named ${name}`);
+    const title = path.replace(/\.md$/, "").split("/").pop()!;
+    const before = file.revision === 0 ? `# ${title}\n` : file.text;
+    const added = withTasksAdded(before, [q.line], !name && !!to.daily);
+    await this.save(path, added.content, file.revision);
+    return { path, line: added.line, text: q.line.match(TASK_LINE)![4] };
   }
 
   /** Move a task to the end of another note's Tasks section (or the note's end), and out of its own. */

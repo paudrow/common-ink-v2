@@ -1,0 +1,15 @@
+{
+  "pr": 0,
+  "title": "Quick-add: a task the way you'd say it",
+  "steps": [
+    "Open any note and press ⌘⇧. (Ctrl+Shift+. off a Mac). It's the character, wherever your layout puts it: on Dvorak it's the key that types \".\". The quick-add bar opens over the note, in Vim's insert mode if you use Vim.",
+    "Type \"Pay the gas bill every month on the 1st #home\". \"every month on the 1st\" lights up, and the chips under the field show what will be written: due the 1st, Monthly. Click the lit phrase to keep it as words instead.",
+    "Press Enter: the task goes to today's daily note, Journal/<today>, under ## Tasks (made if it's missing), as one change by you, and a notice offers to open it. The words were read into tokens: `- [ ] Pay the gas bill due:… rec:1st #home`.",
+    "Open it again from a note and press Tab: the target switches to that note. `→ [[Shopping]]` in the words sends it there instead. Esc clears what's typed; on an empty bar it closes (with Vim, Esc first goes to normal mode).",
+    "Set Tasks' Inbox in settings (⌘,) to Inbox: tasks now go to the Inbox note.",
+    "Other phrases: tomorrow, next fri, in 3 days, oct 12, starting monday, every weekday, every other week, the last friday of every month, every 2 weeks after it's done, until dec 1, for 6 months, 10 times.",
+    "In a note, on a task line, type \" tomorrow\": it's underlined. Tab right after it (or a click on it) makes it `due:…`; one undo takes it back. Tab elsewhere indents as before.",
+    "In Show tasks, the same bar sits at the top, and clicking a task's words edits them in the same input: phrases typed there become tokens.",
+    "⌘⇧P lists it as Add a task, with its shortcut, and you can rebind it in your keybindings like any other command."
+  ]
+}
