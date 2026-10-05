@@ -195,7 +195,7 @@ test("an edit Google refuses goes back to how Google has it, says why, and doesn
   await op(store, "sync_calendar", {});
   fake.refusing.set("dentist", "Invalid value for: summary");
   const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
-  const why = "Google Calendar refused the change to Dentist (Dr Lee): Invalid value for: summary. It's back as Google has it, and the change is in its history.";
+  const why = "Google Calendar refused the change to Dentist (Dr Lee): Invalid value for: summary. It's back as it was, and the change is in its history.";
   assert.deepEqual(refused, { ok: false, error: why });
   assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist");
   await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });

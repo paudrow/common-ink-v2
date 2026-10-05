@@ -3,7 +3,7 @@
 // the app sees calendar.ts's events. Writes are PATCHes of the fields Common Ink models, so what it
 // doesn't (guests, reminders, video calls) is left as Google has it.
 import { fullWall, wallTimeAt, type Calendar, type CalendarEvent, type EventFields, type RecordOp } from "./calendar.ts";
-import { Conflict, ReconnectNeeded, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import type { GoogleConfig } from "./google.ts";
 
 /** An event as the Calendar API sends and takes it (the fields Common Ink uses). */
@@ -110,6 +110,21 @@ export function eventToGoogle(e: CalendarEvent, calendarZone: string | undefined
   };
 }
 
+/** Reasons Google gives a 403 for that pass: too many requests for now. */
+const BUSY = new Set(["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded"]);
+
+/**
+ * Why a push failed, as an error flush can act on: a Refusal when Google won't take the change as
+ * it is (a 4xx), else an error to try again later (5xx, too many requests).
+ */
+async function failure(res: Response, doing: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as { error?: { message?: string; errors?: Array<{ reason?: string }> } } | null;
+  const message = body?.error?.message;
+  const busy = res.status === 408 || res.status === 429 || (res.status === 403 && BUSY.has(body?.error?.errors?.[0]?.reason ?? ""));
+  if (res.status >= 400 && res.status < 500 && !busy) return new Refusal(message || `Google answered ${res.status}`);
+  return new Error(`Google Calendar answered ${res.status} ${doing}${message ? `: ${message}` : ""}`);
+}
+
 export class GoogleCalendar implements Adapter {
   readonly source = "google";
   readonly title = "Google Calendar";
@@ -168,7 +183,7 @@ export class GoogleCalendar implements Adapter {
       const res = await this.call("DELETE", this.path(e.calendar, e.id), { etag });
       if (res.status === 412) throw await this.conflict(e);
       // Gone already is what we wanted.
-      if (!res.ok && res.status !== 404 && res.status !== 410) throw new Error(`Google Calendar answered ${res.status} deleting ${e.title || e.id}`);
+      if (!res.ok && res.status !== 404 && res.status !== 410) throw await failure(res, `deleting ${e.title || e.id}`);
       return {};
     }
     const body = eventToGoogle(e, this.zones.get(e.calendar));
@@ -176,7 +191,7 @@ export class GoogleCalendar implements Adapter {
     const res = op.created && e.series === undefined ? await this.call("POST", this.path(e.calendar), { body: { ...body, id: e.id } }) : await this.call("PATCH", this.path(e.calendar, e.id), { body, etag });
     if (res.status === 412) throw await this.conflict(e);
     if (res.status === 409) return this.push({ op: "put", event: e, created: false }, null, calendar);
-    if (!res.ok) throw new Error(`Google Calendar answered ${res.status} saving ${e.title || e.id}: ${((await res.json().catch(() => null)) as { error?: { message?: string } } | null)?.error?.message ?? ""}`.trim());
+    if (!res.ok) throw await failure(res, `saving ${e.title || e.id}`);
     return { etag: ((await res.json()) as GoogleEvent).etag };
   }
 

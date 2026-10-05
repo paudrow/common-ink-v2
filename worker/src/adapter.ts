@@ -6,6 +6,9 @@ import type { SourceId } from "./records.ts";
 /** An adapter couldn't push or sync because the source wants you to sign in again. */
 export class ReconnectNeeded extends Error {}
 
+/** The source won't take a change as it is (an invalid field, a rule of the calendar's), so sending it again won't help. */
+export class Refusal extends Error {}
+
 /** What a source says about one pushed edit. */
 export interface Pushed {
   /** The source's version tag for the record, for its next edit. */
@@ -16,7 +19,7 @@ export interface Pushed {
 export interface Adapter {
   source: SourceId;
   title: string;
-  /** Send one record's change to the source. Throws ReconnectNeeded, a Conflict, or any error to keep it queued. */
+  /** Send one record's change to the source. Throws ReconnectNeeded, a Conflict, a Refusal, or any other error to keep it queued. */
   push(op: RecordOp, etag: string | null, calendar?: Calendar): Promise<Pushed>;
   /** Bring the source's own changes in, through `io`. A source with nothing behind it has none. */
   sync?(io: SyncIO): Promise<void>;

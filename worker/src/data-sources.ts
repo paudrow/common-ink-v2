@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, type Adapter, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -25,7 +25,7 @@ export interface SourceState {
   events: number;
   /** Edits made here that the source hasn't taken yet. */
   pending: number;
-  /** The last time an edit here and one in the source changed the same thing, and which side won. */
+  /** The last edit here the source didn't take as it was: changed there too (and which side won), or refused. */
   conflict?: string;
 }
 
@@ -78,7 +78,7 @@ interface StateRow {
   lastSync?: number;
   error?: string;
   reconnect?: boolean;
-  /** The last time an edit here and one in the source changed the same thing, in words. */
+  /** The last edit here the source didn't take as it was, in words. */
   conflict?: string;
   /** Sync tokens, by calendar. */
   tokens?: Record<string, string>;
@@ -86,6 +86,10 @@ interface StateRow {
 
 export class DataSources {
   private adapters: Partial<Record<SourceId, Adapter>>;
+  /** The flush running now: flushes take turns, so no edit goes out twice. */
+  private flushing: Promise<unknown> = Promise.resolve();
+  /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
+  private refusals = new Map<number, string>();
 
   constructor(
     private db: Db,
@@ -234,7 +238,7 @@ export class DataSources {
     }
   }
 
-  private async planned(edit: EventEdit, author: Author, zone: string): Promise<EditResult> {
+  private async planned(edit: EventEdit, author: Author, zone: string): Promise<EditResult | Refused> {
     if (edit.op === "create") {
       const source = this.calendarSource;
       const calendars = this.calendars();
@@ -266,7 +270,7 @@ export class DataSources {
   }
 
   /** Write ops as `author`'s changes and queue them for the source, in one transaction; then push what's queued. */
-  private async apply(source: SourceId, ops: RecordOp[], author: Author, address: string, undoes?: Revision): Promise<EditResult> {
+  private async apply(source: SourceId, ops: RecordOp[], author: Author, address: string, undoes?: Revision): Promise<EditResult | Refused> {
     const writes: Array<{ op: RecordOp; write: Write; before: string | null }> = [];
     for (const op of ops) {
       const path = recordPath({ source, kind: "event", collection: op.event.calendar, id: op.event.id });
@@ -277,15 +281,20 @@ export class DataSources {
       const write: Write = op.op === "put" ? { path, text: recordText(op.event), base, author } : { path, text: "", base, author, delete: true };
       writes.push({ op, write: undoes !== undefined && ops.length === 1 ? { ...write, undoes } : write, before: current?.text ?? null });
     }
+    const queued: number[] = [];
     this.files.writeAll(
       writes.map((w) => w.write),
       () => {
         for (const { op, write, before } of writes) {
-          this.db.run("INSERT INTO outbox(source, path, op, author, time, base) VALUES (?, ?, ?, ?, ?, ?)", source, write.path, JSON.stringify(op), authorKey(author), this.now(), before);
+          const [{ seq }] = this.db.all<{ seq: number }>("INSERT INTO outbox(source, path, op, author, time, base) VALUES (?, ?, ?, ?, ?, ?) RETURNING seq", source, write.path, JSON.stringify(op), authorKey(author), this.now(), before);
+          queued.push(seq);
         }
       },
     );
     const error = await this.flush(source);
+    const refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
+    for (const seq of queued) this.refusals.delete(seq);
+    if (refusal) return { status: "refused", error: refusal };
     return {
       status: error ? "queued" : "saved",
       address,
@@ -296,12 +305,19 @@ export class DataSources {
   }
 
   /**
-   * Push queued edits to their source, oldest first, stopping at the first that fails, since later
-   * ones may build on it. Returns why it stopped, or null once the outbox is empty. Running it again
-   * after a crash sends what's left; an edit the source took but we didn't hear back about is sent
-   * again, which writes the same record.
+   * Push queued edits to their source, oldest first, stopping at the first that fails for now, since
+   * later ones may build on it. An edit the source refuses is dropped (see refuse) so the rest go on.
+   * Returns why it stopped, or null once the outbox is empty. Running it again after a crash sends
+   * what's left; an edit the source took but we didn't hear back about is sent again, which writes the
+   * same record.
    */
-  async flush(source: SourceId): Promise<string | null> {
+  flush(source: SourceId): Promise<string | null> {
+    const run = this.flushing.then(() => this.flushQueued(source));
+    this.flushing = run.catch(() => undefined);
+    return run;
+  }
+
+  private async flushQueued(source: SourceId): Promise<string | null> {
     const adapter = this.adapters[source];
     for (;;) {
       const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
@@ -322,6 +338,10 @@ export class DataSources {
           this.resolve(source, row, op, err);
           continue;
         }
+        if (err instanceof Refusal) {
+          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
+          continue;
+        }
         const message = (err as Error).message;
         this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ? WHERE seq = ?", message, row.seq);
         this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: message });
@@ -331,9 +351,10 @@ export class DataSources {
   }
 
   /**
-   * The source changed a record while our edit of it waited. Merge the two, field by field from what
-   * the edit started from (the source's side wins where both changed one thing), write the merge as
-   * the sync's change, and send it again against the source's version.
+   * The source changed a record while our edits of it waited. Merge each, field by field from what it
+   * started from, onto the source's version and the edits before it (the source's side wins where
+   * both changed one thing); write the result as the sync's change, and send them again against the
+   * source's version.
    */
   private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
     const bookkeeping = () => {
@@ -342,13 +363,43 @@ export class DataSources {
       else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
     };
     if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
-    const { event, lost } = mergeEvents(row.base ? readEvent(row.base) : null, op.event, conflict.remote);
+    const queued = this.db.all<{ seq: number; op: string; base: string | null }>("SELECT seq, op, base FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", row.path, row.seq);
+    let theirs = conflict.remote;
+    const lost = new Set<string>();
+    const rebased: Array<{ seq: number; op: RecordOp; base: string }> = [];
+    for (const r of queued) {
+      const o = JSON.parse(r.op) as RecordOp;
+      // A delete waiting after them wins, whatever they merge to.
+      if (o.op === "delete") break;
+      const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
+      for (const field of merged.lost) lost.add(field);
+      rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
+      theirs = merged.event;
+    }
     const current = this.files.read(row.path as FilePath);
-    this.files.writeAll([{ path: row.path as FilePath, text: recordText(event), base: current?.revision ?? 0, author: SYNC_AUTHOR[source] }], () => {
+    const text = recordText(theirs);
+    const write = rebased.length === queued.length && current?.text !== text ? [{ path: row.path as FilePath, text, base: current?.revision ?? 0, author: SYNC_AUTHOR[source] }] : [];
+    this.files.writeAll(write, () => {
       bookkeeping();
-      this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify({ ...op, event, created: false }), recordText(conflict.remote!), row.seq);
+      for (const r of rebased) this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify(r.op), r.base, r.seq);
     });
-    if (lost.length) this.setState(source, { conflict: `${event.title || "An event"}: Google's ${lost.join(" and ")} replaced yours, which is still in its history` });
+    if (lost.size) this.setState(source, { conflict: `${theirs.title || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
+  }
+
+  /**
+   * The source won't take an edit. Drop it and the record's edits queued after it (they build on it,
+   * and are sent whole), and put the record back as it was before them, as the sync's change: what the
+   * source has. History keeps the edits. Returns why, in words.
+   */
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string): string {
+    const path = row.path as FilePath;
+    const current = this.files.read(path);
+    const author = SYNC_AUTHOR[source];
+    const restore: Write[] = row.base === null ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
+    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. It's back as it was, and the change is in its history.`;
+    this.setState(source, { conflict: message, error: undefined });
+    return message;
   }
 
   private setEtag(path: string, etag: string) {
