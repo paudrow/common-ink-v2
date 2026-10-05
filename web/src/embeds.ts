@@ -11,7 +11,8 @@
 // above it offering to install it. A link alone on its own line is drawn too, by the extension whose
 // urlEmbeds pattern matches it (a video, a post, a link card). What an embed draws is drawn once and
 // kept (lives.ts): while the cursor shows its markdown it's hidden, not removed, so a frame never
-// reloads and shows again as it was.
+// reloads and shows again as it was. A link's frame stays in view under its raw line, so a video
+// plays on while its link is edited.
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
@@ -19,7 +20,7 @@ import type { EmbedContribution, EmbedSyntax } from "../../worker/src/extensions
 import type { FilePath } from "../../worker/src/files.ts";
 import { attrsRecord, directiveText, parseAttrs, serializeAttrs, withValues, type Attr } from "./directives.ts";
 import { embedForm } from "./embed-form.ts";
-import { blockHeight, blockPreview, type BlockPreview } from "./live-preview.ts";
+import { blockHeight, blockPreview, previewEnabled, type BlockPreview } from "./live-preview.ts";
 import { dropLives, livesOf } from "./lives.ts";
 
 /** One embed in a note, as its extension gets it. */
@@ -416,6 +417,17 @@ function noteBars(state: EditorState, host: EmbedHost): DecorationSet {
 }
 
 /**
+ * The links whose line the cursor or a selection touches, which show their raw text: each one's frame
+ * goes in a slot just under its line instead of over it, so a video keeps playing while its link is
+ * edited, and nothing reloads when the cursor moves on.
+ */
+function linksUnderCursor(state: EditorState, host: EmbedHost): DecorationSet {
+  if (!state.facet(previewEnabled)) return Decoration.none;
+  const touched = findUrlEmbeds(state, host).filter((u) => state.selection.ranges.some((r) => r.from <= u.to && r.to >= u.from));
+  return Decoration.set(touched.map((u) => Decoration.widget({ widget: new UrlSlot(u.url, u.id, u.n, host), block: true, side: 1 }).range(u.to)));
+}
+
+/**
  * Keep embeds' boxes alive (lives.ts): place each over its slot after every update, before the page
  * paints, and let go of a box once its markdown is gone from the note (once the whole note is parsed,
  * so one not parsed yet isn't taken for gone).
@@ -453,6 +465,12 @@ export function embeds(host: EmbedHost) {
     }),
     blockPreview((state): BlockPreview[] => findEmbeds(state, host.contributions()).found.map(({ from, to, embed }) => ({ from, to, widget: new EmbedSlot(embed, host) }))),
     blockPreview((state): BlockPreview[] => findUrlEmbeds(state, host).map(({ from, to, url, id, n }) => ({ from, to, widget: new UrlSlot(url, id, n, host) }))),
+    // A link whose line the cursor is on shows its raw text, and its frame stays, just under it.
+    StateField.define<DecorationSet>({
+      create: (state) => linksUnderCursor(state, host),
+      update: (deco, tr) => (tr.docChanged || tr.selection || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? linksUnderCursor(tr.state, host) : deco),
+      provide: (field) => EditorView.decorations.from(field),
+    }),
     keepAlive(host),
     EditorView.theme({
       ".cm-embed": { position: "relative", padding: "0.6em 0 0.25em", cursor: "text" },
