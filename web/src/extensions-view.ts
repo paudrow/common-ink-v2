@@ -4,7 +4,8 @@
 // built-in into the workspace, and Revert or Uninstall deletes the workspace's copy. Each is an
 // ordinary change, and each applies after a reload.
 import type { EditorView } from "@codemirror/view";
-import { PERMISSION_KINDS, type ExtensionManifest } from "../../worker/src/extensions.ts";
+import { needsScope, PERMISSION_KINDS, type ExtensionManifest } from "../../worker/src/extensions.ts";
+import type { Answer } from "../../worker/src/permissions.ts";
 import { isSelfContained, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 
 export interface ExtensionsViewDeps {
@@ -22,6 +23,15 @@ export interface ExtensionsViewDeps {
   /** Delete the workspace's files for it: a customized built-in goes back to the built-in, a workspace extension goes. */
   remove(record: ExtensionRecord): Promise<void>;
   reload(safe?: boolean): void;
+  /** Your answer kept for one of its declared permissions, by key ("network:api.weather.gov"). */
+  answer(record: ExtensionRecord, key: string): Answer | undefined;
+  /** Keep an answer, or forget it (undefined) so it asks again. */
+  setAnswer(record: ExtensionRecord, key: string, answer: Answer | undefined): Promise<void>;
+  /** Whether you trust it to run in the page (workspace extensions only). */
+  isTrusted(record: ExtensionRecord): boolean;
+  setTrusted(record: ExtensionRecord, trusted: boolean): Promise<void>;
+  install(): Promise<void>;
+  showActivity(): void;
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string | false | null | undefined)[]): T {
@@ -72,6 +82,16 @@ export function permissionLines(m: ExtensionManifest): Array<[string, string]> {
   });
 }
 
+/** Each declared permission's key, as answers are kept: one per scope. Exported for tests. */
+export function permissionKeys(m: ExtensionManifest): Array<{ key: string; why: string }> {
+  return PERMISSION_KINDS.flatMap((kind) => {
+    const p = m.permissions[kind];
+    if (!p) return [];
+    if (!needsScope(kind)) return [{ key: kind, why: p.why }];
+    return (p.hosts ?? p.paths ?? p.keys ?? []).map((scope) => ({ key: `${kind}:${scope}`, why: p.why }));
+  });
+}
+
 export function extensionsView(deps: ExtensionsViewDeps) {
   const view = {
     id: "extensions",
@@ -93,6 +113,12 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         reload.size
           ? el("p", { className: "banner" }, "Extension changes apply after reload. ", focusable(el("button", { textContent: "Reload", onclick: () => deps.reload() }), "reload"))
           : "",
+        el(
+          "div",
+          { className: "extension-actions top" },
+          focusable(el("button", { textContent: "Install from URL…", onclick: () => void deps.install() }), "install"),
+          focusable(el("button", { textContent: "Activity", title: "What extensions have reached and asked for this session", onclick: () => deps.showActivity() }), "activity"),
+        ),
         ...deps.records().map((r) => row(r, reload.has(r.id))),
       );
       const back = focusId && root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focusId)}"]`);
@@ -115,9 +141,20 @@ export function extensionsView(deps: ExtensionsViewDeps) {
           : el("button", { textContent: "Customize", disabled: true, title: `${name} uses the app's own modules, so a copy of it can't run on its own yet` })
         : null,
       r.workspace ? focusable(el("button", { textContent: b ? "Revert to built-in" : "Uninstall", title: "Delete the workspace's files for it, as changes undo can take back", onclick: () => void deps.remove(r) }), `remove:${id}`) : null,
+      r.workspace
+        ? focusable(
+            el("button", {
+              textContent: deps.isTrusted(r) ? "Stop trusting" : "Trust…",
+              title: deps.isTrusted(r) ? "Run it sandboxed again, after a reload" : "Let it run in the app's page, with access to note editors",
+              onclick: () => void deps.setTrusted(r, !deps.isTrusted(r)),
+            }),
+            `trust:${id}`,
+          )
+        : null,
     ];
     const adds = contributionLines(r.manifest);
-    const asks = permissionLines(r.manifest);
+    const asks = permissionKeys(r.manifest);
+    const builtIn = !!b && !r.workspace;
     return el(
       "section",
       { className: `extension state-${r.state}` },
@@ -133,7 +170,12 @@ export function extensionsView(deps: ExtensionsViewDeps) {
       description && el("p", { className: "extension-desc", textContent: description }),
       adds.length ? el("dl", { className: "extension-adds" }, ...adds.flatMap(([label, text]) => [el("dt", { textContent: label }), el("dd", { textContent: text })])) : null,
       asks.length
-        ? el("dl", { className: "extension-adds extension-asks" }, el("dt", { className: "full", textContent: "May ask to" }), ...asks.flatMap(([what, why]) => [el("dt", { textContent: what }), el("dd", { textContent: why })]))
+        ? el(
+            "dl",
+            { className: "extension-adds extension-asks" },
+            el("dt", { className: "full", textContent: builtIn ? "Uses (allowed with the app; you can deny any)" : "May ask to" }),
+            ...asks.flatMap(({ key, why }) => [el("dt", { textContent: key }), el("dd", {}, why, " ", answerPicker(r, key, builtIn))]),
+          )
         : null,
       r.error &&
         el(
@@ -145,6 +187,23 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         ),
       el("div", { className: "extension-actions" }, ...actions),
     );
+  }
+
+  /** Your answer for one permission: Ask (none kept), Allow or Deny. */
+  function answerPicker(r: ExtensionRecord, key: string, builtIn: boolean): HTMLElement {
+    const now = deps.answer(r, key);
+    const pick = focusable(
+      el<HTMLSelectElement>(
+        "select",
+        { className: "answer", ariaLabel: `${r.manifest.name}: ${key}` },
+        el("option", { value: "", textContent: builtIn ? "Allowed" : "Ask", selected: !now }),
+        el("option", { value: "allow", textContent: "Allow", selected: now === "allow" }),
+        el("option", { value: "deny", textContent: "Deny", selected: now === "deny" }),
+      ),
+      `answer:${r.id}:${key}`,
+    );
+    pick.addEventListener("change", () => void deps.setAnswer(r, key, (pick.value || undefined) as Answer | undefined));
+    return pick;
   }
 
   return view;

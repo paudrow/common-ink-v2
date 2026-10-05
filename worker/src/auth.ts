@@ -56,7 +56,9 @@ export async function identify(req: Request, config: AuthConfig, keys = accessKe
  * Who a change is by. A person is the author, unless their request names the agent working for them
  * (the X-Common-Ink-Agent header, which the CLI and MCP send). A service token is always an agent.
  */
-export function authorFor(who: Identity, agent: string | null): Author {
+export function authorFor(who: Identity, agent: string | null, extension: string | null = null): Author {
+  // An extension acting in the app, for the person using it. Its id is checked like any extension id.
+  if (extension && who.kind !== "service" && /^[a-zA-Z0-9][\w.-]{0,63}$/.test(extension)) return { kind: "extension", id: extension, by: who.email };
   const name = agent?.trim().slice(0, 60) || null;
   if (who.kind === "service") return { kind: "agent", name: name ?? who.id };
   return name ? { kind: "agent", name, by: who.email } : { kind: "user", email: who.email };

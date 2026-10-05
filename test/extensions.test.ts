@@ -28,6 +28,7 @@ function host() {
   const h = new ExtensionHost({
     context: (record, failed) => ({ extension: record.manifest, failed }) as unknown as ExtensionContext,
     load: async () => ({}),
+    sandbox: async (record) => void started.push(`${record.id} (sandboxed)`),
     changed: () => {},
   });
   const starts = (id: string): ExtensionModule => ({ activate: () => void started.push(id) });
@@ -159,6 +160,16 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   );
 });
 
+test("a workspace extension runs sandboxed unless you trust it; built-ins run in the page", async () => {
+  const files = summaries([".common-ink/extensions/mine/extension.json", ".common-ink/extensions/mine/index.js", ".common-ink/extensions/yours/extension.json"]);
+  const texts = { ".common-ink/extensions/mine/extension.json": "{}", ".common-ink/extensions/yours/extension.json": "{}" };
+  const { h, started } = host();
+  await h.load([builtIn("a", { activate: () => void started.push("a") })], files, read(texts), [], false, ["yours"]);
+  assert.deepEqual(h.records.map((r) => [r.id, r.tier]), [["a", "page"], ["mine", "sandbox"], ["yours", "page"]]);
+  await h.activate(h.records[1]);
+  assert.deepEqual(started, ["mine (sandboxed)"]);
+});
+
 test("turning an extension on or off, or changing any of its files, needs a reload; nothing else does", () => {
   const b = [builtIn("history", { activate() {} })];
   const files = summaries([".common-ink/extensions/mine/extension.json", ".common-ink/extensions/mine/index.js", "Plan.md"]);
@@ -227,6 +238,8 @@ test("in the app, a declared command starts its extension the first time it runs
     vimKey: (keys: string, command: string) => ran.push(`vim ${keys} → ${command}`),
     onSaved: [],
     onFocus: [],
+    saveGrant: async () => {},
+    prompt: async () => "deny" as const,
     changed() {},
   });
   const greet: ExtensionModule = {
@@ -245,7 +258,7 @@ test("in the app, a declared command starts its extension the first time it runs
       views: { sidebar: [{ id: "greeting", name: "Greeting" }] },
     },
   };
-  await runtime.load([builtIn("greet", greet, m)], [], [], false);
+  await runtime.load([builtIn("greet", greet, m)], [], [], false, []);
   runtime.declare();
   await runtime.start();
   assert.deepEqual(ran, ["vim gH → greet.hello"], "declared, not started");

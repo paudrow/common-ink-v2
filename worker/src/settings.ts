@@ -73,6 +73,16 @@ const strings = (description: string): Declared<string[]> => ({
   check: (v): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string"),
 });
 
+/** Your answers to extensions' permission prompts: extension id, then what it asked for, then "allow" or "deny". */
+const answers: Declared<Record<string, Record<string, "allow" | "deny">>> = {
+  description: 'Your answers when extensions ask for permissions, by extension: what it asked for, like "network:api.weather.gov", and "allow" or "deny". Delete an answer to be asked again.',
+  default: {},
+  schema: { type: "object", additionalProperties: { type: "object", additionalProperties: { enum: ["allow", "deny"] } } },
+  expects: 'answers by extension, like {"weather": {"network:api.weather.gov": "allow"}}',
+  check: (v): v is Record<string, Record<string, "allow" | "deny">> =>
+    !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((a) => !!a && typeof a === "object" && !Array.isArray(a) && Object.values(a).every((x) => x === "allow" || x === "deny")),
+};
+
 export const SETTINGS = {
   "editor.vim": bool("Vim keys in the editor.", true),
   "editor.lineNumbers": bool("Line numbers beside the text.", false),
@@ -82,6 +92,11 @@ export const SETTINGS = {
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
   "extensions.disabled": { ...strings('Extensions to turn off, by id, such as "history" or "quick-open".'), reload: true as const },
+  "extensions.trusted": {
+    ...strings("Workspace extensions you trust to run in the app's page, by id. A trusted extension can change note editors and draw straight into the page, and it can get around the permissions it asks for. Everything else runs sandboxed."),
+    reload: true as const,
+  },
+  "extensions.permissions": answers,
 };
 
 export type SettingName = keyof typeof SETTINGS;

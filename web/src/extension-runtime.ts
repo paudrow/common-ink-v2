@@ -1,20 +1,25 @@
 // Extensions in the running app: what their manifests declare goes in at once (commands in the
 // command bar, keybindings, menus, views, settings sections), and each extension's code starts the
-// first time one of its activation events happens, such as its command running or its view showing.
-import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
+// first time one of its activation events happens. Trusted extensions run in the page with a context
+// object; sandboxed ones run in a host frame and call the same services over messages. Either way,
+// anything sensitive goes through the permission broker first.
 import type { ExtensionManifest, MenuId } from "../../worker/src/extensions.ts";
+import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
+import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { api } from "./api.ts";
-import type { CommandBar } from "./commandbar.ts";
+import { api, type ExtensionResponse } from "./api.ts";
+import { PermissionBroker } from "./broker.ts";
+import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
-import type { ExtensionContext, ViewRenderer } from "./extension-api.ts";
+import type { ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { ExtensionHost, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
 import type { Offline } from "./offline.ts";
 import type { Panels } from "./panels.ts";
+import { SandboxHost, Webview } from "./sandbox.ts";
 import type { Workbench } from "./workbench.ts";
 
 /** What of the app extensions reach, through their contexts. */
@@ -34,28 +39,54 @@ export interface RuntimeApp {
   vimKey(keys: string, command: string): void;
   onSaved: Array<(path: FilePath) => void>;
   onFocus: Array<(path: FilePath | null) => void>;
-  /** An extension's state or error changed. */
+  /** Keep an answer to a permission prompt in your settings. */
+  saveGrant(extension: string, key: string, answer: "allow" | "deny"): Promise<void>;
+  /** Show a permission prompt. */
+  prompt: ConstructorParameters<typeof PermissionBroker>[0]["prompt"];
+  /** An extension's state, error or activity changed. */
   changed(): void;
 }
 
+/** The services an extension reaches, each checked against its manifest and your answers first. */
+interface Services {
+  read(path: FilePath): ReturnType<Offline["read"]>;
+  write(path: FilePath, text: string, base: number): ReturnType<typeof api.writeAs>;
+  /** Files it may read, of all there are. Asks for each declared scope it needs, once. */
+  list(): Promise<FileSummary[]>;
+  fetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string }): Promise<ExtensionResponse>;
+  check(ask: Ask): Promise<void>;
+}
+
+let webviewIds = 0;
+
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
+  readonly broker: PermissionBroker;
   private handlers = new Map<string, () => unknown>();
   private renderers = new Map<string, ViewRenderer>();
   private describers: Array<(change: Change) => string | null> = [];
+  private sandboxes = new Map<string, SandboxHost>();
 
   constructor(private app: RuntimeApp) {
+    this.broker = new PermissionBroker({
+      grants: () => parseGrants(app.settings()["extensions.permissions"]),
+      isBuiltIn: (id) => !!this.host.records.find((r) => r.id === id && r.builtIn && !r.workspace),
+      save: (id, key, answer) => app.saveGrant(id, key, answer),
+      prompt: app.prompt,
+      changed: () => app.changed(),
+    });
     this.host = new ExtensionHost({
       context: (record, failed) => this.context(record, failed),
       // From the Worker, so `script-src 'self'` allows it; the version makes each change a new address.
       load: (w: WorkspaceExtension, main: string) => import(/* @vite-ignore */ `/extensions/${w.id}/${main}?v=${encodeURIComponent(w.version)}`),
+      sandbox: (record, failed) => this.startSandbox(record, failed),
       changed: () => app.changed(),
     });
   }
 
   /** Read every extension's manifest. */
-  load(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean): Promise<void> {
-    return this.host.load(builtIns, files, (path) => this.app.offline.read(path), disabled, safe);
+  load(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean, trusted: readonly string[]): Promise<void> {
+    return this.host.load(builtIns, files, (path) => this.app.offline.read(path), disabled, safe, trusted);
   }
 
   /** Every setting, the app's and installed extensions', on or off: they're all listed, so you can set one before turning it on. */
@@ -70,11 +101,7 @@ export class ExtensionRuntime {
 
   /** Commands extensions add to a menu, with their titles. */
   menu(id: MenuId): Array<{ command: string; title: string }> {
-    return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: this.titleOf(m, item.command) })));
-  }
-
-  private titleOf(m: ExtensionManifest, command: string): string {
-    return m.contributes.commands.find((c) => c.command === command)?.title ?? command;
+    return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })));
   }
 
   /** Put in what the manifests of extensions that are on declare: commands, Vim sequences and views. No extension code runs. */
@@ -111,6 +138,21 @@ export class ExtensionRuntime {
     return this.describers.map((d) => d(change)).find((s) => s) ?? null;
   }
 
+  /** Tell sandboxed extensions something happened. */
+  broadcast(name: "saved" | "focus", arg: FilePath | null): void {
+    for (const host of this.sandboxes.values()) host.event(name, arg);
+  }
+
+  /** Settings changed: sandboxed extensions get their own section's new values. */
+  settingsChanged(): void {
+    for (const [id, host] of this.sandboxes) host.event("settings", this.ownSettings(id));
+  }
+
+  private ownSettings(id: string): Record<string, unknown> {
+    const settings = this.app.settings();
+    return Object.fromEntries(Object.keys(settings).filter((k) => k.startsWith(`${id}.`)).map((k) => [k, settings[k]]));
+  }
+
   /** Start whichever extension declares something, by its activation event, then wait for it. */
   private async activateFor(event: `onView:${string}` | `onCommand:${string}`, declares: (m: ExtensionManifest) => boolean): Promise<void> {
     await this.host.fire(event);
@@ -126,15 +168,84 @@ export class ExtensionRuntime {
     return run?.();
   }
 
-  /** The context an extension's code gets: everything it registers is checked against its manifest, and what it throws is reported. */
+  /** What an extension reaches, each through the broker. Trusted built-ins have their declared permissions already. */
+  private services(m: ExtensionManifest): Services {
+    const app = this.app;
+    const check = (ask: Ask) => this.broker.check(m, ask);
+    return {
+      check,
+      read: async (path) => {
+        await check({ kind: "files:read", target: path });
+        return app.offline.read(path);
+      },
+      write: async (path, text, base) => {
+        await check({ kind: "files:write", target: path });
+        // In history, the change is the extension's, acting for you.
+        return api.writeAs(m.id, path, text, base);
+      },
+      list: async () => {
+        // Each declared scope is asked about as a whole; files in the ones allowed are listed.
+        const allowed: string[] = [];
+        for (const scope of m.permissions["files:read"]?.paths ?? []) {
+          try {
+            await check({ kind: "files:read", scope });
+            allowed.push(scope);
+          } catch {
+            // Not allowed: its files aren't listed.
+          }
+        }
+        return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
+      },
+      fetch: async (url, init) => {
+        let host: string;
+        try {
+          host = new URL(url).hostname;
+        } catch {
+          throw new Error(`"${url}" isn't a URL`);
+        }
+        await check({ kind: "network", target: host });
+        return this.broker.inFlightWhile(m.id, url, () => api.extensionFetch(m.id, url, init, this.broker.allowedOnce(m, { kind: "network", target: host })));
+      },
+    };
+  }
+
+  /** A webview in `el` for one of an extension's views. Messages from its page go to `onMessage`. */
+  private webview(m: ExtensionManifest, viewId: string, el: HTMLElement, onMessage: (message: unknown) => void): Webview {
+    el.replaceChildren();
+    const view = new Webview(el, `${viewId}:${++webviewIds}`, `${m.name}: ${viewId}`, onMessage);
+    view.frame.dataset.view = viewId;
+    return view;
+  }
+
+  /** A trusted extension's handle on a webview: its HTML, and messages both ways. */
+  private webviewHandle(m: ExtensionManifest, viewId: string, el: HTMLElement): WebviewHandle {
+    const listeners: Array<(message: unknown) => void> = [];
+    const view = this.webview(m, viewId, el, (message) => listeners.forEach((fn) => fn(message)));
+    let html = "";
+    return {
+      get html() {
+        return html;
+      },
+      set html(value: string) {
+        html = value;
+        void view.setHtml(value);
+      },
+      post: (message) => view.post(message),
+      onMessage: (fn) => void listeners.push(fn),
+    };
+  }
+
+  /** The context a trusted extension's code gets in the page: everything it registers is checked against its manifest, and what it throws is reported. */
   private context(record: ExtensionRecord, failed: (err: unknown) => void): ExtensionContext {
     const m = record.manifest;
     const app = this.app;
+    const services = this.services(m);
     const guard = <A extends unknown[], R>(fn: (...args: A) => R, fallback?: R) => guarded(fn, failed, fallback);
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
     const needsEditor = () => {
       if (!m.permissions.editor) throw new Error(`${m.id} needs the "editor" permission in its extension.json to change note editors`);
     };
+    const asked = new Set<string>();
     return {
       extension: m,
       me: app.me,
@@ -158,7 +269,8 @@ export class ExtensionRuntime {
       views: {
         register: (id, renderer) => {
           if (!declaresView(id)) throw new Error(`View "${id}" isn't declared in ${m.id}'s contributes.views`);
-          this.renderers.set(id, { render: guard((el: HTMLElement) => renderer.render(el)) });
+          const draw = "resolve" in renderer ? (el: HTMLElement) => renderer.resolve(this.webviewHandle(m, id, el)) : (el: HTMLElement) => renderer.render(el);
+          this.renderers.set(id, { render: guard(draw) });
         },
         provide: (prefix, make) =>
           app.workbench.provideViews(prefix, (id) => {
@@ -189,16 +301,35 @@ export class ExtensionRuntime {
         },
       },
       files: {
-        list: () => app.files(),
-        fetchList: () => app.offline.list(),
-        read: (path) => app.offline.read(path),
-        write: (path, text, base) => app.offline.write(path, text, base),
-        upload: (name, data) => api.upload(name, data),
+        // In the page, a list has to be there at once: files it may read without asking you, and asks for the rest once.
+        list: () =>
+          app.files().filter((f) => {
+            const d = decide(m, { kind: "files:read", target: f.path }, parseGrants(app.settings()["extensions.permissions"]), { builtIn: !!record.builtIn && !record.workspace });
+            if (d.outcome === "ask" && !asked.has(d.key)) {
+              asked.add(d.key);
+              void services.check({ kind: "files:read", target: f.path }).catch(() => {});
+            }
+            return d.outcome === "allow";
+          }),
+        fetchList: async () => app.offline.list(),
+        read: services.read,
+        write: (path, text, base) => (record.builtIn && !record.workspace ? app.offline.write(path, text, base) : services.write(path, text, base)),
+        upload: async (name, data) => {
+          await services.check({ kind: "files:write", target: ".common-ink/uploads.json" });
+          return api.upload(name, data);
+        },
       },
+      net: { fetch: services.fetch },
       sources: {
         status: api.sources,
-        events: api.events,
-        contacts: api.contacts,
+        events: async (from, to) => {
+          await services.check({ kind: "calendar:read" });
+          return api.events(from, to);
+        },
+        contacts: async (query) => {
+          await services.check({ kind: "contacts:read" });
+          return api.contacts(query);
+        },
         connect: () => location.assign(`/auth/google?data=1&next=${encodeURIComponent(location.pathname + location.search)}`),
       },
       workbench: {
@@ -216,4 +347,108 @@ export class ExtensionRuntime {
       },
     };
   }
+
+  /** Start a sandboxed extension: its host frame, its code by token, and the services it calls, each checked. */
+  private async startSandbox(record: ExtensionRecord, failed: (err: unknown) => void): Promise<void> {
+    const m = record.manifest;
+    const app = this.app;
+    const services = this.services(m);
+    const webviews = new Map<string, Webview>();
+    const providers = new Map<string, string>();
+    const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    const host: SandboxHost = new SandboxHost(
+      m,
+      async (method, args) => {
+        const [a, b, c] = args as [string, unknown, unknown];
+        switch (method) {
+          case "commands.register":
+            if (!m.contributes.commands.some((x) => x.command === a)) throw new Error(`Command "${a}" isn't declared in ${m.id}'s contributes.commands`);
+            this.handlers.set(a, () => host.invoke(`command:${a}`).catch(failed));
+            return;
+          case "commands.run":
+            return app.commands.run(a);
+          case "commands.all":
+            return app.commands.all().map((x) => ({ id: x.id, title: x.title }));
+          case "commands.shortcut": {
+            const key = keyFor(a, app.settings().keybindings);
+            return key && formatKeys(key);
+          }
+          case "commandBar.provide":
+            providers.set(a, String(b));
+            app.bar.provide({
+              prefix: String(b),
+              placeholder: String(c),
+              items: async (query) => {
+                const items = (await host.invoke(`provider:${a}`, query).catch(() => [])) as Array<{ label: string; detail?: string; run: string }>;
+                return items.map((i): Item => ({ label: i.label, detail: i.detail, run: () => host.invoke(`item:${i.run}`).catch(failed) }));
+              },
+            });
+            return;
+          case "commandBar.open":
+            return app.bar.open(a);
+          case "views.register":
+            if (!declaresView(a)) throw new Error(`View "${a}" isn't declared in ${m.id}'s contributes.views`);
+            this.renderers.set(a, {
+              render: (el) => {
+                // A webview keeps running between redraws; only a missing one is made again.
+                if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
+                const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
+                webviews.set(view.id, view);
+                void host.invoke(`view:${a}`, view.id).catch(failed);
+              },
+            });
+            return;
+          case "views.show":
+            return app.panels.show(a);
+          case "views.toggle":
+            return app.panels.toggle(a);
+          case "views.refresh":
+            app.panels.refresh(a);
+            return app.workbench.refreshView(a);
+          case "views.open":
+            return app.workbench.openView(a, b as { newTab?: boolean });
+          case "webview.html":
+            return webviews.get(a)?.setHtml(String(b));
+          case "webview.post":
+            return webviews.get(a)?.post(b);
+          case "files.list":
+            return services.list();
+          case "files.read":
+            return services.read(a as FilePath);
+          case "files.write":
+            return services.write(a as FilePath, String(b), Number(c));
+          case "net.fetch":
+            return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });
+          case "clipboard.read":
+            await services.check({ kind: "clipboard:read" });
+            return navigator.clipboard.readText();
+          case "clipboard.write":
+            await services.check({ kind: "clipboard:write" });
+            return navigator.clipboard.writeText(a);
+          case "notifications.show":
+            await services.check({ kind: "notifications" });
+            if ("Notification" in window && (Notification.permission === "granted" || (await Notification.requestPermission()) === "granted")) new Notification(a, { body: String(b ?? "") });
+            return;
+          case "sources.events":
+            await services.check({ kind: "calendar:read" });
+            return api.events(new Date(a), new Date(String(b)));
+          case "sources.contacts":
+            await services.check({ kind: "contacts:read" });
+            return api.contacts(a);
+          case "workbench.open":
+            return app.workbench.open(a as FilePath, b as { newTab?: boolean });
+          case "workbench.focusedPath":
+            return app.workbench.focusedPath ?? app.lastFile();
+          case "workbench.notice":
+            return app.workbench.notice(`${m.name}: ${a}`);
+        }
+        throw new Error(`There's no ${method} for extensions`);
+      },
+      (message) => failed(new Error(message)),
+    );
+    this.sandboxes.set(m.id, host);
+    const code = record.builtIn && !record.workspace ? `${location.origin}/sandbox/builtin/${m.id}/${m.main}` : `${location.origin}/sandbox/code/${await api.sandboxToken(m.id)}/${m.main}`;
+    await host.start(code, this.ownSettings(m.id), app.me);
+  }
 }
+

@@ -1,0 +1,160 @@
+// Fetching a URL someone else chose, safely: what the Worker does for an extension's brokered fetch
+// and for link cards. Only http(s), only public hosts (checked by name, by address literal, and by
+// what the name resolves to), redirects followed by hand and each one checked again, no credentials
+// or referrer, and limits on time and size.
+
+export interface SafeFetchOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  /** Largest response body, in bytes. */
+  maxBytes?: number;
+  timeoutMs?: number;
+  maxRedirects?: number;
+  /** For tests: the fetch and DNS lookup to use. */
+  fetcher?: typeof fetch;
+  resolve?: (host: string) => Promise<string[]>;
+}
+
+export interface SafeResponse {
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  /** The body as text (UTF-8), cut off at maxBytes. */
+  body: string;
+  truncated: boolean;
+}
+
+export class FetchRefused extends Error {}
+
+const DEFAULTS = { maxBytes: 1_000_000, timeoutMs: 8_000, maxRedirects: 3 };
+
+/** Whether an IPv4 address is one the public internet doesn't route: loopback, private, link-local, shared, multicast or reserved. */
+export function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+/** Whether an IPv6 address is loopback, unspecified, private (fc00::/7), link-local, multicast, or an IPv4 one that is. */
+export function isPrivateIPv6(ip: string): boolean {
+  const s = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (s === "::" || s === "::1") return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (mapped) return isPrivateIPv4(mapped[1]);
+  const first = parseInt(s.split(":")[0] || "0", 16);
+  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00;
+}
+
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/** Why a URL can't be fetched, or null if it can (as far as its text shows). */
+export function refuseUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return "That isn't a URL";
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "Only http and https addresses can be fetched";
+  if (url.username || url.password) return "Addresses with a user name or password can't be fetched";
+  const host = url.hostname.toLowerCase();
+  if (IPV4.test(host)) return isPrivateIPv4(host) ? "Private and local addresses can't be fetched" : null;
+  if (host.startsWith("[")) return isPrivateIPv6(host) ? "Private and local addresses can't be fetched" : null;
+  if (!host.includes(".") || /(^|\.)(localhost|local|internal|intranet|home|lan|corp)$/.test(host)) return "Local names can't be fetched";
+  return null;
+}
+
+/** A host's addresses, from Cloudflare's DNS over HTTPS. */
+async function resolveWithDoh(host: string, fetcher: typeof fetch): Promise<string[]> {
+  const ask = async (type: string) => {
+    const res = await fetcher(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`, { headers: { Accept: "application/dns-json" } });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
+    return (data.Answer ?? []).filter((a) => a.type === 1 || a.type === 28).map((a) => a.data);
+  };
+  const [a, aaaa] = await Promise.all([ask("A"), ask("AAAA")]);
+  return [...a, ...aaaa];
+}
+
+async function checkResolved(host: string, resolve: (host: string) => Promise<string[]>) {
+  if (IPV4.test(host) || host.startsWith("[")) return;
+  const addresses = await resolve(host);
+  if (!addresses.length) throw new FetchRefused(`${host} doesn't resolve`);
+  if (addresses.some((ip) => (ip.includes(":") ? isPrivateIPv6(ip) : isPrivateIPv4(ip)))) throw new FetchRefused(`${host} resolves to a private address`);
+}
+
+/** Read at most `max` bytes of a body as text. */
+async function readCapped(res: Response, max: number): Promise<{ body: string; truncated: boolean }> {
+  if (!res.body) return { body: "", truncated: false };
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let truncated = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (size + value.byteLength > max) {
+      chunks.push(value.slice(0, max - size));
+      size = max;
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+    chunks.push(value);
+    size += value.byteLength;
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return { body: new TextDecoder().decode(all), truncated };
+}
+
+/** Fetch a URL with every check. Throws FetchRefused for a URL it won't fetch, and on time running out. */
+export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<SafeResponse> {
+  const fetcher = o.fetcher ?? fetch;
+  const resolve = o.resolve ?? ((host: string) => resolveWithDoh(host, fetcher));
+  const maxRedirects = o.maxRedirects ?? DEFAULTS.maxRedirects;
+  const signal = AbortSignal.timeout(o.timeoutMs ?? DEFAULTS.timeoutMs);
+  let url = raw;
+  let method = (o.method ?? "GET").toUpperCase();
+  let body = o.body;
+  for (let hop = 0; ; hop++) {
+    const refused = refuseUrl(url);
+    if (refused) throw new FetchRefused(refused);
+    await checkResolved(new URL(url).hostname.toLowerCase(), resolve);
+    // No cookies, no credentials, no referrer: the request carries only what the caller sent.
+    const headers = Object.fromEntries(Object.entries(o.headers ?? {}).filter(([k]) => !/^(cookie|authorization|proxy-|host$|referer$)/i.test(k)));
+    let res: Response;
+    try {
+      res = await fetcher(url, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body, redirect: "manual", signal });
+    } catch (err) {
+      if ((err as Error).name === "TimeoutError" || signal.aborted) throw new FetchRefused("It took too long");
+      throw new FetchRefused(`Couldn't reach ${new URL(url).host}: ${(err as Error).message}`);
+    }
+    const location = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && location) {
+      if (hop >= maxRedirects) throw new FetchRefused("Too many redirects");
+      url = new URL(location, url).toString();
+      if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) [method, body] = ["GET", undefined];
+      continue;
+    }
+    const { body: text, truncated } = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    return { url, status: res.status, headers: Object.fromEntries(res.headers), body: text, truncated };
+  }
+}

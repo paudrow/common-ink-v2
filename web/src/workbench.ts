@@ -70,6 +70,9 @@ export class Workbench {
   private groupEls = new Map<L.GroupId, HTMLElement>();
   private jumps = new Map<L.GroupId, Jumps>();
   private layoutRevision = 0;
+  private pendingNotice: [string, Array<{ label: string; run: () => unknown }>] | null = null;
+  /** Whether start() has loaded the layout: until then, the live socket's news of it is start's to read. */
+  private started = false;
   /** Editor extensions for one file's editors, such as help in a settings file. */
   extensionsFor: (path: FilePath) => Extension[] = () => [];
   private layoutTimer = 0;
@@ -108,13 +111,17 @@ export class Workbench {
       else missing = first;
     }
     this.setLayout(layout, { save: false });
+    this.started = true;
+    if (this.pendingNotice) this.notice(...this.pendingNotice);
+    this.pendingNotice = null;
     return { missing };
   }
 
   /** A message in the focused window, with buttons, until its tabs change. */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
-    if (!editors) return;
+    // Before there's a window to show it in (an extension starting with the app, say): show it once there is.
+    if (!editors) return void (this.pendingNotice = [message, actions]);
     const box = document.createElement("div");
     box.className = "notice";
     box.setAttribute("role", "status");
@@ -270,7 +277,7 @@ export class Workbench {
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
     if (path === L.LAYOUT_PATH) {
-      if (revision <= this.layoutRevision || this.layoutSaving) return false;
+      if (!this.started || revision <= this.layoutRevision || this.layoutSaving) return false;
       const saved = await this.net.read(L.LAYOUT_PATH);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;

@@ -5,6 +5,7 @@ import { isNote, type Author, type Change, type FilePath } from "../../worker/sr
 /** "you", a person's email, or an agent's name with who it worked for. */
 export function describeAuthor(author: Author, me?: string): string {
   if (author.kind === "user") return author.email === me ? "you" : author.email;
+  if (author.kind === "extension") return `${author.id} (extension${author.by === me ? "" : `, for ${author.by}`})`;
   return author.by ? `${author.name} (for ${author.by === me ? "you" : author.by})` : author.name;
 }
 

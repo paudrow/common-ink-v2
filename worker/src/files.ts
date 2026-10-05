@@ -32,10 +32,11 @@ const EXTENSION_SCRIPT = /^\.common-ink\/extensions\/[a-zA-Z0-9][\w.-]{0,63}\/([
 export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path);
 
 /** Who made a change. An agent may be working for a person (`by`), as the CLI and MCP do. */
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string };
+/** Who made a change: a person, an agent (perhaps working for a person), or an extension acting for the person using it. */
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string };
 
 /** One string per author, for filtering history by who made a change. */
-export const authorKey = (a: Author) => (a.kind === "user" ? `user:${a.email}` : `agent:${a.name}${a.by ? `:${a.by}` : ""}`);
+export const authorKey = (a: Author) => (a.kind === "user" ? `user:${a.email}` : a.kind === "extension" ? `extension:${a.id}` : `agent:${a.name}${a.by ? `:${a.by}` : ""}`);
 
 /** Revisions are change numbers, counted across the workspace. 0 is "before the file existed". */
 export type Revision = number;
@@ -314,6 +315,18 @@ export class Files {
    */
   write(w: Write): WriteResult {
     return this.db.tx(() => this.apply(w));
+  }
+
+  /** A random secret by name, made the first time it's asked for and kept from then on. */
+  secret(name: string): string {
+    return this.db.tx(() => {
+      const key = `secret:${name}`;
+      const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = ?", key);
+      if (row) return row.value;
+      const value = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      this.db.run("INSERT INTO meta(key, value) VALUES (?, ?)", key, value);
+      return value;
+    });
   }
 
   /** Apply a seed once: running it again with the same id changes nothing. */

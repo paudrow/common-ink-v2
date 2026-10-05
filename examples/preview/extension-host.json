@@ -1,0 +1,15 @@
+{
+  "pr": 18,
+  "title": "Sandboxed extensions and permissions",
+  "steps": [
+    "⌘⇧P, Show word count. Word count is a workspace extension, so it runs sandboxed: a prompt says \"Word count wants to read your notes · Count the words in the note on show\". Choose Allow once: its view (a sandboxed webview) shows the count. Reload and show it again: it asks again, since once lasts the session.",
+    "This time choose Always allow. Your answer is in your user settings under `extensions.permissions`, and in the Extensions view, where Word count's permission now says Allow. Set it to Deny there: Show word count now says you didn't allow it, without asking.",
+    "Escape on a prompt means not now: it's refused for this session only, and asked again after a reload.",
+    "⌘⇧P, Show extension activity: every read Word count asked for, allowed or not, with the time.",
+    "The Extensions view lists what each extension may ask for, with why. Built-ins have theirs already (\"allowed with the app\"), and you can deny any.",
+    "Trust… on Word count asks you to confirm that it may run in the page, around its permissions. Stop trusting puts it back in the sandbox after a reload.",
+    "Install from URL… copies an extension's files in from where it's published (its folder, or its extension.json). It runs sandboxed. Try it with any public extension folder you have; Common Ink refuses local addresses and built-ins' ids.",
+    "Customize a built-in (Command list): the copy is trusted for you, since you made it yours.",
+    "Every app page now has a stricter policy: its own scripts, connections only to itself, and frames only from the sandbox route. Even code in the page can't quietly reach another site."
+  ]
+}
