@@ -29,11 +29,12 @@ browserTest(h, "the calendar syncs from Google as it shows, and after Google end
   assert.match(await banner.innerText(), /One edit is waiting to go to Google/);
   // Reconnecting goes to Google, saying to come back here.
   // Google sign-in isn't set up in this Worker, so the page it lands on says so: what matters is where it went.
+  const here = new URL(app.page.url());
   await Promise.all([app.page.waitForURL(/\/auth\/google\?/), banner.locator("button", { hasText: "Reconnect Google Calendar" }).click()]);
   const went = app.page.url();
   const url = new URL(went);
   assert.equal(url.searchParams.get("data"), "1");
-  assert.equal(url.searchParams.get("next"), "/");
+  assert.equal(url.searchParams.get("next"), here.pathname + here.search, "it comes back to where you were");
   // Google gave the grant again: the waiting edit goes out, and the status bar has nothing to say.
   await post(app, "/api/levers/google", { revoked: false });
   await app.goto();
