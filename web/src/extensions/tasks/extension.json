@@ -2,7 +2,7 @@
   "id": "tasks",
   "name": "Tasks",
   "version": "2.0.0",
-  "description": "Checkbox lines with todo.txt-style tokens: due:2026-10-01, start:, rec:monthly, until:, times:, !high, @person, #tag. Each token is a chip that opens its own editor; ⌘. opens a task's fields. Show tasks and ::tasks list them from across your notes, and ⌘⇧. adds one the way you'd say it.",
+  "description": "Checkbox lines with todo.txt-style tokens: due:2026-10-01, start:, rec:monthly, until:, times:, !high, @person, #tag. Each token is a chip that opens its own editor; ⌘. opens a task's fields. Show tasks and ::tasks list them from across your notes, and ⌘⇧. adds one the way you'd say it. Ticking a repeating task logs it in today's daily note.",
   "main": "index.ts",
   "files": [
     "index.ts",
@@ -160,6 +160,21 @@
           "type": "string",
           "default": "",
           "description": "The note quick-add (⌘⇧.) puts tasks in, by name, like Inbox. Empty: today's daily note, Journal/YYYY-MM-DD."
+        },
+        "tasks.completionLog": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "inline",
+            "none"
+          ],
+          "default": "daily",
+          "description": "Where ticking a repeating task is recorded. daily: it moves on to its next date, and a line goes under ## Done in today's daily note. inline: a ticked copy stays in its note, with the next one below it (as v1 did). none: it moves on, recorded only in history."
+        },
+        "tasks.logPlainTasks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log tasks that don't repeat in today's daily note too, when they're ticked (they're already ticked with done: in their own note)."
         }
       }
     }

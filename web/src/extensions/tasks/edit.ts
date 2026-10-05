@@ -4,24 +4,62 @@
 // Tab or a click turns them into tokens.
 // No DOM here: the widgets that draw these are in widgets.ts.
 import { syntaxTree } from "@codemirror/language";
-import { StateField, type EditorState, type TransactionSpec } from "@codemirror/state";
+import { invertedEffects } from "@codemirror/commands";
+import { StateEffect, StateField, type EditorState, type TransactionSpec } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet, type WidgetType } from "@codemirror/view";
 import { parseQuickAdd, type QuickKind } from "./quickadd.ts";
-import { editTaskLine, localDate, parseTask, patchProblem, TASK_LINE, type TaskPatch } from "./tasks.ts";
+import { completeTask, localDate, parseTask, patchProblem, TASK_LINE, type LogMode, type TaskPatch } from "./tasks.ts";
+
+/** A completion to add to the daily note's `## Done` (its line), and how the task looked before and after. */
+export interface Completion {
+  line: string;
+  path: string;
+  before: string;
+  after: string;
+}
+/** A tick logged this completion: the daily note gets its line. */
+export const logged = StateEffect.define<Completion>();
+/** Undoing that tick: the daily note's line goes. */
+export const unlogged = StateEffect.define<Completion>();
+
+/**
+ * Undo takes back what a tick logged, and redo logs it again, so the tick in the note and its line in
+ * the daily note are one step in the note's history.
+ */
+export const logUndo = invertedEffects.of((tr) =>
+  tr.effects.flatMap((e) => (e.is(logged) ? [unlogged.of(e.value)] : e.is(unlogged) ? [logged.of(e.value)] : [])),
+);
+
+/** How a tick is recorded (the settings), and the note it's in, for its log line. */
+export interface TickHow {
+  mode: LogMode;
+  logPlain: boolean;
+  /** The note's name and path. */
+  note: string;
+  path: string;
+}
 
 /**
  * The change that applies `patch` to the task on line `n`, or null if nothing would change. Throws
  * if the line is no longer `expected` (the note changed while the chip's editor was open), or if the
- * patch can't be written as tokens.
+ * patch can't be written as tokens. A tick is recorded as `how` says: logged (an effect the daily
+ * note follows), or v1's ticked copy with the next one below.
  */
-export function taskLineEdit(state: EditorState, n: number, expected: string, patch: TaskPatch, today = localDate(Date.now())): TransactionSpec | null {
+export function taskLineEdit(state: EditorState, n: number, expected: string, patch: TaskPatch, today = localDate(Date.now()), how: TickHow = { mode: "none", logPlain: false, note: "", path: "" }): TransactionSpec | null {
   const line = n <= state.doc.lines ? state.doc.line(n) : null;
   if (!line || line.text !== expected) throw new Error("That task changed while you were editing it. Click its chip again.");
   const problem = patchProblem(patch);
   if (problem) throw new Error(problem);
-  const next = editTaskLine(line.text, patch, today);
-  if (next === line.text) return null;
-  return { changes: { from: line.from, to: line.to, insert: next }, userEvent: "input.task" };
+  const below = n < state.doc.lines ? state.doc.line(n + 1) : null;
+  const done = completeTask(line.text, below?.text, patch, today, how);
+  const to = done.replaced === 2 && below ? below.to : line.to;
+  const insert = done.lines.join("\n");
+  if (insert === state.sliceDoc(line.from, to)) return null;
+  return {
+    changes: { from: line.from, to, insert },
+    userEvent: "input.task",
+    ...(done.log ? { effects: logged.of({ line: done.log, path: how.path, before: line.text, after: done.lines[0] }) } : {}),
+  };
 }
 
 const CODE = new Set(["FencedCode", "CodeBlock", "InlineCode", "CodeText", "HTMLBlock", "CommentBlock"]);

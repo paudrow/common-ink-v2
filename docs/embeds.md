@@ -103,6 +103,7 @@ A task is a checkbox line, `- [ ] Send the invoice`, with todo.txt-style tokens 
 | `due:2026-10-01`, `due:2026-10-01T09:30` | When it's due |
 | `start:2026-09-28` (or `scheduled:`) | Hidden from open lists until then |
 | `done:2026-10-01` | When it was ticked (written when it's ticked) |
+| `last:2026-10-05` | When a repeating task was last done (written each time it's ticked and moves on) |
 | `rec:weekly` | How it repeats: `daily`, `weekly`, `monthly`, `yearly`, `2w`, `mon,thu`, `2w-mon,thu`, `6th`, `last-day`, `1st-tue,3rd-tue`, `last-fri`, `mar-1`, `1st-mon-mar`, `day-50`, `after-1m` (a gap after it's done), or `RRULE:FREQ=…` |
 | `until:2027-06-30`, `times:5` | When a repeat ends: its last day, or how many times are left, this one included |
 | `!high`, `!low` | Priority |
@@ -111,7 +112,9 @@ A task is a checkbox line, `- [ ] Send the invoice`, with todo.txt-style tokens 
 
 Typed in words, in the quick-add bar (⌘⇧.) or a task's inline edit, phrases become tokens: "Pay rent every month on the 1st" is `- [ ] Pay rent due:… rec:1st`, and so are "tomorrow", "next fri", "in 3 days", "every weekday", "the last friday of every month", "until dec 1", "for 6 months" and "10 times". In a note, Tab right after such a phrase on a task line does the same.
 
-Ticking a repeating task doesn't tick it: it moves on to its next date, on the same line (and `times:` counts down). Its last time, it's ticked with `done:`.
+When a repeating task moves on, its completion is logged under `## Done` in that day's daily note (`Journal/YYYY-MM-DD.md`, from the Daily notes extension), as `- [x] Water the plants done:2026-10-05 ([[Chores]])`: its words, people and tags, the day, and its note. The `tasks.completionLog` setting chooses: `"daily"` (the default), `"inline"` (a ticked copy stays in its note, with the next one below it), or `"none"` (only history). Plain tasks are ticked with `done:` where they are, and logged too with `tasks.logPlainTasks`. Agents tick tasks with the `complete_task` tool, which logs the same way.
+
+Ticking a repeating task doesn't tick it: it moves on to its next date, on the same line (and `times:` counts down), with `last:` the day it was done. Its chip reads "✓ Oct 5 · 4×": when it was last done, and how many completions the daily notes log for it; click it for the list. Its last time, it's ticked with `done:`.
 
 ```markdown
 - [ ] Pay rent due:2026-11-01 rec:1st @sam !high #home/bills

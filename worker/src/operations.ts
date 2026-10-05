@@ -1,6 +1,7 @@
 // What people and agents can do with a workspace, defined once. The HTTP API (and so the web app and
 // the CLI) and the MCP server both run these, so an agent can do anything the UI does, the same way.
 import type { SourceStatus } from "./data-sources.ts";
+import { completeTaskIn, TaskError } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact, Event } from "./sources.ts";
@@ -253,6 +254,37 @@ export const OPERATIONS = {
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
+  }),
+  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
+    description:
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+    input: {
+      type: "object",
+      properties: {
+        path: PATH,
+        line: { type: "integer", minimum: 1, description: "The task's line number, from 1" },
+        text: { type: "string", description: "The task's line as you read it, so a note that changed meanwhile isn't ticked in the wrong place" },
+        done: { type: "boolean", description: "false to untick it" },
+        today: { type: "string", description: "The person's day, YYYY-MM-DD" },
+      },
+      required: ["path", "line"],
+    },
+    parse: (a) => {
+      const path = parseFilePath(a.path);
+      const line = count(a.line);
+      if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
+      if (!line) return fail('"line" must be the task\'s line number, from 1');
+      if (a.today !== undefined && (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today))) return fail('"today" must be a day like 2026-10-05');
+      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today as string | undefined });
+    },
+    run: async (store, args, author) => {
+      try {
+        return await completeTaskIn(store, args, author);
+      } catch (err) {
+        if (err instanceof TaskError) throw new OperationError(err.message);
+        throw err;
+      }
+    },
   }),
   list_uploads: op<Record<string, never>>({
     description: "Uploaded files (images, PDFs and others), each with its name, size, type and the address notes link it by, like ![photo](/uploads/photo.png).",

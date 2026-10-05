@@ -644,6 +644,9 @@ export class ExtensionRuntime {
         canGo: (by) => !!app.workbench.navigation.step(by),
       },
       util: { fuzzyFilter, notePathFor: (name) => notePathFor(name), label: docLabel },
+      extensions: {
+        api: async <T,>(id: string) => (await this.host.api(id)) as T | undefined,
+      },
       events: {
         onSaved: (fn) => void app.onSaved.push(guard(fn)),
         onFocus: (fn) => void app.onFocus.push(guard(fn)),

@@ -6,18 +6,49 @@
 // ("tomorrow", "every week") are underlined there; Tab right after one, or a click on one, makes them
 // tokens. Every change is one transaction, so one undo takes it back.
 import { completionStatus } from "@codemirror/autocomplete";
-import { Prec } from "@codemirror/state";
+import { Prec, StateEffect, StateField, type EditorState } from "@codemirror/state";
 import { Decoration, EditorView, keymap, WidgetType } from "@codemirror/view";
 import { livePreview, type Preview } from "common-ink/live-preview";
 import { tokenChip, type ChipField } from "./chips.ts";
 import { el, icon } from "./dom.ts";
-import { convertPhrases, HINTS, isTaskLine, phrasesAt, phraseTab, taskLineEdit, taskPhrases, taskTools, taskToolsAt, type HintField } from "./edit.ts";
-import { openChipEditor, openFieldEditor, openTaskMenu, type ChipContext } from "./editors.ts";
+import { convertPhrases, HINTS, isTaskLine, logged, logUndo, phrasesAt, phraseTab, taskLineEdit, taskPhrases, taskTools, taskToolsAt, unlogged, type Completion, type HintField, type TickHow } from "./edit.ts";
+import { choose, openChipEditor, openFieldEditor, openTaskMenu, type ChipContext } from "./editors.ts";
 import { tagsInLine } from "./tags.ts";
-import { lineTokens, parseTask, TASK_LINE } from "./tasks.ts";
+import { doneLines, lineTokens, parseLogLine, parseTask, TASK_LINE } from "./tasks.ts";
 
-/** How long a repeating task shows as ticked before it moves on to its next date. */
-export const CHECKED_FOR_MS = 450;
+/** How long a repeating task shows as ticked, its line struck through, before it moves on to its next date. */
+export const CHECKED_FOR_MS = 1000;
+/** How long its new due date stands out after it moves on. */
+export const FRESH_FOR_MS = 1600;
+
+/** Whether the person asked for less motion: then a tick moves a task on at once, and only the highlight and the notice say so. */
+export const lessMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Redraw the tasks' chips: the log changed, and with it a completion chip's count. */
+export const chipsChanged = StateEffect.define<null>();
+
+/** A line being ticked (struck through for a moment), or just moved on (its new due date stands out), by where it starts. */
+const completing = StateEffect.define<number | null>();
+const fresh = StateEffect.define<number | null>();
+const tickMarks = StateField.define<{ completing: number | null; fresh: number | null }>({
+  create: () => ({ completing: null, fresh: null }),
+  update(marks, tr) {
+    let { completing: c, fresh: f } = marks;
+    if (tr.docChanged) [c, f] = [c === null ? null : tr.changes.mapPos(c), f === null ? null : tr.changes.mapPos(f)];
+    for (const e of tr.effects) {
+      if (e.is(completing)) c = e.value;
+      if (e.is(fresh)) f = e.value;
+    }
+    return c === marks.completing && f === marks.fresh ? marks : { completing: c, fresh: f };
+  },
+  provide: (field) =>
+    EditorView.decorations.from(field, (m) => {
+      const marks = [];
+      if (m.completing !== null) marks.push(Decoration.line({ class: "cm-task-completing" }).range(m.completing));
+      if (m.fresh !== null) marks.push(Decoration.line({ class: "cm-task-fresh" }).range(m.fresh));
+      return Decoration.set(marks, true);
+    }),
+});
 
 /** What the editor's task tools need from the app: the day, the chips setting, and the people and tags to offer. */
 export interface TaskEnv {
@@ -30,6 +61,19 @@ export interface TaskEnv {
   say(message: string): void;
   /** The path of the note this editor shows. */
   path(view: EditorView): string;
+  /** How a tick in this editor is recorded: the settings, and its note. */
+  how(view: EditorView): TickHow;
+  /** Add a completion to the daily note's `## Done`, or take it out (its tick was undone). */
+  log(c: Completion): void;
+  unlog(c: Completion): void;
+  /** Put a completion's task back in its note, from its line in the daily note. */
+  putBack(line: string): Promise<void>;
+  /** A task was ticked done (or moved on): say so, with Undo and, if it was logged, Open log. */
+  ticked(what: { after: string; log: string | null; undo(): void }): void;
+  /** A task's logged completions, newest first, for its `last:` chip. */
+  completions(path: string, summary: string): Array<{ day: string; path: string; line: number }>;
+  /** Open a note at a line (1-based). */
+  openAt(path: string, line: number): void;
 }
 
 /** The task on line `n` as the chip editors take it, saving through a transaction on that line. */
@@ -40,7 +84,7 @@ export function lineTaskContext(view: EditorView, n: number, env: TaskEnv): Chip
   return {
     task: { path: env.path(view), done: task.done, meta: task.meta },
     save: async (patch) => {
-      const spec = taskLineEdit(view.state, n, line.text, patch, env.today());
+      const spec = taskLineEdit(view.state, n, line.text, patch, env.today(), env.how(view));
       if (spec) view.dispatch(spec);
     },
     people: env.people,
@@ -51,28 +95,62 @@ export function lineTaskContext(view: EditorView, n: number, env: TaskEnv): Chip
   };
 }
 
-/** Tick or untick the task on the line at `pos`. A repeating one shows ticked a moment, then moves on to its next date. */
-export function toggleTaskAt(view: EditorView, pos: number, env: Pick<TaskEnv, "today" | "say">, box?: HTMLElement): boolean {
+/**
+ * Tick or untick the task on the line at `pos`. A repeating one shows ticked a moment, then moves on
+ * to its next date (and is logged, as the settings say). A completion in a daily note's `## Done`
+ * asks instead: put the task back in its note, or only take the line out of the log.
+ */
+export function toggleTaskAt(view: EditorView, pos: number, env: Pick<TaskEnv, "today" | "say" | "how" | "putBack" | "ticked">, box?: HTMLElement): boolean {
   const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
   const task = parseTask(line.text);
   if (!task || view.state.readOnly) return false;
+  const entry = task.done && parseLogLine(line.text);
+  if (entry && doneLines(view.state.doc.toString()).some((d) => d.line === line.number)) {
+    const remove = () => {
+      const now = view.state.doc.line(line.number);
+      if (now.text !== line.text) return;
+      view.dispatch({ changes: { from: now.from, to: Math.min(now.to + 1, view.state.doc.length) }, userEvent: "delete.task" });
+    };
+    const anchor = box ?? view.dom;
+    choose(anchor, `Done: ${entry.task.summary}`, [
+      { label: `Put it back in ${entry.note}`, icon: "reset", run: () => env.putBack(line.text).then(remove, (e) => env.say(e instanceof Error ? e.message : "Couldn't put it back")) },
+      { label: "Only take it out of the log", icon: "close", run: remove },
+    ], () => setTimeout(() => view.focus()));
+    return true;
+  }
   const apply = () => {
     const now = view.state.doc.line(line.number);
     try {
-      const spec = taskLineEdit(view.state, line.number, now.text, { checked: !task.done }, env.today());
+      const spec = taskLineEdit(view.state, line.number, now.text, { checked: !task.done }, env.today(), env.how(view));
       // Only the line's text changes; the cursor stays where it is, on this line or another.
-      if (spec) view.dispatch(spec);
+      if (!spec) return void view.dispatch({ effects: completing.of(null) });
+      const moved = !task.done && !!task.meta.rec;
+      view.dispatch({ ...spec, effects: [...[spec.effects ?? []].flat(), completing.of(null), ...(moved ? [fresh.of(now.from)] : [])] });
+      if (moved) window.setTimeout(() => view.dispatch({ effects: fresh.of(null) }), FRESH_FOR_MS);
+      const after = view.state.doc.lineAt(now.from).text;
+      const log = [spec.effects ?? []].flat().find((e) => e.is(logged))?.value ?? null;
+      if (!task.done && (moved || log)) env.ticked({ after, log: log?.line ?? null, undo: () => undoTick(view, now.from, after, now.text, log) });
     } catch (e) {
       env.say(e instanceof Error ? e.message : "Couldn't change the task");
     }
   };
-  if (box && !task.done && task.meta.rec) {
-    box.classList.add("is-checked", "is-checking");
-    box.setAttribute("aria-checked", "true");
+  if (!task.done && task.meta.rec && !lessMotion()) {
+    // Ticked and struck through for a moment, then it moves on, its new due date standing out.
+    view.dispatch({ effects: completing.of(line.from) });
     window.setTimeout(apply, CHECKED_FOR_MS);
   } else apply();
   return true;
 }
+
+/** Undo a tick from its notice: the line back as it was, if it's still as the tick left it, and its log line out. */
+function undoTick(view: EditorView, from: number, after: string, before: string, log: Completion | null) {
+  const line = view.state.doc.lineAt(Math.min(from, view.state.doc.length));
+  if (line.text !== after) return;
+  view.dispatch({ changes: { from: line.from, to: line.to, insert: before }, userEvent: "input.task", ...(log ? { effects: unlogged.of(log) } : {}) });
+}
+
+/** Whether the line at `from` is being ticked or has just moved on (for tests). */
+export const tickState = (state: EditorState) => state.field(tickMarks, false) ?? null;
 
 class CheckboxWidget extends WidgetType {
   constructor(
@@ -81,23 +159,27 @@ class CheckboxWidget extends WidgetType {
     /** The line's whole text: a repeating task's box must redraw when only its date moves on. */
     readonly line: string,
     readonly env: TaskEnv,
+    /** Being ticked: it shows ticked for a moment before the task moves on. */
+    readonly checking = false,
   ) {
     super();
   }
   eq(other: CheckboxWidget) {
-    return other.line === this.line;
+    return other.line === this.line && other.checking === this.checking;
   }
   updateDOM(dom: HTMLElement) {
     // Pressing it may have drawn it ticked for a moment; draw it as the task is now.
-    dom.classList.remove("is-checking");
-    dom.classList.toggle("is-checked", this.checked);
-    dom.setAttribute("aria-checked", String(this.checked));
+    const checked = this.checked || this.checking;
+    dom.classList.toggle("is-checking", this.checking);
+    dom.classList.toggle("is-checked", checked);
+    dom.setAttribute("aria-checked", String(checked));
     dom.setAttribute("aria-label", this.label || "Task");
     dom.title = this.checked ? "Mark open" : "Mark done";
     return true;
   }
   toDOM(view: EditorView) {
-    const box = el("span", { class: `cm-checkbox${this.checked ? " is-checked" : ""}`, role: "checkbox", "aria-checked": String(this.checked), "aria-label": this.label || "Task", title: this.checked ? "Mark open" : "Mark done" });
+    const checked = this.checked || this.checking;
+    const box = el("span", { class: `cm-checkbox${checked ? " is-checked" : ""}${this.checking ? " is-checking" : ""}`, role: "checkbox", "aria-checked": String(checked), "aria-label": this.label || "Task", title: this.checked ? "Mark open" : "Mark done" });
     // On press, not click, and with the default stopped: the editor keeps (or doesn't take) focus, and
     // its cursor, Vim's included, stays where it was.
     box.addEventListener("mousedown", (e) => {
@@ -124,21 +206,25 @@ class TokenWidget extends WidgetType {
     readonly done: boolean,
     readonly now: string,
     readonly env: TaskEnv,
+    /** A `last:` chip's count of logged completions. */
+    readonly count?: number,
+    readonly summary = "",
+    readonly path = "",
   ) {
     super();
   }
   eq(o: TokenWidget) {
-    return o.field === this.field && o.value === this.value && o.done === this.done && o.now === this.now;
+    return o.field === this.field && o.value === this.value && o.done === this.done && o.now === this.now && o.count === this.count;
   }
   toDOM(view: EditorView) {
-    const chip = tokenChip(this.field, this.value, { done: this.done, now: this.now });
+    const chip = tokenChip(this.field, this.value, { done: this.done, now: this.now, count: this.count });
     chip.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       if (view.state.readOnly) return;
       const ctx = lineTaskContext(view, view.state.doc.lineAt(view.posAtDOM(chip)).number, this.env);
-      if (ctx) openChipEditor(chip, ctx);
+      if (ctx) openChipEditor(chip, { ...ctx, completions: () => this.env.completions(this.path, this.summary), openAt: this.env.openAt });
     });
     return chip;
   }
@@ -151,7 +237,7 @@ const doneText = Decoration.mark({ class: "cm-task-done" });
 const tagMark = Decoration.mark({ class: "cm-task-tag" });
 
 /** What a task line draws: its checkbox, its tokens as chips, and a done task's words struck through. */
-export function taskPreviews(text: string, lineFrom: number, env: TaskEnv, chips = env.chips()): Preview[] {
+export function taskPreviews(text: string, lineFrom: number, env: TaskEnv, chips = env.chips(), path = "", checking = false): Preview[] {
   const m = text.match(TASK_LINE);
   const task = m && parseTask(text);
   if (!m || !task) return [];
@@ -161,7 +247,7 @@ export function taskPreviews(text: string, lineFrom: number, env: TaskEnv, chips
   const now = env.today();
   // The box shows its markdown only while the cursor is on it; the rest of the line reads as it is.
   const box = { from: at(indent), to: boxEnd };
-  const out: Preview[] = [{ ...box, span: box, decoration: Decoration.replace({ widget: new CheckboxWidget(task.done, task.summary, text, env) }) }];
+  const out: Preview[] = [{ ...box, span: box, decoration: Decoration.replace({ widget: new CheckboxWidget(task.done, task.summary, text, env, checking) }) }];
   if (task.done && text.length > m[1].length + 2) out.push({ from: boxEnd, to: at(text.length), decoration: doneText, always: true });
   // Each token is a chip until the cursor touches it: then it's its raw text, to edit, and the rest of the line stays still.
   // Its #tags read as tags, the same with the cursor on them: only their colour changes, so nothing moves.
@@ -169,7 +255,8 @@ export function taskPreviews(text: string, lineFrom: number, env: TaskEnv, chips
   if (chips) {
     for (const t of lineTokens(text)) {
       const token = { from: at(t.from), to: at(t.to) };
-      out.push({ ...token, span: token, decoration: Decoration.replace({ widget: new TokenWidget(t.field, t.value, task.done, now, env) }) });
+      const count = t.field === "last" ? env.completions(path, task.summary).length : undefined;
+      out.push({ ...token, span: token, decoration: Decoration.replace({ widget: new TokenWidget(t.field, t.value, task.done, now, env, count, task.summary, path) }) });
     }
   }
   return out;
@@ -264,10 +351,23 @@ function phraseClick(env: TaskEnv) {
 /** The tasks live preview, line tools and phrases for note editors. */
 export function tasksPreview(env: TaskEnv) {
   return [
-    livePreview((line, view) => (isTaskLine(view.state, line.from) ? taskPreviews(line.text, line.from, env) : [])),
+    livePreview((line, view) =>
+      isTaskLine(view.state, line.from) ? taskPreviews(line.text, line.from, env, env.chips(), env.path(view), view.state.field(tickMarks, false)?.completing === line.from) : [],
+    ),
+    tickMarks,
     taskTools((missing) => new ToolsWidget(missing, env)),
     taskPhrases(env.today),
     phraseKey(env),
     phraseClick(env),
+    // A tick's log line follows the tick: added with it, taken out when it's undone, back on redo.
+    logUndo,
+    EditorView.updateListener.of((u) => {
+      for (const tr of u.transactions) {
+        for (const e of tr.effects) {
+          if (e.is(logged)) env.log(e.value);
+          else if (e.is(unlogged)) env.unlog(e.value);
+        }
+      }
+    }),
   ];
 }

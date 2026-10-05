@@ -36,7 +36,7 @@ export type ChipField = keyof Omit<TaskMeta, "tags" | "assignees"> | "assignees"
  * repeating task's date after this one, and `ends` how it stops, both shown on its repeat chip in
  * task lists ("Monthly · 5 left").
  */
-export function tokenChip(field: ChipField, value: string, opts: { done?: boolean; now?: string; next?: string | null; ends?: { until: string | null; times: number | null } } = {}): HTMLElement {
+export function tokenChip(field: ChipField, value: string, opts: { done?: boolean; now?: string; next?: string | null; ends?: { until: string | null; times: number | null }; count?: number } = {}): HTMLElement {
   const now = opts.now ?? today();
   const chip = (cls: string, title: string, ...children: Array<Node | string>) => el("span", { class: `tk ${cls}`.trim(), title, "data-field": field, "data-value": value }, ...children);
   switch (field) {
@@ -60,6 +60,11 @@ export function tokenChip(field: ChipField, value: string, opts: { done?: boolea
     // A repeat's ends, on their own (the editor draws each token): they open the repeat's editor.
     case "until":
       return chip("tk-muted", `Repeats until ${value}`, icon("reset", 12), `until ${dayLabel(value, now)}`);
+    // When a repeating task was last done, and how many times its completions are logged.
+    case "last": {
+      const times = opts.count ? ` · ${opts.count}×` : "";
+      return chip("tk-muted tk-last", `Last done ${value}${opts.count ? `; done ${opts.count} ${opts.count === 1 ? "time" : "times"} in the log` : ""}. Click for its completions`, `✓ ${dayLabel(value, now)}${times}`);
+    }
     case "times":
       return chip("tk-muted", `${value} ${value === "1" ? "time" : "times"} left, this one included`, icon("reset", 12), `${value} left`);
     case "priority":
@@ -82,14 +87,16 @@ export function nextOf(meta: TaskMeta): string | null {
 
 /**
  * A task's chips in one fixed order, whatever order its tokens are in: priority, due (and a start
- * still ahead), repeat, people, then `tags` sorted by name, and done last.
+ * still ahead), repeat and when it was last done (with `count`, its logged completions), people, then
+ * `tags` sorted by name, and done last.
  */
-export function metaChips(meta: TaskMeta, done: boolean, tags: string[] = [], now = today()): HTMLElement[] {
+export function metaChips(meta: TaskMeta, done: boolean, tags: string[] = [], now = today(), count?: number): HTMLElement[] {
   return [
     meta.priority && tokenChip("priority", meta.priority),
     meta.due && tokenChip("due", meta.due, { done, now }),
     meta.start && meta.start.slice(0, 10) > now && tokenChip("start", meta.start, { now }),
     meta.rec && tokenChip("rec", meta.rec, { next: done ? null : nextOf(meta), ends: meta, now }),
+    meta.rec && meta.last && tokenChip("last", meta.last, { now, count }),
     ...meta.assignees.map((a) => tokenChip("assignees", a)),
     ...[...tags].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })).map((t) => tokenChip("tags", t)),
     done && meta.done && tokenChip("done", meta.done, { now }),
@@ -100,4 +107,16 @@ export function metaChips(meta: TaskMeta, done: boolean, tags: string[] = [], no
 export function endTags(summary: string, tags: string[]): string[] {
   const inText = new Set(tagsInLine(summary).map((h) => h.tag));
   return tags.filter((tag) => !inText.has(tag.toLowerCase()));
+}
+
+/** "Sat, Oct 12": a day as the notice after a tick says when a task is next due. */
+export const dueWords = (day: string) => new Date(`${day.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+/**
+ * What a tick did, in a few words: "Done · next due Sat, Oct 12 · Logged in today's note". The next due
+ * date for a task that moved on, and the log part only when it was logged.
+ */
+export function doneWords(after: { done: boolean; meta: { due: string | null } } | null, logged: boolean): string {
+  const next = after && !after.done && after.meta.due ? ` · next due ${dueWords(after.meta.due)}` : "";
+  return `Done${next}${logged ? " · Logged in today's note" : ""}`;
 }

@@ -20,7 +20,7 @@ test("MCP lists the workspace operations as tools", async () => {
   assert.equal(init.body.result.protocolVersion, "2025-06-18");
   assert.equal((await call(files, "notifications/initialized", undefined, null)).status, 202);
   const tools = (await call(files, "tools/list")).body.result.tools.map((t: { name: string }) => t.name);
-  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "list_events", "list_contacts", "diff", "read_version", "restore", "labels", "add_label", "list_embeds", "list_uploads", "upload_file"]);
+  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "list_events", "list_contacts", "diff", "read_version", "restore", "labels", "add_label", "list_embeds", "complete_task", "list_uploads", "upload_file"]);
 });
 
 test("an agent's writes through MCP are its changes, and can be undone", async () => {
@@ -53,4 +53,25 @@ test("operations take numbers from query strings", async () => {
     (result.value as Array<{ revision: number }>).map((c) => c.revision),
     [2],
   );
+});
+
+test("an agent ticks a repeating task the way the app does: it moves on, and its completion is logged in today's daily note", async () => {
+  const files = memoryStore();
+  const run = (name: string, args: Record<string, unknown>) => runOperation(name as never, args, files, agent);
+  await run("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d #home\n- [ ] Call mum\n", base: 0 });
+  const ticked = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Water the plants due:2026-10-05 rec:3d #home", today: "2026-10-05" });
+  assert.equal(ticked.ok, true);
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home\n- [ ] Call mum\n");
+  assert.equal(files.files.read("Journal/2026-10-05.md" as never)?.text, "# 2026-10-05\n\n## Done\n\n- [x] Water the plants #home done:2026-10-05 ([[Chores]])\n");
+  // A plain task is ticked where it is, and not logged by default.
+  await run("complete_task", { path: "Chores.md", line: 4, today: "2026-10-05" });
+  assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Call mum done:2026-10-05/);
+  assert.doesNotMatch(files.files.read("Journal/2026-10-05.md" as never)!.text, /Call mum/);
+  // The person's settings say how: v1's ticked copy, in another folder.
+  await run("write_file", { path: ".common-ink/users/ada@example.com/settings.json", text: '{ "tasks.completionLog": "inline" }', base: 0 });
+  await run("complete_task", { path: "Chores.md", line: 3, today: "2026-10-08" });
+  assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08\n- \[ \] Water the plants due:2026-10-11 rec:3d last:2026-10-05 #home/);
+  // A line that isn't that task any more isn't ticked.
+  const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
+  assert.equal(stale.ok, false);
 });

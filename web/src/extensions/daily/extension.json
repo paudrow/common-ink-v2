@@ -1,0 +1,26 @@
+{
+  "id": "daily",
+  "name": "Daily notes",
+  "version": "1.0.0",
+  "description": "A note for each day, Journal/2026-10-05, made the first time something's written to it with just its date as its title. Open today's note, or step to the day before or after. Quick-add puts tasks in today's note, and ticking a repeating task logs it there.",
+  "main": "index.ts",
+  "files": ["index.ts", "daily.ts"],
+  "activationEvents": ["onCommand:daily.today", "onCommand:daily.previous", "onCommand:daily.next"],
+  "permissions": {
+    "files:read": { "paths": ["**/*.md"], "why": "Find the daily notes before and after the one you're on" },
+    "files:write": { "paths": ["**/*.md"], "why": "Make today's note when you open it" }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "daily.today", "title": "Open today's note" },
+      { "command": "daily.previous", "title": "Open the previous day's note" },
+      { "command": "daily.next", "title": "Open the next day's note" }
+    ],
+    "configuration": {
+      "title": "Daily notes",
+      "properties": {
+        "daily.folder": { "type": "string", "default": "Journal", "description": "The folder daily notes are in, each named by its date: Journal/2026-10-05." }
+      }
+    }
+  }
+}
