@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 32,
   "title": "Link embeds keep playing",
   "steps": [
     "Open Link embeds tour and start the video. Move the mouse over it, and the cursor onto its link's line (/youtube then Enter in Vim, or click just left of the link): the raw link shows above the video, and the video keeps playing under it. Move off the line: it plays on, in the same frame.",
