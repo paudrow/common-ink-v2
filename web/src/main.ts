@@ -95,8 +95,8 @@ const workbench = new Workbench(
     mode: (mode) => (modeLine.textContent = mode),
     focus(path) {
       if (path) window.history.replaceState(null, "", addressFor(path));
-      // Switching notes is something extensions act on; focus coming back to the same one isn't.
-      if (path && path !== lastFile) extensions.youDid({ kind: "opened", path });
+      // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
+      if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
       if (path) lastFile = path;
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
