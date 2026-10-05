@@ -5,6 +5,7 @@
 // far you go; and the keyboard moves through periods and events.
 import assert from "node:assert/strict";
 import { browserTest, harness } from "./harness.ts";
+import type { Locator } from "playwright-core";
 import type { App } from "./pages.ts";
 
 const h = harness();
@@ -28,13 +29,19 @@ async function titled(app: App, from: string, to: string): Promise<Array<{ title
   return res.json();
 }
 
+/** Where something is on screen. What the calendar draws again after an edit is briefly not on screen, so this waits for it. */
+async function box(app: App, what: Locator) {
+  for (let i = 0; i < 40; i++) {
+    const r = await what.boundingBox();
+    if (r) return r;
+    await app.page.waitForTimeout(100);
+  }
+  assert.fail(`${what} isn't on screen`);
+}
+
 /** Where a time is in a day's column, on screen. */
 async function at(app: App, day: string, minutes: number, dx = 0.5) {
-  // A column drawn again after an edit is briefly not on screen: wait for it.
-  const column = app.page.locator(`.cal-day[data-day="${day}"]`);
-  let r = await column.boundingBox();
-  for (let i = 0; !r && i < 20; i++) (await app.page.waitForTimeout(100), (r = await column.boundingBox()));
-  assert.ok(r, `${day}'s column is on screen`);
+  const r = await box(app, app.page.locator(`.cal-day[data-day="${day}"]`));
   return { x: r.x + r.width * dx, y: r.y + (minutes / 60) * HOUR };
 }
 
@@ -70,10 +77,10 @@ browserTest(h, "a drag makes an event as long as the drag, a click makes half an
   await app.page.keyboard.press("Enter");
   const made = app.page.locator(".cal-event", { hasText: "Design review" });
   await made.waitFor();
-  const box = (await made.boundingBox())!;
+  const drawn = await box(app, made);
   const top = await at(app, "2026-10-06", 11 * 60);
-  assert.ok(Math.abs(box.y - top.y) < 2, `drawn at 11:00 (${box.y} vs ${top.y})`);
-  assert.ok(Math.abs(box.height - 1.5 * HOUR) < 4, `90 minutes tall (${box.height})`);
+  assert.ok(Math.abs(drawn.y - top.y) < 2, `drawn at 11:00 (${drawn.y} vs ${top.y})`);
+  assert.ok(Math.abs(drawn.height - 1.5 * HOUR) < 4, `90 minutes tall (${drawn.height})`);
   const listed = (await titled(app, "2026-10-06T00:00:00Z", "2026-10-07T12:00:00Z")).find((e) => e.title === "Design review");
   assert.ok(listed, "it's an event on the server");
   assert.equal((await event(app, listed.address))?.start, "2026-10-06T11:00:00");
@@ -88,14 +95,14 @@ browserTest(h, "a drag makes an event as long as the drag, a click makes half an
 
 browserTest(h, "dragging an event moves it, and dragging its bottom edge changes when it ends", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
-  const dentist = (await app.page.locator(".cal-event", { hasText: "Dentist" }).boundingBox())!;
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
   const to = await at(app, "2026-10-07", 16 * 60 + 15);
   await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
   await until(app, "the dentist moved to Wednesday 16:15", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T16:15:00");
   assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T17:00:00", "it keeps its 45 minutes");
   const planning = app.page.locator(".cal-event", { hasText: "Quarterly planning" });
   await planning.waitFor();
-  const p = (await planning.boundingBox())!;
+  const p = await box(app, planning);
   const end = await at(app, "2026-10-05", 15 * 60);
   await drag(app, { x: p.x + p.width / 2, y: p.y + p.height - 3 }, { x: p.x + p.width / 2, y: end.y });
   await until(app, "planning ends at 15:00", async () => (await event(app, "event:sample/work/planning"))?.end === "2026-10-05T15:00:00");
@@ -109,7 +116,7 @@ browserTest(h, "a repeating event's edits ask which ones: this event, this and f
   const standups = async () => (await titled(app, "2026-10-05T00:00:00Z", "2026-10-17T00:00:00Z")).filter((e) => e.address.includes("standup") || e.title.startsWith("Team") || e.title.startsWith("Sync"));
   // This event: Thursday's moves alone.
   const thu = app.page.locator('.cal-day[data-day="2026-10-08"] .cal-event', { hasText: "Team standup" });
-  const t = (await thu.boundingBox())!;
+  const t = await box(app, thu);
   const to = await at(app, "2026-10-08", 10 * 60);
   await drag(app, { x: t.x + t.width / 2, y: t.y + 5 }, { x: to.x, y: to.y + 5 });
   await app.page.locator(".cal-scope").waitFor();
@@ -189,7 +196,7 @@ browserTest(h, "scrolling sideways goes on through the weeks, drawing only a few
 browserTest(h, "an event moved while offline waits in this browser, says so, and goes once it's back online", { scenario: "calendar", open: "Calendar tour", levers: LEVERS, allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await openCalendar(app);
   await app.page.context().setOffline(true);
-  const dentist = (await app.page.locator(".cal-event", { hasText: "Dentist" }).boundingBox())!;
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
   const to = await at(app, "2026-10-08", 11 * 60);
   await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
   await app.page.locator("#unsent", { hasText: "1 unsent change" }).waitFor();
