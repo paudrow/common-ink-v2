@@ -80,3 +80,69 @@ browserTest(h, "a Kanban board keeps its frame while the cursor is in its markdo
   assert.deepEqual([...new Set(after.map((s) => s.below))], [belowBefore], `the line below is where it was: ${seen}`);
   assert.deepEqual(await same(app), { element: true, page: true }, "the same iframe, never reloaded");
 });
+
+/**
+ * Every animation frame from navigation: whether a line shows the embed's raw markdown, the slot's
+ * height, and what the box shows: "card" (waiting, a quiet card), "shown" (ready, its frame visible),
+ * or "blank" (a slot with nothing in it, or a frame shown before it's ready).
+ */
+const COLD_SAMPLER = (raw: string, box: string) => `(() => {
+  if (window.top !== window) return;
+  window.coldFrames = [];
+  const tick = () => {
+    const lines = [...document.querySelectorAll(".cm-line")].map((l) => l.textContent);
+    const slot = document.querySelector(".cm-embed-slot");
+    const el = document.querySelector(${JSON.stringify(box)});
+    let state = null;
+    if (slot) {
+      const pending = el && (el.matches("[data-pending]") || el.querySelector("[data-pending]"));
+      const frame = el && el.querySelector(".cm-embed-frame");
+      const visible = el && getComputedStyle(el).visibility === "visible" && el.getBoundingClientRect().height > 10;
+      state = !visible ? "blank" : pending ? "card" : frame && getComputedStyle(frame).opacity !== "1" && !frame.classList.contains("is-pending") ? "fading" : "shown";
+    }
+    window.coldFrames.push({ raw: lines.some((l) => l.startsWith(${JSON.stringify(raw)})), slot: slot ? slot.getBoundingClientRect().height : null, state });
+    if (window.coldFrames.length < 600) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+})()`;
+
+/**
+ * A cold load of a note seen before (its embed's height is remembered): from navigation, no frame
+ * shows the embed's raw markdown or a blank box, and the slot's height never changes after it's first
+ * drawn. The cursor starts in the title, outside the embed.
+ */
+async function coldLoad(app: App, note: string, text: string, raw: string, box: string, ready: string) {
+  await app.writeFile(`${note}.md`, text);
+  await app.goto({}, note);
+  await app.page.locator(ready).first().waitFor();
+  await app.page.waitForFunction((b) => !document.querySelector(b)?.querySelector("[data-pending]") && !document.querySelector(b)?.matches("[data-pending]"), box);
+  await app.page.waitForTimeout(800); // its height, remembered
+  await app.page.addInitScript(COLD_SAMPLER(raw, box));
+  await app.page.reload();
+  await app.page.locator(ready).first().waitFor();
+  await app.page.waitForFunction((b) => !document.querySelector(b)?.querySelector("[data-pending]") && !document.querySelector(b)?.matches("[data-pending]"), box);
+  await app.page.waitForTimeout(600);
+  const frames = (await app.page.evaluate(() => (window as unknown as { coldFrames: Array<{ raw: boolean; slot: number | null; state: string | null }> }).coldFrames)) as Array<{ raw: boolean; slot: number | null; state: string | null }>;
+  const seen = JSON.stringify(frames.filter((f, i) => i === 0 || JSON.stringify(f) !== JSON.stringify(frames[i - 1])));
+  assert.deepEqual(frames.filter((f) => f.raw), [], `no frame shows its raw markdown: ${seen}`);
+  const drawn = frames.filter((f) => f.slot !== null);
+  assert.ok(drawn.length > 5, `sampled it drawn: ${seen}`);
+  assert.deepEqual(drawn.filter((f) => f.state === "blank"), [], `no blank frame: ${seen}`);
+  assert.ok(drawn.every((f) => Math.abs(f.slot! - drawn[0].slot!) <= 1), `its slot keeps its height from the first frame: ${seen}`);
+  assert.equal(drawn.at(-1)!.state, "shown");
+  const shownAt = drawn.findIndex((f) => f.state === "shown");
+  assert.deepEqual(drawn.slice(shownAt).filter((f) => f.state === "card"), [], `once shown, it stays shown: ${seen}`);
+}
+
+browserTest(h, "a cold load of a note with a Kanban board: a quiet card at the board's height until it has painted, then the board, with nothing moving", {}, async (app) => {
+  await coldLoad(app, "Cold board", "# Cold board\n\nAbove\n\n:::kanban\n## To do\n- Card one\n- Card two\n## Done\n- Card three\n:::\n\nBelow\n", ":::kanban", '.cm-embed[data-embed="kanban"]', '.cm-embed[data-embed="kanban"] iframe');
+});
+
+browserTest(h, "a cold load of an html-app chart: no raw fence, no blank frame, no jump", {}, async (app) => {
+  const chart = '<canvas id="c" width="300" height="120"></canvas><script>const g = document.getElementById("c").getContext("2d"); g.fillStyle = "#2f5fd0"; for (let i = 0; i < 10; i++) g.fillRect(i * 30, 120 - i * 11, 20, i * 11);</script>';
+  await coldLoad(app, "Cold chart", `# Cold chart\n\nAbove\n\n\`\`\`html-app height=180\n${chart}\n\`\`\`\n\nBelow\n`, "```html-app", '.cm-embed[data-embed="html-app"]', '.cm-embed[data-embed="html-app"] iframe');
+});
+
+browserTest(h, "a cold load of a link embed: no raw link, no blank frame, no jump", {}, async (app) => {
+  await coldLoad(app, "Cold link", "# Cold link\n\nAbove\n\nhttps://www.youtube.com/watch?v=aqz-KE-bpKQ\n\nBelow\n", "https://www.youtube.com", ".cm-url-embed", ".cm-url-embed iframe");
+});

@@ -21,8 +21,8 @@ import type { EmbedContribution, EmbedSyntax } from "../../worker/src/extensions
 import type { FilePath } from "../../worker/src/files.ts";
 import { attrsRecord, directiveText, parseAttrs, serializeAttrs, withValues, type Attr } from "./directives.ts";
 import { embedForm } from "./embed-form.ts";
-import { blockHeight, blockPreview, previewEnabled, type BlockPreview } from "./live-preview.ts";
-import { dropLives, livesOf } from "./lives.ts";
+import { blockPreview, previewEnabled, type BlockPreview } from "./live-preview.ts";
+import { dropLives, livesOf, rememberedHeight } from "./lives.ts";
 
 /** One embed in a note, as its extension gets it. */
 export interface Embed {
@@ -55,6 +55,8 @@ export interface EmbedHost {
   /** Which URL embed draws a link alone on its line, if one does: its id. */
   urlEmbed(url: string): string | null;
   drawUrl(el: HTMLElement, url: string, id: string): void;
+  /** Start the extensions these embeds need, as a note opens, before they're drawn. */
+  prepare?(languages: string[]): void;
 }
 
 /** A line that's just a link: https://… or <https://…>. */
@@ -78,13 +80,14 @@ class UrlSlot extends WidgetType {
     return other.key === this.key;
   }
   get estimatedHeight() {
-    return blockHeight(this.key, -1);
+    return rememberedHeight(this.key) || -1;
   }
   toDOM(view: EditorView) {
     return livesOf(view).slot(this.key, () => {
       const el = document.createElement("div");
       el.className = "cm-embed cm-url-embed";
       el.dataset.urlEmbed = this.id;
+      el.dataset.pending = "";
       this.host.drawUrl(el, this.url, this.id);
       // A click on its edge puts the cursor on its line, to edit the link.
       el.addEventListener("mousedown", (e) => {
@@ -233,7 +236,7 @@ class EmbedSlot extends WidgetType {
     return sameEmbed(this.embed, other.embed);
   }
   get estimatedHeight() {
-    return blockHeight(this.embed.key, -1);
+    return rememberedHeight(this.embed.key) || -1;
   }
   /** The same embed with new arguments or body: its box takes them (see toDOM), and this slot stays. */
   updateDOM(dom: HTMLElement, view: EditorView) {
@@ -269,8 +272,15 @@ class EmbedSlot extends WidgetType {
     tools.className = "cm-embed-tools";
     const body = document.createElement("div");
     body.className = "cm-embed-body";
+    // A quiet card until what it shows is ready (extension-runtime.ts clears this).
+    body.dataset.pending = "";
     el.append(tools, body);
     const contribution = this.host.contributions().get(this.embed.language);
+    // Never drawn here before: until it's ready, a card as tall as its height argument says, or a
+    // block's usual size, so that what's below moves once at most, not at every step of its loading.
+    const declared = Number(this.embed.args.height ?? contribution?.arguments.height?.default);
+    const estimate = declared > 0 ? declared + 16 : this.embed.syntax === "leaf" ? 0 : 120;
+    if (estimate) el.dataset.estimate = String(estimate);
     const tool = (label: string, title: string, run: () => void) => {
       const b = document.createElement("button");
       b.type = "button";
@@ -434,6 +444,11 @@ function linksUnderCursor(state: EditorState, host: EmbedHost): DecorationSet {
  */
 function keepAlive(host: EmbedHost) {
   return [
+    // As the note opens: start the extensions its embeds need, in parallel with the editor's first render.
+    StateField.define<null>({
+      create: (state) => (host.prepare?.(findEmbeds(state, host.contributions()).found.map((f) => f.embed.language)), null),
+      update: () => null,
+    }),
     ViewPlugin.define((view) => {
       livesOf(view);
       return { destroy: () => dropLives(view) };
@@ -451,6 +466,12 @@ function keepAlive(host: EmbedHost) {
       ".cm-embed-layer > .cm-embed": { position: "absolute", boxSizing: "border-box" },
       ".cm-embed-layer > .cm-embed.is-hidden": { visibility: "hidden", pointerEvents: "none" },
       ".cm-embed-slot": { display: "block" },
+      // Not ready yet: a quiet card in the board's background, as tall as it was last time.
+      ".cm-embed-layer > .cm-embed:is(:has([data-pending]), [data-pending])": { minHeight: "var(--embed-height, 0px)" },
+      ".cm-embed-body[data-pending]": { minHeight: "calc(var(--embed-height, 0px) - 0.85em)", borderRadius: "6px", background: "var(--code-bg)" },
+      ".cm-embed-frame": { transition: "opacity 100ms ease-out" },
+      ".cm-embed-frame.is-pending": { opacity: "0", borderColor: "transparent" },
+      "@media (prefers-reduced-motion: reduce)": { ".cm-embed-frame": { transition: "none" } },
     }),
   ];
 }
@@ -494,7 +515,6 @@ export function embeds(host: EmbedHost) {
       ".cm-embed-missing": { color: "var(--muted)", fontSize: "0.85em" },
       ".cm-embed-needs": { color: "var(--muted)", fontSize: "0.8em", fontFamily: "var(--prose)", padding: "0.2em 0" },
       ".cm-embed-needs button": { font: "inherit", color: "var(--accent)", background: "none", border: "none", padding: "0", cursor: "pointer", textDecoration: "underline" },
-      ".cm-embed-loading": { position: "absolute", inset: "0", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: "0.8em", fontFamily: "var(--prose)", pointerEvents: "none" },
       ".cm-embed-form": {
         display: "grid",
         gridTemplateColumns: "max-content 1fr",

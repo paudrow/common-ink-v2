@@ -2,6 +2,7 @@
   "pr": 31,
   "title": "Embeds keep their frame while you edit their markdown",
   "steps": [
+    "Open Boards tour (reload the page first, so it starts cold). The board's place is a quiet card from the first frame, as tall as the board was last time (or a usual size the first time), until the board has drawn; then the board fades in over 100ms. No raw :::kanban, no blank or white frame, and the text below doesn't move once it's there.",
     "Open Boards tour. Move the cursor into the board's markdown (j from the line above, or click its edge): the raw :::kanban lines show. Move out again (k): the same board is back at once, with no blank flash and nothing below it moving. It's the same frame: it was hidden, not reloaded.",
     "Drag a card, then go into the markdown and out again: the board is as you left it.",
     "Edit the board's markdown while it shows raw (add a card under a column), then move out: the board shows the change, in the same frame.",
