@@ -21,10 +21,14 @@ import type { SaveStatus } from "./session.ts";
 import { Panels } from "./panels.ts";
 import { changedExtensions, extensionStates, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { ExtensionRuntime } from "./extension-runtime.ts";
-import { builtInSourceView, extensionsView } from "./extensions-view.ts";
+import { builtInSourceView, extensionsView, originOf } from "./extensions-view.ts";
 import { modalOpen } from "./modal.ts";
+import { changeIn } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState } from "./editor.ts";
+import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
+import { activityView } from "./activity.ts";
+import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
@@ -41,6 +45,8 @@ const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
 const reloadLine = $("#reload");
+const netLine = $("#net-activity");
+netLine.addEventListener("click", () => panels.show("extension-activity"));
 
 const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
@@ -89,6 +95,8 @@ const workbench = new Workbench(
     mode: (mode) => (modeLine.textContent = mode),
     focus(path) {
       if (path) window.history.replaceState(null, "", addressFor(path));
+      // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
+      if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
       if (path) lastFile = path;
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
@@ -151,6 +159,7 @@ async function loadSettings() {
   problemsLine.textContent = problems.length ? `Settings: ${problems.length === 1 ? "1 problem" : `${problems.length} problems`}` : "";
   problemsLine.title = problems.join("\n");
   extensionsChanged();
+  extensions.settingsChanged();
   workbench.refreshView(SETTINGS_VIEW);
 }
 
@@ -394,8 +403,25 @@ const extensions = new ExtensionRuntime({
   vimKey: (keys, command) => vimKey(keys, command),
   onSaved: savedListeners,
   onFocus: focusListeners,
+  saveGrant: async (id, key, answer) => {
+    const grants = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
+    await loadSettings();
+  },
+  prompt: (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger),
+  // It tried something it never asked for: say so once, with where to see what it does ask for.
+  undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
 });
+/** Who's asking, for a permission prompt: its name, where it's from and who made it, and its details. */
+function askerOf(id: string): Asker {
+  const r = extensions.host.records.find((x) => x.id === id);
+  return { name: r?.manifest.name ?? id, origin: r ? originOf(r) : "Workspace", publisher: r?.manifest.publisher, showDetails: () => extensionsUi.showDetails(id) };
+}
+
+// Sandboxed extensions hear of saves and focus changes like trusted ones do.
+savedListeners.push((path) => extensions.broadcast("saved", path));
+focusListeners.push((path) => extensions.broadcast("focus", path));
 
 // Extensions' manifests are read once, as the app loads. Turning one on or off, or changing its files,
 // applies after a reload (ADR 0006 says why), and until then the status bar and the Extensions view say so.
@@ -422,6 +448,12 @@ function updateReloadLine() {
 function extensionsChanged() {
   panels.refresh("extensions");
   workbench.refreshView("extensions");
+  panels.refresh("extension-activity");
+  workbench.refreshView("extension-activity");
+  // The dot shows while an extension has a network request in flight.
+  const busy = extensions.broker.busy();
+  netLine.hidden = !busy.length;
+  netLine.title = busy.length ? `Reaching the network: ${busy.join(", ")}` : "";
   updateReloadLine();
 }
 
@@ -435,9 +467,13 @@ function openExtensionSource(r: ExtensionRecord) {
   else workbench.openView(`extension-source:${r.id}`, { newTab: true });
 }
 
-/** Copy a built-in into the workspace, file for file, where it runs in its place after a reload, and open its code. */
+/**
+ * Copy a built-in into the workspace, file for file, where it runs in its place after a reload, and open
+ * its code. You chose to make it yours, so the copy is trusted to run in the page as the built-in did.
+ */
 async function customize(b: BuiltIn) {
   for (const [file, text] of Object.entries(b.sources)) await api.write(extensionFilePath(b.manifest.id, file), text, 0);
+  if (!settings["extensions.trusted"].includes(b.manifest.id)) await setTrust(b.manifest.id, true);
   await refreshList();
   await workbench.open(extensionFilePath(b.manifest.id, b.manifest.main), { newTab: true });
 }
@@ -469,7 +505,61 @@ const extensionsUi = extensionsView({
   customize,
   remove: removeExtension,
   reload: reloadWindow,
+  answer: (r, key) => parseGrants(settings["extensions.permissions"])[r.id]?.[key],
+  async setAnswer(r, key, answer) {
+    const grants = parseGrants(settings["extensions.permissions"]);
+    const mine = { ...grants[r.id] };
+    if (answer) mine[key] = answer;
+    else delete mine[key];
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
+    await loadSettings();
+  },
+  async resetAnswers(r) {
+    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await loadSettings();
+  },
+  isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
+  async setTrusted(r, trusted) {
+    if (trusted) {
+      const ok = await confirmDialog(
+        `Trust ${r.manifest.name}?`,
+        `A trusted extension runs in the app's own page instead of a sandbox. It can change note editors and draw straight into the page, and it can reach the server and everything you can, around the permissions it asks for. Trust only code you've read or wrote.`,
+        "Trust it",
+      );
+      if (!ok) return;
+    }
+    await setTrust(r.id, trusted);
+  },
+  async install() {
+    const url = await textDialog(
+      "Install an extension from a URL",
+      "The address of an extension's folder, or of its extension.json. Its files are copied into this workspace, and it runs sandboxed, asking before it reaches anything. Extensions from others are at your own risk.",
+      "https://example.com/my-extension/",
+      "Install",
+    );
+    if (!url) return;
+    try {
+      const { name } = await api.installExtension(url);
+      await refreshList();
+      workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+    } catch (err) {
+      workbench.notice(`Couldn't install it: ${(err as Error).message}`);
+    }
+  },
+  showActivity: () => panels.show("extension-activity"),
 });
+
+/** Trust an extension to run in the page, or stop: kept in your settings, applied after a reload. */
+async function setTrust(id: string, trusted: boolean) {
+  const others = settings["extensions.trusted"].filter((x) => x !== id);
+  await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.trusted", trusted ? [...others, id] : others);
+  await loadSettings();
+}
+
+const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
+panels.register(activityUi);
+workbench.registerView(activityUi);
 // The Extensions view is the app's own, not an extension: turning extensions off can't lock you out of it.
 panels.register(extensionsUi);
 workbench.registerView(extensionsUi);
@@ -493,6 +583,7 @@ commands.register(
       ),
   },
   { id: "window.reload", title: "Reload window", run: () => reloadWindow() },
+  { id: "extensions.activity", title: "Show extension activity", run: () => panels.toggle("extension-activity") },
 );
 
 window.addEventListener(
@@ -634,7 +725,7 @@ try {
   // The app's settings first, for which extensions are off; then every manifest, whose settings join
   // the catalog; then settings again, read against it.
   await loadSettings();
-  await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE);
+  await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
   catalog = extensions.catalog();
   extensions.declare();
   await loadSettings();

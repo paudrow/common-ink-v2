@@ -9,6 +9,8 @@ import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type Si
 import { cookie } from "./session.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
+import { extensionApi, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
+import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -28,15 +30,16 @@ interface Env extends WorkspaceEnv {
 }
 
 const HEADERS: Record<string, string> = {
-  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
 };
 
+/** The app's headers on a response. Its policy goes on in `fetch`, which knows the origin. */
 function secure(res: Response): Response {
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(HEADERS)) out.headers.set(k, v);
+  out.headers.set("Content-Security-Policy", "{app}");
   return out;
 }
 
@@ -44,10 +47,22 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 
 export default {
   async fetch(req, env) {
-    // The settings schema is public, so editors outside the app can check settings files against it.
     const url = new URL(req.url);
+    const res = await handle(req, env, url);
+    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    const out = new Response(res.body, res);
+    out.headers.set("Content-Security-Policy", appCsp(url.origin));
+    return out;
+  },
+} satisfies ExportedHandler<Env>;
+
+async function handle(req: Request, env: Env, url: URL): Promise<Response> {
+  {
+    // The settings schema is public, so editors outside the app can check settings files against it.
     if (url.pathname === SCHEMA_URL) return secure(json(schema));
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
+    // Sandboxed frames send no cookies: the sandbox route answers them without sign-in (sandbox.ts says what's safe there).
+    if (url.pathname.startsWith(SANDBOX_PREFIX)) return sandboxRoute(req, url, env.ASSETS, workspace as unknown as SandboxStore);
     const signIn = signInConfig(env);
     if (url.pathname.startsWith("/auth/")) {
       const answer = await signInRoute(req, url, signIn, (granted) => workspace.connectGoogle(granted));
@@ -92,14 +107,18 @@ export default {
       await workspace.disconnectGoogle(who.email);
       return secure(json({ ok: true }));
     }
-    const store = workspace as unknown as Store;
+    const store = workspace as unknown as SandboxStore;
     // The live connection goes straight to the workspace: a WebSocket's response can't be rewrapped.
     if (url.pathname === "/api/live") return workspace.fetch(req);
+    if (who.kind === "user") {
+      const extensionAnswer = await extensionApi(req, url, who.email, authorFor(who, null), store);
+      if (extensionAnswer) return secure(extensionAnswer);
+    }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
     await seedOnce(env, workspace);
     return secure(await api(req, url, who, store));
-  },
-} satisfies ExportedHandler<Env>;
+  }
+}
 
 /** Google sign-in, if this Worker has what it needs for it. */
 function signInConfig(env: Env): SignInConfig | null {
@@ -132,7 +151,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   if (!name) return json({ error: `No route for ${route}` }, 404);
   const body = req.method === "GET" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
-  const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+  const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, 400);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
   return json(result.value, (result.value as { status?: string }).status === "conflict" ? 409 : 200);

@@ -12,7 +12,8 @@ export interface Provider {
   /** What the query starts with to use this provider. The longest matching prefix wins. */
   prefix: string;
   placeholder: string;
-  items(query: string): Item[];
+  /** What matches, now or once it's known: a sandboxed extension answers over a message. */
+  items(query: string): Item[] | Promise<Item[]>;
 }
 
 /** The provider for a query, and the query without its prefix. Null if no provider takes it. */
@@ -82,10 +83,23 @@ export class CommandBar {
     if (restoreFocus) this.returnFocus?.focus();
   }
 
+  /** Each render's turn, so a provider's late answer to an old query doesn't replace a newer one. */
+  private turn = 0;
+
   private render() {
     const found = this.choices ? { provider: this.choices, query: this.input.value.trim() } : providerFor(this.input.value, this.providers);
     this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's extensions are turned off";
-    this.items = found ? found.provider.items(found.query).slice(0, MAX_ITEMS) : [];
+    const turn = ++this.turn;
+    const items = found ? found.provider.items(found.query) : [];
+    if (items instanceof Promise) {
+      void items.then((later) => turn === this.turn && this.show(later), () => turn === this.turn && this.show([]));
+      return;
+    }
+    this.show(items);
+  }
+
+  private show(items: Item[]) {
+    this.items = items.slice(0, MAX_ITEMS);
     this.selected = 0;
     this.list.replaceChildren(
       ...this.items.map((item, i) => {

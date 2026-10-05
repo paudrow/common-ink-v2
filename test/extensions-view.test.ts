@@ -19,10 +19,11 @@ function record(id: string, more: { [key: string]: unknown } = {}, workspace = f
 
 function setUp() {
   const records = [
-    record("vim", { description: "Vim keys.", contributes: { commands: [{ command: "vim.toggle", title: "Toggle Vim" }] } }),
-    record("word-count", { description: "Counts words.", permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" } } }, true),
+    record("vim", { description: "Vim keys.", contributes: { commands: [{ command: "vim.toggle", title: "Toggle Vim" }] }, permissions: { editor: { why: "Vim keys in every editor" } } }),
+    record("word-count", { description: "Counts words.", permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" }, network: { hosts: ["api.example.com"], why: "Look words up" } } }, true),
   ];
   const disabled = new Set<string>();
+  let answers: { [id: string]: { [key: string]: "allow" | "deny" } } = {};
   const view = extensionsView({
     records: () => records,
     needsReload: () => new Set(disabled),
@@ -38,6 +39,23 @@ function setUp() {
     customize: async () => {},
     remove: async () => {},
     reload: () => {},
+    answer: (r, key) => answers[r.id]?.[key],
+    setAnswer: async (r, key, answer) => {
+      const mine = { ...answers[r.id] };
+      if (answer) mine[key] = answer;
+      else delete mine[key];
+      answers = { ...answers, [r.id]: mine };
+      view.render(root);
+    },
+    resetAnswers: async (r) => {
+      const { [r.id]: _gone, ...others } = answers;
+      answers = others;
+      view.render(root);
+    },
+    isTrusted: () => false,
+    setTrusted: async () => {},
+    install: async () => {},
+    showActivity: () => {},
   });
   const root = document.createElement("div");
   document.body.replaceChildren(root);
@@ -63,8 +81,14 @@ test("the list is a row each, in sections; a row opens its details in a modal", 
   assert.equal(dialog()?.getAttribute("aria-modal"), "true");
   assert.equal(dialog()?.getAttribute("aria-label"), "Word-count");
   assert.equal(document.activeElement, dialog(), "focus moves into the modal");
-  assert.equal(dialog()!.querySelector(".perm-can")!.textContent, "Read all your notes");
-  assert.equal(dialog()!.querySelector(".perm-why")!.textContent, "Word-count says: “Count the words in the note on show”");
+  assert.deepEqual(
+    [...dialog()!.querySelectorAll(".extension-perms li")].map((li) => [li.querySelector(".perm-can")!.textContent, li.querySelector(".perm-why")!.textContent]),
+    [
+      ["Connect to api.example.com", "Word-count says: “Look words up”"],
+      ["Read all your notes", "Word-count says: “Count the words in the note on show”"],
+    ],
+  );
+  assert.equal(dialog()!.querySelector(".badge")!.textContent, "Workspace");
   dialog()!.querySelector<HTMLElement>(".modal-close")!.click();
 });
 
@@ -73,7 +97,7 @@ test("Tab stays in the modal, Escape closes it, and focus goes back to the row",
   const open = root.querySelector<HTMLButtonElement>('[data-focus="open:vim"]')!;
   open.focus();
   open.click();
-  const stops = [...dialog()!.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])")];
+  const stops = [...dialog()!.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select")];
   assert.ok(stops.length >= 3);
   key(dialog()!, "Tab");
   assert.equal(document.activeElement, stops[0], "Tab from the modal itself goes to its first control");
@@ -122,4 +146,35 @@ test("the search filters rows and hides sections with none", () => {
     [...root.querySelectorAll<HTMLElement>(".extension-section")].map((s) => s.hidden),
     [false, true],
   );
+});
+
+test("each permission shows your answer in the prompt's words; Reset forgets them all, so it asks again", async () => {
+  const { root } = setUp();
+  root.querySelector<HTMLButtonElement>('[data-focus="open:word-count"]')!.click();
+  const picks = () => [...dialog()!.querySelectorAll<HTMLSelectElement>("select.answer")];
+  assert.deepEqual(
+    picks().map((p) => [p.getAttribute("aria-label"), [...p.options].map((o) => o.textContent), p.selectedOptions[0].textContent]),
+    [
+      ["Word-count: Connect to api.example.com", ["Ask", "Always allow", "Don't allow"], "Ask"],
+      ["Word-count: Read all your notes", ["Ask", "Always allow", "Don't allow"], "Ask"],
+    ],
+  );
+  assert.equal(dialog()!.querySelector('[data-focus="reset:word-count"]'), null, "nothing kept, nothing to reset");
+  picks()[0].value = "deny";
+  picks()[0].dispatchEvent(new window.Event("change"));
+  picks()[1].value = "allow";
+  picks()[1].dispatchEvent(new window.Event("change"));
+  await Promise.resolve();
+  assert.deepEqual(picks().map((p) => p.selectedOptions[0].textContent), ["Don't allow", "Always allow"]);
+  dialog()!.querySelector<HTMLButtonElement>('[data-focus="reset:word-count"]')!.click();
+  await Promise.resolve();
+  assert.deepEqual(picks().map((p) => p.selectedOptions[0].textContent), ["Ask", "Ask"]);
+  key(document.activeElement!, "Escape");
+  root.querySelector<HTMLButtonElement>('[data-focus="open:vim"]')!.click();
+  assert.deepEqual(
+    picks().map((p) => [[...p.options].map((o) => o.textContent), p.selectedOptions[0].textContent]),
+    [[["Always allow", "Don't allow"], "Always allow"]],
+    "a built-in has its permissions with the app, until you say Don't allow",
+  );
+  key(document.activeElement!, "Escape");
 });

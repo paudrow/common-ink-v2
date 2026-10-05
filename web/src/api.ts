@@ -12,6 +12,15 @@ async function ok(res: Response): Promise<Response> {
   return res;
 }
 
+/** What an extension's brokered fetch gets back. */
+export interface ExtensionResponse {
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  truncated: boolean;
+}
+
 export const api = {
   async list(): Promise<FileSummary[]> {
     return (await ok(await fetch("/api/files"))).json();
@@ -32,6 +41,29 @@ export const api = {
   async delete(path: FilePath, base: Revision): Promise<WriteResult> {
     const res = await fetch("/api/file", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, base }) });
     return (res.status === 409 ? res : await ok(res)).json();
+  },
+  /** Write a file for an extension: the change's author is the extension, acting for you. */
+  async writeAs(extension: string, path: FilePath, text: string, base: Revision): Promise<WriteResult> {
+    const res = await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json", "X-Common-Ink-Extension": extension }, body: JSON.stringify({ path, text, base }) });
+    return (res.status === 409 ? res : await ok(res)).json();
+  },
+  /** A token for a sandboxed extension's host to load its code with. */
+  async sandboxToken(extension: string): Promise<string> {
+    return ((await (await ok(await fetch(`/api/sandbox/token?extension=${encodeURIComponent(extension)}`))).json()) as { token: string }).token;
+  },
+  /** Fetch a URL for an extension, through the Worker, which checks what it declares and what you've allowed. */
+  async extensionFetch(extension: string, url: string, init: { method?: string; headers?: Record<string, string>; body?: string }, once: boolean): Promise<ExtensionResponse> {
+    const res = await fetch("/api/extensions/fetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ extension, url, ...init, once }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
+    return data as ExtensionResponse;
+  },
+  /** Copy an extension's files into the workspace from where it's published. */
+  async installExtension(url: string): Promise<{ id: string; name: string; files: string[] }> {
+    const res = await fetch("/api/extensions/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
+    return data as { id: string; name: string; files: string[] };
   },
   async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
     const body = JSON.stringify({ path, text, base });

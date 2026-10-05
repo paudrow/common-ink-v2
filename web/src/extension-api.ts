@@ -13,9 +13,31 @@ import type { Item, Provider } from "./commandbar.ts";
 
 export type { Item, Provider };
 
-/** How a view draws. Called when the view shows, and again when it's refreshed. */
+/** How a trusted extension draws a view straight into the page. Called when it shows, and again when it's refreshed. */
 export interface ViewRenderer {
   render(el: HTMLElement): void | Promise<void>;
+}
+
+/** A webview: a sandboxed frame an extension writes HTML into, in the app's colours, with messages both ways. */
+export interface WebviewHandle {
+  /** The page's HTML. Setting it replaces the page. Its scripts get `commonInk.post()` and `commonInk.onMessage()`. */
+  html: string;
+  post(message: unknown): Promise<void>;
+  onMessage(fn: (message: unknown) => void): void;
+}
+
+/** How a view draws as a webview, in any extension. Called once when the view first shows; the webview lives on. */
+export interface WebviewViewProvider {
+  resolve(webview: WebviewHandle): void | Promise<void>;
+}
+
+/** What a brokered fetch gets back: the text, cut off past 1 MB. */
+export interface FetchResponse {
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  truncated: boolean;
 }
 
 /** A view made from its id, such as a note at an old revision ("version:12:Plan.md"). */
@@ -46,8 +68,8 @@ export interface ExtensionContext {
     open(text?: string): void;
   };
   views: {
-    /** How a view the manifest declares draws. */
-    register(id: string, renderer: ViewRenderer): void;
+    /** How a view the manifest declares draws: as a webview (`resolve`), or, for trusted extensions, in the page (`render`). */
+    register(id: string, renderer: ViewRenderer | WebviewViewProvider): void;
     /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
     provide(prefix: string, make: (id: string) => MadeView | null): void;
     /** Show a view in the side panel, or hide it if it's showing. */
@@ -84,6 +106,10 @@ export interface ExtensionContext {
     write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
     /** Upload a file (an image, a PDF…); its address goes in notes as /uploads/<name>. Throws if it can't be uploaded. */
     upload(name: string, data: Blob): Promise<UploadDone>;
+  };
+  /** The network, through the Worker: only hosts the manifest declares and you've allowed. */
+  net: {
+    fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<FetchResponse>;
   };
   /** Data sources: outside data shown but not stored as files. They answer for the signed-in person. */
   sources: {

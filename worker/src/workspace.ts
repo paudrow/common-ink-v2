@@ -90,6 +90,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.restore(path, at, author);
   }
 
+  /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
+  sandboxKey(): string {
+    return this.files.secret("sandbox-key");
+  }
+
   /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */
   upload(name: string, data: ArrayBuffer, author: Author) {
     const bucket = this.env.UPLOADS;

@@ -50,6 +50,15 @@ These were checked in headless Chrome against a test server.
 - Content written into the sandboxed frame with `document.write` runs. In there, `document.cookie` and `localStorage` throw `SecurityError`, `fetch` is blocked by `connect-src 'none'`, and `window.open` returns null.
 - A sandboxed frame can navigate itself to another site, which would carry data out in the address. The parent page's `frame-src` stops it: with the app's policy naming only the test server, the frame's navigation to another host was blocked before any request went out.
 
+## What building it changed
+
+- **A sandboxed frame that navigates is stopped, not just blocked.** The app's `frame-src` blocks a frame leaving the sandbox route, which leaves it on an error page. The app notices (the host frame loads again; a webview stops answering its ping) and stops that extension or webview, and says why.
+- **Webviews are written, not loaded.** A webview's shell is a fixed page from the sandbox route; the extension's HTML arrives over its port and replaces the page with `document.write`. Its `commonInk` API and its port survive that. That keeps one public shell for every webview, with no extension HTML served by URL.
+- **Trusted extensions may draw views straight into the page** (`render(el)`), as well as webviews (`resolve(webview)`). History, Calendar and the rest share the app's styles, focus and keyboard handling that way; a webview couldn't, and for code that runs in the page anyway, it would buy no safety.
+- **"Allow once" is the page's word.** The Worker checks a brokered fetch against your kept answers, but it can't see a prompt, so a fetch marked "once" by the page is believed if the manifest declares the host. Code in the page could claim it; code in a sandbox can't reach the Worker at all.
+- **Answers are kept in your user settings**, since they're your consent, not the workspace's.
+- **The activity bar, sidebar, bottom panel and status bar items arrive with the Workbench extension**, where the layout model is redesigned anyway, so the layout API is designed once.
+
 ## Consequences
 
 - One manifest format and one API for built-ins and everyone else, so the API is proven by the app's own features.

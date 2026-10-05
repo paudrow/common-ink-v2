@@ -1095,7 +1095,7 @@ body {
 }
 
 .extensions-search {
-  flex: 1 1 10rem;
+  flex: 1 1 100%;
   min-width: 0;
   font: inherit;
   color: var(--ink);
@@ -1338,6 +1338,25 @@ body {
   font-size: 0.8125rem;
 }
 
+.perm-about {
+  margin: 0 0 0.375rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.extension-details select.answer {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.extension-perms + button {
+  margin-top: 0.5rem;
+}
+
 /* The Uploads view (extensions/uploads/index.ts). */
 :is(#panel, .tab-view) .upload-add {
   margin-bottom: 0.75rem;
@@ -1375,5 +1394,192 @@ body {
 :is(#panel, .tab-view) .upload button {
   grid-column: 2;
   grid-row: span 2;
+}
+
+/* Dialogs (dialog.ts), in a modal: permission prompts, trust, install. */
+.dialog h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.dialog h2 .badge {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  vertical-align: 0.1em;
+}
+
+.dialog .muted {
+  font-weight: normal;
+  color: var(--muted);
+}
+
+/* A button that reads as a link: an extension's name, opening its details. */
+button.link {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 0.15em;
+}
+
+.dialog-asks {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+  font-weight: 600;
+}
+
+.dialog-asks em,
+.dialog-why-now em,
+.activity-view em {
+  font-style: italic;
+}
+
+.dialog-details {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.dialog-details summary {
+  cursor: pointer;
+}
+
+.dialog-details ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.dialog-details code {
+  font: 0.75rem var(--mono);
+}
+
+.dialog-why-now {
+  margin: 0 0 0.5rem;
+}
+
+.dialog-why {
+  margin: 0 0 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+/* A prompt's answers say what they do, so they're long: one to a line. */
+.prompt .dialog-actions {
+  flex-direction: column;
+  align-items: stretch;
+  margin-bottom: 0.75rem;
+}
+
+.dialog-note {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.75rem;
+  padding: 0.375rem 0.5rem;
+  font: inherit;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.dialog-actions button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+
+.dialog :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A webview: an extension's sandboxed frame, filling its view. */
+iframe.webview {
+  display: block;
+  width: 100%;
+  min-height: 12rem;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+
+/* The status bar's dot while an extension is reaching the network. */
+#net-activity {
+  width: 0.6rem;
+  height: 0.6rem;
+  align-self: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #d97706;
+  cursor: pointer;
+  animation: net-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes net-pulse {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The Extension activity view (activity.ts). */
+.activity-view {
+  font: 0.8125rem/1.5 var(--prose);
+}
+
+.activity-view h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.875rem;
+}
+
+.activity-view .muted,
+.activity-view .when {
+  color: var(--muted);
+  font-weight: normal;
+}
+
+.activity-view ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity-view li {
+  padding: 0.125rem 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-view .activity-denied,
+.activity-view .activity-failed {
+  color: #c2410c;
 }
 

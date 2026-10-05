@@ -38,8 +38,12 @@ export type ExtensionState =
   /** A workspace extension, not loaded because this is safe mode. */
   | "safe";
 
+/** Where an extension's code runs: in the app's page (built-ins, and ones you trust), or in a sandbox. */
+export type Tier = "page" | "sandbox";
+
 export interface ExtensionRecord {
   id: string;
+  tier: Tier;
   /** The manifest in effect: a workspace copy's, when it runs in place of the built-in. */
   manifest: ExtensionManifest;
   /** The built-in with this id, if there is one. With `workspace` too, the built-in is customized. */
@@ -51,6 +55,21 @@ export interface ExtensionRecord {
   error?: string;
   /** Its extension.json couldn't be read, so `manifest` is a stand-in. */
   broken?: true;
+  /** Where it was installed from, for a workspace extension installed from a URL (its installed.json). */
+  installedFrom?: string;
+}
+
+/** The file Install from URL leaves in an extension's folder, saying where it came from. */
+export const installedPath = (id: string) => `.common-ink/extensions/${id}/installed.json` as FilePath;
+
+/** The address an installed.json names, if it names one. */
+function installedFrom(text: string): string | undefined {
+  try {
+    const from = (JSON.parse(text) as { from?: unknown }).from;
+    return typeof from === "string" ? from : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The workspace extensions among the files: a folder with an extension.json. */
@@ -82,10 +101,12 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
 });
 
 export interface HostOptions {
-  /** The context an extension's code gets. Its errors are reported through `failed`. */
+  /** The context an extension's code gets in the page. Its errors are reported through `failed`. */
   context(record: ExtensionRecord, failed: (err: unknown) => void): ExtensionContext;
-  /** Load a workspace extension's main module (from the Worker, so `script-src 'self'` allows it). */
+  /** Load a trusted workspace extension's main module (from the Worker, so `script-src 'self'` allows it). */
   load(extension: WorkspaceExtension, main: string): Promise<unknown>;
+  /** Start a sandboxed extension in its own host frame, reporting later errors through `failed`. Resolves once it's activated. */
+  sandbox(record: ExtensionRecord, failed: (err: unknown) => void): Promise<void>;
   /** Something about an extension changed after it started, such as a command that threw. */
   changed(): void;
 }
@@ -99,14 +120,21 @@ export class ExtensionHost {
   constructor(private o: HostOptions) {}
 
   /** Read every extension's manifest. Built-ins first, then workspace extensions; none of their code runs yet. */
-  async load(builtIns: readonly BuiltIn[], files: readonly FileSummary[], read: (path: FilePath) => Promise<WorkspaceFile>, disabled: readonly string[], safe: boolean): Promise<void> {
+  async load(
+    builtIns: readonly BuiltIn[],
+    files: readonly FileSummary[],
+    read: (path: FilePath) => Promise<WorkspaceFile>,
+    disabled: readonly string[],
+    safe: boolean,
+    trusted: readonly string[] = [],
+  ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
     const records: ExtensionRecord[] = [];
     for (const b of builtIns) {
       const copy = workspace.get(b.manifest.id);
       // The workspace's copy runs instead, below; in safe mode the built-in runs as it shipped.
       if (copy && !safe) continue;
-      records.push({ id: b.manifest.id, manifest: b.manifest, builtIn: b, workspace: copy, state: disabled.includes(b.manifest.id) ? "off" : "inactive" });
+      records.push({ id: b.manifest.id, tier: "page", manifest: b.manifest, builtIn: b, workspace: copy, state: disabled.includes(b.manifest.id) ? "off" : "inactive" });
       this.modules.set(b.manifest.id, async () => b.module);
     }
     for (const w of workspace.values()) {
@@ -114,7 +142,10 @@ export class ExtensionHost {
       if (safe && builtIn) continue;
       // extension.json is only data, so it's read even in safe mode, for the extension's name.
       const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
-      const record: ExtensionRecord = { id: w.id, manifest: typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest, builtIn, workspace: w, state: "inactive" };
+      // A workspace extension runs sandboxed unless you trust it.
+      const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
+      const record: ExtensionRecord = { id: w.id, tier, manifest: typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest, builtIn, workspace: w, state: "inactive" };
+      if (w.files.includes(installedPath(w.id))) record.installedFrom = installedFrom((await read(installedPath(w.id))).text);
       records.push(record);
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
       else if (safe) record.state = "safe";
@@ -162,8 +193,11 @@ export class ExtensionHost {
     };
     const run = (async () => {
       try {
-        const module = await this.modules.get(record.id)!();
-        await module.activate(this.o.context(record, failed));
+        if (record.tier === "sandbox") await this.o.sandbox(record, failed);
+        else {
+          const module = await this.modules.get(record.id)!();
+          await module.activate(this.o.context(record, failed));
+        }
         record.state = "active";
       } catch (err) {
         console.error(`Extension ${record.id} didn't start:`, err);

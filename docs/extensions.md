@@ -5,7 +5,17 @@ Built-in features are extensions on the same manifest and API anyone else's use 
 - `extension.json`, the manifest: what the extension is, what it adds, when its code starts, and what it may ask for.
 - Its code: `main` (default `index.js`), an ES module whose default export has `activate(ctx)`, plus any modules `main` imports from the same folder. It imports nothing else; everything it needs comes through `ctx`.
 
-A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id.
+A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from where it's published with Install from URL in the Extensions view, which copies its files in.
+
+## Where it runs
+
+A workspace extension runs **sandboxed** unless you trust it: in a hidden iframe of its own, with an opaque origin and a policy that lets nothing connect out. It can't see the app's page, cookies or storage, and everything it does is a message to the app, which checks its manifest and your answers first. Its views are **webviews**: frames it writes HTML into, in the app's colours, with `commonInk.post()` and `commonInk.onMessage()` to talk to its code.
+
+Built-ins and extensions you mark **trusted** (Trust… in the Extensions view) run in the app's page. They can also change note editors and draw views straight into the page. They can get around the permissions they declare, so trust only code you've read or wrote. Customize trusts the copy it makes, since you made it yours.
+
+## Permissions
+
+The manifest's `permissions` are the most an extension may ever ask for, each with why. The first time it asks, you see "Word count wants to read your notes · Count the words in the note on show", and choose Allow once, Always allow, or Don't allow. Your answers are kept in your settings, under `extensions.permissions`, and the Extensions view lets you change them. Built-ins have what they declare until you deny it. Every check and every network request shows in Extension activity, and a dot in the status bar shows while a request is in flight.
 
 ## The manifest
 
@@ -46,9 +56,10 @@ A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a 
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
 - `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`.
-- `ctx.views.register(id, renderer)`, `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
+- `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
-- `ctx.files` lists, reads, writes and uploads files. Writes are changes by the signed-in person.
+- `ctx.files` lists, reads and writes files, each checked against `files:read` and `files:write`. Writes are changes in history by the extension, acting for you.
+- `ctx.net.fetch(url, init)` fetches through the Worker: only hosts the manifest declares and you've allowed, with no cookies or referrer, at most 1 MB. A sandboxed extension has no other way out.
 - `ctx.workbench` opens files, says which file is focused, and shows a notice.
 - `ctx.changes.describe(fn)` puts words to changes in history, such as "Completed 'Pay rent' (due Oct 1)".
 - `ctx.events.onSaved` and `ctx.events.onFocus` say when a file saved and when focus moved.

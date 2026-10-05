@@ -57,6 +57,9 @@ export const PERMISSION_KINDS: readonly PermissionKind[] = [
   "editor",
 ];
 
+/** Whether a kind of permission is declared with a scope: hosts, paths or setting keys. */
+export const needsScope = (kind: PermissionKind) => kind === "network" || kind === "files:read" || kind === "files:write" || kind === "settings:write";
+
 /** One declared permission: why it's wanted and, for network and files, how far it reaches. */
 export interface PermissionRequest {
   why: string;
@@ -162,6 +165,8 @@ export interface ExtensionManifest {
   name: string;
   version: string;
   description: string;
+  /** Who made it, as its prompts and details say. */
+  publisher?: string;
   /** The module that's started, relative to the folder. */
   main: string;
   /** Every file the extension is made of, for copying it: main and what main imports. */
@@ -196,7 +201,7 @@ function object(v: unknown, what: string): Json {
 
 const relativeFile = (v: unknown, what: string, typescript = false) => {
   const file = text(v, what);
-  const kinds = typescript ? /\.(js|mjs|ts|json|css|html)$/ : /\.(js|mjs|json|css|html)$/;
+  const kinds = typescript ? /\.(js|ts|json)$/ : /\.(js|json)$/;
   if (!kinds.test(file) || file.startsWith("/") || file.split("/").some((p) => p === "" || p === "." || p === "..")) {
     throw new ManifestError(`${what} must be a file in the extension's folder, like "index.js"`);
   }
@@ -329,14 +334,19 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
         out.paths = strings("paths");
         if (!out.paths.length) throw new ManifestError(`${at}.paths must name the files it may touch, like "Journal/**"`);
       }
-      if (kind === "settings:write") out.keys = strings("keys");
+      if (kind === "settings:write") {
+        out.keys = strings("keys");
+        if (!out.keys.length) throw new ManifestError(`${at}.keys must name the settings it may change`);
+      }
       permissions[kind as PermissionKind] = out;
     }
+    const publisher = text(m.publisher, '"publisher"', true);
     return {
       id: folderId,
       name: text(m.name, '"name"', true) || folderId,
       version: text(m.version, '"version"', true) || "0.0.0",
       description: text(m.description, '"description"', true),
+      ...(publisher ? { publisher } : {}),
       main,
       files: files.includes(main) ? files : [main, ...files],
       activationEvents: activationEvents.length ? activationEvents : ["onStartup"],
