@@ -114,3 +114,10 @@ _Avoid_: Hide, move to archive
 **Trash**:
 The notes deleted in the last `trash.retentionDays` days (30 by default), whatever is at their paths now. It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history, or beside the note that has its path now.
 _Avoid_: Bin, recycle
+
+**Device**:
+One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
+
+**Requirement**:
+What an extension or contribution needs from a device to work, such as a keyboard or a wide screen, declared as `requires`. One that isn't met is off on that device, with the reason shown, unless you turn it on there.
+_Avoid_: Platform, desktop-only, mobile-only

@@ -19,6 +19,7 @@ import {
   moveTab,
   moveTabDirection,
   only,
+  onShow,
   openTab,
   parseLayout,
   resizeFocused,
@@ -225,4 +226,15 @@ test("a saved layout whose sizes can't be shares (infinite, or too big to add up
     const l = two(odd);
     assert.deepEqual([sizes(l), layoutProblems(l)], [[0.5, 0.5], []], JSON.stringify(odd));
   }
+});
+
+test("a phone starts from just what's on show: the focused window, with its tab on show", () => {
+  const p = (name: string) => `${name}.md` as FilePath;
+  let l = openTab(openTab(emptyLayout(), p("A")), p("B"));
+  l = split(l, "right", p("C"));
+  l = openTab(l, p("D"));
+  l = selectTab(l, l.focus, 0);
+  assert.deepEqual(onShow(l), { root: { kind: "group", id: l.focus, tabs: [{ file: "C.md" }], active: 0 }, focus: l.focus });
+  assert.deepEqual(layoutProblems(onShow(l)), []);
+  assert.deepEqual(onShow(emptyLayout()), emptyLayout(), "nothing on show, nothing kept");
 });

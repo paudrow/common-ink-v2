@@ -5,10 +5,14 @@ export function globMatches(glob: string, path: string): boolean {
   return globRegExp(glob).test(path);
 }
 
-/** Whether a path matches any of some globs, with each glob read once. */
+/**
+ * Whether some globs admit a path. The first glob it matches decides: a glob admits it, a "!glob" leaves
+ * it out; one none match is left out. So ["!Secret/**", "**"] is everything but Secret/, and it's how
+ * an extension's files:read scopes are decided too, by the first declared scope that covers a path.
+ */
 export function inGlobs(globs: readonly string[]): (path: string) => boolean {
-  const res = globs.map(globRegExp);
-  return (path) => res.some((re) => re.test(path));
+  const rules = globs.map((g) => (g.startsWith("!") ? { admit: false, re: globRegExp(g.slice(1)) } : { admit: true, re: globRegExp(g) }));
+  return (path) => rules.find((r) => r.re.test(path))?.admit ?? false;
 }
 
 function globRegExp(glob: string): RegExp {

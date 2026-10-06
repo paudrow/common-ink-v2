@@ -120,3 +120,22 @@ test("a search within some paths ranks, limits and counts only the notes there",
   assert.equal(fromUrl.value.total, 1);
   assert.equal((await runOperation("search", { query: "zebra", zone: "UTC", within: "Public/**" }, store, ada)).ok, false);
 });
+
+test("search and writes don't fail on a lone surrogate before a combining mark", async () => {
+  const store = memoryStore();
+  const agent: Author = { kind: "agent", name: "Bot" };
+  assert.ok((await runOperation("search", { query: "\udc00́ hello", zone: "UTC" }, store, agent)).ok);
+  assert.ok((await runOperation("write_file", { path: "X.md", text: "# \udc00́ title\nbody", base: 0 }, store, agent)).ok);
+  assert.ok((await runOperation("search", { query: "title", zone: "UTC" }, store, agent)).ok);
+});
+
+test("within takes globs in order, the first a path matches deciding, as an extension's scopes are", async () => {
+  const store = memoryStore();
+  store.files.write({ path: "Public/Decoy.md" as FilePath, text: "# Decoy\nzebra stripes", base: 0, author: ada });
+  store.files.write({ path: "Secret/Plan.md" as FilePath, text: "# Zebra acquisition\nzebra terms", base: 0, author: ada });
+  const paths = async (within: string[]) => ((await runOperation("search", { query: "zebra", zone: "UTC", within }, store, ada)) as { ok: true; value: { results: Array<{ path: string }> } }).value.results.map((r) => r.path).sort();
+  // Declared ["**/*.md", "Secret/**"]: the first denied, the second allowed. Secret/Plan.md is the first's, so it's out.
+  assert.deepEqual(await paths(["!**/*.md", "Secret/**"]), []);
+  assert.deepEqual(await paths(["**/*.md", "!Secret/**"]), ["Public/Decoy.md", "Secret/Plan.md"]);
+  assert.deepEqual(await paths(["!Secret/**", "**/*.md"]), ["Public/Decoy.md"]);
+});

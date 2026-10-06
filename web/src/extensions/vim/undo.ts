@@ -28,6 +28,9 @@ const session = StateField.define<{ from: number; broke: boolean } | null>({
       else if (e.is(end)) value = null;
     }
     if (value && tr.docChanged && tr.annotation(Transaction.addToHistory) !== false) value = { ...value, broke: notTyping(tr) };
+    // After an undo or redo the step on top isn't this session's typing, and after the history starts
+    // afresh (a clash undone) the depth it began at is gone: the session's steps start from here.
+    if (value && (tr.isUserEvent("undo") || tr.isUserEvent("redo") || undoDepth(tr.state) < value.from)) value = { ...value, from: undoDepth(tr.state) };
     return value;
   },
 });
