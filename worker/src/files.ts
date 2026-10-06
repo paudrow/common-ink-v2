@@ -429,14 +429,16 @@ export class Files {
 
   /**
    * Deletes since a time that are in effect, newest first: each is a file in Trash, whatever is at its
-   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one. Only
-   * revisions and times are read here; a deleted file's text is `versionAt(path, before)`, when asked.
+   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one, nor is
+   * one whose restore a later delete undid: that delete is the note's row now. Only revisions and times
+   * are read here; a deleted file's text is `versionAt(path, before)`, when asked.
    */
   deleted(since: number): Deleted[] {
     const undoneBy = this.undoneBy();
+    const deletedAgain = (revision: Revision) => this.db.all("SELECT 1 FROM changes r JOIN changes x ON x.undoes = r.revision AND x.deletes = 1 WHERE r.undoes = ? LIMIT 1", revision).length > 0;
     return this.db
       .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
-      .filter((d) => undoneBy(d.revision) === null)
+      .filter((d) => undoneBy(d.revision) === null && !deletedAgain(d.revision))
       .map(({ revision, path, author, time }) => {
         const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
         return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
