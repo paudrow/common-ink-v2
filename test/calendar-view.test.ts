@@ -55,3 +55,18 @@ test("a month is drawn as whole weeks", () => {
   assert.deepEqual([weeks[0][0], weeks.at(-1)!.at(-1)], ["2026-09-28", "2026-11-01"]);
   assert.equal(monthWeeks("2026-02-01", SUNDAY).length, 4, "February 2026 starts on a Sunday and fills four weeks");
 });
+
+test("the event editor goes beside its event, and stays on screen when the event is off it", async () => {
+  Object.assign(globalThis, { window: { innerWidth: 1200, innerHeight: 800 } });
+  const { place } = await import("../web/src/extensions/calendar/editor.ts");
+  const at = (left: number, top: number) => ({ left, right: left + 130, top, bottom: top + 36, width: 130, height: 36 }) as DOMRect;
+  const placed = (rect: DOMRect) => {
+    const box = { getBoundingClientRect: () => ({ width: 366, height: 455 }), style: { left: "", top: "" } } as unknown as HTMLElement;
+    place(box, rect);
+    return [box.style.left, box.style.top];
+  };
+  assert.deepEqual(placed(at(300, 200)), ["438px", "200px"], "to its right");
+  assert.deepEqual(placed(at(900, 200)), ["526px", "200px"], "to its left, with no room on the right");
+  assert.deepEqual(placed(at(2480, 200)), ["826px", "200px"], "an event off to the right: at the right edge");
+  assert.deepEqual(placed(at(-900, 700)), ["8px", "337px"], "an event off to the left and low: at the left edge, all of it on screen");
+});
