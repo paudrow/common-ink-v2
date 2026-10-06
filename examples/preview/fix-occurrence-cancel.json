@@ -1,0 +1,9 @@
+{
+  "pr": 40,
+  "title": "Undo and series moves no longer cancel occurrences in Google",
+  "steps": [
+    "A Preview has the Sample calendar, which has no Google behind it, so what Google would have done doesn't show here. The pull request says how to see it with `npm run dev -- --fake-google`.",
+    "⌘⇧P, Show calendar. Rename one Standup to Kickoff and choose This event. Undo it from History: it's Standup again, at its time, and still there after the calendar syncs.",
+    "Delete one Standup with This event, then undo it: it comes back."
+  ]
+}

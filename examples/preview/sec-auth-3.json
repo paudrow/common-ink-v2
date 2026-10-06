@@ -1,0 +1,7 @@
+{
+  "pr": 94,
+  "title": "Sign-in: next= capped as it's kept",
+  "steps": [
+    "This Preview doesn't use Google sign-in: test/google.test.ts covers a next= full of é, emoji or quotes."
+  ]
+}

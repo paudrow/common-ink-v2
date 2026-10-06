@@ -30,6 +30,7 @@ export interface Store {
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
+  logDone(path: FilePath, entry: string, day: string, author: Author): Promise<WriteResult> | WriteResult;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -60,7 +61,8 @@ const isoTime = (v: unknown, fallback: Date): string | null => {
 const MAX_FILE_BYTES = 1_000_000;
 
 type Args = Record<string, unknown>;
-type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+/** `internal`: the operation failed in a way the caller can't fix, which is logged; `error` says so in a sentence. */
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; internal?: true };
 
 export interface Operation<T = unknown> {
   description: string;
@@ -486,9 +488,9 @@ export const OPERATIONS = {
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
   }),
-  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
+  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today: string }>({
     description:
-      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. `today` is the person's day (YYYY-MM-DD) where they are, which is what done: and last: say. Both changes are yours; undo them together with both revisions.",
     input: {
       type: "object",
       properties: {
@@ -496,17 +498,17 @@ export const OPERATIONS = {
         line: { type: "integer", minimum: 1, description: "The task's line number, from 1" },
         text: { type: "string", description: "The task's line as you read it, so a note that changed meanwhile isn't ticked in the wrong place" },
         done: { type: "boolean", description: "false to untick it" },
-        today: { type: "string", description: "The person's day, YYYY-MM-DD" },
+        today: { type: "string", description: "The person's day where they are, YYYY-MM-DD" },
       },
-      required: ["path", "line"],
+      required: ["path", "line", "today"],
     },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const line = count(a.line);
       if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
       if (!line) return fail('"line" must be the task\'s line number, from 1');
-      if (a.today !== undefined && (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today))) return fail('"today" must be a day like 2026-10-05');
-      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today as string | undefined });
+      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:');
+      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
       try {
@@ -563,6 +565,7 @@ export async function runOperation(name: OperationName, args: Args, store: Store
     // Data sources fail in ways the caller can fix (connect Google); say how instead of a 500.
     if (name === "data_sources" || name === "list_contacts") return fail((err as Error).message);
     if (err instanceof OperationError) return fail(err.message);
-    throw err;
+    console.error("Operation failed:", name, err);
+    return { ok: false, internal: true, error: `Something went wrong running ${name}. It's been logged; try again.` };
   }
 }
