@@ -125,7 +125,7 @@ function clashes(name: string, claimed: ReadonlySet<string>): boolean {
 }
 
 /** The names the app and built-ins use, for `Claimed.names`: `ids` are the app's own commands and views. */
-export function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManifest[]): Set<string> {
+function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManifest[]): Set<string> {
   const firstWord = (id: string) => id.split(".")[0];
   const names = [
     "note",
@@ -142,12 +142,12 @@ export function claimedNames(ids: readonly string[], builtIns: readonly Extensio
 }
 
 /** The presses a key is on a Mac and elsewhere, for `Claimed.keys`; none for a key with a word that isn't a modifier. */
-export const pressesOf = (key: string) => ([true, false] as const).flatMap((mac) => {
+const pressesOf = (key: string) => ([true, false] as const).flatMap((mac) => {
   const c = chord(key, mac);
   return c === null ? [] : [`${mac ? "mac" : "other"}:${c}`];
 });
 
-/** Whether a sandboxed extension may bind a key: one with ⌘, Ctrl or Alt (not typing, nor Vim's keys), that nothing claimed is on either platform. */
+/** Whether a sandboxed extension may bind a key: one with ⌘, Ctrl or Alt, so not typing, that's nothing claimed on either platform. */
 function freeKey(key: string, claimed: ReadonlySet<string>): boolean {
   const presses = pressesOf(key);
   return presses.length === 2 && presses.every((p) => /^\w+:(meta|ctrl|alt)-/.test(p) && !claimed.has(p));

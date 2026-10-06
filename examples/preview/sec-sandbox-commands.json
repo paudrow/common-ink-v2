@@ -2,7 +2,8 @@
   "pr": 84,
   "title": "What a sandboxed extension can open and run",
   "steps": [
-    "Boards, Word count and the html-app samples work as before: open Boards tour and move a card.",
-    "test/browser/sandbox-escape.browser.ts covers what a sandboxed extension can no longer open or run."
+    "Boards, Word count and the html-app samples work as before: open Boards tour and move a card, and install Word count from the Catalog.",
+    "Make .common-ink/extensions/settings/extension.json holding {\"name\": \"Test\"} and reload: the Extensions view lists Test as Failed, and says why and what to do.",
+    "test/browser/sandbox-escape.browser.ts and test/browser/sandbox-namespace.browser.ts cover what a sandboxed extension can no longer open, run, name or bind."
   ]
 }
