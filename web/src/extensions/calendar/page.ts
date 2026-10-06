@@ -266,7 +266,8 @@ export class CalendarPage {
 
   /** Show a view at a day. */
   show(view: View, day: Day) {
-    closePopover();
+    // Its own editor goes with what it showed; another calendar's (a Calendar tab's, as a note's is drawn) stays.
+    this.editing?.close();
     this.view = view;
     this.anchor = day;
     this.renderer?.destroy();

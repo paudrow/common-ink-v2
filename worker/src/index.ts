@@ -11,7 +11,7 @@ import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PA
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { extensionFileOf, statePath } from "./extensions.ts";
+import { EXTENSION_ID, extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
@@ -33,6 +33,8 @@ interface Env extends WorkspaceEnv {
   ACCESS_AUD?: string;
   /** Set by `npm run dev` and in Previews: who you are signed in as there. */
   DEV_USER?: string;
+  /** Set by `npm run dev`: which run started this Worker (scripts/dev.ts). */
+  DEV_RUN?: string;
   /** "1" in Previews and local development: the workspace is filled from the build's seed.json. */
   SEED?: string;
   /** "1" in Previews, local development and the browser tests, with DEV_USER: test levers (docs/TESTING.md). */
@@ -171,7 +173,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     if (levers && url.pathname.startsWith("/api/levers")) {
       await seedPreview(env, workspace);
-      const answer = await leversApi(req, url, env.ASSETS, workspace);
+      const answer = await leversApi(req, url, env.ASSETS, workspace, env.DEV_RUN);
       if (answer) return secure(answer);
     }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
@@ -213,9 +215,6 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/labels": "labels",
   "POST /api/labels": "add_label",
 };
-
-/** An extension's id, as manifests and folders have it. */
-const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);

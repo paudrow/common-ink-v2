@@ -1,0 +1,7 @@
+{
+  "pr": 147,
+  "title": "Stop trusting, wherever trust was given",
+  "steps": [
+    "Add \"extensions.trusted\": [\"word-count\"] to Workspace settings (JSON) with Word count installed. In Extensions, open Word count and press Stop trusting: Workspace settings no longer lists it."
+  ]
+}

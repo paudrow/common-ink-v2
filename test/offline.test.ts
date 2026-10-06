@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author, FilePath } from "../worker/src/files.ts";
 import { ServerAnswer } from "../web/src/api.ts";
-import { memoryKV, Offline, type HeldOp, type Network } from "../web/src/offline.ts";
+import { idbKV, memoryKV, Offline, type HeldOp, type KV, type Network } from "../web/src/offline.ts";
 import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
 const PLAN = "Plan.md" as FilePath;
 
 /** The real files store behind a network that can be cut. */
-function setup() {
+function setup(kv: KV = memoryKV()) {
   const store = memoryStore();
   let up = true;
   const gate = <T>(fn: () => T): Promise<T> => (up ? Promise.resolve(fn()) : Promise.reject(new TypeError("Failed to fetch")));
@@ -19,7 +19,7 @@ function setup() {
     write: (path, text, base, edit) => gate(() => store.files.write({ path, text, base, author: you, ...(edit ? { edit } : {}) })),
     editApplied: (path, edit) => gate(() => store.files.editApplied(path, edit)),
   };
-  const offline = new Offline(memoryKV(), net);
+  const offline = new Offline(kv, net);
   return { store, offline, setUp: (v: boolean) => (up = v) };
 }
 
@@ -143,6 +143,101 @@ test("held edits of records go once each, however often sending starts, and wait
   await Promise.all([offline.flushOps(send), offline.flushOps(send)]);
   assert.deepEqual(sent, ["Add Lunch"]);
   assert.deepEqual(await offline.ops(), []);
+});
+
+test("IndexedDB that won't open (storage blocked) leaves a store in memory, so the app still works", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  for (const open of [
+    () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    },
+    () => {
+      const req = { error: new DOMException("Blocked", "UnknownError") } as { error: DOMException; onerror?: () => void };
+      setTimeout(() => req.onerror?.());
+      return req;
+    },
+  ]) {
+    Object.defineProperty(globalThis, "indexedDB", { value: { open }, configurable: true });
+    const kv = idbKV("blocked");
+    await kv.set("files", "Plan.md", { text: "a" });
+    assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" });
+    assert.deepEqual(await kv.all("files"), [{ text: "a" }]);
+    assert.deepEqual(await kv.keys("files"), ["Plan.md"]);
+    await kv.del("files", "Plan.md");
+    assert.equal(await kv.get("files", "Plan.md"), undefined);
+  }
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+});
+
+test("IndexedDB that never answers (an older tab holding it) gives way to memory after a moment, and says so", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  let late: (() => void) | undefined;
+  let closed = false;
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: {
+      open() {
+        const req = { result: { close: () => (closed = true) } } as { result: unknown; onsuccess?: () => void; onblocked?: () => void };
+        // Blocked, then answers only long after.
+        setTimeout(() => req.onblocked?.());
+        late = () => req.onsuccess?.();
+        return req;
+      },
+    },
+  });
+  const kv = idbKV("hanging", 30);
+  await kv.set("files", "Plan.md", { text: "a" });
+  assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" });
+  assert.equal(await kv.durable?.(), false, "kept in memory only");
+  late!();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(closed, true, "a database that opens after the page gave up on it is let go");
+  assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" }, "and memory is still what's kept");
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+});
+
+test("a newer page upgrading the database is let have it: this one keeps to memory from then", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const stored = new Map<string, unknown>();
+  let closed = false;
+  const db = {
+    objectStoreNames: { contains: () => true },
+    close: () => (closed = true),
+    onversionchange: null as null | (() => void),
+    transaction() {
+      const tx = { oncomplete: null as null | (() => void), onerror: null };
+      const request = (result: unknown) => {
+        const req = { result };
+        setTimeout(() => tx.oncomplete?.());
+        return req;
+      };
+      return Object.assign(tx, { objectStore: () => ({ put: (v: unknown, k: string) => request(stored.set(k, v) && k), get: (k: string) => request(stored.get(k)) }) });
+    },
+  };
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: {
+      open() {
+        const req = { result: db } as { result: unknown; onsuccess?: () => void };
+        setTimeout(() => req.onsuccess?.());
+        return req;
+      },
+    },
+  });
+  const kv = idbKV("upgraded", 1000);
+  await kv.set("files", "A.md", 1);
+  assert.equal(await kv.durable?.(), true);
+  assert.equal(stored.get("A.md"), 1);
+  db.onversionchange?.();
+  assert.equal(closed, true);
+  await kv.set("files", "B.md", 2);
+  assert.equal(stored.has("B.md"), false, "not written to a database it let go of");
+  assert.equal(await kv.get("files", "B.md"), 2);
+  assert.equal(await kv.durable?.(), false);
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
 });
 
 test("back online, one request says whether the server can be reached, with nothing waiting to send", async () => {
@@ -269,12 +364,52 @@ test("a note whose edits were undone as the page went: what was kept of them bef
   }
 });
 
+test("of a draft kept as the page went and one typed after it came back, the newer is the one", async () => {
+  const items = new Map<string, string>();
+  const storage = { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k) };
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  try {
+    const s = await kept();
+    // The page went (kept at once), came back from the browser's back-forward cache, and typing went on.
+    s.offline.keepDraftsNow([{ path: TRIP, text: "# Trip\n- a\n- went\n", base: 1, edit: "w" }]);
+    const wentKey = [...items.keys()].find((k) => k.startsWith("common-ink.draft:"))!;
+    const went = JSON.parse(items.get(wentKey)!) as { time: number };
+    items.set(wentKey, JSON.stringify({ ...went, path: TRIP, text: "# Trip\n- a\n- went\n", base: 1, edit: "w", time: Date.now() - 60_000 }));
+    await s.offline.keepDraft({ path: TRIP, text: "# Trip\n- a\n- went\n- and more\n", base: 1, edit: "t" });
+    assert.equal((await opened(s))?.edit.text, "# Trip\n- a\n- went\n- and more\n");
+    // And the other way: the page went after the last typing.
+    s.offline.keepDraftsNow([{ path: TRIP, text: "# Trip\n- a\n- last\n", base: 1, edit: "l" }]);
+    assert.equal((await opened(s))?.edit.text, "# Trip\n- a\n- last\n");
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
 test("a clash typed back to the server's own text is no clash when the note opens", async () => {
   const s = await kept();
   s.store.files.write({ path: TRIP, text: "# Trip\n- b\n", base: 1, author: you });
   await s.offline.hold({ path: TRIP, text: "# Trip\n- b\n", base: 1, edit: "c", conflict: true });
   assert.equal(await opened(s), undefined);
   assert.deepEqual(await s.offline.unsent(), []);
+});
+
+test("with IndexedDB that never answers, an edit undone is let go of from the memory standing in for it", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: { open: () => ({}) } });
+  try {
+    const s = setup(idbKV("hanging-let-go", 30));
+    s.offline.account = "you@example.com";
+    s.store.files.write({ path: TRIP, text: "# Trip\n- a\n", base: 0, author: you });
+    await s.offline.hold({ path: TRIP, text: "# Trip\n- a\n- b\n", base: 1, edit: "b" });
+    await s.offline.keepDraft({ path: TRIP, text: "# Trip\n- a\n- b\n", base: 1, edit: "b" });
+    assert.deepEqual((await s.offline.unsent()).map((u) => u.text), ["# Trip\n- a\n- b\n"]);
+    await s.offline.letGoOwn(TRIP);
+    assert.deepEqual(await s.offline.unsent(), [], "the held edit goes");
+    assert.equal(await opened(s), undefined, "and the draft: the note opens as saved");
+  } finally {
+    if (had) Object.defineProperty(globalThis, "indexedDB", had);
+    else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  }
 });
 
 /** Two pages of the app in one browser, keeping edits in the same place, as two tabs do. */

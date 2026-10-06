@@ -66,6 +66,16 @@ export function installNet(hooks: NetHooks): void {
   LeveredWebSocket.prototype = RealWebSocket.prototype;
   Object.assign(LeveredWebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
   window.WebSocket = LeveredWebSocket as unknown as typeof WebSocket;
+  // A beacon goes the same way: refused while offline, and lost (as the page goes, it can't wait) when
+  // it's one a test holds back.
+  const realBeacon = navigator.sendBeacon?.bind(navigator);
+  if (realBeacon)
+    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => {
+      const to = new URL(String(url), location.href);
+      if (net.offline && to.origin === location.origin) return false;
+      if (net.slow.some((s) => s.match.test(`POST ${decodeURIComponent(to.pathname + to.search)}`))) return true;
+      return realBeacon(url, data);
+    };
   Object.defineProperty(Navigator.prototype, "onLine", { configurable: true, get: function (this: Navigator) { return !net.offline && realOnLine.call(this); } });
 }
 

@@ -101,6 +101,7 @@
         addEventListener("load", () => (port.postMessage({ type: "loaded" }), watchFirstPaint()), { once: true });
       } else if (m.type === "message") for (const fn of listeners) fn(m.data);
       else if (m.type === "ping") port.postMessage({ type: "pong", id: m.id });
+      else if (m.type === "dropped") console.error(`commonInk.post: ${m.why}`);
       else if (m.type === "probe" && probing) port.postMessage({ type: "probe", id: m.id, frames, drawn: { ...drawn }, canvases: [...document.querySelectorAll("canvas")].map(sample) });
     };
     port.postMessage({ type: "ready" });

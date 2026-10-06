@@ -304,7 +304,9 @@ async function renderUnsent() {
   // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
   const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  // Kept in memory only (this browser won't keep site data): they're gone if the page closes before they're sent.
+  const fragile = waiting > 0 && !(await offline.durable());
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}${fragile ? ", lost if this page closes" : ""}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
   unsentLine.textContent = parts.filter(Boolean).join(" · ");
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
@@ -662,7 +664,7 @@ const extensionDeps: ExtensionsViewDeps = {
       // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
       const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
       if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
-      else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+      else workbench.notice(`Installed ${name}. It starts after a reload${taken}.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
     }
@@ -764,11 +766,28 @@ async function installFromCatalog(entry: CatalogEntry) {
   }
 }
 
-/** Trust an extension to run in the page, or stop: kept in your settings, applied after a reload. */
+/** The extensions a settings file trusts, or null if it can't be read as JSON. */
+async function trustedIn(path: FilePath): Promise<string[] | null> {
+  try {
+    const value = JSON.parse((await api.read(path)).text || "{}")["extensions.trusted"];
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Trust an extension to run in the page, kept in your settings; or stop, wherever it was trusted (yours
+ * or the workspace's). Applied after a reload.
+ */
 async function setTrust(id: string, trusted: boolean) {
-  const others = settings["extensions.trusted"].filter((x) => x !== id);
-  await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.trusted", trusted ? [...others, id] : others);
+  for (const path of trusted ? [USER_SETTINGS ?? WORKSPACE_SETTINGS] : [USER_SETTINGS, WORKSPACE_SETTINGS]) {
+    if (!path) continue;
+    const list = (await trustedIn(path)) ?? [];
+    if (trusted !== list.includes(id)) await writeSetting(api, path, "extensions.trusted", trusted ? [...list, id] : list.filter((x) => x !== id));
+  }
   await loadSettings();
+  if (!trusted && settings["extensions.trusted"].includes(id)) workbench.notice(`${id} is still trusted: fix the settings file that lists it under extensions.trusted (it isn't valid JSON), then try again.`);
 }
 
 const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
@@ -823,7 +842,12 @@ window.addEventListener("pagehide", () => {
   offline.keepDraftsNow(unsaved);
   // And notes whose edits were undone, so a draft or held edit not yet let go of isn't sent next time.
   offline.keepCleanNow(workbench.cleaned());
-  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  // Then sent as a beacon, which outlives the page more surely than a keepalive request. One the
+  // browser won't take (too big) waits as a draft: a keepalive request would draw on the same budget.
+  for (const u of unsaved) {
+    if (typeof navigator.sendBeacon === "function") api.beacon(u.path, u.text, u.base, u.edit);
+    else void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  }
 });
 
 // The app's own files, kept by a service worker so it opens offline.
