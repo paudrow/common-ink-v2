@@ -60,3 +60,27 @@ test("disconnecting revokes the token at Google, then forgets it", async () => {
   assert.deepEqual(stored(db), []);
   assert.equal(sources.status("ada@example.com").using, "none");
 });
+
+test("a sealed token of a version this code doesn't know is as if nobody connected, and isn't sealed again", async () => {
+  const db = memoryDb();
+  const { fetcher } = fakeGoogle();
+  const { sources } = openWorkspace(db, { fixtures: false, google, tokenKey: "session-secret-1" }, undefined, fetcher);
+  await sources.connect(ada);
+  db.run("UPDATE connections SET refresh_token = ?", "sealed:v9:abc.def");
+  await assert.rejects(sources.contacts("ada@example.com", ""), /isn't connected/);
+  await sources.sealTokens();
+  assert.deepEqual(stored(db), ["sealed:v9:abc.def"]);
+});
+
+test("a revoke Google never answers doesn't hold up disconnecting", async () => {
+  const db = memoryDb();
+  const hang = ((_url: string, init?: RequestInit) => new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
+  const { sources } = openWorkspace(db, { fixtures: false, google, tokenKey: "session-secret-1" }, undefined, hang);
+  await sources.connect(ada);
+  const keepAlive = setTimeout(() => {}, 10_000);
+  const started = Date.now();
+  await sources.disconnect("ada@example.com");
+  clearTimeout(keepAlive);
+  assert.ok(Date.now() - started < 6000, "it gave up on Google");
+  assert.deepEqual(stored(db), []);
+});

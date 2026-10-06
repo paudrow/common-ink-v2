@@ -234,3 +234,12 @@ test("the sample fake Google's week is around the day it's given, in New York, w
     "2026-10-09T13:00 Standup",
   ]);
 });
+
+test("disconnecting ends the fake Google's grant, as Google's revoke does", async () => {
+  const fake = sampleGoogle("2026-10-05");
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" }, tokenKey: "fake" }, fake.fetch);
+  await store.sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+  await store.sources.disconnect("tester@localhost");
+  assert.equal(fake.revoked, true);
+  assert.ok(fake.calls.includes("POST /revoke"));
+});
