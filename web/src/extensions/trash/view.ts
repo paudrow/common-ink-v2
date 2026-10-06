@@ -1,6 +1,7 @@
 // The Trash view: each deleted note, newest first, with who deleted it, when, and the days it has left
-// as a bar that turns red in the last three. Restore with r, the row's button, or a swipe right. ↵ or a
-// tap looks inside: the note's last version, read-only, with Restore. Rows are known by their delete's
+// as a bar that turns red in the last three. Restore with r, the row's button, or a swipe right; delete
+// forever with D, its button, or a swipe left, which asks first, as Empty Trash does. ↵ or a tap looks
+// inside: the note's last version, read-only, with Restore and Delete forever. Rows are known by their delete's
 // revision, so a list that changes under you never moves the selection to another note.
 import { ago, describeAuthor } from "common-ink/describe";
 import { icon } from "common-ink/icons";
@@ -22,6 +23,10 @@ export interface TrashEnv {
   me: string | undefined;
   retentionDays(): number;
   restore(item: Trashed): unknown;
+  /** Purge it, once the person says so. */
+  deleteForever(item: Trashed): unknown;
+  /** Purge everything in Trash, once the person says so. */
+  empty(): unknown;
   /** The note's text as it was before it was deleted. */
   lastVersion(item: Trashed): Promise<string>;
 }
@@ -70,6 +75,17 @@ export class TrashView {
       empty.textContent = `Trash is empty. Deleted notes stay here for ${this.env.retentionDays()} days, then they're purged.`;
       view.append(empty);
     } else {
+      const top = document.createElement("div");
+      top.className = "trash-top";
+      const count = document.createElement("span");
+      count.textContent = `${this.items.length} ${this.items.length === 1 ? "note" : "notes"}, each deleted forever ${this.env.retentionDays()} days after it was deleted`;
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "trash-empty-all";
+      empty.append(icon("trash-2", 14), "Empty Trash");
+      empty.addEventListener("click", () => void this.env.empty());
+      top.append(count, empty);
+      view.append(top);
       const list = document.createElement("ul");
       list.className = "trash-list";
       list.setAttribute("role", "listbox");
@@ -123,7 +139,14 @@ export class TrashView {
     restore.setAttribute("aria-label", restore.title);
     restore.append(icon("rotate-ccw"));
     restore.addEventListener("click", () => void this.env.restore(item));
-    body.append(text, left, restore);
+    const forever = document.createElement("button");
+    forever.type = "button";
+    forever.className = "trash-delete";
+    forever.title = `Delete ${item.title} forever`;
+    forever.setAttribute("aria-label", forever.title);
+    forever.append(icon("trash-2"));
+    forever.addEventListener("click", () => void this.env.deleteForever(item));
+    body.append(text, left, restore, forever);
     li.append(body);
     if (this.open === item.revision) {
       const inside = document.createElement("div");
@@ -138,11 +161,19 @@ export class TrashView {
       back.type = "button";
       back.append(icon("rotate-ccw", 14), "Restore");
       back.addEventListener("click", () => void this.env.restore(item));
-      actions.append(back);
+      const gone = document.createElement("button");
+      gone.type = "button";
+      gone.className = "danger";
+      gone.append(icon("trash-2", 14), "Delete forever");
+      gone.addEventListener("click", () => void this.env.deleteForever(item));
+      actions.append(back, gone);
       inside.append(peek, actions);
       li.append(inside);
     }
-    swipeable(li, body, { right: { label: "Restore", tone: "restore", run: () => this.env.restore(item) } });
+    swipeable(li, body, {
+      right: { label: "Restore", tone: "restore", run: () => this.env.restore(item) },
+      left: { label: "Delete forever", tone: "delete", run: () => this.env.deleteForever(item) },
+    });
     return li;
   }
 
@@ -160,6 +191,7 @@ export class TrashView {
       if (this.root) this.render(this.root);
       this.root?.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "r") void this.env.restore(item);
+    else if (e.key === "D") void this.env.deleteForever(item);
     else if (e.key === "Enter") this.lookInside(item);
     else return;
     e.preventDefault();

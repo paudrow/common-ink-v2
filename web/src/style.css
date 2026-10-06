@@ -2453,6 +2453,8 @@ iframe.webview {
 }
 
 .trash-empty-all {
+  flex: none;
+  white-space: nowrap;
   gap: 0.35rem;
   align-items: center;
   padding: 0.25rem 0.6rem;
@@ -2478,5 +2480,32 @@ iframe.webview {
   color: var(--accent);
   font: inherit;
   padding: 0;
+  cursor: pointer;
+}
+
+/* A button for something that can't be undone: Delete forever, Empty Trash. */
+.dialog-actions button.danger,
+.trash-actions button.danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: var(--on-accent);
+}
+
+.trash-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.25rem 0.5rem;
+}
+
+.trash-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  font: inherit;
+  padding: 0.25rem 0.6rem;
   cursor: pointer;
 }
