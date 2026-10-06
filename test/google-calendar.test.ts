@@ -462,3 +462,12 @@ for (const [what, series, move] of moves) {
     });
   }
 }
+
+test("a calendar list Google sends in pages comes in whole, so no calendar or its events go", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.calendarPage = 1;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "list_calendars", {})) as Array<{ id: string }>).map((c) => c.id), ["primary", "team@group.calendar.google.com"]);
+  assert.ok((await listed(store)).includes("2026-10-08 Offsite"), "the second page's calendar kept its events");
+});

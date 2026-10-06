@@ -21,6 +21,8 @@ export class FakeGoogle {
   revoked = false;
   /** Every request, as "METHOD path?query", for tests to read. */
   readonly calls: string[] = [];
+  /** How many calendars a page of the calendar list holds at most: Google may page it below what was asked for. */
+  calendarPage = 250;
   /** Events whose changes Google refuses (400), with what it says: an invalid field, or a rule of the calendar's. */
   readonly refusing = new Map<string, string>();
 
@@ -70,7 +72,12 @@ export class FakeGoogle {
     // Revoking the grant ends the access tokens made from it too.
     if (this.revoked || new Headers(init.headers).get("Authorization") !== "Bearer fake-access") return error(401, "Invalid Credentials", "authError");
     const path = url.pathname.replace(/^\/calendar\/v3/, "");
-    if (path === "/users/me/calendarList") return json({ items: [...this.calendars.values()].map((c) => c.entry) });
+    if (path === "/users/me/calendarList") {
+      const all = [...this.calendars.values()].map((c) => c.entry);
+      const size = Math.min(Number(url.searchParams.get("maxResults") ?? 100), this.calendarPage);
+      const offset = Number(url.searchParams.get("pageToken") ?? 0);
+      return json({ items: all.slice(offset, offset + size), ...(offset + size < all.length ? { nextPageToken: String(offset + size) } : {}) });
+    }
     const m = /^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(path);
     if (!m) return error(404, "Not Found");
     let cal: ReturnType<FakeGoogle["cal"]>;
