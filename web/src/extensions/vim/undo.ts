@@ -5,21 +5,29 @@
 // a new step, as in Vim. Someone else's change arriving meanwhile isn't in the history at all, so it's
 // never part of yours.
 import { history, undoDepth } from "@codemirror/commands";
-import { EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, Transaction, type Annotation, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 /** An insert session starts: its edits join the history's steps from this depth on. */
 const start = StateEffect.define<number>();
 const end = StateEffect.define<null>();
 
-/** The history's depth when the command that went into insert mode began, while in insert mode. */
-const session = StateField.define<number | null>({
+/**
+ * An edit in insert mode that isn't typing: a task ticked, an embed's form, a note's text replaced, a
+ * drop. Vim starts a new step for what isn't typed, so it's a step of its own, and the typing after it
+ * starts another.
+ */
+const notTyping = (tr: Transaction) => ["input.task", "delete.task", "input.embed", "input.replace", "move"].some((e) => tr.isUserEvent(e));
+
+/** While in insert mode: the history's depth when the command that went into it began, and whether the last edit wasn't typing. */
+const session = StateField.define<{ from: number; broke: boolean } | null>({
   create: () => null,
   update(value, tr) {
     for (const e of tr.effects) {
-      if (e.is(start)) value = e.value;
+      if (e.is(start)) value = { from: e.value, broke: false };
       else if (e.is(end)) value = null;
     }
+    if (value && tr.docChanged && tr.annotation(Transaction.addToHistory) !== false) value = { ...value, broke: notTyping(tr) };
     return value;
   },
 });
@@ -33,9 +41,32 @@ const beforeKey = new WeakMap<EditorView, number>();
  */
 const joinSession = history({
   joinToEvent: (tr) => {
-    const from = tr.startState.field(session, false);
-    return from !== null && from !== undefined && undoDepth(tr.startState) > from;
+    const now = tr.startState.field(session, false);
+    return !!now && !now.broke && !notTyping(tr) && undoDepth(tr.startState) > now.from;
   },
+});
+
+/** The kinds of edit CodeMirror's history joins at all: anything else (Enter's "input", a list's "input.list") never is. */
+const JOINABLE = /^(input\.type|delete)($|\.)/;
+
+/**
+ * Typing in insert mode that the history wouldn't join because of its kind (Enter, a list continued,
+ * a paste) is told as typing: "input" becomes "input.type", "input.list" "input.type.list". It's still
+ * an "input" to anything that asks, such as a list's renumbering.
+ */
+const asTyping = EditorState.transactionFilter.of((tr) => {
+  const event = tr.annotation(Transaction.userEvent);
+  if (!event || !tr.docChanged || JOINABLE.test(event) || !/^input($|\.)/.test(event) || notTyping(tr)) return tr;
+  if (tr.startState.field(session, false) == null || tr.annotation(Transaction.addToHistory) === false) return tr;
+  // A transaction's annotations aren't in its typings; every one but its kind is kept.
+  const others = ((tr as unknown as { annotations: readonly Annotation<unknown>[] }).annotations ?? []).filter((a) => a.type !== Transaction.userEvent);
+  return {
+    changes: tr.changes,
+    selection: tr.selection,
+    effects: tr.effects,
+    scrollIntoView: tr.scrollIntoView,
+    annotations: [...others, Transaction.userEvent.of(`input.type${event.slice("input".length)}`)],
+  };
 });
 
 /**
@@ -55,6 +86,9 @@ const keys = EditorView.domEventHandlers({
   },
 });
 
+/** For tests: start or end an insert session as Vim's mode change would, from this history depth. */
+export const sessionEffects = { start, end };
+
 /** Told of Vim's mode: insert starts a session from the depth before the key that got there; any other ends it. */
 export function modeChanged(view: EditorView, mode: string): void {
   const inSession = view.state.field(session, false) != null;
@@ -63,4 +97,4 @@ export function modeChanged(view: EditorView, mode: string): void {
 }
 
 /** The extension: before Vim's own keys, so each key's starting depth is known when Vim acts on it. */
-export const insertUndo: Extension = [session, joinSession, quietCursor, keys];
+export const insertUndo: Extension = [session, joinSession, quietCursor, asTyping, keys];

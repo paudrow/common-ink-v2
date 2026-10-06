@@ -492,6 +492,11 @@ browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, 
     ["o", ["o", "H", "i", "<Esc>", "u"], START],
     ["A", ["A", "!", "?", "<Esc>", "u"], START],
     ["a block's I", ["<C-v>jjI", "X", "Y", "<Esc>", "u"], START],
+    // Enter in insert mode is typing too.
+    ["A…<CR>…", ["A", "x", "<CR>", "y", "<Esc>", "u"], START],
+    ["cw…<CR>…", ["cw", "Z", "<CR>", "Y", "<Esc>", "u"], START],
+    ["o…<CR>…", ["o", "H", "<CR>", "i", "<Esc>", "u"], START],
+    ["S with two Enters", ["S", "a", "<CR>", "b", "<CR>", "c", "<Esc>", "u"], START],
     // The second change, made by ., is the step u takes back.
     [".", ["cwZ<Esc>", "j", ".", "u"], "# U\n\naZ\nefgh\nijkl\nmnop\n"],
     // An arrow in insert mode starts a new step, as in Vim.
@@ -508,6 +513,27 @@ browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, 
     await app.idle();
     for (let i = 0; i < 20 && (await app.readFile("U.md")) !== after; i++) await app.page.waitForTimeout(250);
     assert.equal(await app.readFile("U.md"), after, name);
+  }
+});
+
+browserTest(h, "in a list, Enter continuing it and Enter ending it are part of the change u takes back", { scenario: "empty" }, async (app) => {
+  const START = "# L\n\n- one\n- two\n";
+  for (const [name, keys] of [
+    ["a bullet continued", ["A", "<CR>", "t", "h", "r", "e", "e", "<Esc>", "u"]],
+    ["the list ended", ["A", "<CR>", "<CR>", "a", "f", "t", "e", "r", "<Esc>", "u"]],
+  ] as const) {
+    await app.writeFile("L.md", START);
+    await app.open("L");
+    await app.idle();
+    await app.call("cursor", 4, 1);
+    await app.keys("<Esc>");
+    for (const k of keys) {
+      await app.keys(k);
+      await app.page.waitForTimeout(600);
+    }
+    await app.idle();
+    for (let i = 0; i < 20 && (await app.readFile("L.md")) !== START; i++) await app.page.waitForTimeout(250);
+    assert.equal(await app.readFile("L.md"), START, name);
   }
 });
 
