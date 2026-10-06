@@ -53,4 +53,7 @@ export function swipeable(row: HTMLElement, body: HTMLElement, actions: { right?
   };
   row.addEventListener("pointerup", end);
   row.addEventListener("pointercancel", reset);
+  // Once it's a swipe, the finger's moves are the row's alone: the browser doesn't also make a gesture
+  // of them, which could take the next tap (on the dialog a swipe left opens) as its own.
+  row.addEventListener("touchmove", (e) => sideways && e.cancelable && e.preventDefault(), { passive: false });
 }
