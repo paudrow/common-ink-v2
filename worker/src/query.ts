@@ -5,6 +5,9 @@
 // `common-ink/query`, so they read a query the same way.
 import type { Author } from "./files.ts";
 
+/** Whether a path matches one of some globs, as a provider keeps to search's `within` (globs.ts). */
+export { inGlobs } from "./globs.ts";
+
 /** One piece of a query: a word or "a phrase", or a filter like `is:archived`. A leading `-` negates either. */
 export type Term = { kind: "words"; text: string; negated: boolean } | { kind: "filter"; key: string; value: string; negated: boolean };
 
@@ -51,12 +54,33 @@ export interface Filter {
  * Text as search compares it: accents dropped where they're optional, as on Latin, Greek, Hebrew and
  * Arabic letters (é, ά, ָ, َ), and kept where they make another letter (й, が, ा); then lower case.
  */
-const fold = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/([\p{Script=Latin}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Arabic}])\p{M}+/gu, "$1")
+const fold = (s: string) => {
+  // Plain ASCII, as most notes are, has no accents: folding it is lower case alone.
+  if (/^[\x00-\x7f]*$/.test(s)) return s.toLowerCase();
+  const d = s.normalize("NFD");
+  return d
+    .replace(/\p{M}+/gu, (marks, at: number) => {
+      if (at === 0) return marks;
+      // The letter before: a pair of surrogates is one; a lone one is nothing with optional accents.
+      const unit = d.charCodeAt(at - 1);
+      const high = at > 1 ? d.charCodeAt(at - 2) : 0;
+      const letter = unit >= 0xdc00 && unit <= 0xdfff && high >= 0xd800 && high <= 0xdbff ? d.codePointAt(at - 2)! : unit;
+      return marksOptional(letter) ? "" : marks;
+    })
     .normalize("NFC")
     .toLowerCase();
+};
+
+const OPTIONAL = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Arabic}]$/u;
+const optional = new Map<number, boolean>();
+/** Whether accents on a letter are optional: on Latin, Greek, Hebrew and Arabic ones. Remembered for the first few thousand letters asked about. */
+function marksOptional(codePoint: number): boolean {
+  const known = optional.get(codePoint);
+  if (known !== undefined) return known;
+  const answer = OPTIONAL.test(String.fromCodePoint(codePoint));
+  if (optional.size < 4096) optional.set(codePoint, answer);
+  return answer;
+}
 
 /**
  * Text as the words search sees: runs of letters, digits and the marks that are part of them, folded.
@@ -294,7 +318,7 @@ export function problems(query: Query): string[] {
 
 /** The order a query asks for: its last `sort:`, or relevance when it has words to rank by, else edited. */
 export function sortOf(query: Query): (typeof SORTS)[number] {
-  const asked = query.terms.findLast((t) => t.kind === "filter" && t.key === "sort" && SORTS.includes(t.value.toLowerCase() as never));
+  const asked = query.terms.findLast((t) => t.kind === "filter" && t.key === "sort" && !t.negated && SORTS.includes(t.value.toLowerCase() as never));
   if (asked?.kind === "filter") return asked.value.toLowerCase() as (typeof SORTS)[number];
   return query.terms.some((t) => t.kind === "words" && !t.negated && tokens(t.text).length) ? "relevance" : "edited";
 }
@@ -336,19 +360,24 @@ function titleScore(query: Query, note: NoteFacts): number {
   return query.terms.filter((t) => t.kind === "words" && !t.negated && tokens(t.text).length && holds(title, tokens(t.text))).length;
 }
 
-/**
- * The notes that match, in the query's order. Archived notes come last unless the query asks for them
- * (decision 15); within that, relevance puts title matches first, then the newest.
- */
+/** The notes that match, in the query's order (`ordered`). */
 export function select(query: Query, notes: readonly NoteFacts[], ctx: MatchContext): NoteFacts[] {
+  return ordered(query, notes.filter((n) => matches(query, n, ctx)));
+}
+
+/**
+ * Notes in a query's order. Archived notes come last unless the query asks for them (decision 15);
+ * within that, relevance puts title matches first, then the newest. It needs only what's known of each
+ * note without its text, so a search can order notes before it reads any.
+ */
+export function ordered(query: Query, notes: NoteFacts[]): NoteFacts[] {
   const sort = sortOf(query);
-  const found = notes.filter((n) => matches(query, n, ctx));
-  const score = new Map(sort === "relevance" ? found.map((n) => [n, titleScore(query, n)]) : []);
+  const score = new Map(sort === "relevance" ? notes.map((n) => [n, titleScore(query, n)]) : []);
   const newest = (a: NoteFacts, b: NoteFacts) => b.edited - a.edited || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const order: Record<typeof sort, (a: NoteFacts, b: NoteFacts) => number> = {
     relevance: (a, b) => score.get(b)! - score.get(a)! || newest(a, b),
     edited: newest,
     title: (a, b) => a.title.localeCompare(b.title) || newest(a, b),
   };
-  return found.sort((a, b) => Number(a.archived === true) - Number(b.archived === true) || order[sort](a, b));
+  return notes.sort((a, b) => Number(a.archived === true) - Number(b.archived === true) || order[sort](a, b));
 }

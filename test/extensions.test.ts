@@ -94,11 +94,20 @@ test("a manifest that's wrong says what's wrong with it", () => {
   assert.equal(wrong({ permissions: { network: { why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any');
   assert.equal(wrong({ permissions: { network: { hosts: ["http://evil.example"], why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any; "http://evil.example" isn\'t one');
   assert.equal(wrong({ permissions: { "files:read": { paths: ["**"] } } }), 'permissions["files:read"].why must be text');
+  assert.equal(wrong({ permissions: { "files:read": { paths: ["!Secret/**"], why: "x" } } }), 'permissions["files:read"].paths are the files it may touch, so none starts with "!": "!Secret/**" does');
   assert.equal(wrong({ contributes: { configuration: { properties: { "other.thing": { type: "boolean" } } } } }), 'Setting "other.thing" must start with "x."');
   assert.equal(wrong({ main: "../escape.js" }), '"main" must be a file in the extension\'s folder, like "index.js"');
   assert.equal(wrong({ main: "index.ts" }), '"main" must be a file in the extension\'s folder, like "index.js"', "only built-ins are compiled");
   assert.match(wrong({ activationEvents: ["whenever"] }) as string, /^"activationEvents"\[0\] isn't an activation event/);
   assert.equal(wrong({}, "../up"), `"../up" can't be an extension's id: letters, digits, dots, dashes and underscores`);
+  assert.equal(wrong({ contributes: { search: { types: [{ type: "note", title: "Mine" }] } } }), 'contributes.search.types[0].type must be lowercase letters and dashes, and not "note"');
+  assert.equal(wrong({ contributes: { search: { filters: [{ filter: "is:", values: [] }] } } }), 'contributes.search.filters[0].filter must be a word like "due:", and not one of is, in, from, type, edited, has, sort, http, https, www, ftp, mailto, file, note');
+  assert.match(wrong({ contributes: { search: { filters: [{ filter: "https", values: [] }] } } }) as string, /not one of/);
+});
+
+test("a manifest's search contribution names its kinds of result and its filters, without their colons", () => {
+  const m = parseManifest({ name: "x", version: "1", contributes: { search: { types: [{ type: "event", title: "Events" }], filters: [{ filter: "On:", description: "A day", values: ["today"] }] } } }, "x");
+  assert.deepEqual(typeof m === "string" ? m : m.contributes.search, { types: [{ type: "event", title: "Events" }], filters: [{ filter: "on", description: "A day", values: ["today"] }] });
 });
 
 test("every built-in's extension.json is valid, and lists files that are there", () => {
@@ -281,6 +290,7 @@ test("in the app, a declared command starts its extension the first time it runs
     me: "you@example.com",
     commands,
     bar: { provide() {}, open() {} } as never,
+    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
     panels: { register: (v: { id: string; render(el: unknown): unknown }) => views.set(v.id, v), toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => ran.push(`notice: ${m}`) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
@@ -358,6 +368,7 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     me: "you@example.com",
     commands: new Commands(),
     bar: { provide() {}, open() {} } as never,
+    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
