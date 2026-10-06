@@ -148,6 +148,15 @@ export function editText(view: EditorView, text: string) {
 /** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
 const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
 
+/**
+ * The keys a note's editor takes on one platform, written as shortcuts are ("Mod-z"), and the browser's
+ * copy, cut and paste: a sandboxed extension can't bind them. CodeMirror's ⌘ (Cmd, Meta) is Mod on a Mac.
+ */
+export function editorKeys(mac: boolean): string[] {
+  const keys = [...markdownKeymap, ...defaultKeymap, ...historyKeymap].flatMap((b) => (mac ? [b.mac ?? b.key] : [b.win ?? b.key, b.linux ?? b.key]));
+  return [...keys.flatMap((k) => (k ? [mac ? k.replace(/\b(Cmd|Meta)(?=-)/g, "Mod") : k] : [])), "Mod-c", "Mod-x", "Mod-v"];
+}
+
 /** How close in time two edits side by side are to be one undo step: CodeMirror's history's default. */
 const JOIN_MS = 500;
 const timeOf = (tr: Transaction) => tr.annotation(Transaction.time) ?? Date.now();

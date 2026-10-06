@@ -17,13 +17,13 @@ import type { Search } from "./search.ts";
 import type { Query } from "../../worker/src/query.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
-import { addMarkdownSyntax } from "./editor.ts";
+import { addMarkdownSyntax, editorKeys } from "./editor.ts";
 import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
 import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { newEventId, type Scope } from "../../worker/src/calendar.ts";
-import { ExtensionHost, findWorkspaceExtensions, guarded, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
+import { ExtensionHost, findWorkspaceExtensions, guarded, ownPrefix, type BuiltIn, type ExtensionRecord, type WorkspaceExtension } from "./extension-host.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { formatKeys } from "./keys.ts";
 import { notePathFor } from "./links.ts";
@@ -238,6 +238,11 @@ export class ExtensionRuntime {
   /** How each URL embed draws, by its id. */
   private urlDrawers = new Map<string, (el: HTMLElement, link: { url: string; match: string[] }) => void>();
   private sandboxes = new Map<string, SandboxHost>();
+  /**
+   * The extension each command and view went in for, as they were put in. A sandboxed extension's calls,
+   * keys, menus and status items name only what went in for it: not the app's, nor another extension's.
+   */
+  private owners = { command: new Map<string, string>(), view: new Map<string, string>() };
 
   constructor(private app: RuntimeApp) {
     this.broker = new PermissionBroker({
@@ -254,6 +259,8 @@ export class ExtensionRuntime {
       load: (w: WorkspaceExtension, main: string) => import(/* @vite-ignore */ `/extensions/${w.id}/${main}?v=${encodeURIComponent(w.version)}`),
       sandbox: (record, failed) => this.startSandbox(record, failed),
       changed: () => app.changed(),
+      // Read as extensions load, before any of theirs go in: the app's own.
+      app: () => ({ ids: [...app.commands.all().map((c) => c.id), ...app.workbench.viewIds()], keys: editorKeys }),
     });
   }
 
@@ -338,20 +345,39 @@ export class ExtensionRuntime {
     return settingsCatalog(this.host.installed());
   }
 
+  private sandboxed(m: ExtensionManifest): boolean {
+    return this.host.records.some((r) => r.manifest === m && r.tier === "sandbox");
+  }
+
+  /** Whether a command or view went in for this extension. */
+  private owns(m: ExtensionManifest, kind: "command" | "view", id: unknown): boolean {
+    return typeof id === "string" && this.owners[kind].get(id) === m.id;
+  }
+
+  /** What an extension that's on may bind or list: a sandboxed one, only commands that went in for it. */
+  private bindable(m: ExtensionManifest): (command: string) => boolean {
+    return this.sandboxed(m) ? (command) => this.owns(m, "command", command) : () => true;
+  }
+
   /** Keybindings extensions that are on declare, before the user's and the workspace's. */
   keybindings(): Keybinding[] {
-    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [{ key: k.key, command: k.command }] : [])));
+    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k && this.bindable(m)(k.command) ? [{ key: k.key, command: k.command }] : [])));
   }
 
   /** Commands extensions add to a menu, with their titles. */
   menu(id: MenuId): Array<{ command: string; title: string }> {
-    return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })));
+    return this.host.on().flatMap((m) =>
+      (m.contributes.menus[id] ?? []).filter((item) => this.bindable(m)(item.command)).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })),
+    );
   }
 
-  /** Every keybinding in effect, with the Vim sequences extensions declare. */
+  /** Every keybinding in effect, with the Vim sequences extensions declare (never a sandboxed one's). */
   allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }> {
     const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key }] : []));
-    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim, ...(k.operator ? { operator: true as const } : {}) }] : [])));
+    const vim = this.host
+      .on()
+      .filter((m) => !this.sandboxed(m))
+      .flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim, ...(k.operator ? { operator: true as const } : {}) }] : [])));
     return [...keys, ...vim];
   }
 
@@ -383,11 +409,11 @@ export class ExtensionRuntime {
   }
 
   private declareOne(m: ExtensionManifest): void {
-    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id })));
-    // A sandboxed extension never takes a command id the app or another extension has already.
-    const sandboxed = this.host.records.some((r) => r.manifest === m && r.tier === "sandbox");
+    // A sandboxed extension never takes a command or view id the app or another extension has already.
+    const sandboxed = this.sandboxed(m);
     for (const c of m.contributes.commands) {
-      if (sandboxed && this.app.commands.has(c.command)) continue;
+      if (sandboxed && this.app.commands.has(c.command) && !this.owns(m, "command", c.command)) continue;
+      this.owners.command.set(c.command, m.id);
       this.app.commands.register({
         id: c.command,
         title: c.title,
@@ -400,7 +426,10 @@ export class ExtensionRuntime {
         },
       });
     }
+    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, command: item.command !== undefined && this.bindable(m)(item.command) ? item.command : undefined, owner: m.id })));
     for (const view of Object.values(m.contributes.views).flat()) {
+      if (sandboxed && (this.app.workbench.viewIds().includes(view.id) || this.app.commands.has(`${view.id}.openInWindow`)) && !this.owns(m, "view", view.id)) continue;
+      this.owners.view.set(view.id, m.id);
       const declared = {
         id: view.id,
         title: view.name,
@@ -952,10 +981,9 @@ export class ExtensionRuntime {
       webviews.set(view.id, view);
     };
     const providers = new Map<string, string>();
-    const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
     const ownView = (id: unknown): string => {
-      if (typeof id !== "string" || !declaresView(id)) throw new Error(`${m.name} can show only its own views`);
-      return id;
+      if (!this.owns(m, "view", id)) throw new Error(`${m.name} can show only its own views`);
+      return id as string;
     };
     // An edit's answer names the events it wrote: only for an extension that may read them already.
     const readAsk: Ask = { kind: "data:calendar:read" };
@@ -978,12 +1006,12 @@ export class ExtensionRuntime {
         const [a, b, c] = args as [string, unknown, unknown];
         switch (method) {
           case "commands.register":
-            if (!m.contributes.commands.some((x) => x.command === a)) throw new Error(`Command "${a}" isn't declared in ${m.id}'s contributes.commands`);
+            if (!this.owns(m, "command", a)) throw new Error(`Command "${a}" isn't one of ${m.name}'s: declare it in contributes.commands, named under "${m.id}."`);
             this.handlers.set(a, () => host.invoke(`command:${a}`).catch(failed));
             return;
           case "commands.run":
             // Only its own: an app command acts as you, on whatever is open.
-            if (!m.contributes.commands.some((x) => x.command === a)) throw new Error(`${m.name} can run only its own commands`);
+            if (!this.owns(m, "command", a)) throw new Error(`${m.name} can run only its own commands`);
             return app.commands.run(a);
           case "commands.all":
             return this.allCommands();
@@ -994,6 +1022,7 @@ export class ExtensionRuntime {
           case "statusBar.set":
             return app.statusItems.set(m.id, a, String(b ?? ""), typeof c === "string" ? c : undefined);
           case "commandBar.provide":
+            if (!ownPrefix(m.id, String(b))) throw new Error(`${m.name}'s command bar prefix has to start with its name, like "${m.id} "`);
             providers.set(a, String(b));
             app.bar.provide({
               prefix: String(b),
@@ -1043,7 +1072,7 @@ export class ExtensionRuntime {
           case "search.filterKeys":
             return app.search.extraKeys();
           case "views.register":
-            if (!declaresView(a)) throw new Error(`View "${a}" isn't declared in ${m.id}'s contributes.views`);
+            if (!this.owns(m, "view", a)) throw new Error(`View "${a}" isn't one of ${m.name}'s: declare it in contributes.views, named under "${m.id}"`);
             this.renderers.set(a, {
               render: (el) => {
                 // A webview keeps running between redraws; only a missing one is made again.

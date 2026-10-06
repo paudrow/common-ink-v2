@@ -121,7 +121,7 @@ async function runtimeOn(device: ReturnType<typeof fakeDevice>) {
     search: { provide() {}, find: async () => [], extraKeys: () => [], ownerOf: () => undefined } as never,
     onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
-    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => void notices.push(m) } as never,
+    workbench: { registerView() {}, viewIds: () => [], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => void notices.push(m) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
     settings: () => DEFAULTS,
     files: () => [],

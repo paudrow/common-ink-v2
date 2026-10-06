@@ -3,10 +3,11 @@
 // extension with a built-in's id runs in its place: that's how a built-in is customized. Each extension
 // starts only when one of its activation events happens, through a context that catches what it
 // throws, so one broken extension can't take the others down.
-import { extensionFileOf, manifestPath, parseManifest, STATE_FILE, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
+import { extensionFileOf, manifestPath, parseManifest, STATE_FILE, type ActivationEvent, type Contributions, type ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { FilePath, FileSummary, WorkspaceFile } from "../../worker/src/files.ts";
 import { DEFAULT_KEYBINDINGS } from "../../worker/src/settings.ts";
 import type { ExtensionContext, ExtensionModule } from "./extension-api.ts";
+import { chord } from "./keys.ts";
 
 /** An extension that ships with Common Ink, with its source to show, and the JavaScript to copy. */
 export interface BuiltIn {
@@ -100,36 +101,120 @@ export function findWorkspaceExtensions(files: readonly FileSummary[]): Workspac
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-/** A key as "ctrl-shift-s": Mod and Ctrl are the same key off a Mac, so they count as one, and modifiers in any order. */
-function keyId(key: string): string {
-  const parts = key.split(/-(?=.)/);
-  const last = parts.pop()!;
-  return [...parts.map((p) => (p === "Mod" ? "ctrl" : p.toLowerCase())).sort(), last.toLowerCase()].join("-");
+/** What a sandboxed extension can't take, because the app, a built-in or a trusted extension has it. */
+export interface Claimed {
+  /**
+   * Names the app and the built-ins use, in every spelling `spellings` gives: the first word of each of
+   * their commands and views ("settings" for settings.user), the built-ins' ids, and their search types
+   * and embeds. A sandboxed extension can't be named with one, or add anything named in one.
+   */
+  names: ReadonlySet<string>;
+  /** Key presses taken, as `chord`s on a Mac ("mac:meta-s") and elsewhere ("other:ctrl-s"). */
+  keys: ReadonlySet<string>;
+}
+
+/** An extension's own names for what it adds: its id, and its id in camelCase ("word-count" and "wordCount"). */
+const namesOf = (id: string) => [...new Set([id, id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase())])];
+
+/** A name as names are compared: in any case, with and without its dashes read as camelCase. */
+const spellings = (name: string) => [...new Set([name.toLowerCase(), name.replace(/-([a-z0-9])/gi, (_, c: string) => c.toUpperCase()).toLowerCase()])];
+
+/** Whether a name is a claimed one, inside one ("lists.indent" in "lists"), or holds one, in any spelling. */
+function clashes(name: string, claimed: ReadonlySet<string>): boolean {
+  return spellings(name).some((n) => [...claimed].some((c) => n === c || n.startsWith(`${c}.`) || c.startsWith(`${n}.`)));
+}
+
+/** The names the app and built-ins use, for `Claimed.names`: `ids` are the app's own commands and views. */
+export function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManifest[]): Set<string> {
+  const firstWord = (id: string) => id.split(".")[0];
+  const names = [
+    "note",
+    ...ids.map(firstWord),
+    ...builtIns.flatMap((m) => [
+      m.id,
+      ...m.contributes.commands.map((c) => firstWord(c.command)),
+      ...Object.values(m.contributes.views).flat().map((v) => firstWord(v.id)),
+      ...m.contributes.search.types.map((t) => t.type),
+      ...m.contributes.embeds.map((e) => e.language),
+    ]),
+  ];
+  return new Set(names.flatMap(spellings));
+}
+
+/** The presses a key is on a Mac and elsewhere, for `Claimed.keys`; none for a key with a word that isn't a modifier. */
+export const pressesOf = (key: string) => ([true, false] as const).flatMap((mac) => {
+  const c = chord(key, mac);
+  return c === null ? [] : [`${mac ? "mac" : "other"}:${c}`];
+});
+
+/** Whether a sandboxed extension may bind a key: one with ⌘, Ctrl or Alt (not typing, nor Vim's keys), that nothing claimed is on either platform. */
+function freeKey(key: string, claimed: ReadonlySet<string>): boolean {
+  const presses = pressesOf(key);
+  return presses.length === 2 && presses.every((p) => /^\w+:(meta|ctrl|alt)-/.test(p) && !claimed.has(p));
+}
+
+interface Own {
+  /** Whether an id is under the extension's own names and clashes with nothing claimed. */
+  name(id: string): boolean;
+  /** Its commands, as kept. */
+  commands: ReadonlySet<string>;
+  claimed: Claimed;
 }
 
 /**
- * What a sandboxed extension may add, of what its manifest declares: commands in its own namespace (its
- * id, or its id in camelCase: "word-count." or "wordCount."), views named the same way, and keys, status
- * items and menu entries for those commands only. A key the app or a built-in already uses stays theirs.
- * Anything else would let it stand in for the app's own commands, which act as you.
+ * What a sandboxed extension keeps of each kind of contribution. A kind that isn't here can't be kept: a
+ * new kind of contribution has to say here what a sandboxed extension may have of it before one gets any.
  */
-export function confined(m: ExtensionManifest, takenKeys: ReadonlySet<string>): ExtensionManifest {
-  const names = new Set([m.id, m.id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase())]);
-  const ownName = (id: string) => [...names].some((n) => id === n || id.startsWith(`${n}.`));
-  const c = m.contributes;
-  const commands = c.commands.filter((x) => ownName(x.command) && x.command.includes("."));
-  const own = new Set(commands.map((x) => x.command));
-  return {
-    ...m,
-    contributes: {
-      ...c,
-      commands,
-      keybindings: c.keybindings.filter((k) => own.has(k.command) && !("key" in k && takenKeys.has(keyId(k.key)))),
-      statusBarItems: c.statusBarItems.map((i) => (i.command === undefined || own.has(i.command) ? i : { ...i, command: undefined })),
-      menus: Object.fromEntries(Object.entries(c.menus).map(([id, items]) => [id, (items ?? []).filter((i) => own.has(i.command))])),
-      views: Object.fromEntries(Object.entries(c.views).map(([where, list]) => [where, list.filter((v) => ownName(v.id))])),
-    },
-  };
+const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => Contributions[K] } = {
+  commands: (c, own) => c.commands.filter((x) => own.commands.has(x.command)),
+  // Keys only, not Vim sequences: every sequence is Vim's to begin with, or one it's partway through.
+  keybindings: (c, own) => c.keybindings.filter((k) => "key" in k && own.commands.has(k.command) && freeKey(k.key, own.claimed.keys)),
+  menus: (c, own) => Object.fromEntries(Object.entries(c.menus).map(([id, items]) => [id, (items ?? []).filter((i) => own.commands.has(i.command))])),
+  // Its settings are named for it already (parseManifest).
+  configuration: (c) => c.configuration,
+  viewsContainers: (c, own) => ({ activitybar: c.viewsContainers.activitybar.filter((v) => own.name(v.id)), panel: c.viewsContainers.panel.filter((v) => own.name(v.id)) }),
+  views: (c, own) => Object.fromEntries(Object.entries(c.views).map(([where, list]) => [where, list.filter((v) => own.name(v.id))])),
+  statusBarItems: (c, own) => c.statusBarItems.map((i) => (i.command === undefined || own.commands.has(i.command) ? i : { ...i, command: undefined })),
+  embeds: (c, own) => c.embeds.filter((e) => !clashes(e.language, own.claimed.names)),
+  // Drawn in the page, which only a trusted extension may do.
+  urlEmbeds: () => [],
+  layout: () => [],
+  dataSources: (c) => c.dataSources,
+  // Not a kind of result the app or a built-in answers for (notes, tasks, events): their results are theirs.
+  search: (c, own) => ({ types: c.search.types.filter((t) => !clashes(t.type, own.claimed.names)), filters: c.search.filters }),
+};
+
+/**
+ * What a sandboxed extension may add, of what its manifest declares: commands named under its own id
+ * (its id, or its id in camelCase: "word-count." or "wordCount."), views named the same way, and keys,
+ * status items and menu entries for those commands only; nothing named with a name the app or a
+ * built-in uses, and no key they or a trusted extension bind. Anything else would let it stand in for
+ * the app's own commands, which act as you.
+ */
+export function confined(m: ExtensionManifest, claimed: Claimed): ExtensionManifest {
+  const names = namesOf(m.id);
+  const name = (id: string) => names.some((n) => id === n || id.startsWith(`${n}.`)) && !clashes(id, claimed.names);
+  const commands = new Set(m.contributes.commands.filter((x) => name(x.command) && x.command.includes(".")).map((x) => x.command));
+  const own: Own = { name, commands, claimed };
+  const contributes = Object.fromEntries(Object.entries(CONFINE).map(([kind, keep]) => [kind, (keep as (c: Contributions, own: Own) => unknown)(m.contributes, own)])) as unknown as Contributions;
+  return { ...m, contributes };
+}
+
+/**
+ * Whether a sandboxed extension may take queries starting with `prefix` in the command bar: one that
+ * starts with its own name, as a word ("word-count " or "wordCount:"). Search's "", commands' ">" and
+ * every other provider's stay theirs.
+ */
+export function ownPrefix(id: string, prefix: string): boolean {
+  const p = prefix.toLowerCase();
+  return namesOf(id).some((n) => p.startsWith(n.toLowerCase()) && !/[\w.-]/.test(p.charAt(n.length)));
+}
+
+/** Why a sandboxed extension can't run under its folder's name, if it can't: the app or a built-in uses it. */
+export function reservedName(id: string, claimed: Claimed, builtIn?: BuiltIn): string | null {
+  if (!clashes(id, claimed.names)) return null;
+  const instead = builtIn ? `, or Trust it to run in place of the built-in ${builtIn.manifest.name}` : "";
+  return `"${id}" is a name the app or a built-in extension uses for its own commands and views, so an extension in a folder named that can't run sandboxed. Rename its folder${instead}.`;
 }
 
 /** A manifest for a folder whose extension.json can't be read, so it can still be listed and fixed. */
@@ -154,6 +239,8 @@ export interface HostOptions {
   sandbox(record: ExtensionRecord, failed: (err: unknown) => void): Promise<void>;
   /** Something about an extension changed after it started, such as a command that threw. */
   changed(): void;
+  /** The app's own commands and views, and the keys its editor takes on a Mac or elsewhere: no sandboxed extension may have them. */
+  app?(): { ids: readonly string[]; keys(mac: boolean): readonly string[] };
 }
 
 /** Every extension, and starting them as their activation events happen. */
@@ -161,8 +248,8 @@ export class ExtensionHost {
   records: ExtensionRecord[] = [];
   private modules = new Map<string, () => Promise<ExtensionModule>>();
   private activations = new Map<string, Promise<void>>();
-  /** Keys the app and built-ins bind, which a sandboxed extension can't take. */
-  private takenKeys = new Set(DEFAULT_KEYBINDINGS.map((k) => keyId(k.key)));
+  /** What the app, the built-ins and trusted extensions have, which a sandboxed extension can't take. */
+  private claimed: Claimed = { names: new Set(), keys: new Set() };
 
   constructor(private o: HostOptions) {}
 
@@ -176,8 +263,19 @@ export class ExtensionHost {
     trusted: readonly string[] = [],
   ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
+    const manifests = new Map<string, ExtensionManifest | string>();
+    for (const w of workspace.values()) {
+      // extension.json is only data, so it's read even in safe mode, for the extension's name.
+      if (!(safe && builtIns.some((b) => b.manifest.id === w.id))) manifests.set(w.id, parseManifest((await read(w.manifestPath)).text, w.id));
+    }
+    const app = this.o.app?.() ?? { ids: [], keys: () => [] };
+    const keyed = [...builtIns.map((b) => b.manifest), ...[...manifests].flatMap(([id, m]) => (typeof m !== "string" && trusted.includes(id) ? [m] : []))];
+    const keys = [...DEFAULT_KEYBINDINGS.map((k) => k.key), ...keyed.flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [k.key] : [])))];
+    this.claimed = {
+      names: claimedNames(app.ids, builtIns.map((b) => b.manifest)),
+      keys: new Set([...keys.flatMap(pressesOf), ...([true, false] as const).flatMap((mac) => app.keys(mac).flatMap((k) => pressesOf(k).filter((p) => p.startsWith(mac ? "mac:" : "other:"))))]),
+    };
     const records: ExtensionRecord[] = [];
-    for (const b of builtIns) for (const k of b.manifest.contributes.keybindings) if ("key" in k) this.takenKeys.add(keyId(k.key));
     for (const b of builtIns) {
       const copy = workspace.get(b.manifest.id);
       // The workspace's copy runs instead, below; in safe mode the built-in runs as it shipped.
@@ -188,17 +286,18 @@ export class ExtensionHost {
     for (const w of workspace.values()) {
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
       if (safe && builtIn) continue;
-      // extension.json is only data, so it's read even in safe mode, for the extension's name.
-      const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
+      const manifest = manifests.get(w.id)!;
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
       const parsed = typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest;
-      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.takenKeys) : parsed, builtIn, workspace: w, state: "inactive" };
+      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive" };
       if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
       records.push(record);
+      const reserved = tier === "sandbox" ? reservedName(w.id, this.claimed, builtIn) : null;
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
       else if (safe) record.state = "safe";
       else if (disabled.includes(w.id)) record.state = "off";
+      else if (reserved) [record.state, record.error] = ["failed", reserved];
       else {
         const main = manifest.main;
         this.modules.set(w.id, async () => {
@@ -213,17 +312,22 @@ export class ExtensionHost {
 
   /**
    * A sandboxed workspace extension installed or turned on while the app runs: its record, ready to start
-   * on its activation events. Null for one that can't be put in live: a built-in's id, a broken manifest,
-   * or one that's on already.
+   * on its activation events, or failed, if its name is one the app uses. Null for one that can't be put
+   * in live: a built-in's id, a broken manifest, or one that's on already.
    */
   async add(w: WorkspaceExtension, read: (path: FilePath) => Promise<WorkspaceFile>): Promise<ExtensionRecord | null> {
     const existing = this.records.find((r) => r.id === w.id);
     if (existing?.builtIn || (existing && existing.state !== "off")) return null;
     const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
     if (typeof manifest === "string") return null;
-    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.takenKeys), workspace: w, state: "inactive" };
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.claimed), workspace: w, state: "inactive" };
     if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
     this.records = [...this.records.filter((r) => r.id !== w.id), record];
+    const reserved = reservedName(w.id, this.claimed);
+    if (reserved) {
+      [record.state, record.error] = ["failed", reserved];
+      return record;
+    }
     const main = manifest.main;
     this.modules.set(w.id, async () => (await this.o.load(w, main)) as ExtensionModule);
     this.activations.delete(w.id);
