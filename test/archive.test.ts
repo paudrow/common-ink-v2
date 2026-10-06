@@ -103,3 +103,26 @@ test("a hand-edited archive keeps its other keys, and one that isn't valid JSON 
   assert.deepEqual(await run(store, "archive", { paths: ["Launch plan.md"] }), { error: ".common-ink/archive.json isn't valid JSON with an \"archived\" list, so it wasn't changed. Fix it, or put back an earlier version from History." });
   assert.equal(archiveFile(store), broken);
 });
+
+test("history undoes a hand edit that broke the archive, and the one that fixed it, line by line", async () => {
+  const store = workspace();
+  await run(store, "archive", { paths: ["Groceries.md"] });
+  const path = ".common-ink/archive.json" as FilePath;
+  const good = archiveFile(store);
+  const broke = store.files.write({ path, text: '{ "archived": ["Groceries.md", }\n', base: store.files.read(path)!.revision, author: ada }).file!.revision;
+  assert.deepEqual((await run(store, "undo", { revisions: [broke] })).map((u) => u.status), ["undone"]);
+  assert.equal(archiveFile(store), good);
+  const broken = store.files.write({ path, text: '{ "archived": [ }\n', base: store.files.read(path)!.revision, author: ada }).file!.revision;
+  const fixed = store.files.write({ path, text: good!, base: broken, author: ada }).file!.revision;
+  assert.deepEqual((await run(store, "undo", { revisions: [fixed] })).map((u) => u.status), ["undone"]);
+  assert.equal(archiveFile(store), '{ "archived": [ }\n');
+});
+
+test("undoing a note's delete in History brings it back archived, as it was", async () => {
+  const store = workspace();
+  await run(store, "archive", { paths: ["Groceries.md"] });
+  const d = ((await run(store, "delete_file", { path: "Groceries.md", base: store.files.read("Groceries.md" as FilePath)!.revision })).file as { revision: number }).revision;
+  assert.deepEqual(await archivedNow(store), []);
+  await run(store, "undo", { revisions: [d] });
+  assert.deepEqual(await archivedNow(store), ["Groceries.md"]);
+});
