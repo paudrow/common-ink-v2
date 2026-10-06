@@ -342,10 +342,14 @@ async function renderUnsent() {
   notSaying = line.phone;
   notSavedLine.hidden = !line.phone;
   if (!line.phone) notSavedLine.textContent = "";
-  else if (showing) notSavedLine.textContent = line.phone;
+  else if (showing) {
+    notSavedLine.textContent = line.phone;
+    placeNotSaved();
+  }
   // Shown first and said a frame later, so screen readers hear the live region change.
   else
     requestAnimationFrame(() => {
+      placeNotSaved();
       notSavedLine.textContent = notSaying;
       // The cursor, if it's where the pill now is, moves out from under it.
       const view = workbench.focusedView;
@@ -366,6 +370,14 @@ async function openClash() {
   await resolveConflict();
 }
 unsentLine.addEventListener("click", () => void openClash());
+/** The pill sits just inside the top of the top right window's editors, whatever is above them: a tab row, or nothing. */
+function placeNotSaved() {
+  if (notSavedLine.hidden) return;
+  const tops = [...$("#workbench").querySelectorAll<HTMLElement>(".editors")].flatMap((e) => (e.getClientRects().length ? [e.getBoundingClientRect()] : []));
+  const top = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0]?.top ?? 0;
+  notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
+}
+addEventListener("resize", placeNotSaved);
 floatsOverEditors(notSavedLine);
 notSavedLine.addEventListener("click", () => void openClash());
 notSavedLine.addEventListener("keydown", (e) => {

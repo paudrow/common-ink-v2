@@ -28,8 +28,6 @@
   --del: #b91c1c;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
-  /* A window's tab row, without its border. */
-  --tab-row: 2rem;
   font-family: var(--prose);
 }
 
@@ -192,7 +190,7 @@ body {
   scrollbar-width: none;
   border-bottom: 1px solid var(--line);
   font-size: 0.8125rem;
-  min-height: var(--tab-row);
+  min-height: 2rem;
 }
 
 /* Back and forward, when the Workbench's navigationArrows setting shows them: over the start of the top left tab bar. */
@@ -203,7 +201,7 @@ body {
   z-index: 1;
   display: flex;
   align-items: center;
-  height: var(--tab-row);
+  height: 2rem;
   padding: 0 0.25rem;
   gap: 0.125rem;
 }
@@ -450,9 +448,10 @@ html[data-device-frame] body {
 }
 
 /* A phone has no status bar. While an edit hasn't reached the server, a pill says so, at the right just
-   under the top window's tab row: over a note, that's the editor's empty top margin, so it covers no text
-   and no control, and the note doesn't move as it comes and goes. It takes its own taps, so a tap on it
-   never lands on something it hides. A top bar above the windows moves it down with --not-saved-top. */
+   inside the top of the top window's editors (below its tab row, if it shows one; main.ts sets
+   --not-saved-at): over a note, that's the editor's empty top margin, so it covers no text and no
+   control, and the note doesn't move as it comes and goes. It takes its own taps, so a tap on it never
+   lands on something it hides. */
 #not-saved {
   display: none;
 }
@@ -460,7 +459,7 @@ html[data-device-frame] body {
 #not-saved:not([hidden]) {
   position: fixed;
   z-index: 15;
-  top: var(--not-saved-top, calc(var(--tab-row) + 1px + 0.25rem));
+  top: max(calc(var(--not-saved-at, 0px) + 0.25rem), calc(env(safe-area-inset-top) + 0.25rem));
   right: calc(env(safe-area-inset-right) + 0.5rem);
   max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right));
   box-sizing: border-box;
