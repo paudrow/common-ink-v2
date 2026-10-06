@@ -1,0 +1,7 @@
+{
+  "pr": 114,
+  "title": "The Worker takes a page's last save by sendBeacon",
+  "steps": [
+    "Nothing changes in the app until the web side uses it. From this Preview's page console: navigator.sendBeacon('/api/file/beacon', JSON.stringify({ path: 'Beacon.md', base: 0, text: '# Beacon\\n' })), then open Beacon.md: it's there."
+  ]
+}

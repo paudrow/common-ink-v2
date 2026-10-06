@@ -1,0 +1,7 @@
+{
+  "pr": 110,
+  "title": "An event deleted in Google while your edit waited goes here too",
+  "steps": [
+    "Nothing changes on a Preview's Sample calendar. With `npm run dev -- --fake-google`, end the fake Google's grant, rename an event, delete that event in the fake Google, and give the grant back: the event goes from the calendar, and its history keeps your rename."
+  ]
+}
