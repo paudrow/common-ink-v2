@@ -23,6 +23,7 @@ const { createState } = await import("../web/src/editor.ts");
 const { DEFAULTS } = await import("../worker/src/settings.ts");
 const { embeds, findEmbeds, parseInfo } = await import("../web/src/embeds.ts");
 const { StateEffect, Transaction } = await import("@codemirror/state");
+const { ensureSyntaxTree } = await import("@codemirror/language");
 const clock = await import("../web/src/extensions/timers/clock.ts");
 const { noiseSamples } = await import("../web/src/extensions/media/noise.ts");
 const { exampleOf, listEmbeds } = await import("../worker/src/embed-list.ts");
@@ -63,8 +64,17 @@ const DECLARED = new Map([
   ["html-app", { syntax: "fence" as const }],
 ]);
 
-const state = (doc: string, extensions: import("@codemirror/state").Extension[] = []) =>
-  createState(doc, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions, onUpdate: () => {}, onBlur: () => {} });
+/**
+ * A note's state, parsed to its end. A new state parses for 20 ms only (CodeMirror's budget, so typing
+ * never waits) and an editor goes on in the background; on a busy machine, a cold first parse stopped
+ * after the first timer, and the scan found nothing below it.
+ */
+const state = (doc: string, extensions: import("@codemirror/state").Extension[] = []) => {
+  const made = createState(doc, { path: "Plan.md" as FilePath, json: false, readOnly: false, settings: DEFAULTS, extensions, onUpdate: () => {}, onBlur: () => {} });
+  assert.ok(ensureSyntaxTree(made, made.doc.length, 10_000), "parsed to its end");
+  // The parse went on in the state's own parse context: a transaction hands the whole tree to the state.
+  return made.update({}).state;
+};
 
 test("an info string is a language and key=value arguments, quoted or not, kept in order with their quotes", () => {
   assert.deepEqual(parseInfo('timer duration=25m label="Deep work"'), {
