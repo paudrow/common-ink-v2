@@ -123,7 +123,12 @@ export async function addUpload(files: Files, blobs: Blobs, rawName: string, dat
   if (data.byteLength > MAX_UPLOAD_BYTES) return { status: "refused", error: `${cleaned} is over ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` };
   const hash = await sha256(data);
   const type = typeFor(cleaned);
-  if (!(await blobs.has(blobKey(hash)))) await blobs.put(blobKey(hash), data, type);
+  try {
+    if (!(await blobs.has(blobKey(hash)))) await blobs.put(blobKey(hash), data, type);
+  } catch (err) {
+    console.error("Storing an upload's bytes failed:", err);
+    return { status: "refused", error: `${cleaned} wasn't uploaded: uploads can't be stored right now. Try again in a minute.` };
+  }
   // Reading and writing the uploads file happen together, with nothing awaited in between, so two
   // uploads can't both take the same name.
   const current = files.read(UPLOADS_PATH);

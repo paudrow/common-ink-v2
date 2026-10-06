@@ -1,0 +1,7 @@
+{
+  "pr": 65,
+  "title": "Sealed refresh tokens: follow-ups",
+  "steps": [
+    "This Preview uses the Sample calendar, so nothing changes on screen. test/tokens.test.ts and the browser tests with the fake Google cover sealing, revoking and an unknown seal version."
+  ]
+}
