@@ -2,7 +2,7 @@
 // Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
@@ -105,7 +105,8 @@ export function createState(
       history(),
       drawSelection(),
       remoteFlash,
-      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
+      // Tab and Shift-Tab indent, so the keyboard stays in the note (Escape, then Tab, still leaves it).
+      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap, indentWithTab]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
