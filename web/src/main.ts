@@ -1,5 +1,7 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { mediaHooks, whenHiddenOf } from "./media.ts";
+import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
@@ -181,6 +183,12 @@ const workbench = new Workbench(
   offline,
   new Navigation(savedNavigation()),
 );
+// A floating video's setting, and its Back to note (media.ts, lives.ts).
+mediaHooks.whenHidden = () => whenHiddenOf(settings["media.whenHidden"]);
+mediaHooks.reveal = (view, pos) => workbench.reveal(view, pos);
+mediaHooks.open = (path) => workbench.open(path);
+// Focus in an embed's box (in the layer, outside every window) focuses the window its note is in.
+embedHooks.focused = (view) => workbench.focusView(view);
 // After a reload, the entry the browser is on is where you are.
 if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
 
@@ -424,6 +432,7 @@ commands.register(
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
+  { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },

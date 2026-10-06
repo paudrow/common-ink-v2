@@ -55,7 +55,7 @@ class MathWidget extends WidgetType {
       // A click puts the cursor in it, which shows its TeX to edit.
       el.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+        view.dispatch({ selection: { anchor: view.posAtDOM(el) }, userEvent: "select.pointer" });
         view.focus();
       });
     }

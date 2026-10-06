@@ -60,7 +60,8 @@ const isoTime = (v: unknown, fallback: Date): string | null => {
 const MAX_FILE_BYTES = 1_000_000;
 
 type Args = Record<string, unknown>;
-type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+/** `internal`: the operation failed in a way the caller can't fix, which is logged; `error` says so in a sentence. */
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; internal?: true };
 
 export interface Operation<T = unknown> {
   description: string;
@@ -563,6 +564,7 @@ export async function runOperation(name: OperationName, args: Args, store: Store
     // Data sources fail in ways the caller can fix (connect Google); say how instead of a 500.
     if (name === "data_sources" || name === "list_contacts") return fail((err as Error).message);
     if (err instanceof OperationError) return fail(err.message);
-    throw err;
+    console.error("Operation failed:", name, err);
+    return { ok: false, internal: true, error: `Something went wrong running ${name}. It's been logged; try again.` };
   }
 }

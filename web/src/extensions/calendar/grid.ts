@@ -25,6 +25,8 @@ type Drag =
 
 export class TimeGrid implements CalendarView {
   readonly root: HTMLElement;
+  /** Its listeners, let go of when it goes. */
+  private listening = new AbortController();
   private scroller: HTMLElement;
   private canvas: HTMLElement;
   private headDays: HTMLElement;
@@ -66,7 +68,7 @@ export class TimeGrid implements CalendarView {
     );
     this.scroller = el("div", { class: "cal-scroll", tabindex: "-1" }, this.canvas);
     this.root = el("div", { class: `cal-grid cal-${view}` }, this.scroller);
-    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true });
+    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true, signal: this.listening.signal });
     this.root.addEventListener("pointerdown", (e) => this.down(e));
     this.root.addEventListener("pointermove", (e) => this.moveTo(e));
     this.root.addEventListener("pointerup", (e) => this.up(e));
@@ -412,6 +414,7 @@ export class TimeGrid implements CalendarView {
   }
 
   destroy() {
+    this.listening.abort();
     this.resize.disconnect();
     clearInterval(this.tick);
     clearTimeout(this.settle);
