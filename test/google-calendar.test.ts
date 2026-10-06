@@ -485,7 +485,6 @@ test("after a full sync that left an event for a change made meanwhile, the next
   const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { location?: string } }).event;
   assert.equal(here.location, "Room 9");
 });
-});
 
 const daily = (fake: FakeGoogle) => {
   fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
