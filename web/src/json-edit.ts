@@ -76,24 +76,32 @@ export function topLevelKeys(text: string): { keys: Span[]; open: number; close:
  * a new one goes at the end, indented like the others. Null if the text isn't a JSON object.
  */
 export function setTopLevelKey(text: string, key: string, value: unknown): string | null {
-  const parsed = topLevelKeys(text.trim() ? text : "{}\n");
-  if (!parsed) return null;
   const source = text.trim() ? text : "{}\n";
+  const parsed = topLevelKeys(source);
+  if (!parsed) return null;
   const { keys, close } = parsed;
-  const at = keys.findIndex((k) => k.key === key);
+  // Written twice, JSON.parse reads the last copy: the later ones go, so the one set is the one read.
+  const copies = keys.flatMap((k, i) => (k.key === key ? [i] : []));
+  if (copies.length > 1) return setTopLevelKey(removeAt(source, parsed, copies.at(-1)!), key, value);
+  const at = copies[0] ?? -1;
   const indent = keys.length ? (/\n([ \t]*)$/.exec(source.slice(0, keys[0].start))?.[1] ?? "  ") : "  ";
   const json = JSON.stringify(value, null, 2)?.replace(/\n/g, `\n${indent}`);
   if (at >= 0) {
-    const k = keys[at];
-    if (value !== undefined) return source.slice(0, k.valueStart) + json + source.slice(k.end);
-    // Remove it with its comma: the one after it, or before it if it's the last.
-    if (at < keys.length - 1) return source.slice(0, k.start) + source.slice(keys[at + 1].start);
-    const prevEnd = at > 0 ? keys[at - 1].end : parsed.open + 1;
-    return source.slice(0, prevEnd) + source.slice(k.end).replace(/^[\s,]*(?=\s*\})/, at > 0 ? "\n" : "\n");
+    if (value !== undefined) return source.slice(0, keys[at].valueStart) + json + source.slice(keys[at].end);
+    return removeAt(source, parsed, at);
   }
   if (value === undefined) return source;
   const entry = `${JSON.stringify(key)}: ${json}`;
   if (!keys.length) return `${source.slice(0, close).replace(/\s*$/, "")}\n${indent}${entry}\n${source.slice(close)}`;
   const last = keys.at(-1)!;
   return `${source.slice(0, last.end)},\n${indent}${entry}${source.slice(last.end)}`;
+}
+
+/** The text without its `at`th top-level key, and the comma that went with it: the one after it, or before it if it's the last. */
+function removeAt(source: string, parsed: NonNullable<ReturnType<typeof topLevelKeys>>, at: number): string {
+  const { keys } = parsed;
+  const k = keys[at];
+  if (at < keys.length - 1) return source.slice(0, k.start) + source.slice(keys[at + 1].start);
+  const prevEnd = at > 0 ? keys[at - 1].end : parsed.open + 1;
+  return source.slice(0, prevEnd) + source.slice(k.end).replace(/^[\s,]*(?=\s*\})/, "\n");
 }
