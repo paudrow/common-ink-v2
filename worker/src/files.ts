@@ -2,7 +2,8 @@
 // in tests. A file is a note (markdown) or workspace JSON (app state such as the layout, in .common-ink/).
 // Every write is recorded as a change with its author, and a file's text is what its changes add up to
 // (ADR 0002). The files table keeps the latest text so reads are cheap.
-import { diff3Merge, diffPatch, patch, type IPatchRes } from "node-diff3";
+import { patch, type IPatchRes } from "node-diff3";
+import { lineMerge, linePatch } from "./line-diff.ts";
 
 export type SqlValue = string | number | null;
 
@@ -463,7 +464,7 @@ export class Files {
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
     if (current && next === currentText && !deleting) return { status, file: current };
-    const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
+    const diff = JSON.stringify(linePatch(lines(currentText), lines(next)));
     this.db.run(
       "INSERT INTO changes(path, author, base, diff, time, undoes, deletes) VALUES (?, ?, ?, ?, ?, ?, ?)",
       path, JSON.stringify(author), base, diff, this.now(), undoes ?? null, deleting ? 1 : 0,
@@ -500,7 +501,5 @@ export class Files {
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {
-  const regions = diff3Merge(lines(mine), lines(base), lines(theirs), { excludeFalseConflicts: true });
-  if (regions.some((r) => r.conflict)) return null;
-  return regions.flatMap((r) => r.ok ?? []).join("\n");
+  return lineMerge(lines(mine), lines(base), lines(theirs))?.join("\n") ?? null;
 }
