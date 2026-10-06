@@ -246,13 +246,19 @@ test("a sync that was already under way when an edit went out leaves the edit as
   assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, "the next edit went with the etag Google gave ours, not the page's older one");
 });
 
-test("a sync asked for while one runs is that one, so an older page can't land after a newer one", async () => {
+test("syncs asked for while one runs share one more after it, so they take turns and see what changed meanwhile", async () => {
   const { fake, store } = google();
   await op(store, "sync_calendar", {});
   const before = fake.calls.length;
-  const [a, b] = await Promise.all([store.sources.sync(), store.sources.sync()]);
-  assert.deepEqual(b, a);
-  assert.equal(fake.calls.slice(before).filter((c) => c.startsWith("GET /calendar/v3/users/me/calendarList")).length, 1);
+  const first = store.sources.sync();
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, summary: "Dentist (moved)" });
+  const [, b, c] = await Promise.all([first, store.sources.sync(), store.sources.sync()]);
+  assert.deepEqual(c, b);
+  const lists = fake.calls.slice(before).map((call, i) => [call, i] as const).filter(([call]) => call.startsWith("GET /calendar/v3/users/me/calendarList"));
+  assert.equal(lists.length, 2);
+  const events = fake.calls.slice(before).map((call, i) => [call, i] as const).filter(([call]) => call.includes("/events?"));
+  assert.ok(events.filter(([, i]) => i < lists[1][1]).length >= 2, "the second began after the first had read every calendar");
+  assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist (moved)");
 });
 
 test("an event Google changed after an edit made during a sync comes in on a later sync", async () => {

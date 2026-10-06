@@ -79,7 +79,7 @@ export interface Refused {
 class EditError extends Error {}
 
 /** Who a source's sync is, as the author of what it brings in. */
-const SYNC_AUTHOR: Record<SourceId, Author> = { google: { kind: "sync", source: "google-calendar" }, sample: { kind: "sync", source: "sample-calendar" } };
+const SYNC_AUTHOR: Record<SourceId, Extract<Author, { kind: "sync" }>> = { google: { kind: "sync", source: "google-calendar" }, sample: { kind: "sync", source: "sample-calendar" } };
 
 interface StateRow {
   lastSync?: number;
@@ -95,8 +95,9 @@ export class DataSources {
   private adapters: Partial<Record<SourceId, Adapter>>;
   /** The flush running now: flushes take turns, so no edit goes out twice. */
   private flushing: Promise<unknown> = Promise.resolve();
-  /** The sync running now: one asked for meanwhile is this one, so an older page can't land after a newer one. */
+  /** The sync running now, and the one after it: syncs take turns, so an older page can't land after a newer one. */
   private syncing: Promise<SourceState> | null = null;
+  private again: Promise<SourceState> | null = null;
   /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
   private refusals = new Map<number, string>();
 
@@ -440,8 +441,17 @@ export class DataSources {
    * is a change by its sync. Safe to run again at any point: it picks up from its sync tokens.
    */
   sync(): Promise<SourceState> {
-    this.syncing ??= this.syncOnce().finally(() => (this.syncing = null));
-    return this.syncing;
+    if (!this.syncing) return (this.syncing = this.syncOnce().finally(() => (this.syncing = null)));
+    // The running sync may have read Google before what its caller wants to see, so everyone who asks meanwhile shares one more after it.
+    return (this.again ??= this.syncing
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .then(() => {
+        this.again = null;
+        return this.sync();
+      }));
   }
 
   private async syncOnce(): Promise<SourceState> {
@@ -477,15 +487,25 @@ export class DataSources {
   }
 
   /**
-   * What a sync writes through. A record with an edit waiting to go out, or changed here since the
-   * sync began, is left as it is: the page it came on may be older than the edit, and the next sync
-   * brings Google's version of it.
+   * What a sync writes through. A record with an edit waiting to go out is left as it is: pushing the
+   * edit merges it with Google's version. One changed here since the sync began is left too, since the
+   * page it came on may be older than the change; its calendar's sync token then stays where it was,
+   * so the next sync reads it again.
    */
   private syncIO(source: SourceId, since: Revision): SyncIO {
     const author = SYNC_AUTHOR[source];
-    const pending = (path: string) =>
-      this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0 ||
-      this.db.all("SELECT 1 FROM changes WHERE path = ? AND revision > ? AND author != ? LIMIT 1", path, since, JSON.stringify(author)).length > 0;
+    const held = new Set<string>();
+    const pending = (path: FilePath) => {
+      if (this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length) return true;
+      const changed = this.db.all(
+        "SELECT 1 FROM changes WHERE path = ? AND revision > ? AND NOT (json_extract(author, '$.kind') = 'sync' AND json_extract(author, '$.source') = ?) LIMIT 1",
+        path,
+        since,
+        author.source,
+      ).length;
+      if (changed) held.add(keyOfPath(path)?.collection ?? "");
+      return changed > 0;
+    };
     const write = (path: FilePath, text: string | null) => {
       const current = this.files.read(path);
       if (text === null) {
@@ -510,7 +530,9 @@ export class DataSources {
         }
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
-      setToken: (calendar, token) => this.setToken(source, calendar, token),
+      setToken: (calendar, token) => {
+        if (!held.has(calendar)) this.setToken(source, calendar, token);
+      },
       put: (event, etag) => {
         const path = eventPath(event.calendar, event.id);
         if (pending(path)) return;
