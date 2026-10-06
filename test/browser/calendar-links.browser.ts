@@ -52,3 +52,29 @@ browserTest(h, "Insert event link puts a link to the event you pick where the cu
   for (let i = 0; i < 20 && !(await app.readFile("Plan.md")).includes("event:"); i++) await app.page.waitForTimeout(250);
   assert.equal(await app.readFile("Plan.md"), "# Plan\n\nDiscuss at [Quarterly planning](event:sample/work/planning)\n");
 });
+
+browserTest(h, "a click on an event's chip opens its editor beside it, even when the events come in before the calendar's first frame", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await app.writeFile("Standup notes.md", "# Standup notes\n\nNext: [Dentist](event:sample/personal/dentist).\n");
+  await app.open("Standup notes");
+  await app.page.locator(".cm-event-chip", { hasText: "2:30 PM" }).waitFor();
+  // As on a slow machine: frames and resize callbacks come late, after the events are in.
+  await app.page.evaluate(() => {
+    const later = (f: () => void) => setTimeout(f, 1500);
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (f) => (later(() => raf(f)), 0);
+    const Observer = window.ResizeObserver;
+    window.ResizeObserver = class extends Observer {
+      constructor(f: ResizeObserverCallback) {
+        super((entries, o) => later(() => f(entries, o)));
+      }
+    };
+  });
+  await app.page.locator(".cm-event-chip", { hasText: "Dentist" }).click();
+  const editor = app.page.locator(".cal-editor");
+  await editor.waitFor();
+  await app.idle();
+  assert.equal(await app.page.locator(".cal-title-text").innerText(), "Oct 5 – 11, 2026");
+  const event = (await app.page.locator('.cal-event[data-address="event:sample/personal/dentist"]').boundingBox())!;
+  const box = (await editor.boundingBox())!;
+  assert.equal(Math.round(box.x), Math.round(event.x + event.width + 8), "just right of the event");
+});
