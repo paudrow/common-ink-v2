@@ -2,7 +2,7 @@
 // Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
@@ -102,7 +102,7 @@ export function createState(
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
       slots.livePreview.of(s.livePreview),
-      historySlot.of(history()),
+      historySlot.of(noteHistory),
       drawSelection(),
       // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
       // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
@@ -149,15 +149,18 @@ const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
 
 /** The editor's undo history, in a slot of its own so it can be started afresh (see forgetHistory). */
 const historySlot = new Compartment();
+const noteHistory = history();
+
+/** An undo history with nothing in it, to start one afresh from. */
+const emptyHistory = () => EditorState.create({ extensions: history() }).field(historyField);
 
 /**
  * Start the undo history afresh: the text it would undo and redo has been replaced under it (theirs
- * taken in where yours clashed), so its steps would land in the wrong places. Not during an update.
+ * taken in where yours clashed), so its steps would land in the wrong places. The one history field
+ * every history config shares (an extension may add its own) starts again empty. Not during an update.
  */
 export function forgetHistory(view: EditorView): void {
-  const kept = historySlot.get(view.state);
-  view.dispatch({ effects: historySlot.reconfigure([]) });
-  view.dispatch({ effects: historySlot.reconfigure(kept ?? []) });
+  view.dispatch({ effects: historySlot.reconfigure([noteHistory, historyField.init(emptyHistory)]) });
 }
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
