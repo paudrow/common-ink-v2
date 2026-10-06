@@ -1,5 +1,7 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { mediaHooks, whenHiddenOf } from "./media.ts";
+import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
@@ -24,7 +26,8 @@ import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } 
 import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
-import { createState } from "./editor.ts";
+import { createState, editText } from "./editor.ts";
+import { showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
@@ -54,6 +57,7 @@ const list = $<HTMLUListElement>("#notes ul");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
+const resolveButton = $<HTMLButtonElement>("#resolve");
 const reloadLine = $("#reload");
 const netLine = $("#net-activity");
 netLine.addEventListener("click", () => panels.show("extension-activity"));
@@ -62,7 +66,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
   unsaved: "Edited",
   saving: "Saving…",
-  conflict: "Not saved: this note changed in the same place elsewhere. :e! loads that version.",
+  conflict: "Not saved: this note changed in the same place elsewhere.",
   offline: "Not saved: can't reach the server. Trying again.",
 };
 
@@ -154,6 +158,8 @@ const workbench = new Workbench(
     status(status, message) {
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
+      resolveButton.hidden = status !== "conflict";
+      queueMicrotask(() => void renderUnsent());
     },
     navigated: (how, visit) => browserHistory.follow(how, visit),
     focus(path) {
@@ -177,6 +183,12 @@ const workbench = new Workbench(
   offline,
   new Navigation(savedNavigation()),
 );
+// A floating video's setting, and its Back to note (media.ts, lives.ts).
+mediaHooks.whenHidden = () => whenHiddenOf(settings["media.whenHidden"]);
+mediaHooks.reveal = (view, pos) => workbench.reveal(view, pos);
+mediaHooks.open = (path) => workbench.open(path);
+// Focus in an embed's box (in the layer, outside every window) focuses the window its note is in.
+embedHooks.focused = (view) => workbench.focusView(view);
 // After a reload, the entry the browser is on is where you are.
 if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
 
@@ -261,18 +273,54 @@ async function refreshList() {
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
-  const waiting = unsent.length + ops.length;
-  const clashing = unsent.filter((u) => u.conflict);
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : ""].filter(Boolean);
-  unsentLine.textContent = parts.join(" · ") + (clashing.length ? ` (${clashing.length} can't be merged: open ${docLabel(clashing[0].path)})` : "");
-  unsentLine.title = [...unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
+  // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
+  const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
+  const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  unsentLine.textContent = parts.filter(Boolean).join(" · ");
+  unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
 offline.onChange(() => void renderUnsent());
 unsentLine.addEventListener("click", async () => {
-  const clashing = (await offline.unsent()).find((u) => u.conflict);
-  if (clashing) await workbench.open(clashing.path, { newTab: true });
+  const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
+  if (!clashing) return;
+  if (clashing !== workbench.focusedPath) await workbench.open(clashing, { newTab: true });
+  await resolveConflict();
 });
+resolveButton.addEventListener("click", () => void resolveConflict());
+
+/**
+ * The note on show has an edit that clashes with someone else's: show the two, and keep yours (saved
+ * over theirs, which stays in History) or use theirs (as an edit of yours, so u brings yours back).
+ */
+async function resolveConflict(): Promise<boolean> {
+  const session = workbench.focusedSession;
+  const view = workbench.focusedView;
+  if (!session || !view || session.status !== "conflict") return false;
+  const path = session.path;
+  let theirs: Awaited<ReturnType<typeof api.read>>;
+  try {
+    theirs = await api.read(path);
+  } catch {
+    workbench.notice("Their version can't be read while offline: try again when you're back online.");
+    return true;
+  }
+  const latest = await fetch(`/api/history?${new URLSearchParams({ path, limit: "1" })}`)
+    .then((r) => (r.ok ? (r.json() as Promise<Array<{ author: Parameters<typeof describeAuthor>[0] }>>) : []))
+    .catch(() => []);
+  const who = latest[0] ? describeAuthor(latest[0].author, me) : "Someone";
+  showClash({
+    where: docLabel(path),
+    who: who.charAt(0).toUpperCase() + who.slice(1),
+    mine: view.state.doc.toString(),
+    theirs: theirs.text,
+    keepMine: () => void session.adopt(theirs).then(() => session.save(true)),
+    useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
+    returnTo: () => view.contentDOM,
+  });
+  return true;
+}
 
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
@@ -378,11 +426,13 @@ commands.register(
   { id: "note.new", title: "New note…", run: () => pick("here") },
   { id: "note.save", title: "Save note", run: () => workbench.save(true) },
   { id: "note.reload", title: "Reload note from the server, discarding unsaved changes", run: () => workbench.reload() },
+  { id: "note.resolveConflict", title: "Compare your edit with the one it clashes with, and keep yours or theirs", run: () => void resolveConflict() },
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
   { id: "go.back", title: "Go back", run: () => navigate(-1) },
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
+  { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
@@ -725,7 +775,8 @@ connectLive({
   async change(notice) {
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
-    if (open && !mine && notice.path === workbench.focusedPath) {
+    // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.
+    if (open && !mine && notice.path === workbench.focusedPath && workbench.focusedSession?.status !== "conflict") {
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
     }

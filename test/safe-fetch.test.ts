@@ -143,3 +143,13 @@ test("each redirect's host must be one the caller allows, and a body isn't sent 
   assert.equal(same.url, "https://api.example/there");
   assert.deepEqual(fetched, ["GET https://api.example/go ", "POST https://api.example/post secret", "POST https://api.example/here note", "POST https://api.example/there note"]);
 });
+
+test("the documentation ranges and the old 6to4 relay are refused too", () => {
+  for (const ip of ["198.51.100.7", "203.0.113.9", "192.88.99.1"]) assert.ok(isPrivateIPv4(ip), ip);
+  for (const ip of ["198.51.101.7", "203.0.114.9", "192.88.100.1"]) assert.ok(!isPrivateIPv4(ip), ip);
+});
+
+test("a redirect to something that isn't http(s) says so, before asking whether its host is allowed", async () => {
+  const fetcher = (async () => new Response(null, { status: 302, headers: { location: "ftp://files.example/x" } })) as typeof fetch;
+  await assert.rejects(safeFetch("https://api.example/go", { fetcher, resolve: publicDns, allowHost: (h) => h === "api.example" }), new FetchRefused("Only http and https addresses can be fetched"));
+});

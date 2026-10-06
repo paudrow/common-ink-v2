@@ -473,6 +473,34 @@ for (const [what, series, move] of moves) {
   }
 }
 
+test("an edit of a whole series' fields reaches its changed occurrences where they still had the series' old value, here and in Google", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Daily sync", location: "Room 4", scope: "all" });
+  const there = (id: string) => [fake.event("ada@example.com", id)?.summary, fake.event("ada@example.com", id)?.location];
+  assert.deepEqual(there("standup_20261006T160000Z"), ["Standup (late)", "Room 4"], "its own title stays, the place it shared with the series follows");
+  assert.deepEqual(there("standup_20261009T160000Z"), ["Kickoff", "Room 4"]);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await listed(store), [
+    "2026-10-05T16:00 Daily sync",
+    "2026-10-06T17:00 Standup (late)",
+    "2026-10-06T21:30 Dentist",
+    "2026-10-08 Offsite",
+    "2026-10-09T16:00 Kickoff",
+  ]);
+});
+
+test("a series renamed for all events renames a moved occurrence that kept the series' name", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", start: "2026-10-09T10:00", scope: "this" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Daily sync", scope: "all" });
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.summary, "Daily sync");
+  await op(store, "sync_calendar", { force: true });
+  assert.ok((await listed(store)).includes("2026-10-09T17:00 Daily sync"));
+});
+
 test("an edit that keeps meeting Google's newer versions waits, then goes once Google holds still, with the edits behind it", async () => {
   const { fake } = await google();
   let busy = 4;
@@ -542,7 +570,7 @@ for (const [how, deleted] of [
     fake.remove("ada@example.com", "dentist");
     gone.add("dentist");
     const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
-    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's gone here too, and the change is in its history." });
     assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
     fake.remove("ada@example.com", "standup");
     gone.add("standup");
@@ -644,3 +672,196 @@ for (const [how, answer] of [
     assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null);
   });
 }
+
+test("a series moved, synced, undone, synced and moved again by hand ends where its first move did, here and in Google", async () => {
+  const fake = new FakeGoogle();
+  fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
+  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  const month = { from: "2026-10-01T00:00:00-07:00", to: "2026-11-01T00:00:00-07:00", zone: LA };
+  const shown = async () => ((await op(store, "list_events", month)) as Occurrence[]).map((o) => `${o.start.slice(0, 16)} ${o.title}`);
+  const move = { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA };
+  await op(store, "sync_calendar", {});
+  const before = await shown();
+  const since = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  const moved = await shown();
+  const mine = store.files.recent({ limit: 100 }).filter((c) => c.revision > since && c.author.kind === "user").map((c) => c.revision);
+  const undone = (await op(store, "undo", { revisions: mine })) as Array<{ status: string }>;
+  assert.deepEqual(undone.filter((u) => u.status !== "undone"), []);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), before, "the undo, synced, is the series as it was");
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), moved);
+});
+
+test("after a sync brings back Google's copy of an edit, the edit can still be undone and redone, and a made event undone", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  const renamed = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [renamed] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  const undo = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [undo] })) as Array<{ status: string }>).map((u) => u.status), ["undone"], "redo");
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.summary, "Kickoff");
+  const made = (await op(store, "create_event", { title: "Lunch", start: "2026-10-07T12:00", timeZone: LA })) as { address: string };
+  const created = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [created] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  assert.equal(fake.event("ada@example.com", made.address.split("/").at(-1)!)?.status, "cancelled");
+});
+
+/** A daily series of six with changed occurrences on the 8th and 9th, synced, then cut in Google by `cut`, synced again. */
+async function cutInGoogle(cut: (fake: FakeGoogle) => void, expire = false) {
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  const fake = new FakeGoogle();
+  fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+  fake.put("ada@example.com", { id: "d_20261009T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("09", "09:00"), start: at("09", "13:00"), end: at("09", "13:15") });
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  cut(fake);
+  for (const id of ["d_20261008T160000Z", "d_20261009T160000Z"]) fake.put("ada@example.com", { ...fake.event("ada@example.com", id)!, status: "cancelled" });
+  if (expire) fake.expireSyncTokens();
+  await op(store, "sync_calendar", { force: true });
+  const month = { from: "2026-10-01T00:00:00-07:00", to: "2026-11-01T00:00:00-07:00", zone: LA };
+  return ((await op(store, "list_events", month)) as Occurrence[]).map((o) => `${o.start.slice(5, 16)} ${o.title}`);
+}
+
+const ending = (fake: FakeGoogle, rule: string) => fake.put("ada@example.com", { ...fake.event("ada@example.com", "d")!, recurrence: [rule] });
+
+test("a series Google ends early takes its changed occurrences past the end with it: by UNTIL, by COUNT, and on a full sync", async () => {
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z")), ["10-05T16:00 Daily", "10-06T16:00 Daily"]);
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;COUNT=3")), ["10-05T16:00 Daily", "10-06T16:00 Daily", "10-07T16:00 Daily"]);
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z"), true), ["10-05T16:00 Daily", "10-06T16:00 Daily"]);
+});
+
+test("a series Google splits this and following leaves no copy of the changed occurrences it moved", async () => {
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  const shown = await cutInGoogle((fake) => {
+    ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z");
+    fake.put("ada@example.com", { id: "d_R20261007", summary: "Daily", start: at("07", "09:00"), end: at("07", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=4"] });
+  });
+  assert.deepEqual(shown, ["10-05T16:00 Daily", "10-06T16:00 Daily", "10-07T16:00 Daily", "10-08T16:00 Daily", "10-09T16:00 Daily", "10-10T16:00 Daily"]);
+});
+
+/** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */
+async function googleWith(answer: (url: string, method: string) => Response | undefined, now?: () => number) {
+  const { fake } = await google();
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => answer(String(input), init?.method ?? "GET") ?? fake.fetch(input, init), [], now);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  return { fake, store };
+}
+
+test("after a 412, a read Google answers with a 403 that isn't about limits keeps the edit waiting, not refused", async () => {
+  let forbid = false;
+  const { fake, store } = await googleWith((url, method) => (forbid && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 403, message: "Forbidden", errors: [{ reason: "forbidden" }] } }, { status: 403 }) : undefined));
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  forbid = true;
+  const edit = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(edit.status, "queued");
+  forbid = false;
+  await store.sources.flush("google");
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+test("an edit Google answers 404 or 410 for says the event was deleted in Google, as after a 412", async () => {
+  for (const status of [404, 410]) {
+    const { store } = await googleWith((url, method) => (method === "PATCH" && url.endsWith("/events/dentist") ? Response.json({ error: { code: status, message: "Not Found" } }, { status }) : undefined));
+    await op(store, "sync_calendar", {});
+    const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's gone here too, and the change is in its history." });
+  }
+});
+
+test("a sync that works doesn't hide edits still waiting for Google: the source keeps saying why", async () => {
+  const { store } = await googleWith((_url, method) => (method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  const state = (await op(store, "sync_calendar", { force: true })) as { state: string; pending: number; error?: string };
+  assert.deepEqual([state.state, state.pending, state.error], ["error", 1, "Google Calendar answered 503 saving Dentist (Dr Lee)"]);
+});
+
+test("an edit whose event Google keeps refusing to read is refused after half an hour of it, so the edits behind it still go", async () => {
+  let unreadable = false;
+  let clock = Date.parse("2026-10-05T09:00:00Z");
+  const { fake, store } = await googleWith((url, method) => (unreadable && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 400, message: "Bad Request" } }, { status: 400 }) : undefined), () => clock);
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  unreadable = true;
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
+  for (let i = 0; i < 5; i++) await store.sources.flush("google");
+  assert.equal(store.sources.outbox("google").length, 2, "quick tries don't use up its time");
+  clock += 31 * 60_000;
+  await store.sources.flush("google");
+  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff", "the edit behind it went");
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist");
+  assert.deepEqual(store.sources.outbox("google"), []);
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to Dentist (Dr Lee): Google Calendar answered 400 reading Dentist (Dr Lee). It's back as it was, and the change is in its history.");
+});
+
+test("an edit that waited out failures, then meets one unreadable answer after a 412, still reaches Google", async () => {
+  let patch503 = 2;
+  let read403 = 0;
+  const { fake, store } = await googleWith((url, method) => {
+    if (method === "PATCH" && patch503 > 0 && patch503--) return new Response("{}", { status: 503 });
+    if (method === "GET" && url.endsWith("/events/dentist") && read403 > 0 && read403--) return Response.json({ error: { code: 403, message: "Forbidden", errors: [{ reason: "forbidden" }] } }, { status: 403 });
+  });
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await store.sources.flush("google");
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  read403 = 1;
+  await store.sources.flush("google");
+  await store.sources.flush("google");
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+test("an event Google deleted while an edit of it waited goes here too, with the edit in its history", async () => {
+  let down = false;
+  const { fake, store } = await googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  await op(store, "sync_calendar", {});
+  down = true;
+  assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string }).status, "queued");
+  fake.remove("ada@example.com", "dentist");
+  await op(store, "sync_calendar", { force: true });
+  down = false;
+  await store.sources.flush("google");
+  assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null, "gone here at once");
+  await op(store, "sync_calendar", { force: true });
+  assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null, "and after a sync");
+  const path = recordPath({ source: "google", kind: "event", collection: "primary", id: "dentist" });
+  assert.ok(store.files.recent({ path }).some((c) => store.files.versionAt(path, c.revision)?.includes("Dentist (Dr Lee)")), "the edit is in its history");
+  assert.match(store.sources.status("ada@example.com").sources[0].conflict ?? "", /It was deleted in Google\. It's gone here too/);
+});
+
+test("when Google cancelled an occurrence an edit of it waited for, the source says Google's cancellation won", async () => {
+  let down = false;
+  const late = "standup_20261006T160000Z";
+  const { fake, store } = await googleWith((url, method) => {
+    if (down && method === "PATCH") return new Response("{}", { status: 503 });
+    // Google answers a get of a cancelled occurrence with the occurrence, cancelled.
+    if (method === "GET" && url.endsWith(`/events/${late}`)) return Response.json(fake.event("ada@example.com", late));
+  });
+  await op(store, "sync_calendar", {});
+  down = true;
+  await op(store, "update_event", { address: "event:google/primary/standup_20261006T160000Z", title: "Late standup", scope: "this" });
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "standup_20261006T160000Z")!, status: "cancelled" });
+  down = false;
+  await store.sources.flush("google");
+  assert.equal(fake.event("ada@example.com", "standup_20261006T160000Z")?.status, "cancelled");
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Late standup: Google's cancellation replaced yours, which is still in its history");
+});
