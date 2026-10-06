@@ -73,14 +73,17 @@ test("yearly on a date, on the nth weekday of a month, and on a day of the year"
 
 test("dates stay dates across a daylight-saving change, whatever the machine's time zone", () => {
   const was = process.env.TZ;
-  for (const tz of ["America/New_York", "Europe/London", "Australia/Sydney"]) {
-    process.env.TZ = tz;
-    assert.deepEqual(three("daily", "2026-03-07"), ["2026-03-08", "2026-03-09", "2026-03-10"], tz);
-    assert.deepEqual(three("weekly", "2026-10-25"), ["2026-11-01", "2026-11-08", "2026-11-15"], tz);
-    assert.deepEqual(three("sun", "2026-03-28"), ["2026-03-29", "2026-04-05", "2026-04-12"], tz);
+  try {
+    for (const tz of ["America/New_York", "Europe/London", "Australia/Sydney"]) {
+      process.env.TZ = tz;
+      assert.deepEqual(three("daily", "2026-03-07"), ["2026-03-08", "2026-03-09", "2026-03-10"], tz);
+      assert.deepEqual(three("weekly", "2026-10-25"), ["2026-11-01", "2026-11-08", "2026-11-15"], tz);
+      assert.deepEqual(three("sun", "2026-03-28"), ["2026-03-29", "2026-04-05", "2026-04-12"], tz);
+    }
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
   }
-  if (was === undefined) delete process.env.TZ;
-  else process.env.TZ = was;
 });
 
 test("a rule says what it does, short for a chip and long for the editor", () => {

@@ -9,6 +9,7 @@ import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
+import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
 import { RESET_CLOSE } from "./levers.ts";
 
 export interface WorkspaceEnv {
@@ -130,6 +131,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  editApplied(path: FilePath, id: string) {
+    return this.files.editApplied(path, id);
+  }
+
   /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
     return restoreFile(this.files, this.sources, path, at, author);
@@ -138,6 +143,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
   sandboxKey(): string {
     return this.files.secret("sandbox-key");
+  }
+
+  /** Tick a task and log its completion, in one step (complete-task.ts). */
+  completeTask(args: TaskArgs, author: Author) {
+    return completeTaskIn(this.files, args, author);
   }
 
   /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */

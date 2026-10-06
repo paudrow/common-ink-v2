@@ -1,0 +1,7 @@
+{
+  "pr": 52,
+  "title": "complete_task takes the person's day and never loses its log",
+  "steps": [
+    "Agents only. From an MCP client on this Preview's /mcp, call complete_task on a task without `today`: it says to pass the person's day, and nothing changes. With `today` it ticks as before, and the completion is in that day's daily note."
+  ]
+}

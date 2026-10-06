@@ -20,7 +20,7 @@ test("MCP lists the workspace operations as tools", async () => {
   assert.equal(init.body.result.protocolVersion, "2025-06-18");
   assert.equal((await call(files, "notifications/initialized", undefined, null)).status, 202);
   const tools = (await call(files, "tools/list")).body.result.tools.map((t: { name: string }) => t.name);
-  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "sync_calendar", "list_calendars", "list_events", "read_event", "create_event", "update_event", "delete_event", "link_event", "list_contacts", "diff", "read_version", "restore", "labels", "add_label", "list_embeds", "complete_task", "list_uploads", "upload_file"]);
+  assert.deepEqual(tools, ["list_files", "read_file", "write_file", "delete_file", "history", "undo", "data_sources", "sync_calendar", "list_calendars", "list_events", "read_event", "create_event", "update_event", "delete_event", "link_event", "list_contacts", "diff", "read_version", "edit_applied", "restore", "labels", "add_label", "list_embeds", "complete_task", "list_uploads", "upload_file"]);
 });
 
 test("an agent's writes through MCP are its changes, and can be undone", async () => {
@@ -72,8 +72,45 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   await run("complete_task", { path: "Chores.md", line: 3, today: "2026-10-08" });
   assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08\n- \[ \] Water the plants due:2026-10-11 rec:3d last:2026-10-05 #home/);
   // A line that isn't that task any more isn't ticked.
-  const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
-  assert.equal(stale.ok, false);
+  const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else", today: "2026-10-08" });
+  assert.deepEqual(stale, { ok: false, error: 'Line 3 of Chores.md isn\'t that task any more: it\'s "- [x] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08"' });
+});
+
+test("complete_task needs the person's day, since UTC's is tomorrow on a US evening; without it nothing changes", async () => {
+  const files = memoryStore();
+  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Call mum\n", base: 0 }, files, agent);
+  const result = await runOperation("complete_task", { path: "Chores.md", line: 3 }, files, agent);
+  assert.deepEqual(result, { ok: false, error: '"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:' });
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Call mum\n");
+});
+
+test("eight tasks ticked at once each get their line in the daily note", async () => {
+  const files = memoryStore();
+  const chores = ["Water the plants", "Feed the cat", "Pay rent", "Call mum", "Take out the bins", "Book the dentist", "Clean the oven", "Fix the bike"];
+  for (const [i, chore] of chores.entries()) await runOperation("write_file", { path: `Chores ${i}.md`, text: `# Chores\n\n- [ ] ${chore} due:2026-10-05 rec:1w\n`, base: 0 }, files, agent);
+  const results = await Promise.all(chores.map((_, i) => runOperation("complete_task", { path: `Chores ${i}.md`, line: 3, today: "2026-10-05" }, files, agent)));
+  assert.deepEqual(results.map((r) => r.ok), chores.map(() => true));
+  const logged = files.files.read("Journal/2026-10-05.md" as never)!.text;
+  assert.deepEqual(chores.filter((chore) => !logged.includes(`- [x] ${chore} done:2026-10-05`)), []);
+});
+
+test("a repeating task in today's daily note is ticked and logged in that note", async () => {
+  const files = memoryStore();
+  const daily = "Journal/2026-10-05.md";
+  await runOperation("write_file", { path: daily, text: "# 2026-10-05\n\n- [ ] Stretch due:2026-10-05 rec:1d\n", base: 0 }, files, agent);
+  const ticked = await runOperation("complete_task", { path: daily, line: 3, today: "2026-10-05" }, files, agent);
+  assert.equal(ticked.ok, true);
+  assert.equal(files.files.read(daily as never)?.text, "# 2026-10-05\n\n- [ ] Stretch due:2026-10-06 rec:1d last:2026-10-05\n\n## Done\n\n- [x] Stretch done:2026-10-05 ([[Journal/2026-10-05]])\n");
+});
+
+test("the same tick sent twice at once, as a client's retry does, ticks once and logs once", async () => {
+  const files = memoryStore();
+  const line = "- [ ] Water the plants due:2026-10-05 rec:3d";
+  await runOperation("write_file", { path: "Chores.md", text: `# Chores\n\n${line}\n`, base: 0 }, files, agent);
+  const both = await Promise.all([0, 1].map(() => runOperation("complete_task", { path: "Chores.md", line: 3, text: line, today: "2026-10-05" }, files, agent)));
+  assert.deepEqual(both.map((r) => r.ok).sort(), [false, true]);
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05\n");
+  assert.equal(files.files.read("Journal/2026-10-05.md" as never)!.text.split("\n").filter((l) => l.includes("Water the plants")).length, 1);
 });
 
 test("an operation that fails unexpectedly says so in a sentence, logs why, and leaks no stack", async () => {
