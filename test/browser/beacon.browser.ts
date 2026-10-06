@@ -29,10 +29,10 @@ browserTest(h, "a page's sendBeacon saves a note, the same save again writes not
   await beacon({ path: "Plan.md", base: revision, text: "# Plan\n\none\ntwo\n" });
   await app.page.waitForTimeout(500);
   assert.equal(await changes(app, "Plan.md"), written, "sent again, it writes nothing");
-  // Someone else's edit at the top, then a beacon still based on the first revision: both stay.
+  // Someone else's edit at the top, then a beacon still based on the revision before it: both stay.
   const now = (await file(app, "Plan.md"))!;
   await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", base: now.revision, text: "# Plan for Monday\n\none\ntwo\n" } });
-  await beacon({ path: "Plan.md", base: revision, text: "# Plan\n\none\ntwo\nthree\n" });
+  await beacon({ path: "Plan.md", base: now.revision, text: "# Plan\n\none\ntwo\nthree\n" });
   for (let i = 0; i < 40 && !(await file(app, "Plan.md"))?.text.includes("three"); i++) await app.page.waitForTimeout(100);
   assert.equal((await file(app, "Plan.md"))?.text, "# Plan for Monday\n\none\ntwo\nthree\n");
   // A stale one that clashes changes nothing.
