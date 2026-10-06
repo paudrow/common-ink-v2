@@ -16,6 +16,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -132,9 +133,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
-      const size = Number(req.headers.get("Content-Length") ?? "0");
-      if (size > MAX_UPLOAD_BYTES) return secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
-      const result = await workspace.upload(url.searchParams.get("name") ?? "", await req.arrayBuffer(), authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+      const tooBig = secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
+      if (Number(req.headers.get("Content-Length") ?? "0") > MAX_UPLOAD_BYTES) return tooBig;
+      const data = await bytesUpTo(req.body, MAX_UPLOAD_BYTES).catch(() => undefined);
+      if (data === undefined) return secure(json({ error: "The upload didn't arrive whole. Try again." }, 400));
+      if (data === null) return tooBig;
+      const result = await workspace.upload(url.searchParams.get("name") ?? "", data, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
       return secure(result.status === "refused" ? json({ error: result.error }, 400) : json(result));
     }
     if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
@@ -209,7 +213,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
     if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
-  if (!result.ok) return json({ error: result.error }, 400);
+  if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
   if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
