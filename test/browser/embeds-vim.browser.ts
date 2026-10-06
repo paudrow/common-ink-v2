@@ -83,7 +83,7 @@ test("j and k step onto and off every kind of embed, line by line, jumping none"
     await settled(page);
     // On an embed's first line, its markdown shows; the others are still drawn.
     if (down.at(-1) === 3) assert.equal(await drawn(page), "html-app kanban youtube tasks", "on the timer's line, the timer is its line");
-    if (down.at(-1) === 14) assert.equal(await drawn(page), "timer html-app kanban tasks", "on the link's line, the link is its line");
+    if (down.at(-1) === 14) assert.equal(await drawn(page), "timer html-app kanban youtube tasks", "on the link's line, the link is its line, and its video plays on under it");
   }
   assert.deepEqual(down, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], "every line, embeds included");
   assert.equal(await drawn(page), "timer html-app kanban youtube tasks", "off them, all are drawn again");

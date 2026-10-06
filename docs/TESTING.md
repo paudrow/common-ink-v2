@@ -71,6 +71,7 @@ A scenario is a workspace to test against, as data: `test/scenarios/<name>.json`
 | --- | --- | --- |
 | `preview` | Every Preview's sample notes and a Try this PR note. It's the default. | real |
 | `empty` | No notes at all. | real |
+| `google` | No notes. With the fake Google (`--fake-google`), its week of events is around this clock's day. | 2026-10-05 09:00 |
 | `lists` | The lists tour: nested bullets, numbered lists and task lists. | 2026-10-05 09:00 |
 | `tasks` | Tasks due yesterday, today and later, repeating tasks, `::tasks` lists, a Kanban board, and recorded contacts. | 2026-10-05 09:00 |
 | `calendar` | The Sample calendar: Work, Personal and a read-only Holidays, a weekday standup with a moved and a cancelled occurrence, weekly and monthly series, all-day and multi-day events, notes that link to events (Meeting prep), `::calendar` embeds (Week at a glance), and the Calendar tour note. | 2026-10-05 09:00 |
@@ -90,7 +91,7 @@ A scenario is a workspace to test against, as data: `test/scenarios/<name>.json`
 | Offline | `?offline=1` or `0`, or the command | The page's own requests fail as a dropped connection does, its live socket stays shut, and `navigator.onLine` is false. Tests and the probe use Chrome's real offline mode instead (`--set-offline on`). |
 | Slow requests | `__commonInk.slow("^PUT /api/file", 2000)` | Holds back the page's requests that match by that many ms, to open the window a race needs. `slow()` clears it. |
 | Reset | the commands, `bin/common-ink reset [scenario]`, `POST /api/levers/reset {"scenario": "lists"}` | Empties the workspace and seeds it from a scenario, or from the deploy's own seed. Revisions keep counting up. Open pages forget their cached files and load again. A workspace reset to a named scenario stays on it when the Preview deploys again. |
-| Fake Google | `npm run dev -- --fake-google`, or `FAKE_GOOGLE` in a test's Worker | Google Calendar is a fake Google (`worker/src/fake-google.ts`) with a week of events, connected, in place of the Sample calendar: sync, etags and conflicts run as they do against Google. `POST /api/levers/google {"revoked": true}` ends its grant, as Google's test apps' grants end after 7 days, and `{"revoked": false}` gives it again, as reconnecting does. |
+| Fake Google | `npm run dev -- --fake-google`, or `FAKE_GOOGLE` in a test's Worker | Google Calendar is a fake Google (`worker/src/fake-google.ts`) with a week of events around the scenario's day (today in New York on the real clock), connected, in place of the Sample calendar: sync, etags and conflicts run as they do against Google. `POST /api/levers/google {"revoked": true}` ends its grant, as Google's test apps' grants end after 7 days, and `{"revoked": false}` gives it again, as reconnecting does. |
 | Calendar and contacts | always, where `DATA_FIXTURES` is set | The Sample calendar stands in for Google Calendar: its records come with the scenario (`examples/preview/data-sources/`), dated from its clock, and edits, recurrence and history work on them. Contacts are recorded Google data from `worker/src/fixtures/`. |
 
 Levers set in the address are kept in the `common-ink-levers` cookie, so they last across reloads and the Worker sees them. An empty value clears one: `?net=`. `__commonInk.levers.set({ now: null })` changes them without a reload.

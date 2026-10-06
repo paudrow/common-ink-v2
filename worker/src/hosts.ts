@@ -21,3 +21,13 @@ export function redirectFor(url: URL): { location: string; status: 301 | 302 } |
   if (V1_PATH.test(url.pathname)) return { location: `${V1_ORIGIN}${url.pathname}${url.search}`, status: 302 };
   return null;
 }
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// A pull request's Preview: pr-<n>-common-ink-v2.<subdomain>.workers.dev. Its notes are its own samples,
+// so it opens signed in. Production's address never matches, even if DEV_USER leaked into it.
+const PREVIEW_HOST = /^pr-\d+-common-ink-v2\.[a-z0-9-]+\.workers\.dev$/;
+
+/** This machine, or a pull request's Preview: where the dev user is signed in, and test levers work. */
+export function devHost(hostname: string): boolean {
+  return LOCAL_HOSTS.has(hostname) || PREVIEW_HOST.test(hostname);
+}

@@ -1,0 +1,8 @@
+{
+  "pr": 58,
+  "title": "Calendar: the week grid stays where you scroll it, and an event's editor opens beside it",
+  "steps": [
+    "⌘⇧P, Open calendar, then Week. Swipe or scroll sideways back past three weeks, then on past three weeks: it stops on the week you scrolled to each time, and doesn't jump or keep loading.",
+    "Open Meeting prep and click an event chip: the calendar opens on that event's week, with its editor right beside it, all of it on screen."
+  ]
+}

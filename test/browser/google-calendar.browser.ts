@@ -15,7 +15,7 @@ async function post(app: App, route: string, data: unknown, method = "POST") {
 
 const statusItem = (app: App) => app.page.locator("#status-right", { hasText: "Reconnect Google Calendar" });
 
-browserTest(h, "the calendar syncs from Google as it shows, and after Google ends the grant an edit waits until you reconnect", { scenario: "empty", allowErrors: [/503/] }, async (app) => {
+browserTest(h, "the calendar syncs from Google as it shows, and after Google ends the grant an edit waits until you reconnect", { scenario: "google", allowErrors: [/503/] }, async (app) => {
   await app.command("Show calendar");
   await app.page.locator(".event", { hasText: "Dentist" }).waitFor();
   assert.ok(await app.page.locator(".event", { hasText: "Standup" }).count(), "the series came in");
