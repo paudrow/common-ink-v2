@@ -153,3 +153,8 @@ test("a redirect to something that isn't http(s) says so, before asking whether 
   const fetcher = (async () => new Response(null, { status: 302, headers: { location: "ftp://files.example/x" } })) as typeof fetch;
   await assert.rejects(safeFetch("https://api.example/go", { fetcher, resolve: publicDns, allowHost: (h) => h === "api.example" }), new FetchRefused("Only http and https addresses can be fetched"));
 });
+
+test("IPv6's benchmarking, ORCHID, documentation (3fff::/20), SRv6 and dummy ranges are refused; the globally reachable ones beside them aren't", () => {
+  for (const ip of ["2001:2::1", "2001:2:0:ffff::1", "2001:10::1", "2001:1f::1", "3fff::1", "3fff:fff::1", "5f00::1", "100:0:0:1::1"]) assert.ok(isPrivateIPv6(ip), ip);
+  for (const ip of ["2001:20::1", "2001:2f::1", "2001:4:112::1", "2001:3::1", "4000::1", "100:0:0:2::1"]) assert.ok(!isPrivateIPv6(ip), ip);
+});
