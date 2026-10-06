@@ -13,6 +13,7 @@ import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResul
 import type { Contact } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
+import type { SearchProvider, SearchSection } from "./search.ts";
 import type { Embed } from "./embeds.ts";
 import type { MediaHandle, MediaKind, MediaSpec } from "./media.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
@@ -162,6 +163,25 @@ export interface ExtensionContext {
   commandBar: {
     provide(provider: Provider): void;
     open(text?: string): void;
+  };
+  /** Search (docs/queries.md): one query across notes and the kinds of result extensions add. */
+  search: {
+    /**
+     * Answer a kind of result the manifest declares in contributes.search.types, given the query read
+     * with `common-ink/query`. Given `within`, answer only with results in files whose paths match one
+     * of those globs (`inGlobs` from `common-ink/query`), before the limit: what's outside is taken out anyway.
+     */
+    provide(type: string, provider: SearchProvider): void;
+    /**
+     * What a query finds, a section per kind of result, as the search screen shows it; `progress` hears
+     * the sections found so far as each comes. A section with `more` stopped before it read every note it
+     * might find. A sandboxed extension searches only what it could read itself, as if nothing else were
+     * there: notes and tasks in the files:read scopes it's allowed, events with data:calendar:read, and
+     * its own kinds.
+     */
+    find(text: string, limit?: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]>;
+    /** The filter keys extensions add (`due`), for `parse(text, keys)`. */
+    filterKeys(): string[];
   };
   views: {
     /** How a view the manifest declares draws: as a webview (`resolve`), or, for trusted extensions, in the page (`render`). */
