@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { patch } from "node-diff3";
-import { authorKey, Files, parseFilePath, SEED_AUTHOR, type Author, type FilePath, type Seed } from "../worker/src/files.ts";
+import { authorKey, Files, parseFilePath, SEED_AUTHOR, type Author, type Db, type FilePath, type Seed } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const ada: Author = { kind: "user", email: "ada@example.com" };
@@ -384,4 +384,58 @@ test("open pages hear of changes only once they're kept: a write rolled back ann
   assert.equal(files.read("Good.md" as FilePath), null, "the seed was rolled back");
   const next = files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
   assert.deepEqual(heard, [1, next.file!.revision]);
+});
+
+/** An in-memory database whose transactions nest with savepoints, as a Durable Object's transactionSync does. */
+function nestingDb(): Db {
+  const db = memoryDb();
+  let depth = 0;
+  return {
+    ...db,
+    tx: (fn) => {
+      const point = `p${depth++}`;
+      db.raw.exec(`SAVEPOINT ${point}`);
+      try {
+        const out = fn();
+        db.raw.exec(`RELEASE ${point}`);
+        return out;
+      } catch (err) {
+        db.raw.exec(`ROLLBACK TO ${point}`);
+        db.raw.exec(`RELEASE ${point}`);
+        throw err;
+      } finally {
+        depth--;
+      }
+    },
+  };
+}
+
+test("a transaction inside another announces its changes with the outer one's, once it commits; one rolled back announces nothing", () => {
+  const heard: string[] = [];
+  const db = nestingDb();
+  const files = new Files(db, Date.now, (n) => heard.push(`${n.path}${(db as ReturnType<typeof memoryDb>).raw?.isTransaction ? " (before commit)" : ""}`));
+  files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
+    files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
+    assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+  });
+  assert.deepEqual(heard, ["Outer.md", "Inner.md"]);
+});
+
+test("a page whose announcement fails doesn't keep the others from hearing", () => {
+  const heard: string[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => {
+    if (n.path === "A.md") throw new Error("socket gone");
+    heard.push(n.path);
+  });
+  const log = console.error;
+  console.error = () => {};
+  try {
+    files.writeAll([
+      { path: "A.md" as FilePath, text: "a\n", base: 0, author: ada },
+      { path: "B.md" as FilePath, text: "b\n", base: 0, author: ada },
+    ]);
+  } finally {
+    console.error = log;
+  }
+  assert.deepEqual(heard, ["B.md"]);
 });
