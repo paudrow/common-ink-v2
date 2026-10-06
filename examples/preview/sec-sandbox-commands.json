@@ -1,0 +1,8 @@
+{
+  "pr": 84,
+  "title": "What a sandboxed extension can open and run",
+  "steps": [
+    "Boards, Word count and the html-app samples work as before: open Boards tour and move a card.",
+    "test/browser/sandbox-escape.browser.ts covers what a sandboxed extension can no longer open or run."
+  ]
+}
