@@ -199,3 +199,15 @@ test("text put back after it was saved is a new edit, with a new id: the server 
   assert.equal(sent.length, 3);
   assert.equal(new Set(sent).size, 3);
 });
+
+test("a clash undone back to what it was based on is no clash: the session is saved", async () => {
+  const editor = { text: "one\ntwo\n" };
+  const session = new Session({ path: PATH, text: "one\ntwo\n", revision: 1 }, { text: () => editor.text, replace: (t) => (editor.text = t) }, async (path) => ({ status: "conflict", file: { path, text: "ONE\ntwo\n", revision: 2 } }));
+  editor.text = "uno\ntwo\n";
+  session.edited();
+  await session.save();
+  assert.equal(session.status, "conflict");
+  editor.text = "one\ntwo\n";
+  session.edited();
+  assert.equal(session.status, "saved");
+});
