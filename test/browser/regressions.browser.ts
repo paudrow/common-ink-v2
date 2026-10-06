@@ -166,6 +166,16 @@ browserTest(h, "around a table or math block at a note's start or end, G, gg, co
   }
 });
 
+browserTest(h, "resizing a window with a Kanban board in it reports no ResizeObserver loop", { scenario: "tasks", open: "Boards tour.md" }, async (app) => {
+  await app.idle();
+  for (const keys of [":vs Boards tour<CR>", "<C-w>>", "<C-w>>", "<C-w><", "<C-w>=", "<C-w>H", "<C-w>c"]) {
+    await app.keys(`<Esc>${keys}`);
+    await app.page.waitForTimeout(300);
+  }
+  const problems = ((await app.state()) as { problems: Array<{ message: string }> }).problems.map((p) => p.message);
+  assert.deepEqual(problems, []);
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
