@@ -33,7 +33,7 @@ export const APP_MODULES = {
   },
   "common-ink/calendar": {
     file: "worker/src/calendar.ts",
-    exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
+    exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planRevert", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
   },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {

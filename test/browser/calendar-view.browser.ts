@@ -204,3 +204,26 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await until(app, "the dentist moved once back online", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-08T11:00:00");
   await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
 });
+
+browserTest(h, "a view you've left can't move the calendar, even with a scroll it had queued", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const title = app.page.locator(".cal-title-text");
+  /** The view's strip now, and a scroll fired on it later, as one the browser queued fires after the view is gone. */
+  const strip = () => app.page.evaluateHandle(() => document.querySelector(".cal-strip, .cal-scroll")!);
+  const scrollGone = (gone: Awaited<ReturnType<typeof strip>>) => gone.evaluate((s) => s.dispatchEvent(new Event("scroll")));
+  // Each step waits for the view's own saving to finish: the stale scroll is fired by hand, not raced.
+  await app.page.keyboard.press("m");
+  await app.idle();
+  assert.equal(await title.innerText(), "October 2026");
+  const month = await strip();
+  await app.page.keyboard.press("y");
+  await app.idle();
+  await scrollGone(month);
+  assert.equal(await title.innerText(), "2026");
+  const year = await strip();
+  await app.page.keyboard.press("a");
+  await app.idle();
+  await scrollGone(year);
+  await scrollGone(month);
+  assert.equal(await title.innerText(), "Monday, October 5, 2026");
+});

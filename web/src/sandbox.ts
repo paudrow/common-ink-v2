@@ -21,6 +21,18 @@ const hosts = () => {
   return box;
 };
 
+/**
+ * Whether a value from a frame is plain data: text, numbers, booleans, null, and lists and objects of
+ * them. A structured clone also keeps String and Number objects, Dates and the like, which compare
+ * unlike the text they turn into, so a check on one could pass where the use of it wouldn't.
+ */
+export function plainValue(v: unknown, depth = 0): boolean {
+  if (v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return true;
+  if (depth > 32 || typeof v !== "object") return false;
+  if (Array.isArray(v)) return v.every((x) => plainValue(x, depth + 1));
+  return Object.getPrototypeOf(v) === Object.prototype && Object.values(v).every((x) => plainValue(x, depth + 1));
+}
+
 /** A frame's MessagePort, once its shell has loaded: the only way the app and the frame talk. */
 function connect(frame: HTMLIFrameElement): Promise<MessagePort> {
   return new Promise((resolve) => {
@@ -87,6 +99,7 @@ export class SandboxHost {
 
   private async answer(id: string, method: string, args: unknown[]) {
     try {
+      if (typeof method !== "string" || !Array.isArray(args) || !args.every(plainValue)) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
       this.port!.postMessage({ t: "result", id, value: (await this.dispatch(method, args)) ?? null });
     } catch (err) {
       this.port!.postMessage({ t: "reject", id, message: (err as Error).message });

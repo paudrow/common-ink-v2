@@ -41,13 +41,14 @@ export function diffStat(change: Pick<Change, "diff">): string {
   return `+${lines.filter((l) => l.kind === "+").length} −${lines.filter((l) => l.kind === "-").length}`;
 }
 
-/** "just now", "5 min ago", "3 h ago", or a date. */
+/** "just now", "5 min ago", "3 h ago", or the local day. */
 export function ago(time: number, now = Date.now()): string {
   const s = Math.round((now - time) / 1000);
   if (s < 45) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return new Date(time).toISOString().slice(0, 10);
+  const d = new Date(time);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const NAMES: Array<[RegExp, string]> = [
