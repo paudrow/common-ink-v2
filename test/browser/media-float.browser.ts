@@ -272,7 +272,7 @@ const floats = (app: App) =>
   app.page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>(".cm-embed.is-floating")].map((box) => {
       const r = box.getBoundingClientRect();
-      return { top: Math.round(r.top) + 0, left: Math.round(r.left) + 0, onPage: r.top >= -0.5 && r.left >= -0.5 && r.bottom <= innerHeight + 0.5 && r.right <= innerWidth + 0.5 };
+      return { top: Math.round(r.top) + 0, left: Math.round(r.left) + 0, onPage: r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight + 0.01 && r.right <= innerWidth + 0.01 };
     }),
   );
 
@@ -314,6 +314,14 @@ browserTest(h, "three windows floating at once are all on the page, their bars i
   await waitFor(async () => (await floats(app)).length === 3, "three floating");
   const all = await floats(app);
   assert.ok(all.every((f) => f.onPage), `all on the page: ${JSON.stringify(all)}`);
+  // Every bar's buttons are what a pointer at them reaches: no window sits over another's bar.
+  const covered = await app.page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".cm-embed.is-floating .media-float-bar button")].filter((b) => {
+      const r = b.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) !== b;
+    }).length,
+  );
+  assert.equal(covered, 0, "every ↩ and ✕ in reach");
 });
 
 browserTest(h, "a floating window moves with the arrow keys from its bar, and Home, a double-click or Reset floating video position put it back", { sites: SITES }, async (app) => {
@@ -327,6 +335,11 @@ browserTest(h, "a floating window moves with the arrow keys from its bar, and Ho
   await app.page.keyboard.press("Shift+ArrowUp");
   const moved = (await floats(app))[0];
   assert.deepEqual([home.left - moved.left, home.top - moved.top], [16, 80], "16px a key, 64 with Shift");
+  // Moved by keys, it says when it reaches an edge or a corner.
+  for (let i = 0; i < 40; i++) await app.page.keyboard.press("Shift+ArrowUp");
+  assert.equal(await app.page.locator(".media-float-said").textContent(), "At the top edge");
+  for (let i = 0; i < 40; i++) await app.page.keyboard.press("Shift+ArrowLeft");
+  assert.equal(await app.page.locator(".media-float-said").textContent(), "In the top left corner");
   assert.equal((await video(app)).state, 1, "moving it doesn't stop it");
   await app.page.keyboard.press("Home");
   assert.deepEqual((await floats(app))[0], home, "Home: back in the corner");
@@ -364,4 +377,17 @@ browserTest(h, "a player is heard only from its own site: its frame sent to anot
   await waitFor(async () => ((await impostor()) ?? 0) > 5, "the impostor has said it plays, again and again");
   assert.equal(await app.page.locator(".mini-player:not([hidden])").count(), 0, "nothing plays, as far as the app knows");
   assert.equal(await app.page.evaluate(() => document.body.innerText.includes("Impostor")), false, "its title shows nowhere");
+});
+
+browserTest(h, "a file dropped in an extension's frame doesn't leave every embed ignoring clicks", { scenario: "empty" }, async (app) => {
+  // A file dragged in over the page lets drags through the embeds; its drop, in a frame, never reaches the page.
+  await app.page.evaluate(() => {
+    const files = new DataTransfer();
+    files.items.add(new File(["x"], "a.txt"));
+    document.body.dispatchEvent(new DragEvent("dragenter", { dataTransfer: files, bubbles: true }));
+  });
+  assert.equal(await app.page.evaluate(() => document.querySelector(".embed-layer")?.classList.contains("is-passing")), true, "drags pass through while one is on");
+  await app.page.mouse.move(300, 300);
+  await app.page.mouse.move(310, 310);
+  assert.equal(await app.page.evaluate(() => document.querySelector(".embed-layer")?.classList.contains("is-passing")), false, "the pointer moving again means the drag is over");
 });

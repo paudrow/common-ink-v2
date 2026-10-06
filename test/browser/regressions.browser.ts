@@ -118,6 +118,13 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "going offline with nothing to send says Offline at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+  await app.idle();
+  await app.page.context().setOffline(true);
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline", null, { timeout: 1000 });
+  await app.page.context().setOffline(false);
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
