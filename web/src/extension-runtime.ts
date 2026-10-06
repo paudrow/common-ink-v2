@@ -5,7 +5,7 @@
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
-import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
@@ -794,6 +794,7 @@ export class ExtensionRuntime {
           case "files.read":
             return services.read(a as FilePath);
           case "files.write":
+            if (decidesTrust(a)) throw new Error(`${m.name} can't change ${a}: it runs sandboxed, and that file decides what extensions may do`);
             return services.write(a as FilePath, String(b), Number(c));
           case "net.fetch":
             return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });

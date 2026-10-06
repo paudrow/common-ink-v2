@@ -59,6 +59,14 @@ export function coveringKey(m: ExtensionManifest, ask: Ask): string | null {
   return scope ? `${ask.kind}:${scope}` : null;
 }
 
+/**
+ * Files that decide what runs in the page and what extensions may do: settings (which extensions are
+ * trusted, your answers to their asks) and every extension's own files. A sandboxed extension never
+ * changes them, whatever it was allowed to write, or it could let itself out.
+ */
+export const decidesTrust = (path: string) =>
+  path === ".common-ink/settings.json" || /^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path) || path.startsWith(".common-ink/extensions/");
+
 export type Decision = { outcome: "allow" | "deny" | "ask"; key: string } | { outcome: "undeclared" };
 
 /**
