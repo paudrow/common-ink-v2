@@ -227,3 +227,16 @@ browserTest(h, "a view you've left can't move the calendar, even with a scroll i
   await scrollGone(month);
   assert.equal(await title.innerText(), "Monday, October 5, 2026");
 });
+
+browserTest(h, "an event dragged late enough to run past midnight ends on the next day", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  // Scrolled to the bottom of the day, once the grid is laid out: the dentist at 14:30 and 23:30 are both on screen.
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = s.scrollHeight));
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const to = await at(app, "2026-10-06", 23 * 60 + 30);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
+  await until(app, "the dentist moved to 23:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-06T23:30:00");
+  assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T00:15:00", "its 45 minutes, into Wednesday");
+});
