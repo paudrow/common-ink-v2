@@ -2,7 +2,7 @@
 
 A UX research study for Common Ink v2: how to organize extensions' views and side panels, a scrollable feed of notes you can triage, archive, a 30-day trash, data sources and search. It is designed **mobile first**: the model starts on a phone and grows into the tablet and desktop layouts. Extensions say what a device needs to have, so Vim, tabs and splits turn off where they don't fit, and the app shows why. The study ends with a recommendation, prototypes, a build plan and the decisions only you can make.
 
-- **Status:** a proposal. No app code changes.
+- **Status:** decided on 2026-10-06 (section 12). Being built in the steps of section 10.
 - **Prototypes**, each a single HTML file that needs nothing else; open one straight from the repo:
   - [navigation-mobile.html](prototypes/navigation-mobile.html) (**recommended, mobile first**). The same model from a phone up to a laptop. Pick a device in its top bar: Phone, Phone with a Bluetooth keyboard, Tablet, Tablet with a keyboard, Laptop, or a narrow laptop window. Swipes work with a finger or a mouse drag. On a real phone it fills the screen. `?device=phone` (or `tablet`, `laptop`…) in the address picks a device.
   - [navigation-places.html](prototypes/navigation-places.html): the same model on a desktop, explored in depth with the keyboard. It's responsive too: on a narrow screen it gets a bottom bar and a Places drawer.
@@ -24,7 +24,7 @@ A UX research study for Common Ink v2: how to organize extensions' views and sid
 9. [Recommended model: Places and the Feed](#9-recommended-model-places-and-the-feed)
 10. [Build plan](#10-build-plan)
 11. [Testing with you](#11-testing-with-you)
-12. [Decisions for you](#12-decisions-for-you)
+12. [Decisions](#12-decisions)
 13. [Sources](#13-sources)
 
 ## 1. The short version
@@ -973,8 +973,8 @@ Pull-request sized, mobile first. Each ships something you can use, with its own
     - Pins (`pins.json`) and saved searches.
 11. **Agents in the Feed.** All, Mine and Agents; summaries; grouping an agent's runs of changes; the diff; unseen dots (if decision 17).
 12. **The docked context panel** at large widths, `m` to move a view, and Links as a default extension.
-13. **Embeds by device.** Live on the focused card with a keyboard (`feed.liveEmbeds`); "Tap to run" for heavy embeds on phones; `minWidth` for html-apps.
-14. **Bottom panel**, only if something needs it.
+13. **Embeds by device**, after living with step 9. Live on the focused card with a keyboard (`feed.liveEmbeds`); "Tap to run" for heavy embeds on phones; `minWidth` for html-apps.
+14. **Status line:** a word count for the note in focus and an online/offline state on wider screens (decision 23). No bottom panel until something needs one.
 
 Steps 4 to 8 don't depend on the navigation decision and can go in any order after step 1. Steps 1 to 3 are the mobile foundation: everything after them is built and checked on a phone first.
 
@@ -1034,44 +1034,46 @@ Use the Feed as home on both for a week. Add a line to the day's journal when so
 
 Ten real lookups over a few days, on both devices, each noted with what you typed, whether the first result was right, and whether you used a filter or chip. Success: the first result is right for eight of ten.
 
-## 12. Decisions for you
+## 12. Decisions
 
-The choices only you can make. My recommendation is in bold.
+Decided on 2026-10-06. Three answers were left open; they take the recommendation, and they're marked.
 
 **The model**
 
-1. **Which model?** A: Workbench, B: Feed only, **C: Places and the Feed, mobile first**.
-2. **What to call the Feed?** **Feed**, Notes (v1's word), or Home.
-3. **Activity bar icons, or text Places?** **Text**: a sheet on phones, a sidebar on wide screens.
-4. **On wide screens, a list beside the note** (the Feed as a column, notes beside it), **or the Feed as a tab** like any note (the first draft)? **Beside.**
+1. **Model:** C, Places and the Feed, mobile first.
+2. **Name:** Feed.
+3. **Places** are text: a sheet on phones, a sidebar on wide screens. No activity bar.
+4. **On wide screens** a list sits beside the note. The Feed isn't a tab.
 
 **Phones**
 
-5. **Swipe directions:** **right to archive, left to trash**, or right to pin and left to trash (Apple Notes). Both are settings either way.
-6. **The bottom bar's three places by default:** **Feed, Today, Calendar**, or Feed, Today, Tasks.
-7. **An installable web app (PWA) first, or a native shell?** **A PWA first.** A native shell only if the PWA hits a wall (keyboard detection, haptics, share sheet).
+5. **Swipes:** right archives, left trashes. Both are settings.
+6. **The bottom bar's places** by default: Feed, Today, Calendar.
+7. **An installable web app (PWA) first.** A native shell only if the PWA hits a wall.
 
 **Devices and extensions**
 
-8. **How extensions say where they apply:** **capabilities they need (`requires`)**, a device class, or expressions.
-9. **Tabs on tablets in portrait (medium width)?** **Yes**, or only from expanded width.
-10. **Keyboard detection:** **assume one on desktops, detect it elsewhere, and keep it once seen**, with Auto, Yes and No per device.
-11. **Per-device overrides** ("On here", "Off here") in a device file: **yes**, or the workspace setting only.
-12. **Device files** in `.common-ink/users/<you>/devices/`: **yes, files with history**, or kept in the browser only (not observable).
-13. **Layout: per device, or shared?** **Per device**, with a new wide device starting from your last wide layout. Shared is how v2 works now.
+8. Extensions say what they need with **`requires`** (capabilities, not device types).
+9. **Tabs** show from medium width (tablets in portrait).
+10. **Keyboard detection:** assume one on desktops, detect it elsewhere and keep it once seen; Auto, Yes and No per device.
+11. **Per-device overrides** ("On here", "Off here") live in the device file.
+12. **Device files** in `.common-ink/users/<you>/devices/`, with history.
+13. **Layout is per device**, and a new wide device starts from your last wide layout.
 
-**The Feed, archive and trash** (from the first draft)
+**The Feed, archive and trash**
 
-14. **Does an agent's edit bring an archived note back to the Feed?** **No; it shows under Agents, marked archived.**
-15. **Archived notes in search:** **shown last and marked**, or hidden unless you ask (`is:archived`).
-16. **Pins: the workspace's or each person's?** **The workspace's now**, each person's when workspaces are shared.
-17. **Unseen dots for agents' changes** (a small `feed.json` change once per visit): **yes**, or no dots.
-18. **Trash:** **30 days as a setting**, and **agents can't purge**.
-19. **Embeds in cards:** **quiet; live on the focused card with a keyboard; heavy ones wait for a tap on phones**.
-20. **Keys:** **`#` and `dd` to trash, `p` to pin**.
-21. **What opens at start:** **the place you were last on, on this device**, or always the Feed.
-22. **A file tree:** **not in Places** (folders by `in:` and saved searches), or as an optional view.
-23. **Bottom panel:** **not until something needs it**.
+14. An agent's edit **doesn't** bring an archived note back to the Feed; it shows under Agents, marked archived.
+15. Archived notes are **shown last and marked** in search.
+16. **Pins** are the workspace's now, and each person's once workspaces are shared.
+17. **Unseen dots** for agents' changes: yes.
+18. **Trash:** 30 days, as a setting (`trash.retentionDays`). Agents can't purge; only you can *(left open; the recommendation)*.
+19. **Embeds in cards** are quiet: live on the focused card with a keyboard, and heavy ones wait for a tap on phones.
+20. **Keys:** both `#` and `dd` trash; `p` pins *(left open; the recommendation)*.
+21. **At start**, the place you were last on, on this device.
+22. **No file tree** in Places. Folders are found with `in:` and saved searches.
+23. **No bottom panel** until something needs one *(left open; the recommendation)*. Instead, the status line on wider screens gains a **word count** for the note in focus and an **online/offline** state. On a phone the status line stays hidden and offline shows only when something isn't saved.
+
+**Also decided: standard icons.** Delete, archive and pin use the icons people already know: a trash can, an archive box and a pushpin (Lucide's `trash-2`, `archive` and `pin`), not arrows or keyboard symbols. Restore, undo and unarchive follow the same set.
 
 ## 13. Sources
 

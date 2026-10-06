@@ -100,3 +100,40 @@ One that runs in the app's page, with access to note editors: the built-ins, and
 
 **Safe mode**:
 The app with only built-in extensions running, for when a workspace extension breaks it. Open the app with `?safe=1`.
+
+## Navigation
+
+**Place**:
+Somewhere you can go in the app: the Feed, Today, Tasks, Calendar, a pinned note, a saved search, Sources, Archive, Trash, Extensions or Settings. Places are a sheet on a phone and a sidebar on a wide screen.
+_Avoid_: Activity, section, tab (a tab holds an open window)
+
+**Feed**:
+The notes you and your agents changed, newest first, as cards you can read and triage. It's the query `-is:archived sort:edited`.
+_Avoid_: Notes list, inbox, home
+
+**Saved search**:
+A query with a name, kept as a place.
+_Avoid_: Smart folder, filter
+
+**Pin**:
+Keeping a note at the top of the Feed and in Places. Pins are the workspace's while a workspace has one person.
+_Avoid_: Star, favourite
+
+**Archive**:
+A state a note can be in: out of the Feed, shown last in search, still in place and still linked. Archiving doesn't move the note.
+_Avoid_: Hide, move to archive
+
+**Trash**:
+The notes deleted in the last 30 days (a setting). It's a view over history: restoring a note undoes its delete.
+_Avoid_: Bin, recycle
+
+**Purge**:
+Removing a deleted note's text from history, after its time in Trash or on Delete forever. Only the person can purge, never an agent, and each purge leaves a change saying so.
+_Avoid_: Hard delete, permanent delete (in code)
+
+**Device**:
+One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
+
+**Requirement**:
+What an extension or contribution needs from a device to work, such as a keyboard or a wide screen, declared as `requires`. One that isn't met is off on that device, with the reason shown, unless you turn it on there.
+_Avoid_: Platform, desktop-only, mobile-only
