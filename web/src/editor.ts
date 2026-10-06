@@ -104,6 +104,8 @@ export function createState(
       slots.livePreview.of(s.livePreview),
       history(),
       drawSelection(),
+      // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
+      EditorState.allowMultipleSelections.of(true),
       remoteFlash,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
