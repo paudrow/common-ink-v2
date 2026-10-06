@@ -8,9 +8,15 @@ Object.assign(globalThis, {
   document: window.document,
   MutationObserver: window.MutationObserver,
   requestAnimationFrame: (f: () => void) => setTimeout(f, 0),
+  cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
   getComputedStyle: window.getComputedStyle,
   Window: window.Window,
 });
+// jsdom lays nothing out: every element on the page stands as a box, so the keeper (lives.ts) can tell
+// a shown slot (on the page) from a gone one.
+window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+  return (this.isConnected ? { top: 0, left: 0, right: 600, bottom: 20, width: 600, height: 20, x: 0, y: 0 } : { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
+};
 
 const { EditorView } = await import("@codemirror/view");
 const { createState } = await import("../web/src/editor.ts");
@@ -95,7 +101,7 @@ test("a container left open isn't an embed, and says so above it", () => {
   const view = new EditorView({ state: state(":::board\n## To do\n- Card\n\nEnd", [embeds(host([]))]), parent: document.body });
   assert.deepEqual(findEmbeds(view.state, DECLARED).unclosed, [{ from: 0, language: "board" }]);
   assert.equal(view.dom.querySelector(".cm-embed-needs")?.textContent, "This Board isn't closed: add a line with ::: after its last line.");
-  assert.equal(view.dom.querySelectorAll(".cm-embed").length, 0);
+  assert.equal(document.querySelectorAll(".embed-scroller:last-child .cm-embed").length, 0);
   view.destroy();
 });
 
@@ -124,18 +130,18 @@ test("an embed is drawn in place of its markdown until the cursor is on it, with
   const drawn: Embed[] = [];
   const view = new EditorView({ state: state(NOTE, [embeds(host(drawn))]), parent: document.body });
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  const bodies = () => [...view.dom.querySelectorAll(".cm-embed:not(.is-hidden) .cm-embed-body")].map((e) => e.textContent);
+  const bodies = () => [...document.querySelectorAll(".embed-scroller:last-child .cm-embed:not(.is-hidden) .cm-embed-body")].map((e) => e.textContent);
   assert.deepEqual(bodies(), ["drawn 25m", "drawn 4m", "drawn board"]);
-  assert.deepEqual([...view.dom.querySelector(".cm-embed .cm-embed-tools")!.querySelectorAll("button")].map((b) => b.textContent), ["Settings", "Edit markdown"]);
-  const timer = view.dom.querySelector(".cm-embed");
+  assert.deepEqual([...document.querySelector(".embed-scroller:last-child .cm-embed .cm-embed-tools")!.querySelectorAll("button")].map((b) => b.textContent), ["Settings", "Edit markdown"]);
+  const timer = document.querySelector(".embed-scroller:last-child .cm-embed");
   view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 2 } });
   assert.deepEqual(bodies(), ["drawn 4m", "drawn board"], "the cursor on the first shows its markdown");
   assert.ok(timer!.isConnected && timer!.classList.contains("is-hidden"), "kept, hidden");
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  assert.equal(view.dom.querySelector(".cm-embed"), timer, "and shown again: the same box, not drawn again");
+  assert.equal(document.querySelector(".embed-scroller:last-child .cm-embed"), timer, "and shown again: the same box, not drawn again");
   assert.equal(drawn.length, 3, "each drawn once");
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  view.dom.querySelectorAll<HTMLButtonElement>(".cm-embed-tools button")[1].click();
+  document.querySelectorAll<HTMLButtonElement>(".embed-scroller:last-child .cm-embed-tools button")[1].click();
   assert.equal(view.state.selection.main.head, view.state.doc.line(3).to, "Edit markdown puts the cursor at the end of its line");
   view.destroy();
 });
@@ -145,23 +151,23 @@ test("new arguments go to the drawn embed in place: its element stays, unless it
   const updates: Embed[] = [];
   const view = new EditorView({ state: state(NOTE, [embeds(host(drawn, { updates }))]), parent: document.body });
   view.dispatch({ selection: { anchor: view.state.doc.length } });
-  const first = view.dom.querySelector(".cm-embed")!;
+  const first = document.querySelector(".embed-scroller:last-child .cm-embed")!;
   const line = view.state.doc.line(3);
   view.dispatch({ changes: { from: line.from, to: line.to, insert: '::timer{duration=50m label="Deep work"}' } });
-  assert.equal(view.dom.querySelector(".cm-embed"), first, "the same element");
+  assert.equal(document.querySelector(".embed-scroller:last-child .cm-embed"), first, "the same element");
   assert.deepEqual(updates.map((e) => e.args.duration), ["50m"]);
   assert.equal(first.querySelector(".cm-embed-body")!.textContent, "drawn 50m");
   view.dispatch({ changes: { from: 0, insert: "Intro\n\n" } });
-  assert.equal(view.dom.querySelector(".cm-embed"), first, "an edit elsewhere leaves it alone");
+  assert.equal(document.querySelector(".embed-scroller:last-child .cm-embed"), first, "an edit elsewhere leaves it alone");
   assert.equal(updates.length, 1);
   view.destroy();
 
   const refusing = new EditorView({ state: state(NOTE, [embeds(host([], { refuse: true }))]), parent: document.body });
   refusing.dispatch({ selection: { anchor: refusing.state.doc.length } });
-  const before = refusing.dom.querySelector(".cm-embed")!;
+  const before = document.querySelector(".embed-scroller:last-child .cm-embed")!;
   const l = refusing.state.doc.line(3);
   refusing.dispatch({ changes: { from: l.from, to: l.to, insert: "::timer{duration=50m}" } });
-  assert.notEqual(refusing.dom.querySelector(".cm-embed"), before, "drawn again");
+  assert.notEqual(document.querySelector(".embed-scroller:last-child .cm-embed"), before, "drawn again");
   refusing.destroy();
 });
 
@@ -171,8 +177,8 @@ test("Settings writes the arguments into the markdown as your edit, keeping thei
   const events: string[] = [];
   const listen = EditorView.updateListener.of((u) => u.transactions.forEach((tr) => tr.docChanged && events.push(tr.annotation(Transaction.userEvent) ?? "")));
   view.dispatch({ effects: StateEffect.appendConfig.of(listen) });
-  view.dom.querySelector<HTMLButtonElement>(".cm-embed-tools button")!.click();
-  const form = view.dom.querySelector<HTMLFormElement>(".cm-embed-form")!;
+  document.querySelector<HTMLButtonElement>(".embed-scroller:last-child .cm-embed-tools button")!.click();
+  const form = document.querySelector<HTMLFormElement>(".embed-scroller:last-child .cm-embed-form")!;
   assert.deepEqual([...form.querySelectorAll("label")].map((l) => l.textContent), ["Duration", "Label"], "an id isn't offered");
   const [duration, label] = [...form.querySelectorAll("input")];
   assert.equal(duration.value, "25m", "a default shows as its value");
@@ -203,7 +209,7 @@ test("Settings writes the arguments into the markdown as your edit, keeping thei
     ],
     "a choice without a default can be left out; one with a default can't",
   );
-  assert.equal(view.dom.querySelector(".cm-embed-form"), null);
+  assert.equal(document.querySelector(".embed-scroller:last-child .cm-embed-form"), null);
   view.destroy();
 });
 
