@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
+import type { GoogleEvent } from "../worker/src/google-calendar.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { recordPath } from "../worker/src/records.ts";
 import type { Occurrence } from "../worker/src/calendar.ts";
@@ -422,6 +423,127 @@ test("the sample fake Google's week is around the day it's given, in New York, w
   ]);
 });
 
+const daily = (fake: FakeGoogle) => {
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
+  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+};
+const weekly = (fake: FakeGoogle) => {
+  fake.put("ada@example.com", { id: "w", summary: "Weekly", start: at("05", "11:00"), end: at("05", "12:00"), recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4"] });
+  fake.put("ada@example.com", { id: "w_20261012T180000Z", summary: "Weekly (changed)", recurringEventId: "w", originalStartTime: at("12", "11:00"), start: at("12", "11:00"), end: at("12", "12:00") });
+  fake.put("ada@example.com", { id: "w_20261019T180000Z", status: "cancelled", recurringEventId: "w", originalStartTime: at("19", "11:00") });
+};
+const moves: Array<[string, (fake: FakeGoogle) => void, Edit]> = [
+  ["a daily series moved two hours", daily, ["update_event", { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA }]],
+  ["a weekly series moved a day", weekly, ["update_event", { address: "event:google/primary/w_20261005T180000Z", start: "2026-10-06T11:00", scope: "all", zone: LA }]],
+];
+const shuffled = (revisions: number[], seed: number) => {
+  const out = [...revisions];
+  for (let i = out.length - 1, s = seed; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const j = s % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+};
+const plans: Array<[string, (revisions: number[]) => number[][]]> = [
+  ["one at a time, newest first", (r) => [...r].sort((a, b) => b - a).map((x) => [x])],
+  ["one at a time, oldest first", (r) => [...r].sort((a, b) => a - b).map((x) => [x])],
+  ...[1, 2, 3].map((seed): [string, (r: number[]) => number[][]] => [`one at a time, shuffled (${seed})`, (r) => shuffled(r, seed).map((x) => [x])]),
+  ["its occurrences first, then the series", (r) => [r.filter((x) => x !== Math.min(...r)), [Math.min(...r)]]],
+];
+for (const [what, series, move] of moves) {
+  for (const [how, plan] of plans) {
+    test(`undoing ${what} ${how} leaves it as it was, here and in Google`, async () => {
+      const run = await undoAll(series, [move], [], plan);
+      assert.deepEqual(run.statuses.filter((s) => s !== "undone"), []);
+      assert.deepEqual(run.here, run.before);
+      assert.deepEqual(run.synced, run.before);
+    });
+  }
+}
+
+test("an edit that keeps meeting Google's newer versions waits, then goes once Google holds still, with the edits behind it", async () => {
+  const { fake } = google();
+  let busy = 4;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if (init?.method === "PATCH" && String(input).endsWith("/events/dentist") && busy-- > 0) fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, colorId: String(busy) });
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  const first = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(first.status, "queued");
+  assert.equal(store.sources.outbox("google")[0].error, "The source has a newer version of this event", "the waiting edit says why");
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
+  await store.sources.flush("google");
+  assert.deepEqual(store.sources.outbox("google"), []);
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (Dr Lee)");
+  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff");
+});
+
+test("when Google can't say how an event is after a 412, the edit waits with its etag, so it never overwrites Google's newer version", async () => {
+  const { fake } = google();
+  let failing = 1;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if ((init?.method ?? "GET") === "GET" && String(input).endsWith("/events/dentist") && failing-- > 0) return new Response("{}", { status: 503 });
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  const edit = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(edit.status, "queued");
+  await store.sources.flush("google");
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+test("an edit that failed for a while, then meets one 412 once Google is back, merges and goes in the same flush", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.revoked = true;
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await store.sources.flush("google");
+  await store.sources.flush("google");
+  assert.ok(store.sources.outbox("google")[0].attempts >= 3);
+  fake.revoked = false;
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  assert.equal(await store.sources.flush("google"), null);
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+for (const [how, deleted] of [
+  ["with the event, cancelled", (g: GoogleEvent) => Response.json({ ...g, status: "cancelled" })],
+  ["with 410", () => Response.json({ error: { code: 410, message: "Resource has been deleted" } }, { status: 410 })],
+] as const) {
+  test(`an edit of an event Google deleted meanwhile is refused and goes away with the next sync, Google answering a read ${how}; deleting one is done already`, async () => {
+    const { fake } = google();
+    const gone = new Set<string>();
+    const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+      const id = /\/events\/([^/?]+)$/.exec(String(input))?.[1];
+      if ((init?.method ?? "GET") === "GET" && id && gone.has(decodeURIComponent(id))) return deleted(fake.event("ada@example.com", decodeURIComponent(id))!);
+      return fake.fetch(input, init);
+    });
+    store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+    await op(store, "sync_calendar", {});
+    fake.remove("ada@example.com", "dentist");
+    gone.add("dentist");
+    const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+    assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
+    fake.remove("ada@example.com", "standup");
+    gone.add("standup");
+    await op(store, "delete_event", { address: "event:google/primary/standup_20261005T160000Z", scope: "all" });
+    assert.deepEqual(store.sources.outbox("google"), []);
+    await op(store, "sync_calendar", { force: true });
+    assert.deepEqual(await listed(store), ["2026-10-08 Offsite"]);
+  });
+}
+
 test("Google's change made while our push of the same event was in flight comes in on a later sync", async () => {
   const { fake } = google();
   let failing = 2;
@@ -485,47 +607,6 @@ test("after a full sync that left an event for a change made meanwhile, the next
   const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { location?: string } }).event;
   assert.equal(here.location, "Room 9");
 });
-
-const daily = (fake: FakeGoogle) => {
-  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
-  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
-  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
-  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
-};
-const weekly = (fake: FakeGoogle) => {
-  fake.put("ada@example.com", { id: "w", summary: "Weekly", start: at("05", "11:00"), end: at("05", "12:00"), recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4"] });
-  fake.put("ada@example.com", { id: "w_20261012T180000Z", summary: "Weekly (changed)", recurringEventId: "w", originalStartTime: at("12", "11:00"), start: at("12", "11:00"), end: at("12", "12:00") });
-  fake.put("ada@example.com", { id: "w_20261019T180000Z", status: "cancelled", recurringEventId: "w", originalStartTime: at("19", "11:00") });
-};
-const moves: Array<[string, (fake: FakeGoogle) => void, Edit]> = [
-  ["a daily series moved two hours", daily, ["update_event", { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA }]],
-  ["a weekly series moved a day", weekly, ["update_event", { address: "event:google/primary/w_20261005T180000Z", start: "2026-10-06T11:00", scope: "all", zone: LA }]],
-];
-const shuffled = (revisions: number[], seed: number) => {
-  const out = [...revisions];
-  for (let i = out.length - 1, s = seed; i > 0; i--) {
-    s = (s * 1103515245 + 12345) & 0x7fffffff;
-    const j = s % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-};
-const plans: Array<[string, (revisions: number[]) => number[][]]> = [
-  ["one at a time, newest first", (r) => [...r].sort((a, b) => b - a).map((x) => [x])],
-  ["one at a time, oldest first", (r) => [...r].sort((a, b) => a - b).map((x) => [x])],
-  ...[1, 2, 3].map((seed): [string, (r: number[]) => number[][]] => [`one at a time, shuffled (${seed})`, (r) => shuffled(r, seed).map((x) => [x])]),
-  ["its occurrences first, then the series", (r) => [r.filter((x) => x !== Math.min(...r)), [Math.min(...r)]]],
-];
-for (const [what, series, move] of moves) {
-  for (const [how, plan] of plans) {
-    test(`undoing ${what} ${how} leaves it as it was, here and in Google`, async () => {
-      const run = await undoAll(series, [move], [], plan);
-      assert.deepEqual(run.statuses.filter((s) => s !== "undone"), []);
-      assert.deepEqual(run.here, run.before);
-      assert.deepEqual(run.synced, run.before);
-    });
-  }
-}
 
 for (const [how, answer] of [
   ["answering a read with the event, cancelled", null],
