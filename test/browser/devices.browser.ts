@@ -46,7 +46,7 @@ browserTest(h, "on a phone, an extension that needs a keyboard is off with why, 
   await app.page.keyboard.press("Escape");
   await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
   assert.deepEqual(await demoSaw(app), { width: "compact", keyboard: true }, "in, without a reload; and ctx.device answers in the sandbox");
-  assert.deepEqual((await app.state()).notices, ["Keyboard found: Keys demo is on."]);
+  assert.deepEqual((await app.state()).notices, ["Keyboard found: Vim, Keys demo are on."]);
   await app.page.waitForFunction(() => !document.querySelector('.extension-row[data-extension="keys-demo"] .extension-here'));
   await app.idle();
   assert.equal(JSON.parse(await app.readFile(devicePath("lever-phone"))).seen.keyboard, true, "kept once found");
@@ -142,7 +142,7 @@ browserTest(h, "on a touch screen, Not a keyboard? takes a found keyboard back, 
   await installKeysDemo(app);
   await app.page.keyboard.press("ArrowDown");
   await app.page.keyboard.press("Escape");
-  const notice = app.page.locator(".notice", { hasText: "Keyboard found: Keys demo is on." });
+  const notice = app.page.locator(".notice", { hasText: "Keyboard found: Vim, Keys demo are on." });
   await notice.waitFor();
   const reloaded = app.page.waitForEvent("load");
   await notice.getByRole("button", { name: "Not a keyboard?" }).click();

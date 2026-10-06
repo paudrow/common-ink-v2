@@ -257,16 +257,25 @@ export class ExtensionRuntime {
     return hereText(here(requires, this.app.device.facts));
   }
 
-  /** Why a command is off on this device, if it is. */
-  private commandOff(id: string): string | null {
-    const m = this.host.on().find((x) => x.contributes.commands.some((c) => c.command === id));
-    return m ? this.offHere(m, m.contributes.commands.find((c) => c.command === id)!.requires) : null;
+  /**
+   * Whether a part of the layout an extension draws ("tabs", "splits") is out on this device: null if it
+   * is, why it isn't if it isn't, and undefined if no extension that's on draws it.
+   */
+  layoutPart(id: string): string | null | undefined {
+    const m = this.host.on().find((x) => x.contributes.layout.some((p) => p.id === id));
+    return m && this.offHere(m, m.contributes.layout.find((p) => p.id === id)!.requires);
+  }
+
+  /** A command's shortcut as shown, where there's a keyboard to press it: without one, keys aren't hinted anywhere. */
+  private shortcut(id: string): string | undefined {
+    const key = this.app.device.has("keyboard") ? keyFor(id, this.app.settings().keybindings) : undefined;
+    return key && formatKeys(key);
   }
 
   /** Every command, with why it's off on this device if it is. */
   private allCommands(): Array<{ id: string; title: string; off?: string }> {
     return this.app.commands.all().map((c) => {
-      const off = this.commandOff(c.id);
+      const off = c.off?.();
       return { id: c.id, title: c.title, ...(off ? { off } : {}) };
     });
   }
@@ -360,9 +369,8 @@ export class ExtensionRuntime {
       this.app.commands.register({
         id: c.command,
         title: c.title,
+        off: () => this.offHere(m, c.requires),
         run: () => {
-          const off = this.offHere(m, c.requires);
-          if (off) return void this.app.workbench.notice(`${c.title}: ${off.charAt(0).toLowerCase()}${off.slice(1)}`);
           this.broker.cause(m.id, { kind: "command", title: c.title });
           // Started already, its answer comes back at once: false declines a key (commands.runForKey).
           const handler = this.handlers.get(c.command);
@@ -698,10 +706,7 @@ export class ExtensionRuntime {
         },
         run: (id) => app.commands.run(id),
         all: () => this.allCommands(),
-        shortcut: (id) => {
-          const key = keyFor(id, app.settings().keybindings);
-          return key && formatKeys(key);
-        },
+        shortcut: (id) => this.shortcut(id),
         keybindings: () => this.allKeybindings(),
         menu: (id) => this.menu(id),
       },
@@ -939,10 +944,8 @@ export class ExtensionRuntime {
             return app.commands.run(a);
           case "commands.all":
             return this.allCommands();
-          case "commands.shortcut": {
-            const key = keyFor(a, app.settings().keybindings);
-            return key && formatKeys(key);
-          }
+          case "commands.shortcut":
+            return this.shortcut(a);
           case "commands.keybindings":
             return this.allKeybindings();
           case "statusBar.set":
