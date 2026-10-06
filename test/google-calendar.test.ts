@@ -217,3 +217,31 @@ test("edits made at once go to Google once each, in order", async () => {
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
 });
+
+test("a sync that was already under way when an edit went out leaves the edit as it is here", async () => {
+  const { fake } = google();
+  let held: Promise<void> | null = null;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    const answer = await fake.fetch(input, init);
+    if (held && String(input).includes("/calendars/primary/events?")) await held;
+    return answer;
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  let release!: () => void;
+  held = new Promise<void>((r) => (release = r));
+  const syncing = op(store, "sync_calendar", { force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  const editing = op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await new Promise((r) => setTimeout(r, 10));
+  release();
+  held = null;
+  await Promise.all([syncing, editing]);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event;
+  assert.equal(here.title, "Dentist (Dr Lee)", "the page Google sent before the edit doesn't put the old title back");
+  await op(store, "update_event", { address: "event:google/primary/dentist", description: "Bring forms" });
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location, g.description], ["Dentist (Dr Lee)", "14 High Street", "Bring forms"]);
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, "the next edit went with the etag Google gave ours, not the page's older one");
+});
