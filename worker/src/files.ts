@@ -90,9 +90,8 @@ export interface Deleted {
   revision: Revision;
   author: Author;
   time: number;
-  /** The file's last revision before the delete, whose text is `text`. */
+  /** The file's last revision before the delete: its text then is the note in Trash. 0 if it had none. */
   before: Revision;
-  text: string;
 }
 
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
@@ -238,6 +237,10 @@ export interface ChangeNotice {
   path: FilePath;
   revision: Revision;
   author: Author;
+  /** The change deleted the file. */
+  deleted?: true;
+  /** The change undid this one (a restore from Trash is one). */
+  undoes?: Revision;
 }
 
 export class Files {
@@ -417,21 +420,25 @@ export class Files {
   }
 
   /**
-   * Files deleted since a time and not there now: each one's delete, the latest change to it, newest
-   * first. This is what's in Trash; restoring one undoes its delete.
+   * Deletes since a time that are in effect, newest first: each is a file in Trash, whatever is at its
+   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one. Only
+   * revisions and times are read here; a deleted file's text is `versionAt(path, before)`, when asked.
    */
   deleted(since: number): Deleted[] {
+    const undoneBy = this.undoneBy();
     return this.db
-      .all<ChangeRow>(
-        `SELECT * FROM changes c WHERE c.deletes = 1 AND c.time >= ? AND c.path NOT IN (SELECT path FROM files)
-          AND c.revision = (SELECT max(revision) FROM changes WHERE path = c.path) ORDER BY c.revision DESC`,
-        since,
-      )
-      .map((row) => {
-        const { revision, path, author, time } = toChange(row);
+      .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
+      .filter((d) => undoneBy(d.revision) === null)
+      .map(({ revision, path, author, time }) => {
         const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
-        return { path, revision, author, time, before: before?.r ?? 0, text: before?.r ? (this.textAt(path, before.r) ?? "") : "" };
+        return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
       });
+  }
+
+  /** A file's text just before a revision (of any file): "" if it had none yet. */
+  textBefore(path: FilePath, revision: Revision): string {
+    const [row] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+    return row?.r ? (this.textAt(path, row.r) ?? "") : "";
   }
 
   /** A file's text at one of its revisions, or null if it never had that revision. */
@@ -585,7 +592,7 @@ export class Files {
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
       this.observe(path, null, revision);
-      this.heard.push({ path, revision, author });
+      this.heard.push({ path, revision, author, deleted: true, ...(undoes ? { undoes } : {}) });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
@@ -593,7 +600,7 @@ export class Files {
       path, next, revision,
     );
     this.observe(path, next, revision);
-    this.heard.push({ path, revision, author });
+    this.heard.push({ path, revision, author, ...(undoes ? { undoes } : {}) });
     return { status, file: { path, text: next, revision } };
   }
 

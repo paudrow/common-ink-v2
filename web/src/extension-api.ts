@@ -304,7 +304,7 @@ export interface ExtensionContext {
     /** The items that fuzzily match `query`, best first. */
     fuzzyFilter<T>(query: string, items: readonly T[], text: (item: T) => string): T[];
     /** The note a name like "Projects/Plan" means, or null if it can't be one. */
-    notePathFor(name: string): FilePath | null;
+    notePathFor(name: string, from?: FilePath): FilePath | null;
     /** A file's name as people see it: "Projects/Plan", "User settings". */
     label(path: FilePath): string;
   };
@@ -321,6 +321,8 @@ export interface ExtensionContext {
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
+    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file or undid another change. Trusted extensions only. */
+    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number }) => void): void;
   };
 }
 

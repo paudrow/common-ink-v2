@@ -55,7 +55,7 @@ test("restoring undoes the delete: the note comes back with its whole history, a
   assert.equal(store.files.read("Plan.md" as FilePath)?.text, "# Plan\none\ntwo");
   assert.deepEqual(store.files.history("Plan.md" as FilePath).map((c) => [c.deleted ?? false, c.undoes !== null]), [[false, false], [false, false], [true, false], [false, true]]);
   assert.deepEqual(await run(store, "trash"), []);
-  assert.deepEqual(await run(store, "restore", { path: "Plan.md" }), { error: "Plan.md isn't deleted" });
+  assert.deepEqual(await run(store, "restore", { path: "Plan.md" }), { error: "Plan.md isn't in Trash" });
   assert.deepEqual(await run(store, "restore", { path: "Never.md" }), { error: "Never.md isn't in Trash" });
 });
 
@@ -94,4 +94,51 @@ test("a Preview's seed can delete a note it adds, so Trash has something to show
   const { store } = workspace();
   store.files.seed({ id: "t", notes: [{ path: "Untitled 3.md", text: "# Untitled 3\nscratch", replace: false }], edits: [{ path: "Untitled 3.md", text: "", agent: "Claude", delete: true }] });
   assert.deepEqual((await run(store, "trash")).map((t) => [t.path, t.title, (t.author as { name: string }).name]), [["Untitled 3.md", "Untitled 3", "Claude"]]);
+});
+
+test("a deleted note stays in Trash when a new note takes its path, and restores beside it", async () => {
+  const { store, write, remove } = workspace();
+  write("Journal/2026-10-06.md", "# 2026-10-06\nimportant thoughts");
+  remove("Journal/2026-10-06.md");
+  write("Journal/2026-10-06.md", "# 2026-10-06\n");
+  const trash = await run(store, "trash");
+  assert.deepEqual(trash.map((t) => [t.path, t.title]), [["Journal/2026-10-06.md", "2026-10-06"]]);
+  assert.deepEqual(((await run(store, "search", { query: "important is:trashed" })).results as Array<{ path: string }>).map((r) => r.path), ["Journal/2026-10-06.md"]);
+  const restored = await run(store, "restore", { path: "Journal/2026-10-06.md", deleted: trash[0].revision });
+  assert.equal(restored.path, "Journal/2026-10-06 (restored).md");
+  assert.equal(store.files.read("Journal/2026-10-06 (restored).md" as FilePath)?.text, "# 2026-10-06\nimportant thoughts");
+  assert.equal(store.files.read("Journal/2026-10-06.md" as FilePath)?.text, "# 2026-10-06\n", "the new note is left as it is");
+  assert.deepEqual(await run(store, "trash"), []);
+});
+
+test("each delete of a path is its own note in Trash, and restores the one asked for", async () => {
+  const { store, write, remove } = workspace();
+  write("Untitled 1.md", "# Untitled 1\nfirst");
+  remove("Untitled 1.md");
+  write("Untitled 1.md", "# Untitled 1\nsecond");
+  remove("Untitled 1.md");
+  const trash = await run(store, "trash");
+  assert.equal(trash.length, 2);
+  const older = trash[1];
+  const done = await run(store, "restore", { path: "Untitled 1.md", deleted: older.revision });
+  assert.equal(done.path, "Untitled 1.md");
+  assert.equal(store.files.read("Untitled 1.md" as FilePath)?.text, "# Untitled 1\nfirst");
+  assert.deepEqual((await run(store, "trash")).map((t) => t.revision), [trash[0].revision]);
+});
+
+test("restore keeps to Trash's retention, as its list does", async () => {
+  const { store, age, write, remove } = workspace();
+  write("Old.md", "# Old");
+  remove("Old.md");
+  age("Old.md", 31);
+  assert.deepEqual(await run(store, "restore", { path: "Old.md" }), { error: "Old.md isn't in Trash" });
+});
+
+test("a note archived when it was deleted comes back archived", async () => {
+  const { store, write } = workspace();
+  write("Kept.md", "# Kept");
+  await run(store, "archive", { paths: ["Kept.md"] });
+  await run(store, "delete_file", { path: "Kept.md", base: store.files.read("Kept.md" as FilePath)!.revision });
+  await run(store, "restore", { path: "Kept.md" });
+  assert.deepEqual((await run(store, "list_files")).filter((f) => f.archived).map((f) => f.path), ["Kept.md"]);
 });

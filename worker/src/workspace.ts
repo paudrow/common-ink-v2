@@ -4,7 +4,8 @@
 // connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
-import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { restoreFromTrash } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
@@ -151,6 +152,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   deleted(since: number) {
     return this.files.deleted(since);
+  }
+
+  restoreDeleted(d: Deleted, author: Author) {
+    return restoreFromTrash(this.files, d, author);
   }
 
   search(query: Query, options: SearchOptions) {

@@ -1,6 +1,7 @@
 // The Trash view: each deleted note, newest first, with who deleted it, when, and the days it has left
 // as a bar that turns red in the last three. Restore with r, the row's button, or a swipe right. ↵ or a
-// tap looks inside: the note's last version, read-only.
+// tap looks inside: the note's last version, read-only, with Restore. Rows are known by their delete's
+// revision, so a list that changes under you never moves the selection to another note.
 import { ago, describeAuthor } from "common-ink/describe";
 import { icon } from "common-ink/icons";
 import type { Author } from "../../../../worker/src/files.ts";
@@ -27,19 +28,33 @@ export interface TrashEnv {
 
 export class TrashView {
   private items: Trashed[] = [];
-  private selected = 0;
-  private open: string | null = null;
+  /** The selected note and the one open to look inside, by their delete's revision. */
+  private selected: number | null = null;
+  private open: number | null = null;
   private root: HTMLElement | null = null;
+  /** A list that came while a row was being swiped: drawn once the finger lifts. */
+  private waiting: Trashed[] | null = null;
 
   constructor(private env: TrashEnv) {}
 
   show(items: Trashed[]) {
-    // The same Trash again (a change elsewhere was saved): leave the rows be, so a swipe under way goes on.
+    // The same Trash again (a change elsewhere was saved): leave the rows be.
     const key = (list: Trashed[]) => list.map((i) => `${i.revision}:${i.daysLeft}`).join(",");
     if (key(items) === key(this.items) && this.root?.isConnected) return;
+    // A swipe under way keeps its row until it ends.
+    if (this.root?.querySelector(".trash-row[data-swipe]:not([data-swipe=''])")) {
+      if (!this.waiting) document.addEventListener("pointerup", () => setTimeout(() => this.waiting && this.show(this.waiting)), { once: true });
+      this.waiting = items;
+      return;
+    }
+    this.waiting = null;
     this.items = items;
-    this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
+    if (!items.some((i) => i.revision === this.selected)) this.selected = items[0]?.revision ?? null;
     if (this.root) this.render(this.root);
+  }
+
+  private index(): number {
+    return Math.max(0, this.items.findIndex((i) => i.revision === this.selected));
   }
 
   render(root: HTMLElement) {
@@ -59,19 +74,20 @@ export class TrashView {
       list.className = "trash-list";
       list.setAttribute("role", "listbox");
       list.setAttribute("aria-label", "Trash");
-      this.items.forEach((item, i) => list.append(this.row(item, i)));
+      this.items.forEach((item) => list.append(this.row(item)));
       view.append(list);
     }
     root.replaceChildren(view);
     if (focused) view.focus();
   }
 
-  private row(item: Trashed, i: number): HTMLElement {
+  private row(item: Trashed): HTMLElement {
     const li = document.createElement("li");
     li.className = "trash-row";
     li.setAttribute("role", "option");
-    li.setAttribute("aria-selected", String(i === this.selected));
+    li.setAttribute("aria-selected", String(item.revision === this.selected));
     li.dataset.path = item.path;
+    li.dataset.revision = String(item.revision);
     const body = document.createElement("div");
     body.className = "trash-row-body";
     const text = document.createElement("button");
@@ -84,9 +100,13 @@ export class TrashView {
     detail.className = "trash-detail";
     detail.textContent = `${item.path} · deleted by ${describeAuthor(item.author, this.env.me)}, ${ago(item.time)}`;
     text.append(title, detail);
-    text.addEventListener("click", () => {
-      this.selected = i;
-      void this.lookInside(item);
+    // A mouse dragged across the row (to select its text, say) isn't a click on it.
+    let down: { x: number; y: number } | null = null;
+    text.addEventListener("pointerdown", (e) => (down = { x: e.clientX, y: e.clientY }));
+    text.addEventListener("click", (e) => {
+      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return;
+      this.selected = item.revision;
+      this.lookInside(item);
     });
     const left = document.createElement("span");
     left.className = "trash-left";
@@ -105,28 +125,38 @@ export class TrashView {
     restore.addEventListener("click", () => void this.env.restore(item));
     body.append(text, left, restore);
     li.append(body);
-    if (this.open === item.path) {
+    if (this.open === item.revision) {
+      const inside = document.createElement("div");
+      inside.className = "trash-inside";
       const peek = document.createElement("pre");
       peek.className = "trash-peek";
       peek.textContent = "…";
       void this.env.lastVersion(item).then((t) => (peek.textContent = t || "(empty)"));
-      li.append(peek);
+      const actions = document.createElement("div");
+      actions.className = "trash-actions";
+      const back = document.createElement("button");
+      back.type = "button";
+      back.append(icon("rotate-ccw", 14), "Restore");
+      back.addEventListener("click", () => void this.env.restore(item));
+      actions.append(back);
+      inside.append(peek, actions);
+      li.append(inside);
     }
     swipeable(li, body, { right: { label: "Restore", tone: "restore", run: () => this.env.restore(item) } });
     return li;
   }
 
   private lookInside(item: Trashed) {
-    this.open = this.open === item.path ? null : item.path;
+    this.open = this.open === item.revision ? null : item.revision;
     if (this.root) this.render(this.root);
   }
 
   private key(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey || !this.items.length) return;
-    const item = this.items[this.selected];
+    const item = this.items[this.index()];
     const moves: Record<string, number> = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 };
     if (moves[e.key]) {
-      this.selected = Math.max(0, Math.min(this.items.length - 1, this.selected + moves[e.key]));
+      this.selected = this.items[Math.max(0, Math.min(this.items.length - 1, this.index() + moves[e.key]))].revision;
       if (this.root) this.render(this.root);
       this.root?.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "r") void this.env.restore(item);

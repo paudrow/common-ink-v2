@@ -78,3 +78,84 @@ browserTest(h, ":trash moves the note on show to Trash, and Undo brings it back"
   await page.waitForFunction(async () => (await fetch("/api/file?path=Draft.md")).ok);
   assert.deepEqual(await page.evaluate(async () => (await (await fetch("/api/trash")).json()) as unknown[]), []);
 });
+
+browserTest(h, "a deleted note stays in Trash when a new note takes its path, and restores beside it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Untitled 1.md", "# Untitled 1\nimportant first draft");
+  await deleteNote(app, "Untitled 1.md");
+  await app.writeFile("Untitled 1.md", "# Untitled 1\nsomething else");
+  await app.command("Open trash");
+  await rows(page).first().waitFor();
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("r");
+  await page.locator(".notice", { hasText: 'Restored "Untitled 1" as Untitled 1 (restored).md: another note has Untitled 1.md now' }).waitFor();
+  assert.equal(await app.readFile("Untitled 1 (restored).md"), "# Untitled 1\nimportant first draft");
+  assert.equal(await app.readFile("Untitled 1.md"), "# Untitled 1\nsomething else");
+});
+
+browserTest(h, "r restores the selected note, even when another delete comes in above it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  for (const n of ["One", "Two", "Three"]) {
+    await app.writeFile(`${n}.md`, `# ${n}\n`);
+    await deleteNote(app, `${n}.md`);
+  }
+  await app.writeFile("Agent target.md", "# Agent target\n");
+  await app.command("Open trash");
+  await rows(page).nth(2).waitFor();
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("j");
+  const chosen = await page.locator(".trash-row[aria-selected=true]").getAttribute("data-path");
+  await deleteNote(app, "Agent target.md");
+  await rows(page).nth(3).waitFor();
+  assert.equal(await page.locator(".trash-row[aria-selected=true]").getAttribute("data-path"), chosen);
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("r");
+  await page.waitForFunction((p) => fetch(`/api/file?path=${encodeURIComponent(p)}`).then((r) => r.ok), chosen!);
+  assert.equal(await exists(page, "Agent target.md"), false);
+});
+
+browserTest(h, "after :trash the note's tab closes and it leaves the notes list", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Draft.md", "# Draft\nhalf an idea");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.open("Draft");
+  await app.call("idle");
+  await page.locator(".tab-editor:not([hidden]) .cm-content").first().focus();
+  await app.keys("<Esc>:trash<CR>");
+  await page.locator(".notice", { hasText: "Moved" }).waitFor();
+  await page.waitForFunction(() => ![...document.querySelectorAll("#notes a")].some((a) => a.textContent === "Draft"));
+  const tabs = ((await app.call("state")) as { windows: Array<{ tabs: Array<{ label: string }> }> }).windows.flatMap((w) => w.tabs.map((t) => t.label));
+  assert.equal(tabs.includes("Draft"), false, JSON.stringify(tabs));
+});
+
+browserTest(h, "a link says In Trash by where it points from its note: relative links, and names with spaces", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Plan.md", "# Plan (root)\n");
+  await app.writeFile("Projects/Plan.md", "# Plan (projects)\n");
+  await app.writeFile("Projects/Gone.md", "# Gone\n");
+  await app.writeFile("My Note.md", "# My Note\n");
+  await app.writeFile("Projects/Index.md", "# Index\nA [md link](Plan.md)\nB [[Plan]]\nC [md to gone](Gone.md)\nD [spaced](<../My Note.md>)\n");
+  for (const p of ["Plan.md", "Projects/Gone.md", "My Note.md"]) await deleteNote(app, p);
+  await app.open("Projects/Index.md");
+  await page.locator(".tab-editor:not([hidden]) .trash-link").nth(2).waitFor();
+  const lines = await page.locator(".tab-editor:not([hidden]) .cm-line").evaluateAll((ls) => ls.filter((l) => l.querySelector(".trash-link")).map((l) => (l.textContent ?? "").slice(0, 1)));
+  assert.deepEqual(lines, ["B", "C", "D"]);
+});
+
+browserTest(h, "a mouse drag across a row doesn't open it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Groceries.md", "# Groceries\n");
+  await deleteNote(app, "Groceries.md");
+  await app.command("Open trash");
+  const row = rows(page).first();
+  await row.waitFor();
+  const b = (await row.boundingBox())!;
+  await page.mouse.move(b.x + 30, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 200, b.y + b.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator(".trash-peek").count(), 0);
+  await row.locator(".trash-look").click();
+  await page.locator(".trash-inside button", { hasText: "Restore" }).waitFor();
+});
