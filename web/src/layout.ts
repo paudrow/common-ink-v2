@@ -1,7 +1,7 @@
 // Windows, tabs and splits as data: a tree of splits whose leaves are groups of tabs, and the group
 // that has focus. Each split knows how it shares its space. Every change is a pure function from one
-// layout to the next. The layout is saved as a JSON file (.common-ink/layout.json) and read back
-// through parseLayout.
+// layout to the next. Each device's layout is saved as a JSON file (.common-ink/users/<you>/devices/
+// <id>/layout.json; .common-ink/layout.json before layouts were per device) and read back through parseLayout.
 import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
 export type GroupId = string;
@@ -245,6 +245,13 @@ export function split(layout: Layout, where: Direction, path?: FilePath): Layout
 /** Close every group but the focused one. */
 export function only(layout: Layout): Layout {
   return { root: focused(layout), focus: layout.focus };
+}
+
+/** Just what's on show: the focused window, with only its tab on show. Where a phone starts from another device's layout. */
+export function onShow(layout: Layout): Layout {
+  const g = focused(layout);
+  const tab = activeTab(g);
+  return { root: { ...g, tabs: tab ? [tab] : [], active: 0 }, focus: g.id };
 }
 
 export function focusGroup(layout: Layout, id: GroupId): Layout {
