@@ -473,6 +473,15 @@ for (const [what, series, move] of moves) {
   }
 }
 
+test("a calendar list Google sends in pages comes in whole, so no calendar or its events go", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  fake.calendarPage = 1;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "list_calendars", {})) as Array<{ id: string }>).map((c) => c.id), ["primary", "team@group.calendar.google.com"]);
+  assert.ok((await listed(store)).includes("2026-10-08 Offsite"), "the second page's calendar kept its events");
+});
+
 test("an edit of a whole series' fields reaches its changed occurrences where they still had the series' old value, here and in Google", async () => {
   const { fake, store } = await google();
   await op(store, "sync_calendar", {});
@@ -754,6 +763,25 @@ test("a series Google splits this and following leaves no copy of the changed oc
     fake.put("ada@example.com", { id: "d_R20261007", summary: "Daily", start: at("07", "09:00"), end: at("07", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=4"] });
   });
   assert.deepEqual(shown, ["10-05T16:00 Daily", "10-06T16:00 Daily", "10-07T16:00 Daily", "10-08T16:00 Daily", "10-09T16:00 Daily", "10-10T16:00 Daily"]);
+});
+
+test("undoing everything an agent did undoes its several edits of one event together, here and in Google", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  const agent: Author = { kind: "agent", name: "Planner", by: "ada@example.com" };
+  const since = store.files.recent({ limit: 1 })[0].revision;
+  for (const args of [{ title: "Dentist (Dr Lee)" }, { location: "14 High Street" }]) {
+    const r = await runOperation("update_event", { address: "event:google/primary/dentist", ...args }, store, agent);
+    assert.equal(r.ok, true);
+  }
+  await op(store, "sync_calendar", { force: true });
+  const its = store.files.recent({ author: authorKey(agent) }).filter((c) => c.revision > since).map((c) => c.revision);
+  assert.equal(its.length, 2);
+  const undone = (await op(store, "undo", { revisions: its })) as Array<{ status: string }>;
+  assert.deepEqual(undone.map((u) => u.status), ["undone", "undone"]);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string; location?: string } }).event;
+  assert.deepEqual([here.title, here.location], ["Dentist", "12 High Street"]);
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist", "12 High Street"]);
 });
 
 /** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */

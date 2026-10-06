@@ -173,7 +173,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * load again. Running it twice ends the same way.
    */
   reset(seed: Seed, pinned: boolean) {
-    const [{ last }] = this.db.all<{ last: number | null }>("SELECT max(revision) AS last FROM changes");
+    const last = this.files.lastRevision();
     this.db.tx(() => {
       for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
         this.db.run(`DROP TABLE "${name}"`);

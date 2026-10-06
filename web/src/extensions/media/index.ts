@@ -190,6 +190,8 @@ export default {
           volume.value = String(noise?.key === ref.embed.key ? noise.player.volume : volumeFor(ref.embed));
         };
         el.replaceChildren(box);
+        // Boxes whose window closed go as new ones come, or nothing playing would ever let go of them.
+        for (const item of live) if (!item.el.isConnected) live.delete(item);
         live.add({ el: box, update: () => ref.update() });
         drawn.set(el, ref);
         ref.update();
