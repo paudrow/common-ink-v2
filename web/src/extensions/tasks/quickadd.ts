@@ -41,9 +41,9 @@ const NUM = "(?:\\d{1,3}|a|an|one|two|three|four|five|six|seven|eight|nine|ten)"
 const UNIT = "(?:day|week|month|year)s?";
 const ORD = "(?:first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)";
 const DONE = "after\\s+(?:it'?s\\s+)?(?:done|completion|completed|finished|finishing)";
-// A phrase starts and ends at a word's edges, and never inside a token, a link or a path.
+// A phrase starts and ends at a word's edges, and never inside a token, a link, a path or a range (oct 3-9).
 const B = "(?<![\\p{L}\\p{N}_:#@/.'’-])";
-const E = "(?![\\p{L}\\p{N}_'’])";
+const E = "(?![\\p{L}\\p{N}_'’]|-[\\p{L}\\p{N}])";
 
 const DATE = [
   "today|tonight|tomorrow|tmrw",
@@ -122,10 +122,10 @@ export function dateOf(phrase: string, today: string): string | null {
   const [month, date, year] = monthFirst ? [monthFirst[1], monthFirst[2], monthFirst[3]] : dayFirst ? [dayFirst[2], dayFirst[1], dayFirst[3]] : [];
   if (!month || !date || monthOf(month) <= 0) return null;
   const md = `${String(monthOf(month)).padStart(2, "0")}-${date.padStart(2, "0")}`;
-  const thisYear = +today.slice(0, 4);
-  let day = `${year ?? thisYear}-${md}`;
-  if (!year && day < today) day = `${thisYear + 1}-${md}`; // a date without a year is the next one
-  return isDate(day) ? day : null;
+  if (year) return isDate(`${year}-${md}`) ? `${year}-${md}` : null;
+  // A date without a year is the next one there is: Feb 29 may be years off.
+  for (let y = +today.slice(0, 4); y <= +today.slice(0, 4) + 8; y++) if (isDate(`${y}-${md}`) && `${y}-${md}` >= today) return `${y}-${md}`;
+  return null;
 }
 
 /**
@@ -163,7 +163,7 @@ export function parseQuickAdd(input: string, today: string, ignore: string[] = [
   const until = repeats && !typed.until ? take(UNTIL, "ends", (m) => { const d = dateOf(m[0].replace(/^until\s+/i, ""), today); return d ? `until:${d}` : null; }) : null;
   let stretch: { n: number; unit: string } | null = null;
   const times = repeats && typed.times === null
-    ? take(TIMES_PHRASE, "ends", (m) => `times:${count(m[1])}`) ?? take(FOR, "ends", (m) => ((stretch = { n: count(m[1]), unit: unitOf(m[2]) }), "for"))
+    ? take(TIMES_PHRASE, "ends", (m) => (count(m[1]) > 0 ? `times:${count(m[1])}` : null)) ?? take(FOR, "ends", (m) => (count(m[1]) > 0 ? ((stretch = { n: count(m[1]), unit: unitOf(m[2]) }), "for") : null))
     : null;
   const start = typed.start ? null : take(START, "start", (m) => (dateOf(m[0], today) ? `start:${dateOf(m[0], today)}` : null));
   let due = typed.due ? null : take(DUE, "due", (m) => (dateOf(m[0], today) ? `due:${dateOf(m[0], today)}` : null));

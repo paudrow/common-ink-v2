@@ -656,9 +656,12 @@ const extensionDeps: ExtensionsViewDeps = {
     );
     if (!url) return;
     try {
-      const { id, name } = await api.installExtension(url);
+      const { id, name, untrusted } = await api.installExtension(url);
+      if (untrusted) await loadSettings();
       await refreshList();
-      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
+      // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
+      const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
       else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
@@ -818,7 +821,12 @@ window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
-  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  // Then sent as a beacon, which outlives the page more surely than a keepalive request. One the
+  // browser won't take (too big) waits as a draft: a keepalive request would draw on the same budget.
+  for (const u of unsaved) {
+    if (typeof navigator.sendBeacon === "function") api.beacon(u.path, u.text, u.base, u.edit);
+    else void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  }
 });
 
 // The app's own files, kept by a service worker so it opens offline.
