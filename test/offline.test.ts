@@ -361,3 +361,14 @@ test("of a draft kept as the page went and one typed after it came back, the new
     delete (globalThis as { localStorage?: unknown }).localStorage;
   }
 });
+
+test("files the list never has, as the default settings the server makes up, stay kept for offline", async () => {
+  const defaults = ".common-ink/defaults/settings.json" as FilePath;
+  const kv = memoryKV();
+  const down = () => Promise.reject(new TypeError("Failed to fetch"));
+  const online = new Offline(kv, { list: async () => [], read: async (path) => ({ path, text: '{ "editor.fontSize": 16 }', revision: 0 }), write: down, editApplied: down });
+  await online.read(defaults);
+  await online.list();
+  const offline = new Offline(kv, { list: down, read: down, write: down, editApplied: down });
+  assert.equal((await offline.read(defaults)).text, '{ "editor.fontSize": 16 }');
+});

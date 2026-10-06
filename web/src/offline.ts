@@ -64,6 +64,9 @@ const KNOWN_DAYS = 29;
 /** What a kept edit is, against the server's latest: there already, to send, or a clash to show. */
 type Verdict = "landed" | "send" | "clash";
 
+/** Files the workspace's list never has: the default settings the server makes up, and data sources' records, listed by kind. */
+const unlisted = (path: string) => path.startsWith(".common-ink/defaults/") || path.startsWith(".common-ink/records/");
+
 /** Where a note's unsaved edit is kept, by path, as the page goes. */
 const DRAFT = "common-ink.draft:";
 
@@ -115,9 +118,10 @@ export class Offline {
       const files = await this.net.list();
       this.reached(true);
       await this.kv.set("meta", "list", files);
-      // Copies of files the workspace no longer has (deleted, or deleted forever) aren't kept.
+      // Copies of files the workspace no longer has (deleted, or deleted forever) aren't kept. Files a
+      // list never has stay: the default settings the server makes up, and data sources' records.
       const there = new Set(files.map((f) => f.path));
-      for (const path of await this.kv.keys("files")) if (!there.has(path as FilePath)) await this.kv.del("files", path);
+      for (const path of await this.kv.keys("files")) if (!there.has(path as FilePath) && !unlisted(path)) await this.kv.del("files", path);
       return files;
     } catch (err) {
       if (!unreachable(err)) throw err;

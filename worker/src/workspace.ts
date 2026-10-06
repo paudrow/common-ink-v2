@@ -41,6 +41,9 @@ export interface SeededScenario {
   pinned: boolean;
 }
 
+/** How soon after Delete forever the search index is merged: long enough to take a run of them, or Empty Trash, in one. */
+const MERGE_AFTER = 30_000;
+
 export class Workspace extends DurableObject<WorkspaceEnv> {
   private db: Db;
   /** The fake Google a browser test's Worker uses (FAKE_GOOGLE), kept while the object lives. */
@@ -160,8 +163,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return restoreFromTrash(this.files, d, author);
   }
 
-  purge(deletes: Revision[], author: Author) {
-    return this.files.purge(deletes, author);
+  /** Delete notes forever; the search index is merged soon after, by the alarm, once for any number of purges. */
+  async purge(deletes: Revision[], author: Author) {
+    const purged = this.files.purge(deletes, author);
+    if (this.index.mergeDue()) await this.scheduleAlarm();
+    return purged;
   }
 
   retention() {
@@ -250,9 +256,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   }
 
   /**
-   * The one alarm a Durable Object has, for two timers: Trash retention's purge, once a day, and
-   * syncing while Google is connected (every 10 minutes, and soon after connecting). Each runs whatever
-   * the other does, and the next alarm is always set.
+   * The one alarm a Durable Object has, for three timers: Trash retention's purge, once a day; merging
+   * the search index soon after a purge, so no purged words stay in its blocks; and syncing while Google
+   * is connected (every 10 minutes, and soon after connecting). Each runs whatever the others do, and the
+   * next alarm is always set.
    */
   async alarm() {
     try {
@@ -266,6 +273,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     } catch (err) {
       console.error("Trash retention failed:", err);
+    }
+    try {
+      this.index.mergePurged();
+    } catch (err) {
+      console.error("Merging the search index failed:", err);
     }
     try {
       await this.sources.sealTokens();
@@ -284,9 +296,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return first;
   }
 
-  /** Set the alarm for whichever comes first: the next sync, or the next purge. */
+  /** Set the alarm for whichever comes first: the next sync, the next purge, or a merge of the search index a purge left due. */
   private async scheduleAlarm() {
-    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue());
+    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue(), this.index.mergeDue() ? Date.now() + MERGE_AFTER : Infinity);
     const set = await this.ctx.storage.getAlarm();
     if (!set || set > next) await this.ctx.storage.setAlarm(next);
   }

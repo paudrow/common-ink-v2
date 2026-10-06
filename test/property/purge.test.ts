@@ -6,7 +6,8 @@ import { restoreFromTrash } from "../../worker/src/trash.ts";
 import { memoryDb } from "../sqlite.ts";
 import { forAll, type Rng } from "./gen.ts";
 
-const PATHS = ["a.md", "b.md", "Projects/c.md", "d.md"] as FilePath[];
+// Restore puts a note beside a new one at its path as "<name> (restored).md": steps reach those too.
+const PATHS = ["a.md", "b.md", "Projects/c.md", "d.md", "a (restored).md", "b (restored).md"] as FilePath[];
 const AUTHORS: Author[] = [
   { kind: "user", email: "ada@example.com" },
   { kind: "agent", name: "Claude", by: "ada@example.com" },
@@ -49,39 +50,39 @@ const steps = (r: Rng) => Array.from({ length: r.int(1, 45) }, (_, i) => step(r,
 
 /**
  * Run steps on a fresh workspace. The twin (`purge` false) never purges, but at each purge it works out
- * the same lifetime the purging run removes, and leaves those changes out of every later choice, so
- * both runs choose the same changes to undo, restore and base writes on.
+ * the same note the purging run removes, and leaves its changes out of every later choice, so both runs
+ * choose the same changes to undo, restore and base writes on.
  */
 function run(steps: readonly Step[], purge: boolean) {
   const db = memoryDb();
-  const { files } = openWorkspace(db, { fixtures: false, google: null });
+  const { files, search } = openWorkspace(db, { fixtures: false, google: null });
   /** Changes a purge took (or, in the twin, would have). */
   const gone = new Set<Revision>();
   const purgedText: string[] = [];
   const sent: Write[] = [];
   const resurrected: string[] = [];
   const live = (path: FilePath) => files.history(path).filter((c) => !c.purged && !gone.has(c.revision));
-  // Which note each change belongs to, worked out from the changes as they come: a change at a path
-  // with no note makes a new one, unless it undoes the delete just before it there (Restore, in place).
+  // Which note each change belongs to, by the rule, from what each step meant: a change to a file that's
+  // there is its note's; one that makes a file carries on the note of the change it undoes or restores,
+  // if that note isn't somewhere else now; any other makes a new note.
   const noteOf = new Map<Revision, number>();
-  const noteAt = new Map<string, number | null>();
-  const lastAt = new Map<string, Revision>();
+  const noteAt = new Map<string, number>();
   let notes = 0;
   let seen = 0;
-  const follow = () => {
+  const follow = (from: Revision | null = null) => {
     for (const c of files.recent({ limit: 500 }).filter((c) => c.revision > seen).reverse()) {
       seen = c.revision;
       if (c.purged) continue;
-      let note = noteAt.get(c.path) ?? null;
-      if (note === null) note = c.undoes !== null && c.undoes === lastAt.get(c.path) ? noteOf.get(c.undoes)! : ++notes;
+      const source = c.undoes ?? from;
+      const carried = source === null ? undefined : noteOf.get(source);
+      const note = noteAt.get(c.path) ?? (carried !== undefined && ![...noteAt.values()].includes(carried) ? carried : ++notes);
       noteOf.set(c.revision, note);
-      noteAt.set(c.path, c.deleted ? null : note);
-      lastAt.set(c.path, c.revision);
+      if (c.deleted) noteAt.delete(c.path);
+      else noteAt.set(c.path, note);
     }
   };
   const trashed = (path: FilePath) => files.deleted(0).filter((d) => d.path === path && !gone.has(d.revision));
   for (const [i, s] of steps.entries()) {
-    follow();
     if (s.op === "write") {
       const current = files.read(s.path);
       const history = live(s.path);
@@ -98,13 +99,18 @@ function run(steps: readonly Step[], purge: boolean) {
       if (revisions.length) files.undo(revisions, AUTHORS[s.author]);
     } else if (s.op === "restoreTo") {
       const c = live(s.path).at(-1 - s.back);
-      if (c) files.restore(s.path, { revision: c.revision }, ME);
+      if (c) {
+        files.restore(s.path, { revision: c.revision }, ME);
+        follow(c.revision);
+      }
     } else if (s.op === "trashRestore") {
       const d = trashed(s.path)[s.which];
       if (d) restoreFromTrash(files, d, ME);
     } else if (s.op === "replay" && sent.length) {
-      // A page that never heard the answer sends the same edit again.
+      // A page that never heard the answer sends the same edit again. One based on a revision a purge
+      // took is refused, so the twin, which still has it, doesn't send it either.
       const w = sent[s.pick % sent.length];
+      if (gone.has(w.base)) continue;
       const before = files.read(w.path)?.text ?? null;
       const result = files.write(w);
       if (result.status !== "conflict" && purgedText.includes(w.text) && files.read(w.path)?.text !== before) resurrected.push(`${w.path} by a replay of ${w.edit}`);
@@ -112,17 +118,21 @@ function run(steps: readonly Step[], purge: boolean) {
       const d = trashed(s.path)[s.which];
       if (!d) continue;
       const lifetime = files.lifetime(d.revision);
-      const expected = files.history(s.path).filter((c) => !c.purged && !gone.has(c.revision) && noteOf.get(c.revision) === noteOf.get(d.revision)).map((c) => c.revision);
+      const expected = [...noteOf].filter(([r, note]) => note === noteOf.get(d.revision) && !gone.has(r)).map(([r]) => r).sort((a, b) => a - b);
       assert.deepEqual(lifetime, expected, `the deleted note's changes: ${JSON.stringify(steps.slice(0, i + 1))}`);
+      const paths = new Set<FilePath>();
       for (const r of lifetime) {
         gone.add(r);
-        const text = files.versionAt(s.path, r);
+        const [c] = files.recent({ limit: 500 }).filter((c) => c.revision === r);
+        paths.add(c.path);
+        const text = files.versionAt(c.path, r);
         if (text) purgedText.push(text);
       }
-      if (purge) assert.deepEqual(files.purge([d.revision], ME).map((p) => p.path), [s.path]);
+      if (purge) assert.deepEqual(files.purge([d.revision], ME).map((p) => p.path).sort(), [...paths].sort());
     }
+    follow();
   }
-  return { files, db, gone, resurrected };
+  return { files, db, search, gone, resurrected };
 }
 
 /** A file's history as it reads, without revision numbers or what a purge took: who, what, and the text after each change. */
@@ -144,6 +154,9 @@ test("purging a deleted note, at any point, leaves every other note's history re
     (s) => {
       const purging = run(s, true);
       const twin = run(s, false);
+      // Trash has what the twin's has, but for what was deleted forever: no purge brings a delete back.
+      const inTrash = (files: Files, gone: ReadonlySet<Revision>) => files.deleted(0).flatMap((d) => (gone.has(d.revision) ? [] : [[d.path, files.versionAt(d.path, d.before)]]));
+      assert.deepEqual(inTrash(purging.files, purging.gone), inTrash(twin.files, twin.gone), "Trash");
       for (const path of PATHS) {
         assert.deepEqual(story(purging.files, path, purging.gone), story(twin.files, path, twin.gone), `${path}'s history`);
         assert.deepEqual(purging.files.read(path)?.text ?? null, twin.files.read(path)?.text ?? null, `${path} as it is now`);
@@ -170,7 +183,8 @@ test("a purge takes a note's text out of history, leaving one change that says w
       ],
     }),
     ({ steps: s }) => {
-      const { files, db } = run(s, true);
+      const { files, db, search } = run(s, true);
+      search.mergePurged();
       const marker = files.history("a.md" as FilePath).at(-1)!;
       assert.deepEqual({ purged: marker.purged, author: marker.author, diff: marker.diff }, { purged: true, author: ME, diff: [] });
       // The last note's words are nowhere: not in any table's rows, and not in the search index.
