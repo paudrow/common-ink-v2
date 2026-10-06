@@ -50,6 +50,17 @@ test("a HEAD for an upload answers as its GET would, with no body", async () => 
   assert.equal(await res.text(), "");
 });
 
+test("an upload that isn't there answers 404 under the upload's own policy, not the app's", async () => {
+  for (const name of ["missing.svg", "%E0%A4%A"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await fetch(`${h.base}/uploads/${name}`, { method });
+      assert.equal(res.status, 404, `${method} ${name}`);
+      assert.match(res.headers.get("Content-Security-Policy") ?? "", /^sandbox;/, `${method} ${name}`);
+      assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+    }
+  }
+});
+
 test("an SVG upload opened twice doesn't run a trusted extension's script either, which this site does serve to its own pages", async () => {
   await write(".common-ink/extensions/trusty/extension.json", JSON.stringify({ name: "Trusty" }));
   await write(".common-ink/extensions/trusty/index.js", "document.title = 'RAN as ' + location.origin;\n");
