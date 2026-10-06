@@ -25,6 +25,8 @@ type Drag =
 
 export class TimeGrid implements CalendarView {
   readonly root: HTMLElement;
+  /** Its listeners, let go of when it goes. */
+  private listening = new AbortController();
   private scroller: HTMLElement;
   private canvas: HTMLElement;
   private headDays: HTMLElement;
@@ -40,6 +42,8 @@ export class TimeGrid implements CalendarView {
   private resize: ResizeObserver;
   private tick: number;
   private settle = 0;
+  /** Whether the columns have their width yet. */
+  private laidOut = false;
   private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; day: number; minutes: number; edge: boolean } | null = null;
   private drag: Drag | null = null;
   private onScreen: Occurrence[] = [];
@@ -66,7 +70,7 @@ export class TimeGrid implements CalendarView {
     );
     this.scroller = el("div", { class: "cal-scroll", tabindex: "-1" }, this.canvas);
     this.root = el("div", { class: `cal-grid cal-${view}` }, this.scroller);
-    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true });
+    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true, signal: this.listening.signal });
     this.root.addEventListener("pointerdown", (e) => this.down(e));
     this.root.addEventListener("pointermove", (e) => this.moveTo(e));
     this.root.addEventListener("pointerup", (e) => this.up(e));
@@ -92,6 +96,7 @@ export class TimeGrid implements CalendarView {
   private layout() {
     const width = this.scroller.clientWidth - GUTTER;
     if (width <= 0) return;
+    this.laidOut = true;
     this.col = width / this.days;
     this.canvas.style.width = `${GUTTER + this.windowDays * this.col}px`;
     this.root.style.setProperty("--col", `${this.col}px`);
@@ -119,6 +124,8 @@ export class TimeGrid implements CalendarView {
   }
 
   private scrolled() {
+    // A scroll up or down can come before the grid has its width, when where it is sideways means nothing yet.
+    if (!this.laidOut) return;
     const anchor = addDays(this.first, Math.round(this.scroller.scrollLeft / this.col));
     if (anchor !== this.anchor) {
       this.anchor = anchor;
@@ -131,12 +138,14 @@ export class TimeGrid implements CalendarView {
   /** Near either end of what's drawn: draw again around what's on screen, and keep it where it is. */
   private recenter() {
     if (this.drag) return;
-    const at = Math.round(this.scroller.scrollLeft / this.col);
+    const left = this.scroller.scrollLeft;
+    const at = Math.round(left / this.col);
     if (at >= this.days && at <= this.windowDays - 2 * this.days) return;
     const shift = at - this.days * AROUND;
     this.first = addDays(this.first, shift);
     this.draw();
-    this.scroller.scrollLeft -= shift * this.col;
+    // Set, not moved by: the browser may already have snapped back to the column it was on.
+    this.scroller.scrollLeft = left - shift * this.col;
   }
 
   redraw() {
@@ -412,6 +421,7 @@ export class TimeGrid implements CalendarView {
   }
 
   destroy() {
+    this.listening.abort();
     this.resize.disconnect();
     clearInterval(this.tick);
     clearTimeout(this.settle);

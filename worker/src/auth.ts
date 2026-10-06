@@ -4,6 +4,7 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { EXTENSION_ID } from "./extensions.ts";
 import type { Author } from "./files.ts";
+import { devHost } from "./hosts.ts";
 
 /** A person, or an Access service token (how an agent signs in on its own). */
 export type Identity = { kind: "user"; email: string } | { kind: "service"; id: string };
@@ -19,14 +20,6 @@ export interface AuthConfig {
   sessionEmail?: (req: Request) => Promise<string | null>;
 }
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-// A pull request's Preview: pr-<n>-common-ink-v2.<subdomain>.workers.dev. Its notes are its own samples,
-// so it opens signed in. Production's address never matches, even if DEV_USER leaked into it.
-const PREVIEW_HOST = /^pr-\d+-common-ink-v2\.[a-z0-9-]+\.workers\.dev$/;
-
-function devHost(hostname: string): boolean {
-  return LOCAL_HOSTS.has(hostname) || PREVIEW_HOST.test(hostname);
-}
 
 const keySets = new Map<string, JWTVerifyGetKey>();
 function accessKeys(issuer: string): JWTVerifyGetKey {
