@@ -85,6 +85,8 @@ export class CalendarPage {
   private heading: HTMLElement;
   private switcher: HTMLElement;
   private renderer: CalendarView | null = null;
+  /** The env of the view shown now: one a view that's gone still holds says nothing. */
+  private live: ViewEnv | null = null;
   private view: View;
   private anchor: Day;
   /** Where a glide the keys or buttons asked for is going, until it's there: so h and l pressed quickly add up. */
@@ -236,7 +238,7 @@ export class CalendarPage {
   // ---------------------------------------------------------------- views
 
   private env(): ViewEnv {
-    return {
+    const env: ViewEnv = {
       weekStart: this.weekStart,
       startHour: this.startHour,
       today: () => this.today(),
@@ -248,12 +250,15 @@ export class CalendarPage {
       create: (slot, at, ghost) => this.create(slot, at, ghost),
       move: (o, to, at) => void this.move(o, to, at),
       scrolled: (anchor) => {
+        // A scroll the browser queued for a view can come after it's gone.
+        if (this.live !== env) return;
         this.anchor = anchor;
         if (anchor === this.gliding) this.gliding = null;
         this.heading.textContent = title(this.view, this.gliding ?? anchor, this.weekStart);
       },
       show: (view, day) => this.show(view, day),
     };
+    return env;
   }
 
   /** Show a view at a day. */
@@ -262,7 +267,7 @@ export class CalendarPage {
     this.view = view;
     this.anchor = day;
     this.renderer?.destroy();
-    const env = this.env();
+    const env = (this.live = this.env());
     this.renderer = view === "agenda" ? new Agenda(env, day, this.embedded?.days) : view === "month" ? new MonthView(env, day) : view === "year" ? new YearView(env, day) : new TimeGrid(env, view, day);
     this.body.replaceChildren(this.renderer.root);
     this.heading.textContent = title(view, day, this.weekStart);

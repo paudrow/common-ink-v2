@@ -1,0 +1,8 @@
+{
+  "pr": 61,
+  "title": "Sign-in follow-ups",
+  "steps": [
+    "Run Sign out from the command bar. In DevTools > Application, Cache Storage stays empty after the Signed out page loads.",
+    "The rest (a long next=, declining at Google) is Google sign-in, which this Preview doesn't use: test/google.test.ts covers it."
+  ]
+}

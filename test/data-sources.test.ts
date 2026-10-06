@@ -119,14 +119,14 @@ test("an edit the source can't take yet is kept, says why, and goes once the sou
     },
   };
   const store = sampleWorkspace([google], false);
-  store.sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
   const queued = (await op(store, "update_event", { address: "event:google/work/standup", title: "Standup (offline)" })) as { status: string; error: string };
   assert.deepEqual([queued.status, queued.error], ["queued", "Google wants you to sign in again"]);
   assert.equal(store.sources.status("ada@example.com").sources[0].state, "needs-reconnect");
   assert.equal(store.sources.status("ada@example.com").sources[0].pending, 1);
   assert.equal(JSON.parse(store.files.read(recordPath({ source: "google", kind: "event", collection: "work", id: "standup" }))!.text).title, "Standup (offline)", "the edit is kept here meanwhile");
   down = null;
-  store.sources.connect({ email: "ada@example.com", refreshToken: "r2", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "r2", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
   assert.equal(await store.sources.flush("google"), null);
   assert.deepEqual(pushed, ["put standup"]);
   assert.deepEqual([store.sources.status("ada@example.com").sources[0].state, store.sources.status("ada@example.com").sources[0].pending], ["ok", 0]);

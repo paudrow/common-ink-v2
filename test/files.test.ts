@@ -404,3 +404,13 @@ test("history and diffs of more than a hundred changes at once work within a Dur
   const [diff] = files.combined(revisions);
   assert.deepEqual([diff.path, diff.runs.length, diff.runs[0].before, diff.runs[0].after], ["Log.md", 1, "", "150\n"]);
 });
+
+test("open pages hear of changes only once they're kept: a write rolled back announces nothing", () => {
+  const heard: number[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => heard.push(n.revision));
+  files.write({ path: PLAN, text: "# Plan\n", base: 0, author: ada });
+  assert.throws(() => files.seed({ id: "s", notes: [{ path: "Good.md", text: "# Good\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+  assert.equal(files.read("Good.md" as FilePath), null, "the seed was rolled back");
+  const next = files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
+  assert.deepEqual(heard, [1, next.file!.revision]);
+});
