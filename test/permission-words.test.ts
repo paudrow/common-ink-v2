@@ -4,11 +4,11 @@ import { parseManifest } from "../worker/src/extensions.ts";
 import { declaredPermissions, fileWords, filesWords, hostWords, plain, scopeWords } from "../web/src/permission-words.ts";
 
 test("a glob over paths says how far it really reaches", () => {
-  assert.equal(plain(filesWords("**")), "all your files, including settings");
+  assert.equal(plain(filesWords("**")), "all your files");
   assert.equal(plain(filesWords("**/*.md")), "all your notes");
   assert.equal(plain(filesWords("Journal/**")), "everything in Journal");
   assert.equal(plain(filesWords("Projects/Work/**/*.md")), "your notes in Projects/Work");
-  assert.equal(plain(filesWords(".common-ink/**")), "your settings and the app's own files");
+  assert.equal(plain(filesWords(".common-ink/**")), "the app's own files");
   assert.equal(plain(filesWords("Journal/*.txt")), "files matching Journal/*.txt");
 });
 
@@ -45,7 +45,7 @@ test("hosts, and each kind of permission, read as what they let it do", () => {
     [
       "connect to api.weather.gov",
       "read all your notes",
-      "change all your files, including settings",
+      "change all your files",
       "save files you upload (Uploads list)",
       "change the setting editor.fontSize",
       "read your clipboard",

@@ -2,7 +2,7 @@
 // sync, 410 Gone, pushes with etags, the three scopes on a series, conflicts, and invalid_grant.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FakeGoogle } from "../worker/src/fake-google.ts";
+import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
 import { runOperation } from "../worker/src/operations.ts";
@@ -216,4 +216,21 @@ test("edits made at once go to Google once each, in order", async () => {
     fake.calls.slice(before).filter((c) => !c.startsWith("POST /token")),
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
+});
+
+test("the sample fake Google's week is around the day it's given, in New York, whatever the clock says", async () => {
+  const fake = sampleGoogle("2026-10-05");
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+  await store.sources.sync();
+  const week = (await runOperation("list_events", { from: "2026-10-05T00:00:00-04:00", to: "2026-10-10T00:00:00-04:00", zone: "America/New_York" }, store, ada)) as { ok: true; value: Occurrence[] };
+  assert.deepEqual(week.value.map((o) => `${o.start.slice(0, 16)} ${o.title}`), [
+    "2026-10-05T13:00 Standup",
+    "2026-10-06T13:00 Standup",
+    "2026-10-06T18:30 Dentist",
+    "2026-10-07T13:00 Standup",
+    "2026-10-08 Offsite",
+    "2026-10-08T13:00 Standup",
+    "2026-10-09T13:00 Standup",
+  ]);
 });
