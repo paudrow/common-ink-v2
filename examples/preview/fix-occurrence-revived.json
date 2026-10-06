@@ -1,0 +1,8 @@
+{
+  "pr": 112,
+  "title": "A waiting edit still meets Google's change",
+  "steps": [
+    "Nothing should look different: edit an event from Google Calendar here and it reaches Google.",
+    "If the same event also changed in Google before your edit went, both changes are kept where they touch different fields."
+  ]
+}
