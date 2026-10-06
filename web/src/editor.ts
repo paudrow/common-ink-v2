@@ -123,8 +123,8 @@ export function createState(
   });
 }
 
-/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
-export function replaceText(view: EditorView, text: string, flash = false) {
+/** The changes that turn the editor's text into `text`, line by line, so the cursor stays put. */
+function lineChanges(view: EditorView, text: string) {
   const old = linesOf(view.state.doc.toString());
   const starts = [0];
   for (const line of old) starts.push(starts.at(-1)! + line.length);
@@ -134,6 +134,17 @@ export function replaceText(view: EditorView, text: string, flash = false) {
     to: starts[buffer1.offset + buffer1.length],
     insert: buffer2.chunk.join(""),
   }));
+  return { patch, changes };
+}
+
+/** Change the editor's text to `text` as an edit of yours, line by line: `u` takes it back. */
+export function editText(view: EditorView, text: string) {
+  view.dispatch({ changes: lineChanges(view, text).changes, userEvent: "input.replace" });
+}
+
+/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
+export function replaceText(view: EditorView, text: string, flash = false) {
+  const { patch, changes } = lineChanges(view, text);
   view.dispatch({ changes, annotations: [fromServer.of(true), Transaction.addToHistory.of(false)] });
   if (!flash) return;
   // Someone else's lines, highlighted for a moment, so you see what changed under you.

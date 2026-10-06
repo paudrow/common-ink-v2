@@ -1,0 +1,8 @@
+{
+  "pr": 99,
+  "title": "Calendar answers follow read permission",
+  "steps": [
+    "The calendar, Contacts and the Data sources view work as before.",
+    "test/browser/extension-calendar.browser.ts covers what a write-only sandboxed extension gets back."
+  ]
+}
