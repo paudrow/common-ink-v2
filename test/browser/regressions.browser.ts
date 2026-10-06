@@ -567,18 +567,28 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
-browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
-  await app.command("Show extensions");
-  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+/**
+ * Hold the pointer down on a button, and say whether the button the press landed on is still on the page
+ * after `meanwhile`. It's the element the page heard pressed, not one found before: the view may be
+ * drawn again between finding a button and pressing it (its catalog arriving, say, on a slow machine).
+ */
+async function heldThrough(app: App, button: import("playwright-core").Locator, meanwhile: () => Promise<unknown>): Promise<boolean> {
   await button.waitFor();
-  const pressed = await button.elementHandle();
   const box = (await button.boundingBox())!;
+  await app.page.evaluate(() => document.addEventListener("pointerdown", (e) => ((window as unknown as { held: Element | null }).held = (e.target as Element).closest("button")), { capture: true, once: true }));
   await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await app.page.mouse.down();
+  await meanwhile();
+  return app.page.evaluate(() => !!(window as unknown as { held: Element | null }).held?.isConnected);
+}
+
+browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
   // A file changes while the button is held: the panel would be drawn again under the pointer.
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForTimeout(800);
-  const same = await pressed!.evaluate((b) => b.isConnected);
+  const same = await heldThrough(app, app.page.locator(".extensions-view button", { hasText: "Install from URL…" }), async () => {
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForTimeout(800);
+  });
   await app.page.mouse.up();
   await app.page.getByText("Install an extension from a URL").waitFor({ timeout: 3000 });
   assert.ok(same, "the button held is still the one on the page");
@@ -756,15 +766,10 @@ browserTest(h, "a tab dropped on another window's editor opens there, and its na
 browserTest(h, "a click in an extension's details lands though they're drawn again while the button is held", { scenario: "empty" }, async (app) => {
   await app.command("Show extensions");
   await app.page.locator(".extensions-view .extension-open", { hasText: /^Lists/ }).first().click();
-  const source = app.page.locator(".extension-details button", { hasText: "Source" });
-  await source.waitFor();
-  const pressed = await source.elementHandle();
-  const box = (await source.boundingBox())!;
-  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await app.page.mouse.down();
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForTimeout(800);
-  const same = await pressed!.evaluate((b) => b.isConnected);
+  const same = await heldThrough(app, app.page.locator(".extension-details button", { hasText: "Source" }), async () => {
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForTimeout(800);
+  });
   await app.page.mouse.up();
   assert.ok(same, "the button held is still the one on the page");
   // Source closes the details and opens the extension's code.
@@ -773,16 +778,14 @@ browserTest(h, "a click in an extension's details lands though they're drawn aga
 
 browserTest(h, "a press whose release the page never hears (another tab took it) doesn't hold the Extensions panel back", { scenario: "empty" }, async (app) => {
   await app.command("Show extensions");
-  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
-  await button.waitFor();
-  const pressed = await button.elementHandle();
-  const box = (await button.boundingBox())!;
-  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await app.page.mouse.down();
-  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere.
-  await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForFunction((b) => !b.isConnected, pressed, { timeout: 3000 });
+  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere. The panel draws
+  // again for the file that changes meanwhile, as soon as the page hears of it (slower on a busy machine).
+  const held = await heldThrough(app, app.page.locator(".extensions-view button", { hasText: "Install from URL…" }), async () => {
+    await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForFunction(() => !(window as unknown as { held: Element | null }).held?.isConnected, null, { timeout: 10_000 });
+  });
+  assert.equal(held, false, "drawn again while the pointer was still down");
   await app.page.mouse.up();
 });
 
