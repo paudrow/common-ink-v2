@@ -1,0 +1,7 @@
+{
+  "pr": 71,
+  "title": "HSTS on redirects and the sandbox route",
+  "steps": [
+    "Open <this Preview>/s/abc with DevTools > Network on: its 302 to v1.commonink.app has Strict-Transport-Security, and so does /sandbox/host."
+  ]
+}

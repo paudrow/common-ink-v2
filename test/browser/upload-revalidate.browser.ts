@@ -41,3 +41,38 @@ test("the sandbox's code isn't served to a page of this site's own origin", asyn
   assert.equal((await code("same-origin")).status, 404);
   assert.equal((await code("cross-site")).status, 200);
 });
+
+test("a HEAD for an upload answers as its GET would, with no body", async () => {
+  const res = await fetch(`${h.base}/uploads/chart.svg`, { method: "HEAD" });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("Content-Type"), "image/svg+xml");
+  assert.match(res.headers.get("Content-Security-Policy") ?? "", /^sandbox;/);
+  assert.equal(await res.text(), "");
+});
+
+test("an upload that isn't there answers 404 under the upload's own policy, not the app's", async () => {
+  for (const name of ["missing.svg", "%E0%A4%A"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await fetch(`${h.base}/uploads/${name}`, { method });
+      assert.equal(res.status, 404, `${method} ${name}`);
+      assert.match(res.headers.get("Content-Security-Policy") ?? "", /^sandbox;/, `${method} ${name}`);
+      assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+    }
+  }
+});
+
+test("an SVG upload opened twice doesn't run a trusted extension's script either, which this site does serve to its own pages", async () => {
+  await write(".common-ink/extensions/trusty/extension.json", JSON.stringify({ name: "Trusty" }));
+  await write(".common-ink/extensions/trusty/index.js", "document.title = 'RAN as ' + location.origin;\n");
+  await write(".common-ink/settings.json", JSON.stringify({ "extensions.trusted": ["trusty"] }));
+  assert.equal((await fetch(`${h.base}/extensions/trusty/index.js`, { headers: { "Sec-Fetch-Site": "same-origin" } })).status, 200);
+  await fetch(`${h.base}/api/upload?name=trusty.svg`, { method: "PUT", body: `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><title>still</title><script href="/extensions/trusty/index.js"></script></svg>` });
+  const context = await h.browser.newContext();
+  const page = await context.newPage();
+  for (let visit = 0; visit < 2; visit++) {
+    await page.goto(`${h.base}/uploads/trusty.svg`);
+    await page.waitForTimeout(800);
+    assert.equal(await page.title(), "still", `visit ${visit + 1}`);
+  }
+  await context.close();
+});

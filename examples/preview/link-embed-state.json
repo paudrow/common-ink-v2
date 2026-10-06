@@ -1,0 +1,12 @@
+{
+  "pr": 32,
+  "title": "Link embeds keep playing",
+  "steps": [
+    "Open Link embeds tour and start the video. Move the mouse over it, and the cursor onto its link's line (/youtube then Enter in Vim, or click just left of the link): the raw link shows above the video, and the video keeps playing under it. Move off the line: it plays on, in the same frame.",
+    "Type while it plays: on the blank line right above the link, and elsewhere in the note. It doesn't stop or reload.",
+    "⌘-click another note in the sidebar to open it in a new tab, then click back to the tour's tab: the video is still playing.",
+    "Split right (command bar): the video keeps playing, and the new window has its own copy.",
+    "Scroll the video out of view and back, and scroll with the mouse wheel over the video: the note scrolls, and the video is where it was.",
+    "Change the link itself to another video: that one loads in its place, as it should."
+  ]
+}
