@@ -89,7 +89,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       teamDomain: env.ACCESS_TEAM_DOMAIN,
       aud: env.ACCESS_AUD,
       devUser: env.DEV_USER,
-      sessionEmail: (r) => sessionEmail(r, env.SESSION_SECRET),
+      sessionEmail: (r) => sessionEmail(r, signIn),
     });
     if (!who) {
       // A person opening the app goes to sign in; anything else is told no.
