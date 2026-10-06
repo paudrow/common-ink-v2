@@ -84,6 +84,12 @@ class EditError extends Error {}
 /** An etag that matches no version, so a PATCH sent with it meets the source's version first. */
 const UNKNOWN_ETAG = '"common-ink:unknown"';
 
+/**
+ * Kept as a record's etag once our own delete of it went: the version the source holds is the one that
+ * delete made, whose etag it didn't say. Never sent; the echo of that delete a sync brings isn't a change.
+ */
+const DELETED_HERE = '"common-ink:deleted-here"';
+
 /** How long an edit waits for the source to say how its record is, before it's refused. */
 const UNREADABLE_FOR = 30 * 60_000;
 
@@ -392,7 +398,8 @@ export class DataSources {
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
-      const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const etag = known === DELETED_HERE ? null : known;
       try {
         this.pushing = row.path;
         let pushed: Pushed;
@@ -404,7 +411,7 @@ export class DataSources {
         }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
-          if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
+          if (op.op === "delete") this.setEtag(row.path, DELETED_HERE);
           else if (pushed.etag) this.setEtag(row.path, pushed.etag);
         });
         this.setState(source, { error: undefined });
@@ -596,10 +603,13 @@ export class DataSources {
     const put = (event: CalendarEvent, etag: string | null) => {
       const path = eventPath(event.calendar, event.id);
       if (pending(path)) {
+        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+        const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", path)[0]?.etag;
+        // Our own delete, heard back: that version is ours, so the edit waiting goes on from it.
+        if (etag && waiting && known === DELETED_HERE && event.status === "cancelled") this.setEtag(path, etag);
         // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
         // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
-        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
-        if (etag && waiting && !this.db.all("SELECT 1 FROM etags WHERE path = ?", path).length) this.setEtag(path, UNKNOWN_ETAG);
+        else if (etag && waiting && (!known || known === DELETED_HERE)) this.setEtag(path, UNKNOWN_ETAG);
         return;
       }
       write(path, recordText(event));
