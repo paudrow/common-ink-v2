@@ -691,12 +691,13 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
   const plain = revisions.filter((r) => !isRecord(r));
   const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
+  const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (changedSince(files, path, r)) return { r, path, text: null };
+      if (changedSince(files, path, r, chosen)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -715,14 +716,16 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
 }
 
 /**
- * Whether a record changed after one of its revisions. The source filling in its own address for
- * the record (`link`), as a sync does after an edit goes out, isn't a change.
+ * Whether a record changed after one of its revisions, but for changes being undone with it
+ * (`undoing`). The source filling in its own address for the record (`link`), as a sync does after
+ * an edit goes out, isn't a change.
  */
-function changedSince(files: Files, path: FilePath, revision: Revision): boolean {
-  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision);
+function changedSince(files: Files, path: FilePath, revision: Revision, undoing: ReadonlySet<Revision>): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision && !undoing.has(c.revision));
   if (!later.length) return false;
   if (!later.every((c) => c.author.kind === "sync")) return true;
-  const was = readEvent(files.versionAt(path, revision) ?? "");
+  const before = files.recent({ path, before: Math.min(...later.map((c) => c.revision)), limit: 1 })[0];
+  const was = readEvent(before ? (files.versionAt(path, before.revision) ?? "") : "");
   const now = readEvent(files.read(path)?.text ?? "");
   return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
 }
