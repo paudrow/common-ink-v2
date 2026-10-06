@@ -219,6 +219,8 @@ browserTest(h, "on a phone, an edit the server fails to take says it isn't saved
 browserTest(h, "typing in a 20,000-line note makes no long tasks: the count reads only the lines an edit touches", { scenario: "empty" }, async (app) => {
   const line = (i: number) => (i % 10 === 0 ? `## Heading ${i}` : i % 7 === 0 ? `- [ ] task ${i} [a link](https://ex.com/${i}) **bold**` : `The quick brown fox jumps over the dog, line ${i}.`);
   await app.writeFile("Big.md", Array.from({ length: 20_000 }, (_, i) => line(i)).join("\n") + "\n");
+  // No save while it types: sending a megabyte isn't what this measures.
+  await app.writeFile(".common-ink/settings.json", JSON.stringify({ "editor.saveDelay": 10_000 }));
   await app.goto({}, "Big");
   await app.idle();
   await words(app).filter({ hasText: /words$/ }).waitFor();
