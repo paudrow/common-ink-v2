@@ -96,7 +96,7 @@ test("installing copies an extension's files in, as changes by you; a built-in's
     (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
     async () => {
       const install = (url: string) => extensionApi(post("/api/extensions/install", { url }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
-      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"] });
+      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"], untrusted: false });
       assert.equal(s.files.read(".common-ink/extensions/weather/lib.js" as FilePath)?.text, "export const x = 1;");
       assert.deepEqual(JSON.parse(s.files.read(".common-ink/extensions/weather/installed.json" as FilePath)!.text), { from: "https://ext.example/weather/extension.json" }, "where it came from, for the app to say");
       assert.deepEqual(s.files.recent({ path: ".common-ink/extensions/weather/index.js" as FilePath })[0].author, you);

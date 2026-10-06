@@ -77,11 +77,11 @@ export const api = {
     return (data as { entries: CatalogEntry[] }).entries;
   },
   /** Install an extension from where it's published; `catalog` names the catalog that listed it, if one did. */
-  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[] }> {
+  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[]; untrusted: boolean }> {
     const res = await fetch("/api/extensions/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, catalog }) });
     const data = await res.json();
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
-    return data as { id: string; name: string; files: string[] };
+    return data as { id: string; name: string; files: string[]; untrusted: boolean };
   },
   async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
     const body = JSON.stringify({ path, text, base });

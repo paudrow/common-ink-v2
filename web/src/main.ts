@@ -554,9 +554,12 @@ const extensionDeps: ExtensionsViewDeps = {
     );
     if (!url) return;
     try {
-      const { id, name } = await api.installExtension(url);
+      const { id, name, untrusted } = await api.installExtension(url);
+      if (untrusted) await loadSettings();
       await refreshList();
-      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
+      // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
+      const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
       else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);

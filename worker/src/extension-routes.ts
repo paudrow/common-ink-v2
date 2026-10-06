@@ -146,7 +146,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
 class InstallError extends Error {}
 
 /** Copy an extension's files from where it's published into the workspace, as changes by `author`. */
-async function install(store: Store, raw: string, author: Author, catalog: string | undefined, net: Pick<SafeFetchOptions, "fetcher" | "resolve">): Promise<{ id: string; name: string; files: string[] }> {
+async function install(store: Store, raw: string, author: Author, catalog: string | undefined, net: Pick<SafeFetchOptions, "fetcher" | "resolve">): Promise<{ id: string; name: string; files: string[]; untrusted: boolean }> {
   const manifestUrl = raw.endsWith("extension.json") ? raw : `${raw.replace(/\/?$/, "/")}extension.json`;
   const res = await safeFetch(manifestUrl, { ...net, maxBytes: 64_000 });
   if (res.status !== 200) throw new InstallError(`${manifestUrl} answered ${res.status}`);
@@ -168,31 +168,44 @@ async function install(store: Store, raw: string, author: Author, catalog: strin
   }
   // Where it came from, so the app can say so ("From URL") and you can tell its code isn't your own.
   files.push(["installed.json", `${JSON.stringify({ from: res.url, ...(catalog ? { catalog } : {}) })}\n`]);
+  // Trust goes first: if it can't, nothing new is written under an id someone trusts.
+  const untrusted = await untrust(store, id, author);
   for (const [file, text] of files) {
     const path = extensionFilePath(id, file);
     const current = await store.read(path);
     await store.write({ path, text, base: current?.revision ?? 0, author });
   }
-  await untrust(store, id, author);
-  return { id, name: manifest.name, files: files.map(([f]) => f) };
+  return { id, name: manifest.name, files: files.map(([f]) => f), untrusted };
 }
 
 /**
  * Take `id` out of every extensions.trusted list, the workspace's and each person's: whoever trusted
- * an extension by that id trusted other code, so what's just been installed starts sandboxed.
+ * an extension by that id trusted other code, so what's about to be installed starts sandboxed. True
+ * if it was in one. Throws if a settings file that names trusted extensions can't be read or changed.
  */
-async function untrust(store: Store, id: string, author: Author): Promise<void> {
+async function untrust(store: Store, id: string, author: Author): Promise<boolean> {
+  let took = false;
   for (const { path } of await store.list()) {
     if (path !== WORKSPACE_SETTINGS && !/^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path)) continue;
-    const file = await store.read(path);
-    let trusted: unknown;
-    try {
-      trusted = JSON.parse(file?.text || "{}")["extensions.trusted"];
-    } catch {
-      continue;
+    for (let tries = 0; ; tries++) {
+      const file = await store.read(path);
+      if (!file) break;
+      let trusted: unknown;
+      try {
+        trusted = JSON.parse(file.text || "{}")["extensions.trusted"];
+      } catch {
+        if (!file.text.includes('"extensions.trusted"')) break;
+        throw new InstallError(`${path} isn't valid JSON, so ${id} can't be taken out of the extensions it trusts. Fix it first.`);
+      }
+      if (!Array.isArray(trusted) || !trusted.includes(id)) break;
+      const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
+      const result = text === null ? null : await store.write({ path, text, base: file.revision, author });
+      if (result && result.status !== "conflict") {
+        took = true;
+        break;
+      }
+      if (tries === 2) throw new InstallError(`${id} couldn't be taken out of the extensions ${path} trusts, as it kept changing. Try again.`);
     }
-    if (!file || !Array.isArray(trusted) || !trusted.includes(id)) continue;
-    const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
-    if (text !== null) await store.write({ path, text, base: file.revision, author });
   }
+  return took;
 }
