@@ -1,10 +1,15 @@
 # Navigation study: places, a feed, archive, trash and search
 
-A UX research study for Common Ink v2: how to organize extensions' views and side panels, a scrollable feed of notes you can triage, archive, a 30-day trash, data sources and search. It ends with a recommendation, prototypes, a build plan and the decisions only you can make.
+A UX research study for Common Ink v2: how to organize extensions' views and side panels, a scrollable feed of notes you can triage, archive, a 30-day trash, data sources and search. It is designed **mobile first**: the model starts on a phone and grows into the tablet and desktop layouts. Extensions say what a device needs to have, so Vim, tabs and splits turn off where they don't fit, and the app shows why. The study ends with a recommendation, prototypes, a build plan and the decisions only you can make.
 
 - **Status:** a proposal. No app code changes.
-- **Prototypes:** [navigation-places.html](prototypes/navigation-places.html) (recommended) and [navigation-workbench.html](prototypes/navigation-workbench.html) (alternative). Open them in a browser straight from the repo; they need nothing else. Press `?` in either for every key, and the "⚙ prototype" button in the status bar for theme and settings.
-- **Method:** reading the v2 docs, ADRs and code; running v2 locally (`calendar` scenario) to see the UI as it is; reading Common Ink v1's README for what it already shipped; and a comparative review of 20 apps from their own documentation (sources at the end).
+- **Prototypes**, each a single HTML file that needs nothing else; open one straight from the repo:
+  - [navigation-mobile.html](prototypes/navigation-mobile.html) (**recommended, mobile first**). The same model from a phone up to a laptop. Pick a device in its top bar: Phone, Phone with a Bluetooth keyboard, Tablet, Tablet with a keyboard, Laptop, or a narrow laptop window. Swipes work with a finger or a mouse drag. On a real phone it fills the screen. `?device=phone` (or `tablet`, `laptop`…) in the address picks a device.
+  - [navigation-places.html](prototypes/navigation-places.html): the same model on a desktop, explored in depth with the keyboard. It's responsive too: on a narrow screen it gets a bottom bar and a Places drawer.
+  - [navigation-workbench.html](prototypes/navigation-workbench.html): the VS Code-style alternative. On a narrow screen its activity bar moves to the bottom.
+  - In each one, press `?` (with a keyboard) for every key. "⚙ prototype" or the top bar has the theme and settings.
+- **Method:** reading the v2 docs, ADRs and code; running v2 locally (`calendar` scenario) at desktop and phone widths; reading Common Ink v1's README for what it already shipped; and a comparative review of 28 apps and platform guidelines from their own documentation (sources at the end).
+- **Revised** after the first draft, at your request: the recommended model now starts from a phone, a section on extensions that depend on the platform was added, and the prototypes, build plan and decisions were updated.
 
 ## Contents
 
@@ -13,26 +18,49 @@ A UX research study for Common Ink v2: how to organize extensions' views and sid
 3. [What v1 taught us](#3-what-v1-taught-us)
 4. [Comparative analysis](#4-comparative-analysis)
 5. [Answers to the study's questions](#5-answers-to-the-studys-questions)
-6. [Three navigation models](#6-three-navigation-models)
-7. [Recommended model: Places and the Feed](#7-recommended-model-places-and-the-feed)
-8. [Build plan](#8-build-plan)
-9. [Testing with you](#9-testing-with-you)
-10. [Decisions for you](#10-decisions-for-you)
-11. [Sources](#11-sources)
+6. [Mobile first](#6-mobile-first)
+7. [Extensions that depend on the device](#7-extensions-that-depend-on-the-device)
+8. [Three navigation models](#8-three-navigation-models)
+9. [Recommended model: Places and the Feed](#9-recommended-model-places-and-the-feed)
+10. [Build plan](#10-build-plan)
+11. [Testing with you](#11-testing-with-you)
+12. [Decisions for you](#12-decisions-for-you)
+13. [Sources](#13-sources)
 
 ## 1. The short version
 
-**Recommendation: Places and the Feed.** A quiet text sidebar called **Places** replaces today's flat notes list. It holds the Feed, Search, the places extensions add (Today, Tasks, Calendar), your pinned notes and saved searches, and at the bottom Sources, Archive, Trash, Extensions and Settings. A place opens as a tab in the editor area, so it can sit in a split next to a note. The right-hand side panel becomes the **context panel**: views about the note in focus (History, Links, Agenda, an extension's view), one at a time, with a switcher. There is no icon-only activity bar and no bottom panel to start with.
+**Recommendation: Places and the Feed, mobile first.** One model at every size.
 
-**The Feed is the home place.** It's the notes you and your agents changed, newest first, as cards with a live preview, and keyboard triage in Gmail's and Superhuman's keys: `j`/`k`, `↵` open, `o` open beside (the reading pane follows `j`/`k`), `e` archive, `#` or `dd` trash, `p` pin, `x` select, `u` undo. Agents' changes say who made them, with a purple dot for ones you haven't seen, and an Agents filter.
+- **On a phone**, you start in the **Feed**: the notes you and your agents changed, newest first, as cards you can read. **Swipe right to archive and left to trash**, with Undo on a bar at the bottom. Long-press selects several. A **bottom bar** holds three places you choose (Feed, Today and Calendar by default), plus Search and **Places**. Places is a sheet listing everything else: Tasks, pinned notes, saved searches, Sources, Archive, Trash, Extensions and Settings. A note opens full screen; tap its text to edit, with a toolbar above the keyboard that extensions add buttons to. Views about a note (History, Links, Agenda, an extension's view) open as a sheet.
+- **As the screen grows**, the same pieces spread out:
+  - **The Places sheet becomes a sidebar.** It's the same list.
+  - **The note opens beside its list** (two windows) instead of on top of it.
+  - **Tabs appear** at 600px.
+  - **The sheet of views docks** as a context panel at 1200px.
+  - **Search** goes from full screen to a centered dialog.
 
-**One idea runs through it: every list of notes is a query.** The Feed is `-is:archived sort:edited`. Archive is `is:archived`. A saved search (v1's smart folder) is a query you named. Search results open as a tab of the same cards. One parser, shared by the search bar, the Feed's filter, saved searches, MCP and the CLI.
+  Nothing about the desktop is a separate design.
+- **A keyboard, whenever there is one**, adds the keys from the first draft: `j`/`k`, `↵`, `e` archive, `#` trash, `p` pin, `x` select, `u` undo, `g` then a letter to go places, `⌘K` to search, and Vim. A phone with a Bluetooth keyboard gets them; a laptop window too narrow for splits keeps them.
 
-**Archive is a state, kept in a file. Trash is history.** Archiving adds the note's path to `.common-ink/archive.json`, so the note stays where it is, links and history are untouched, and that file's history is the archive log. Deleting already exists as a change in history; Trash is a view of the delete changes from the last 30 days, Restore is undoing that change, and after 30 days the note is **purged**: its text leaves history too. Nothing new is invented for Trash, and nothing about it is hidden.
+**Extensions declare what a device needs to have, not what kind of device it is.** For example, `"requires": { "keyboard": true }` for Vim, `{ "width": "medium" }` for tabs and `{ "width": "expanded" }` for splits. The app checks these against what this device has:
+- a keyboard, detected the first time a key is pressed outside a text field;
+- the window's width class;
+- a fine pointer.
 
-**Search is one bar** (`⌘K`, and `⌘P` as today) across notes, tasks, events, contacts, commands and settings, with Gmail-style filters (`is:archived`, `in:Projects/`, `from:agent`, `type:event`, `edited:<7d`) that Tab completes, `⌘↵` to open all results as a tab, and an action menu on any result (Raycast's idea) to archive, pin or open beside without leaving the bar.
+An extension that's off here is listed in Extensions as "Off on this device: needs a keyboard", with an "On here" override. Menu items that need more room say why instead of vanishing. Each device's capabilities, overrides and layout are a file you can read, `.common-ink/users/<you>/devices/<id>/`. Tabs and windows that don't fit are kept, not closed. They come back when the window is wide enough again.
 
-The alternative most worth comparing is a **VS Code-style Workbench**: an activity bar of icons, a side bar of collapsible views (Pinned, Recent, Archive, Trash), and a bottom panel for agent activity. It's familiar and scales to many extensions, but it's heavier, and its feed is a list of titles rather than something you read.
+**Every list of notes is a query.** The Feed is `-is:archived sort:edited`, Archive is `is:archived`, and a saved search is a query you named. One parser serves the search bar, the Feed's filter, saved searches, MCP and the CLI.
+
+**Archive is a state, kept in a file. Trash is history.**
+- Archiving adds the note's path to `.common-ink/archive.json`. The note doesn't move and there's no frontmatter.
+- Trash is a view of the delete changes from the last 30 days. Restore undoes that change.
+- After 30 days the note is purged: its text leaves history, and one line in history says it happened.
+
+**Search is one bar** across notes, tasks, events, contacts, commands and settings.
+- On a phone it's full screen, with chips that write filters (`is:archived`, `from:agent`, `type:event`) into the query as text.
+- With a keyboard, `⌘K` opens it, and Tab completes filters.
+
+The alternative most worth comparing is a **VS Code-style Workbench**: an activity bar of icons, a side bar of collapsible views, and a bottom panel. It's familiar on a desktop, but on a phone it turns into a row of icons over views that cover the editor, and its feed is a list of titles rather than something you read and swipe.
 
 ## 2. Where v2 is today
 
@@ -46,6 +74,13 @@ Seen by running `npm run dev -- --scenario calendar` and reading `web/src/`:
 - **No archive, no pins, no trash view, no full-text search.** Deleting a note is a change with `deleted: true` (`worker/src/files.ts`), and undoing it brings the note back, but nothing lists deleted notes.
 - **App state already lives in workspace JSON:** `layout.json`, `labels.json`, `settings.json`, `uploads.json`, and records under `.common-ink/records/`. ADR 0003 names pins and view state as things that go in workspace JSON, not frontmatter.
 - **ADR 0006 already says** "The activity bar, sidebar and bottom panel arrive with the Workbench extension", and that "the activity bar waits for an extension that declares a view container; none does yet." This study is the design for that moment.
+
+**On a phone** (`npm run probe -- --scenario calendar --viewport 375x812`), v2 today is a single-note viewer:
+- **No way to move between notes by touch.** Below 40rem the notes list is hidden (`web/src/style.css`), so the only ways to reach another note are tabs already open, or `⌘P`, which needs a keyboard.
+- **Desktop chrome stays.** The status bar shows Vim's `NORMAL` on a device with no keyboard, and the tab row is still drawn.
+- **Content overflows.** Event chips run off the right edge.
+
+This is the strongest reason to start the redesign from the phone.
 
 ## 3. What v1 taught us
 
@@ -63,7 +98,7 @@ Common Ink v1 shipped most of what the request describes. From its README:
 
 ## 4. Comparative analysis
 
-Each app: the patterns that matter here, what works, and what doesn't. Sources are in [section 11](#11-sources).
+Each app: the patterns that matter here, what works, and what doesn't. Sources are in [section 13](#13-sources).
 
 ### 4.1 Navigation and panels
 
@@ -107,7 +142,7 @@ Each app: the patterns that matter here, what works, and what doesn't. Sources a
 
 **Gmail.** `j`/`k` move, `e` archives, `#` deletes. Archive takes mail out of the inbox but keeps it in All Mail; Trash is deleted forever after 30 days. Search filters: `in:`, `is:`, `has:`, `from:`, `older_than:`. [23][24][25]
 - *Works:* the clearest split there is between archive (keep, out of the way) and trash (goes away in 30 days). Its filter syntax is widely known.
-- *Doesn't:* a reply brings an archived thread back to the inbox, which suits mail. For notes, whether an agent's edit should do the same is your call (decision 3).
+- *Doesn't:* a reply brings an archived thread back to the inbox, which suits mail. For notes, whether an agent's edit should do the same is your call (decision 14).
 
 **Things.** Inbox for what isn't sorted yet; Today, Upcoming, Anytime, Someday; completed to-dos go to the Logbook. [26][27]
 - *Works:* a Logbook means done things are out of sight but kept, in time order.
@@ -164,6 +199,78 @@ What to take: Gmail's operator words (`is:`, `in:`, `from:`, `has:`), Obsidian's
 
 What to take: data from outside shows **where it's used** (a calendar view, the day's agenda, chips in notes, search results), not as a folder of its own; a source's own place is for status and settings. This is what ADR 0007 already does, and the design keeps it.
 
+### 4.6 On phones
+
+**Gmail.** Right and left swipes are set separately in Settings › General › Swipe actions: Archive, Delete, Mark as read or unread, Move to, Snooze, or None. Each action has its own colour and animation as you swipe. [50]
+- *Works:* two directions, two actions, each your choice; colour tells you which before you let go.
+
+**Readwise Reader.** Short and long swipes in both directions, each customizable (Account › Customize swipes), including one that marks everything above as seen. Reader shortened the long-swipe distance to make it more fluid. [51][52]
+- *Works:* four actions without a menu.
+- *Doesn't:* four is hard to remember; short versus long is easy to get wrong.
+
+**Things.**
+- Swipe a to-do right to schedule it ("When").
+- Swipe it left to select it, then swipe or tap more to add to the selection, and act on them all from the toolbar at the bottom. Dragging down the right edge selects many at once.
+- Tap and hold to reorder. [53]
+- *Works:* selecting by swiping and then a toolbar of actions; no "edit mode" to find.
+
+**Apple Notes.** Swipe right on a note to pin it; swipe left to delete it, to Recently Deleted for 30 days. [54][41]
+- *Works:* the safe action on the right, the destructive one on the left, the convention Bear follows too.
+
+**Bear.**
+- Swiping right from the list slides in the sidebar (tags, Archive, Trash).
+- Swiping left on a note shows Pin, Trash and More (share, export, copy a link).
+- Pressing and holding lifts a note, and the Drop Bar gathers several for one action. [55][56][57]
+- *Works:* Archive and Trash live in the sidebar, out of the way.
+- *Doesn't:* the edge swipe for the sidebar competes with swipes on rows.
+
+**Craft.**
+- On iPhone, the sidebar's sections live on the Home screen; you turn them on or off and reorder them from ⋯ › Customize Home.
+- Tabs exist on Mac and iPad, but not on iPhone or the web. [58][59]
+- *Works:* tabs only where there's room; the same sections, laid out for the device.
+
+**Linear Mobile.** You customize the bottom toolbar, rearrange the main navigation, and pin projects and documents; Inbox items can be swiped to delete or snoozed. [60][61]
+- *Works:* the bottom bar is yours.
+
+**Obsidian mobile.**
+- There's no ribbon; its actions are in the navigation bar's menu.
+- While you edit, a **mobile toolbar** sits above the keyboard. It's customizable and scrolls sideways for more.
+- Pulling down from the top runs one Quick Action (the command palette by default).
+- Plugins mark themselves `isDesktopOnly` when they need Node or Electron APIs, and code checks `Platform.isMobile`. [62][63][64]
+- *Works:* the keyboard toolbar.
+- *Doesn't:* `isDesktopOnly` is about APIs, not input, and it's all or nothing. A plugin that needs only a keyboard has no way to say so.
+
+**Material Design's window size classes.**
+- **Compact:** under 600dp. Phones in portrait.
+- **Medium:** 600–839. Tablets in portrait and unfolded foldables.
+- **Expanded:** 840–1199. Tablets in landscape and small desktops.
+- **Large:** 1200–1599.
+- **Extra-large:** 1600 and over.
+
+Layouts go from one pane to two to three as the class grows, and list-detail is one of the canonical layouts. [65][66] Apple's iPadOS tab bar similarly turns into a sidebar when there's room. [72]
+
+**The web platform.**
+- **Pointer and hover:** the `pointer`, `any-pointer` and `hover` media features say whether there's a fine pointer and whether it can hover, and they can change while the page is open. [67][68]
+- **Keyboards:** **nothing says whether a hardware keyboard is attached.** The VirtualKeyboard API, which is Chromium only, is about the on-screen keyboard. [69]
+- **The on-screen keyboard:** `visualViewport` reports the area it leaves, so a toolbar can sit just above it. The viewport's `interactive-widget` setting chooses whether the keyboard resizes the page. [70][73]
+
+### 4.7 How others say where something applies
+
+| Approach | Example | What it can say | What it can't |
+| --- | --- | --- | --- |
+| Device class | Obsidian's `isDesktopOnly` [64] | "Not on phones and tablets" | An iPad with a keyboard; a narrow desktop window |
+| Platform keys in expressions | VS Code's `when` clauses (`isWeb`, `isMac`, `isLinux`) [71] | Anything, as an expression | Input capabilities; there's no keyboard or width key |
+| Layout by size class | Material and Apple size classes [65][72] | How a layout changes with width | Whether an extension should run |
+| Media features | CSS `pointer`, `hover`, width queries [67][68] | Pointer and width, live | Keyboards |
+
+**Takeaways for Common Ink:**
+- On phones, the safe action is a swipe right and the destructive one a swipe left. Make both settings.
+- Long-press, or a "Select" button, selects several, and a bottom toolbar acts on them.
+- Tabs are for wider screens.
+- The bottom bar should be yours to set.
+- Editing needs a toolbar above the keyboard.
+- No app studied lets an extension say "I need a keyboard". A device class is too coarse, and the web can't detect a keyboard directly, so Common Ink has to infer one, remember it per device, and let you correct it.
+
 ## 5. Answers to the study's questions
 
 ### 5.1 Where views live
@@ -177,9 +284,11 @@ Four locations, three of them now:
 | **Context panel** (right) | Views about the note in focus: History, Links, Agenda, Outline, an extension's view | One at a time, with a switcher | The side panel |
 | **Bottom panel** | Reserved: logs and long-running output (Extension activity, Problems) | Off until an extension needs it | None |
 
-**How extensions contribute.** A manifest declares `places` (a place in the list that opens a view or a query) and views with a `location` (`editor`, `context`, later `panel`). Today's `views.sidebar` means the context panel and keeps working. See [7.6](#76-extension-api).
+**How extensions contribute.** A manifest declares `places` (a place in the list that opens a view or a query) and views with a `location` (`editor`, `context`, later `panel`). Today's `views.sidebar` means the context panel and keeps working. See [9.6](#96-extension-api) and, for what a device needs, [7.7](#77-manifest-and-api).
 
 **How you rearrange.** Everything is in `.common-ink/places.json` (order, hidden places, saved searches) and `layout.json` (where each view is), so it can be edited by hand, by an agent, and undone. From the keyboard: `J`/`K` move a place in the list, `dd` removes a saved search, and `m` on a context view opens "Add to Places / Open as a tab / Close the panel". Dragging (Workbench's `data-open`) does the same with a mouse.
+
+**On a phone** the same four become: Places as a sheet from the bottom bar, the editor area showing one window at a time, the context panel as a bottom sheet, and no bottom panel. See [section 6](#6-mobile-first).
 
 ### 5.2 The Feed
 
@@ -189,7 +298,9 @@ Four locations, three of them now:
 
 **Scrolling.** Load 30 cards at a time and more as you near the end (the prototype loads the next 30 as you scroll or `j` past the 25th). New changes that arrive while you're scrolled down don't move the list; a pill says "↑ 2 new changes", as X does. Leaving and coming back (`↵` then `Ctrl-O`) returns to the same card.
 
-**Keys.** Only while the Feed has focus, never while typing:
+**By touch**, swipes do the same: right archives, left trashes, and long-press selects. See [6.2](#62-the-feed-and-triage-by-touch).
+
+**Keys.** With a keyboard, only while the Feed has focus, never while typing:
 
 | Key | Does | From |
 | --- | --- | --- |
@@ -230,7 +341,7 @@ The last is the recommendation, and matches how labels already work (`.common-in
 
 **Agents' activity.** Every card says who made the last change, in purple for agents, with their summary. A purple dot marks notes an agent changed since you last opened them; the Feed's place shows "3 new". The Agents filter shows only agents' changes, including changes to archived notes (marked "archived"), so an agent's work on something you archived is never hidden but doesn't clutter the Feed. A run of changes by one agent to one note is one card ("Claude made 5 changes"; `feed.groupAgentChanges`). The full record stays in History.
 
-What "seen" means has to be stored somewhere visible. The smallest choice is one number per person, the revision you'd seen up to when you last left the Feed, in `.common-ink/users/<you>/feed.json`; a note you open is seen too. It writes a change once a visit, not on every card. If even that is too much churn in history, drop the dots (decision 11).
+What "seen" means has to be stored somewhere visible. The smallest choice is one number per person, the revision you'd seen up to when you last left the Feed, in `.common-ink/users/<you>/feed.json`; a note you open is seen too. It writes a change once a visit, not on every card. If even that is too much churn in history, drop the dots (decision 17).
 
 ### 5.3 Archive, Trash and Delete
 
@@ -259,7 +370,7 @@ What "seen" means has to be stored somewhere visible. The smallest choice is one
 - **The Feed** is how you see what's happening and keep it tidy. It's where you start.
 - **Search** is how you find a note you know. One bar, always a keystroke away.
 - **Saved searches** (v1's smart folders) are how you keep a list you come back to: a project, "agent edits this week". They live in Places, with counts.
-- **Folders** are storage. They aren't in Places. You filter by one with `in:Projects/`, and saving that gives you a place. (A file tree can come back as an extension's view if you miss it; decision 12.)
+- **Folders** are storage. They aren't in Places. You filter by one with `in:Projects/`, and saving that gives you a place. (A file tree can come back as an extension's view if you miss it; decision 22.)
 
 **Where things live.**
 
@@ -297,7 +408,9 @@ Archived notes are included, last and marked; trashed notes only with `is:trashe
 
 **Keys.** Type; `Tab` completes a filter (`is:a` → `is:archived`); `↑`/`↓` or `Ctrl-j`/`Ctrl-k` (and `Ctrl-n`/`Ctrl-p`) move; `↵` opens; `Tab` on a result opens its actions (Open, Open beside, Archive, Pin, Copy link; for an event, Make a meeting note); `⌘↵` opens every result as a tab of cards, where `⌘S` saves it as a place.
 
-### 5.6 Staying minimal and keyboard-first
+### 5.6 Staying minimal, touch-first and keyboard-first
+
+- **On touch, the few actions that matter are swipes, one bottom bar and one sheet.** Nothing that needs a keyboard is shown without one: no key hints, no status bar, no Vim mode.
 
 - **Text, not icons**, in one short list. No activity bar, no bottom panel, no new top-bar or status-bar buttons (#135). Places hides with `⌘B`, the context panel with `⌘⌥B`; with both hidden it's a pure editor, the way it is now.
 - **Single-letter keys are scoped**: they act only in the Feed and other lists, never in a note or a field. In a note, Vim stays Vim: `:archive`, `:trash`, `:feed`, and `Ctrl-O` back to the card you came from.
@@ -305,7 +418,294 @@ Archived notes are included, last and marked; trashed notes only with `is:trashe
 - **Vim's window keys move focus** between Places, the editor area and the context panel: `Ctrl-W h`/`l`/`w`.
 - **Five keys to start** in the Feed (`j` `k` `↵` `e` `#`); the rest are there when you want them, and `?` lists them all.
 
-## 6. Three navigation models
+## 6. Mobile first
+
+The recommended model, designed from a phone (375px wide, touch, no hardware keyboard) and then grown. Every flow here works in [navigation-mobile.html](prototypes/navigation-mobile.html) with the device set to Phone.
+
+### 6.1 The phone
+
+```text
+┌ Feed            Select  ✎ ┐   ┌ ‹  Launch plan      ◷  ⋯ ┐   ┌ Places ────────────────────┐
+│ [All] Mine  Agents 4      │   │ Projects/Launch plan.md   │   │ Feed               4 new   │
+│ -is:archived sort:edited  │   │                           │   │ Search · Today · Tasks     │
+│ PINNED                    │   │ Launch plan               │   │ Calendar                   │
+│ ┌ Launch plan   4 min ago┐│   │ Ship the beta on Oct 20.  │   │ PINNED                     │
+│ │ Claude · Added risks…  ││   │ ☐ Record the demo  Oct 7  │   │ Launch plan · A feed for…  │
+│ │ ☐ Record the demo      ││   │ ☐ Draft the changelog     │   │ SAVED SEARCHES             │
+│ └────────────────────────┘│   │                           │   │ Agent edits this week   6  │
+│ ⤓ Archive ◀── swipe ──▶ ⌫ │   │ Tap the text to edit.     │   │ Sources ● Archive 4        │
+│ ┌ 2026-10-05   22 min ago┐│   │                           │   │ Trash 4 · Extensions       │
+│ └────────────────────────┘│   │                           │   │ Settings                   │
+├───────────────────────────┤   ├───────────────────────────┤   │ Kept for wider screens:    │
+│ Feed Today Cal Search ☰   │   │ ☐ • ⇥ ⇤ │ H [[ due @ │ ↶ ⌄│   │ 3 tabs and a window beside │
+└───────────────────────────┘   └───────────────────────────┘   └────────────────────────────┘
+        The Feed                 A note, editing toolbar          The Places sheet
+```
+
+- **Bottom bar:**
+  - Three places from `places.json`'s `bar` (Feed, Today and Calendar by default; "Customize the bottom bar…" at the end of the Places sheet changes them, as Linear Mobile does).
+  - Then **Search** and **Places**. Places opens the Places list as a sheet: the same list the desktop shows as a sidebar.
+  - The bar hides while you edit.
+- **Top bar:** the place's name, then the actions for that place. In the Feed that's Select, for picking several, and ✎ for a new note. In a note it's back, the title, ◷ for views about the note, and ⋯ for its menu.
+- **Filter chips** under the top bar: All, Mine and Agents in the Feed, with the agent count.
+- **The query line** under the chips says what the list is, as on the desktop: nothing hidden.
+- **No status bar, no tabs, no Vim indicator** on a phone. Save state shows only when something's wrong ("Not saved: offline"), as a line under the top bar.
+
+### 6.2 The Feed and triage by touch
+
+| Gesture | In the Feed | In Archive | In Trash |
+| --- | --- | --- | --- |
+| Swipe right, past 42% of the width | Archive | Unarchive | Restore |
+| Swipe left, past 42% | Trash | Trash | Delete forever (asks first) |
+| Short swipe, 64px or more | Shows the action's button; tap it to do it | same | same |
+| Tap | Open the note | Open | Look inside (a sheet with Restore and Delete forever) |
+| Tap a checkbox | Tick the task | same | — |
+| Long-press, or Select | Select; the bottom bar becomes Cancel · Pin · Archive · Trash | same | — |
+
+- **Undo** is a snackbar ("Archived 'Reading list' · Undo") for five seconds. After that it's in History like any change, so `u`, ⌘Z and History all reach it.
+- **Colours say what a swipe will do** before you let go, as in Gmail: green for archive, red for trash. The colour brightens once letting go will act.
+- **Settings:** `feed.swipe.right` and `feed.swipe.left` take `archive`, `trash`, `pin` or `none`, as Gmail's do. The defaults follow Apple Notes and Bear: safe on the right, destructive on the left.
+- **Edge swipes:** a swipe must start at least 24px in from the screen's edge, so it never fights the system's back gesture.
+- **Pull to refresh isn't needed**, since the Feed is live. New changes while you're scrolled down show a "↑ 2 new changes" pill.
+
+### 6.3 Search
+
+- **Full screen.** The field is focused, so the on-screen keyboard is up, with Cancel beside it.
+- **Filter chips** under the field: Archived, Pinned, Agents, Mine, This week, Events, Tasks, Trash. Tapping one **writes its filter into the query** (`from:agent`) and tapping again removes it, so the query stays plain text you can read, edit and save.
+- **Results** in sections: Notes (with the matching line), Tasks, Events, Contacts, Commands.
+- **See all as a list** at the end opens the results as a list of cards, and **Save** in its top bar puts it in Places. A phone has no `⌘↵`.
+- **Commands** come from typing `>` or from a place's ⋯ menu, since there's no `⌘⇧P` without a keyboard.
+
+### 6.4 Opening and editing a note
+
+**Opening:**
+- Tapping a card opens the note full screen, drawn as live preview.
+- Back (‹, or the system's back gesture) returns to the same card.
+- **Opening a note replaces the preview tab**, as the desktop already does, so using a phone never piles tabs into a layout.
+
+**Editing:**
+- **Tap the text to edit** at that spot. Tasks' checkboxes and event chips stay tappable without entering edit mode.
+- A **keyboard toolbar** sits just above the on-screen keyboard (placed with `visualViewport`). Its buttons come from extensions:
+  - Tasks: ☐ task, `due:`
+  - Lists: • bullet, ⇥ indent, ⇤ outdent. These stand in for Vim's `>>` and `<<`.
+  - Calendar: @ link an event
+  - Core: heading, `[[` link, undo, hide the keyboard
+- It scrolls sideways when there are more buttons than fit, as Obsidian's does. Long-pressing a button says which extension added it.
+- **Done** ends editing.
+
+**The ⋯ menu** is an action sheet: Pin, Archive, History and links…, Copy link, Open in a new tab, Open beside, and Move to Trash. The two that need room are shown greyed with why ("needs a screen 600px wide"), not hidden.
+
+### 6.5 Calendar and other data sources
+
+- **Calendar on a phone** is an agenda by day. The header says where the events come from ("Google Calendar · Work, Personal · synced 3 min ago").
+- **Tapping an event** opens a sheet with its time, place, calendar and address, the **notes that link here**, **Make a meeting note**, and **Copy link**.
+- **Wider:** at medium width Calendar shows 3 days; at expanded and above, the agenda sits beside the selected event's details.
+- **Sources** is in the Places sheet: a row per source with its status and a Sync button. A source that needs reconnecting puts a dot on Places in the bottom bar.
+- **Contacts** appear in search (`type:contact`) and as chips. They need no place of their own.
+
+### 6.6 Trash on a phone
+
+- **Each row** says when the note was deleted, by whom, and how long it has left, as a bar plus "4 days". It turns red in the last three days.
+- **Swipe right** restores the note with its history.
+- **Swipe left** asks, in a sheet, before deleting forever.
+- **Tap** shows the last version, read-only, with Restore and Delete forever.
+- **Empty** is in the top bar, and it asks first too.
+
+### 6.7 Where extensions' views go on a phone
+
+There's no separate "mobile panel" concept. Every contribution has a place at every size:
+
+| Contribution | Phone | Tablet | Desktop |
+| --- | --- | --- | --- |
+| A **place** (Calendar, Tasks, Word count's page) | A row in the Places sheet; can be put on the bottom bar | Places sheet from the left, or the sidebar | The Places sidebar |
+| A **context view** (History, Links, Agenda, Word count) | A bottom sheet from the note's ◷ button, with a switcher across its top; drag up for full height, down to close | A side sheet from the right | The docked context panel (large width) |
+| A **command** | Search with `>`, and ⋯ menus | same, and `⌘K` with a keyboard | `⌘K`, `⌘⇧P`, keys |
+| A **toolbar button** (new: `contributes.toolbar`) | The keyboard toolbar while editing | same, when touch is used | Not shown with a keyboard and no touch |
+| An **embed** | Quiet in cards; in a note it draws, and a heavy one (html-app) waits for a tap to run | Draws | Draws |
+| A **status bar item** | Not shown; where it matters it becomes a dot on a place (Sources) or a line in the top bar (a running timer) | same | The status bar |
+
+### 6.8 How it grows
+
+The same model at every width. A layout is windows, and the width decides how many show at once.
+
+| | **Compact**, under 600 (phones) | **Medium**, 600–839 (tablets in portrait) | **Expanded**, 840–1199 (tablets in landscape, small laptops) | **Large**, 1200 and over |
+| --- | --- | --- | --- | --- |
+| Places | Bottom bar, and a sheet from below | Bottom bar, and a sheet from the left | A sidebar, `⌘B` or ☰ hides it | Sidebar |
+| A list and a note | One at a time: the note covers its list | One at a time | **Side by side** (two windows) | Side by side, and a third window if you open one beside |
+| Tabs | None | Over the note | Over the note | Over each window |
+| Views about the note | Bottom sheet | Side sheet | Side sheet | **Docked context panel** |
+| Search | Full screen | Full screen | Centered dialog | Centered dialog |
+| Status bar | None | None | With a keyboard | With a keyboard |
+| Keys and Vim | **Whenever a keyboard is found**, at any width | same | same | same |
+
+**What changed from the first draft's desktop layout.** The Feed no longer opens as a tab with notes as other tabs. On expanded screens and wider, it's a list **beside** the note, which was the first draft's `o` (open beside), made the default. On a laptop that's the familiar three columns: Places, the list and the note. `j`/`k` moves through the list and the note beside it follows, like a mail client's reading pane. Everything else in the first draft stands: Places, the context panel, queries, archive and trash.
+
+## 7. Extensions that depend on the device
+
+Some extensions don't make sense everywhere: Vim without a keyboard, tabs on a phone, splits in a narrow window. How should an extension say where it applies, and how do you see and change that?
+
+### 7.1 Four ways to say it
+
+| | **A. Device class** | **B. Expressions** | **C. Capabilities it needs** (recommended) | **D. Code adapts, nothing declared** |
+| --- | --- | --- | --- | --- |
+| Looks like | `"platforms": ["desktop"]` (Obsidian's `isDesktopOnly`) | `"when": "keyboard && width >= expanded"` (VS Code's `when`) | `"requires": { "keyboard": true }` | `if (ctx.device.has("keyboard")) …` |
+| iPad with a keyboard gets Vim | No | Yes | Yes | Yes |
+| A narrow desktop window drops splits | No | Yes | Yes | Yes |
+| A phone with a Bluetooth keyboard gets keys | No | Yes | Yes | Yes |
+| The Extensions view can say why it's off | "Desktop only", which is vague | Has to explain an expression | **"Needs a keyboard"** | Can't: nothing is declared |
+| Known before the code runs (ADR 0006) | Yes | Yes | Yes | No |
+| Can be wrong about a device | Often: the web can't tell a tablet from a laptop, and iPadOS Safari says it's a Mac | Rarely | Rarely | Rarely |
+| Cost | Least | An expression language to parse, check and explain | A small fixed vocabulary | None, but it hides decisions |
+
+**C** is the recommendation, with **D's API for adapting inside an extension**. `requires` says when an extension, or one of its contributions, is off. `ctx.device` lets code that's on change how it draws: Calendar shows an agenda on a phone, and Boards drags by long-press on touch. B's power isn't needed while the vocabulary is this small, and an AND of named needs reads as a sentence. If it ever needs an OR, B can come later on top of the same names.
+
+### 7.2 The vocabulary
+
+Three capabilities. A small, closed set that the Extensions view can put into words.
+
+| Capability | Values | How the app knows | Changes while open? |
+| --- | --- | --- | --- |
+| `keyboard` | `true` | Assumed on a device with a fine pointer that hovers (a desktop). Elsewhere, true the first time a key is pressed outside a text field, or a key an on-screen keyboard doesn't send (Escape, Tab, arrows, ⌘ or Ctrl chords) arrives. Remembered for the device. | Turns on when first seen; doesn't turn itself off. A tablet whose keyboard is detached keeps it until you say otherwise. |
+| `width` | `compact`, `medium`, `expanded`, `large` (Material's classes) | The window's width: 600, 840 and 1200px | Yes, live: rotating, resizing, iPad Split View |
+| `pointer` | `fine` | `any-pointer: fine`: a mouse or trackpad anywhere | Yes, live |
+
+`touch` isn't a requirement, since nothing should need it; it's a fact `ctx.device` reports for adapting, from `any-pointer: coarse`.
+
+**Detecting a keyboard is a guess**, because the web gives no direct way. The app is open about it:
+- **Settings › This device** says what the app thinks and why: "Keyboard: yes, because a key was pressed outside a text field".
+- One switch corrects it: Keyboard set to Auto, Yes or No.
+- The first time one is found, a snackbar says so: "Keyboard found: Vim and shortcuts are on here."
+
+### 7.3 The cases
+
+What each declares, and whether it's on, on six devices:
+
+| Case | Declares | Phone | Phone + Bluetooth keyboard | Tablet, portrait | Tablet + keyboard, landscape | Laptop | Laptop, narrow window |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Vim** | `requires: { keyboard: true }` | Off | On | Off | On | On | On |
+| **Tabs** (Workbench) | `layout.tabs` `requires: { width: "medium" }` | Off, kept | Off, kept | On | On | On | Off, kept |
+| **Splits** (Workbench) | `layout.splits` `requires: { width: "expanded" }` | Off, kept | Off, kept | Off, kept | On | On | Off, kept |
+| **Command bar** | Nothing: it's core | Full-screen search; commands with `>` | `⌘K` too | Full screen | Dialog, `⌘K` | Dialog | Full screen, `⌘K` |
+| **Keyboard shortcuts** (every extension's keybindings) | Keybindings need a keyboard by definition | Off: no hints anywhere | On | Off | On | On | On |
+| **Kanban drag** (Boards) | Nothing; adapts | Long-press a card to drag; ⋯ › Move to… | same, and Alt+arrows | Long-press | Drag | Drag | Drag |
+| **html-app embeds** | Nothing for the extension; an embed may say `minWidth` | Draws on tap ("Tap to run") | same | Draws | Draws | Draws | Draws unless its `minWidth` is wider: "Needs a wider screen · Run anyway" |
+| Lists | Nothing; adapts | ⇥ ⇤ on the keyboard toolbar | `>>` `<<` with Vim | Toolbar | Keys | Keys | Keys |
+| Calendar | Nothing; adapts | Agenda | Agenda | 3 days | Agenda beside event | Agenda beside event; week in the full view | Agenda |
+
+**"Kept"** means the layout still has those tabs and windows; they come back when there's room (7.6).
+
+### 7.4 Seeing why
+
+Nothing may be hidden, so an extension or contribution that's off on this device is still listed, with why:
+
+- **The Extensions view** gives each row a line for this device: "On", "Off on this device · needs a keyboard", or "On here · you turned it on; it needs a keyboard". The extension's page lists its `requires` beside what this device has. A box at the top describes the device: "Phone · compact width (375px) · touch · coarse pointer · keyboard: no (no key pressed yet)".
+- **Menus keep items that are off**, greyed with the reason: "Open beside · needs a screen 1200px wide". Tapping one says the same in a snackbar.
+- **Layout that's kept** shows as "3 tabs kept" in a note's top bar on a tablet, and under "Kept for wider screens" in the Places sheet on a phone.
+- **Settings › This device** shows the device's file.
+
+### 7.5 Overriding
+
+- **Per device, per extension:** Auto, On here, Off here, in the Extensions view.
+  - **On here** beats a requirement. You're told what it needs, and it runs anyway: Vim on a phone, for when you'll attach a keyboard.
+  - **Off here** turns off something this device could run. For example, Vim on the tablet you hand to someone else.
+- **Per device, the keyboard guess:** Auto, Yes or No.
+- **Everywhere:** `extensions.disabled` in settings, as now.
+
+**Precedence:**
+1. `extensions.disabled`: off everywhere.
+2. This device's override.
+3. `requires` checked against this device.
+4. On by default.
+
+**Where it's kept:** each device has a folder, `.common-ink/users/<you>/devices/<id>/`, made the first time a browser signs in. The id is random and kept in that browser. `device.json` in it holds what was seen and your overrides:
+
+```json
+{
+  "name": "iPhone · Safari",
+  "lastSeen": "2026-10-05T09:12",
+  "seen": { "width": "compact", "pointer": "coarse", "touch": true, "keyboard": false },
+  "keyboard": "auto",
+  "extensions": { "vim": "on" }
+}
+```
+
+It's a file with history like any other, so you and your agents can read it. Settings › Devices lists your devices with when each was last seen, and can forget one.
+
+### 7.6 Layout across devices
+
+Today `layout.json` is one file for the workspace, so every browser shares one set of windows and tabs. With a phone in the picture that breaks: opening a note on the phone would move the laptop's tabs while you watch.
+
+- **Recommendation: a layout per device**, in that device's folder (`devices/<id>/layout.json`).
+  - **A new wide device** starts from the layout of the wide device you used last.
+  - **A phone keeps only what it needs:** the place it was on and the note open over it.
+  - **Continuing where you were** comes from the Feed. The note you just edited on your phone is at the top of the Feed on your laptop, by its last change.
+- **Within one device, width changes never close anything.**
+  - Narrow a laptop window, rotate a tablet, or use iPad Split View: windows that don't fit are **suspended**. The focused one shows, and the rest stay in the layout, unchanged.
+  - Widen it and they're back where they were.
+  - The layout file is written only when you change the layout, never because the window got narrower.
+- **Tabs on a narrow device** are kept the same way. Opening a note replaces the preview tab, so no tabs pile up.
+
+The alternative is to keep one shared layout and accept that devices move each other's tabs. It's simpler, and it's how v2 works today. That's decision 13.
+
+### 7.7 Manifest and API
+
+**Manifest.** `requires` can go on the extension or on any contribution: commands, views, places, embeds and toolbar buttons. Keybindings need a keyboard by definition.
+
+```json
+{
+  "id": "vim",
+  "requires": { "keyboard": true }
+}
+```
+
+```json
+{
+  "id": "workbench",
+  "contributes": {
+    "layout": [
+      { "id": "tabs", "title": "Tabs", "requires": { "width": "medium" } },
+      { "id": "splits", "title": "Windows side by side", "requires": { "width": "expanded" } }
+    ],
+    "commands": [
+      { "command": "workbench.splitRight", "title": "Open beside", "requires": { "width": "expanded" } }
+    ]
+  }
+}
+```
+
+```json
+{
+  "id": "lists",
+  "contributes": {
+    "toolbar": [
+      { "command": "lists.indent", "label": "⇥", "title": "Indent" },
+      { "command": "lists.dedent", "label": "⇤", "title": "Outdent" }
+    ]
+  }
+}
+```
+
+**`ctx.device`**, for code that adapts:
+
+```ts
+ctx.device.has("keyboard");         // true or false
+ctx.device.width;                   // "compact" | "medium" | "expanded" | "large"
+ctx.device.atLeast("expanded");     // true or false
+ctx.device.pointer;                 // "fine" | "coarse"
+ctx.device.touch;                   // true or false
+ctx.device.onChange((device) => {}); // width, pointer or keyboard changed
+ctx.device.why("keyboard");         // "a key was pressed outside a text field"
+```
+
+**Lifecycle:**
+- **An extension whose requirements aren't met doesn't start.** Its contributions are listed but greyed, with the reason.
+- **When they become met**, for example when a keyboard is found:
+  - A sandboxed extension starts at once.
+  - A trusted one that changes editors, like Vim, is added to open editors through a CodeMirror compartment, so no reload is needed.
+- **A contribution whose width requirement stops being met is suspended, not stopped.** Its code keeps running and its UI is put away until there's room again. A timer keeps counting, and a rotation loses nothing.
+- **The test levers** gain `?device=phone|tablet|laptop` and the probe gains `--device`, so tests and Previews can stand in for a device, as the prototype does.
+
+## 8. Three navigation models
 
 Each one end to end, with the same five flows.
 
@@ -320,6 +720,7 @@ An activity bar of icons on the far left (Notes, Search, Calendar, Tasks, Source
 - *Add an extension's panel:* it adds a view; drag it to a container, the secondary side bar or the panel.
 - **For:** familiar to a programmer; ADR 0006 already expects it; scales to many extensions; agent activity has a natural home in the bottom panel.
 - **Against:** the most chrome of the three; icons to learn; the "feed" is a list, so it doesn't give the reading-and-scrolling feel you asked for; three places to look for things (side bar, secondary side bar, panel).
+- *On a phone:* the activity bar becomes a row of icons at the bottom; a container's views cover the editor; the secondary side bar and bottom panel have nowhere to go. It works, but it's a desktop layout squeezed down (try the prototype at phone width).
 - **Prototype:** [navigation-workbench.html](prototypes/navigation-workbench.html).
 
 ### Model B: Feed only
@@ -333,11 +734,14 @@ No sidebar at all. The Feed fills the editor area as home. Everything else is a 
 - *Add an extension's panel:* it's a command and a tab; there's no place to pin it except as a Feed tab.
 - **For:** the least chrome; the editor is always full width; nothing to arrange.
 - **Against:** nothing to see at a glance (counts, pins, what's there); weak for the occasional place you don't remember the key for; extensions' places have no home but the command bar; tabs across the Feed grow as saved searches do.
+- *On a phone:* the most natural of the three: a Feed and a search bar are already a phone app. But with no Places, Archive, Trash and extensions' places are reachable only through search.
 - **Prototype:** the recommended prototype with Places hidden (`⌘B`) is this model.
 
 ### Model C: Places and the Feed (recommended)
 
-Places on the left as one short text list; every place opens in the editor area; context views on the right; one search bar; every list a query. Described in full in section 7.
+Places on the left as one short text list; every place opens in the editor area; context views on the right; one search bar; every list a query. Sheets and a bottom bar on a phone, a sidebar and columns when wider. Described in full in sections 6, 7 and 9.
+
+- **Prototype:** [navigation-mobile.html](prototypes/navigation-mobile.html), at every size; [navigation-places.html](prototypes/navigation-places.html) for the desktop's keys in depth.
 
 ### Comparing them
 
@@ -351,36 +755,37 @@ Places on the left as one short text list; every place opens in the editor area;
 | Agent activity | Bottom panel log, and dots | Feed | Feed (Agents) and History |
 | Matches ADR 0006 | Exactly | Loosely | Mostly: places are the "view containers", opened as tabs |
 | New concepts | Container, view, panel, secondary side bar | None | Place, context panel |
+| On a phone | Icons at the bottom; views cover the editor | Natural, but little to browse | Bottom bar, Places sheet; the same lists |
+| Grows to desktop | Is the desktop | Stays one column | Sheet becomes sidebar; columns appear |
 | Cost to build | High | Low | Medium |
 
-## 7. Recommended model: Places and the Feed
+## 9. Recommended model: Places and the Feed
 
-### 7.1 Information architecture
+### 9.1 Information architecture
+
+The phone layout is in [6.1](#61-the-phone) and how it grows in [6.8](#68-how-it-grows). This is the large width with a keyboard: Places, the list, the note, and the context panel.
 
 ```text
-┌ Places ─────────────┬ Editor area (tabs, splits) ─────────────┬ Context panel ─────────┐
-│ Feed        3 new   │  Feed │ Launch plan │ Calendar           │ History  Links  Agenda │
-│ Search              │                                         │                        │
-│ Today               │  Feed  -is:archived sort:edited         │ Launch plan            │
-│ Tasks               │  [All] Mine  Agents 3                   │ Claude  +12 −3         │
-│ Calendar            │                                         │ 4 min ago · Added a    │
-│                     │  PINNED                                 │ risks section          │
-│ PINNED              │  ┌ Launch plan  Projects     4 min ago ┐│ You  +6 −0             │
-│ • Launch plan       │  │ Claude · Added a risks …  +12 −3    ││ 2 days ago             │
-│ • A feed for notes  │  │ ☐ Record the demo video  Oct 7      ││                        │
-│                     │  └─────────────────────────────────────┘│                        │
-│ SAVED SEARCHES      │  TODAY                                  │                        │
-│ Agent edits…     6  │  ┌ 2026-10-05  Journal      22 min ago ┐│                        │
-│ Projects         2  │  │ ◷ Timer 25m                         ││                        │
-│                     │  └─────────────────────────────────────┘│                        │
-│ Sources          ●  │                                         │                        │
-│ Archive          4  │                                         │                        │
-│ Trash            4  │                                         │                        │
-│ Extensions          │                                         │                        │
-│ Settings            │                                         │                        │
-├─────────────────────┴─────────────────────────────────────────┴────────────────────────┤
-│ NORMAL  Saved                     j/k · ↵ open · o beside · e archive · # trash   09:00 │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Places ──────────┬ Feed ───────────────────────┬ Launch plan │ Reading list ─────┬ History  Links  Agenda ┐
+│ Feed      3 new  │ [All] Mine  Agents 3        │                               │ Launch plan            │
+│ Search           │ -is:archived sort:edited    │ Launch plan                   │ Claude  +12 −3         │
+│ Today            │ PINNED                      │ Ship the public beta on       │ 4 min ago · Added a    │
+│ Tasks            │ ┌ Launch plan   4 min ago ┐ │ Oct 20. Agents keep the       │ risks section          │
+│ Calendar         │ │ Claude · Added risks…   │ │ checklist current.            │ You  +6 −0             │
+│                  │ │ ☐ Record the demo Oct 7 │ │                               │ 2 days ago             │
+│ PINNED           │ └─────────────────────────┘ │ This week                     │                        │
+│ Launch plan      │ TODAY                       │ ☑ Freeze the onboarding copy  │                        │
+│ A feed for notes │ ┌ 2026-10-05   22 min ago ┐ │ ☐ Record the demo video Oct 7 │                        │
+│ SAVED SEARCHES   │ │ ◷ Timer 25m             │ │                               │                        │
+│ Agent edits…  6  │ └─────────────────────────┘ │                               │                        │
+│ Sources  ●       │                             │                               │                        │
+│ Archive 4        │                             │                               │                        │
+│ Trash 4          │                             │                               │                        │
+│ Extensions       │                             │                               │                        │
+│ Settings         │                             │                               │                        │
+├──────────────────┴─────────────────────────────┴───────────────────────────────┴────────────────────────┤
+│ NORMAL  Saved                                    j/k · ↵ open · e archive · # trash · p pin · u undo     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Places, top to bottom:**
@@ -402,21 +807,23 @@ Settings and Extensions stay in the core, so turning every extension off still l
 - **Purge**: removing a deleted note's text from history. _Avoid_: hard delete.
 - **Context panel**: the right-hand panel of views about the note in focus. _Avoid_: sidebar, inspector.
 
-### 7.2 Key flows
+### 9.2 Key flows
 
-All five work in the prototype.
+All five work in the prototypes, by touch in [navigation-mobile.html](prototypes/navigation-mobile.html) and by keys in both it (set to a device with a keyboard) and [navigation-places.html](prototypes/navigation-places.html).
 
-**Triage the Feed.** `g f` (or click Feed). `j`/`k` through cards; the focused card shows its keys underneath. `e` archives with a toast "Archived 'Reading list' · a change to archive.json · Undo `u`" and the card slides out. `#` sends one to Trash. `p` pins (it jumps to Pinned). `x` on several, then `e`, archives them in one change. `o` opens the note beside the Feed; `j`/`k` then change what's beside, like a mail client's reading pane. `Tab` to Agents to see only what agents did; the purple dots go as you look. When the Feed is empty: "Inbox zero for notes."
+**Triage the Feed.** `g f` (or click Feed). `j`/`k` through cards; the focused card shows its keys underneath. `e` archives with a toast "Archived 'Reading list' · a change to archive.json · Undo `u`" and the card slides out. `#` sends one to Trash. `p` pins (it jumps to Pinned). `x` on several, then `e`, archives them in one change. `o` opens the note beside the Feed; `j`/`k` then change what's beside, like a mail client's reading pane. `Tab` to Agents to see only what agents did; the purple dots go as you look. When the Feed is empty: "Inbox zero for notes." *By touch:* Feed on the bottom bar; swipe right to archive, left to trash, Undo on the snackbar; long-press then Pin, Archive or Trash for several; tap to read, back to return to the same card.
 
-**Find a note.** `⌘K`, type `launch`. Notes whose titles match come first, then ones whose text matches with the line shown and the words marked; tasks, events and contacts in their own sections. Add `in:Projects/` (Tab completes it). `↵` opens. Or `Tab` for actions and `e` to archive it without opening. Or `⌘↵` to see all results as cards, and `⌘S` to save them as a place.
+**Find a note.** `⌘K`, type `launch`. Notes whose titles match come first, then ones whose text matches with the line shown and the words marked; tasks, events and contacts in their own sections. Add `in:Projects/` (Tab completes it). `↵` opens. Or `Tab` for actions and `e` to archive it without opening. Or `⌘↵` to see all results as cards, and `⌘S` to save them as a place. *By touch:* Search on the bottom bar; type, tap chips to add filters; tap a result, or See all as a list and Save.
 
-**Open a calendar event.** `⌘K`, type `dentist`. The event is under Events with its day and time. `↵` opens Calendar at that day with the event selected and its details below: where, which calendar, "Notes that link here" and `n` to make a meeting note. `↵` on the event opens the note that links to it. (In a note, clicking an event chip does the same.)
+**Open a calendar event.** `⌘K`, type `dentist`. The event is under Events with its day and time. `↵` opens Calendar at that day with the event selected and its details below: where, which calendar, "Notes that link here" and `n` to make a meeting note. `↵` on the event opens the note that links to it. (In a note, clicking an event chip does the same.) *By touch:* Search, `dentist`, tap the event: a sheet with its details, the notes that link to it, and Make a meeting note.
 
-**Restore from Trash.** `g x`. Each row says when it was deleted, by whom, and how long it has left, with a bar. `↵` shows the last version, read-only. `r` restores it: "Restored 'Untitled 3' to Untitled 3.md, with its history". `D` deletes one forever after asking; `⌘⇧⌫` empties Trash after asking.
+**Restore from Trash.** `g x`. Each row says when it was deleted, by whom, and how long it has left, with a bar. `↵` shows the last version, read-only. `r` restores it: "Restored 'Untitled 3' to Untitled 3.md, with its history". `D` deletes one forever after asking; `⌘⇧⌫` empties Trash after asking. *By touch:* Places › Trash; swipe right to restore, left to delete forever (it asks), or tap to look inside.
 
-**Add an extension's panel.** `g e`, select Word count in the Catalog, `↵` to install. Its row says what it adds ("Panel: Word count") before anything runs. It appears in the context panel's switcher and opens there. `Ctrl-W l` to the panel, `m`: "Add to Places", "Open as a tab" or "Close the panel". Adding to Places writes `places.json`, and it's undoable like any change.
+**Add an extension's panel.** `g e`, select Word count in the Catalog, `↵` to install. Its row says what it adds ("Panel: Word count") before anything runs. It appears in the context panel's switcher and opens there. `Ctrl-W l` to the panel, `m`: "Add to Places", "Open as a tab" or "Close the panel". Adding to Places writes `places.json`, and it's undoable like any change. *By touch:* Places › Extensions › Install; its view appears in the note's ◷ sheet, and its place (if it has one) in the Places sheet, ready for the bottom bar.
 
-### 7.3 Keyboard map
+### 9.3 Keyboard map
+
+With a keyboard, at any width (a phone with a Bluetooth keyboard included). Without one, none of this shows.
 
 Mod is `⌘` on a Mac and `Ctrl` elsewhere. Keys match the character typed (Dvorak-safe), through `web/src/keys.ts`.
 
@@ -435,7 +842,7 @@ Every one is a command with a title, so `⌘⇧P` finds it and settings can rebi
 
 Two clashes to know about: in browsers `⌘⌥B` is Chrome's bookmarks manager on some setups, and off a Mac `Ctrl-W` closes the browser tab, which a page can't stop. The app already lives with the second for Vim's `Ctrl-W`; an installed app (PWA) gets both keys.
 
-### 7.4 Data model
+### 9.4 Data model
 
 New files, all JSON with a schema, all in history:
 
@@ -444,7 +851,7 @@ New files, all JSON with a schema, all in history:
 | `.common-ink/archive.json` | `{"archived": [paths, sorted]}` | archive and unarchive operations |
 | `.common-ink/pins.json` | `{"pinned": [paths, in order]}` | pin and unpin |
 | `.common-ink/places.json` | `{"order": [place ids], "hidden": [ids], "saved": {"name": "query"}}` | Places, and saving a search |
-| `.common-ink/users/<you>/feed.json` | `{"seenThrough": <revision>}` | leaving the Feed (only if decision 11 is yes) |
+| `.common-ink/users/<you>/feed.json` | `{"seenThrough": <revision>}` | leaving the Feed (only if decision 17 is yes) |
 
 No new file for Trash. It's a query over history:
 
@@ -468,16 +875,16 @@ ORDER BY time DESC;
 
 **Rename.** When v2 gets a rename (it has none today), the rename writes the note and updates `archive.json`, `pins.json`, `labels.json` and saved searches that name it, as one change.
 
-**Should pins and archive be per person?** Today a workspace is one person, so they're workspace files. When workspaces are shared, pins become per person (`.common-ink/users/<you>/pins.json`, as v1's stars were), and archive stays shared. That's decision 5.
+**Should pins and archive be per person?** Today a workspace is one person, so they're workspace files. When workspaces are shared, pins become per person (`.common-ink/users/<you>/pins.json`, as v1's stars were), and archive stays shared. That's decision 16.
 
-### 7.5 History and undo, together
+### 9.5 History and undo, together
 
 - `u` right after a triage undoes it: the change to `archive.json`, `pins.json`, or the delete. It's the same undo as everywhere (ADR 0002).
 - History's filter by author ("undo what the agent did") also covers an agent archiving or deleting notes.
 - Trash's Restore is undo of one specific change, so it works even after many other changes.
 - Purge is the one thing undo can't reach, which is why it asks, can't be done by agents, and leaves a line.
 
-### 7.6 Extension API
+### 9.6 Extension API
 
 What the manifest and `ctx` would need. Everything is declared first, so Places, the context panel and search know about an extension before its code runs (ADR 0006).
 
@@ -505,93 +912,168 @@ What the manifest and `ctx` would need. Everything is declared first, so Places,
 - **`ctx.feed.decorate(fn)`**: adds a badge to a card ("3 open tasks · 1 overdue" from Tasks). No other way to change cards.
 - **Embed contributions gain `summary`**, a template like `"Timer {duration}"`, which the Feed shows instead of drawing the embed, with no code running.
 - **`common-ink/query`**: the query parser and matcher as a library, shared by the Worker, the app and extensions.
-- **`ctx.places.reveal(id)`, `ctx.views.move(id, location)`**: so an extension's command can open its place or move its view; the user's choice in `layout.json` wins.
+- **`ctx.places.reveal(id)`, `ctx.views.move(id, location)`**: so an extension's command can open its place or move its view; the user's choice in the layout wins.
+- **`requires`** on the extension and on any contribution, **`contributes.toolbar`** for the keyboard toolbar, **`contributes.layout`** for the Workbench's parts, and **`ctx.device`**: see [7.7](#77-manifest-and-api).
+- **Context views** are drawn the same way wherever they show (sheet, side sheet, docked panel); a view gets its width class from `ctx.device` and is told when it changes.
 
-### 7.7 Risks
+### 9.7 Risks
 
 - **Purging edits history**, which ADR 0002 treats as the source of truth. It's per file, and history is per file, so it's contained, but it needs a property test: purge any path at any point and every other file's history replays the same.
 - **Full-text search** is new infrastructure (FTS5 in the Durable Object, kept in step in the same transaction as writes, as the records index is).
 - **Live tasks in cards** write from a list, not an editor; they must merge like any edit (ADR 0002 already merges).
+- **Keyboard detection is a guess** (7.2). A wrong guess shows key hints on a phone or hides Vim on a tablet; Settings › This device and the Extensions view make it visible and one switch fixes it.
+- **Gestures can clash**: a swipe on a card against the system's back swipe (start 24px in from the edge), against a table or code block that scrolls sideways inside a card (cards clip them, so they don't scroll there), and against embeds (quiet in cards).
+- **Per-device files** add history: device files change rarely, but a per-device layout changes as often as today's `layout.json` does, once per device.
 - **History noise**: every triage key is a change. Changes to `.common-ink/` are already in history (layout.json is); History's filter should hide them by default.
 
-## 8. Build plan
+## 10. Build plan
 
-Pull-request sized, in order. Each ships something you can use, with its own Preview and a "Try this PR" note.
+Pull-request sized, mobile first. Each ships something you can use, with its own Preview and a "Try this PR" note. Each is checked on a phone (`--device phone`) as well as a desktop.
 
-1. **Query library.** `common-ink/query`: the parser and matcher for words, `is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, with property tests. No UI.
-2. **Full-text index and `search`.** FTS5 in the workspace's Durable Object, updated in the write transaction; the `search` operation over MCP and the CLI (`common-ink search 'launch in:Projects/'`).
-3. **Archive.** `archive.json`, the `archive`/`unarchive` operations, `:archive`, `⌘⇧E`, the banner on an archived note, `archived` in `list_files`, archived last in `⌘P`.
-4. **Trash and Restore.** The Trash view as a tab (from the command bar until Places lands), Restore as undo of the delete, "in Trash · Restore" on links to a deleted note.
-5. **Purge and retention.** `purge`, Delete forever, Empty Trash, the daily alarm, `trash.retentionDays`, the property test.
-6. **Places.** Replace the notes list: `contributes.places`, `places.json`, `⌘B`, `J`/`K`, go keys. Daily notes, Tasks and Calendar contribute their places. Pins (`pins.json`, `p`, `:pin`).
-7. **The Feed.** A default extension: cards, date groups, pinned first, `j`/`k`/`↵`/`o`/`e`/`#`/`dd`/`p`/`x`/`u`, scrolling in pages, the new-changes pill, quiet embeds with `summary`.
-8. **Agents in the Feed.** All, Mine, Agents; summaries from `ctx.changes.describe`; grouping runs of an agent's changes; `c` for the diff; unseen dots (if decision 11).
-9. **One search bar.** `⌘K`, sections, filter completion, providers from extensions (`contributes.search`: events, contacts, tasks, settings), actions on results, `⌘↵` results as a tab, `⌘S` save as a place.
-10. **The context panel.** The switcher, `views.context`, `m` to move a view, `Ctrl-W` focus. Links (backlinks) as a default extension.
-11. **Live embeds on the focused card** (`feed.liveEmbeds`), once 7 has been lived with.
-12. **Bottom panel**, only if something needs it.
+1. **Devices and capabilities.** In the core:
+   - `ctx.device`: width class, pointer, touch, and keyboard detection.
+   - The device folder (`devices/<id>/device.json`) and Settings › This device.
+   - `requires` on extensions and contributions, checked and explained in the Extensions view, with per-device overrides.
+   - Levers: `?device=` and the probe's `--device`.
+2. **Vim and the Workbench declare what they need.**
+   - Vim declares `requires: { keyboard: true }`. It turns on live when a keyboard is found, through a compartment.
+   - Tabs and splits declare their widths. Windows that don't fit are suspended, and the layout is kept.
+   - Layout per device (if decision 13).
+   - Keybinding hints show only with a keyboard.
+3. **The phone shell.**
+   - The bottom bar (`places.json`'s `bar`), the Places sheet (at first: All notes, the existing views, Extensions, Settings), and full-screen stack navigation with back.
+   - The viewport, safe areas, and `visualViewport` for the keyboard.
+   - Sheets for context views (`views.context`).
+   - `contributes.toolbar` and the keyboard toolbar, with Lists' and Tasks' buttons.
 
-Steps 1 to 5 are useful alone and don't depend on the navigation decision. Steps 6 onwards follow it.
+   After this step v2 is usable on a phone.
+4. **Query library.** `common-ink/query`: the parser and matcher for words, `is:`, `in:`, `from:`, `type:`, `edited:` and `has:`, with property tests. No UI.
+5. **Full-text index and search.**
+   - FTS5 in the workspace's Durable Object, updated in the write transaction.
+   - The `search` operation over MCP and the CLI.
+   - The search screen: full screen with chips on a phone, a dialog with `⌘K` and filter completion on wider screens.
+   - Providers from extensions (`contributes.search`): events, contacts, tasks, settings.
+6. **Archive.**
+   - `archive.json`, and the `archive` and `unarchive` operations.
+   - The ⋯ menu item, `:archive` and `⌘⇧E`.
+   - The banner on an archived note, `archived` in `list_files`, and archived notes last in search.
+7. **Trash and Restore.**
+   - The Trash place, with swipes on touch and `r`/`D` with keys.
+   - Restore as undo of the delete.
+   - "In Trash · Restore" on links to a deleted note.
+8. **Purge and retention.** `purge`, Delete forever, Empty Trash, the daily alarm, `trash.retentionDays`, and the property test.
+9. **The Feed, touch first.**
+   - Cards, date groups, pinned first, pages as you scroll, the new-changes pill.
+   - Swipes with the `feed.swipe.*` settings, long-press to select, the undo snackbar.
+   - Quiet embeds with `summary`.
+   - Then the keys: `j`/`k`/`↵`/`e`/`#`/`dd`/`p`/`x`/`u`.
+10. **Places on wide screens.**
+    - The Places sidebar, the list beside the note (two windows), `⌘B` and the go keys.
+    - `contributes.places`, so Daily notes, Tasks and Calendar add theirs.
+    - Pins (`pins.json`) and saved searches.
+11. **Agents in the Feed.** All, Mine and Agents; summaries; grouping an agent's runs of changes; the diff; unseen dots (if decision 17).
+12. **The docked context panel** at large widths, `m` to move a view, and Links as a default extension.
+13. **Embeds by device.** Live on the focused card with a keyboard (`feed.liveEmbeds`); "Tap to run" for heavy embeds on phones; `minWidth` for html-apps.
+14. **Bottom panel**, only if something needs it.
 
-## 9. Testing with you
+Steps 4 to 8 don't depend on the navigation decision and can go in any order after step 1. Steps 1 to 3 are the mobile foundation: everything after them is built and checked on a phone first.
 
-There's no one else to recruit, so the plan is three short sessions with you, using the prototypes first and Previews later. Each task has a goal you can check yourself; time it if you like.
+## 11. Testing with you
 
-### Session 1: prototypes (30 minutes, now)
+There's no one else to recruit, so the plan is four short sessions with you, using the prototypes first and Previews later. Each task has a goal you can check yourself; time it if you like.
 
-Open both prototypes side by side. For each, do the tasks without the mouse, then answer the questions.
+### Session 1: on your phone (20 minutes, now)
+
+Open [navigation-mobile.html](prototypes/navigation-mobile.html) on your phone: from the published study, or the file from the repo. Use it one-handed, with no keyboard.
 
 | # | Task | Success looks like |
 | --- | --- | --- |
-| 1 | Get the Feed down to what you want to keep: archive 5, trash 2, pin 1 | Under 90 seconds, no mouse, no mistake you needed to undo (or the undo felt easy) |
-| 2 | Find what agents changed today and look at what they changed | You reach the Agents filter or `from:agent` and use `c` or `o` without the `?` sheet |
-| 3 | Find the note about trash retention | Under 15 seconds from anywhere |
-| 4 | Open tomorrow's dentist appointment and the note that links to it | Under 20 seconds; you knew where events would be |
-| 5 | Restore the deleted "Untitled 3" | Under 15 seconds; you were sure what Restore would do |
-| 6 | Install Word count and put its view in Places | Under 30 seconds |
-| 7 | Save "notes in Projects that mention launch" as a place | Under 20 seconds |
+| 1 | Triage the first ten cards: archive five, trash two, pin one | Under 60 seconds; no swipe did the wrong thing, or Undo fixed it at once |
+| 2 | Archive three notes in one go | You found long-press or Select without help |
+| 3 | Find the note about trash retention | Under 15 seconds |
+| 4 | Open tomorrow's dentist appointment and the note that links to it | Under 20 seconds |
+| 5 | Restore "Untitled 3" from Trash | Under 15 seconds; you found Trash in Places |
+| 6 | Add a task to today's note with a due date, using the toolbar | You didn't have to type `- [ ]` or `due:` |
+| 7 | Put Tasks on the bottom bar in place of Calendar | Under 30 seconds |
+| 8 | See why Vim is off on your phone | You found it in Extensions, and the reason made sense |
 
-Questions after:
+### Session 2: the desktop and the alternative (30 minutes)
 
-1. Which one did you want to keep using? Why?
-2. Did the cards tell you enough to archive without opening the note? What was missing or too much?
-3. Did quiet embeds feel right, or did you want them live? (Try the three settings in the prototype controls.)
-4. When an agent changed an archived note, did you want it back in the Feed?
-5. Did anything feel hidden, or anything feel like clutter?
-6. Was there a key you reached for that didn't work?
+Open [navigation-mobile.html](prototypes/navigation-mobile.html) set to Laptop, and [navigation-workbench.html](prototypes/navigation-workbench.html), side by side. Do the tasks without the mouse. Then set the first to "Laptop, narrow window" and to "Tablet + keyboard", and look at what changes.
 
-### Session 2: a week on a Preview (after build step 7)
+| # | Task | Success looks like |
+| --- | --- | --- |
+| 1 | Get the Feed down to what you want to keep: archive 5, trash 2, pin 1 | Under 90 seconds, no mouse |
+| 2 | Find what agents changed today | You reach Agents or `from:agent` without the `?` sheet |
+| 3 | Find the note about trash retention | Under 15 seconds |
+| 4 | Restore "Untitled 3" | Under 15 seconds |
+| 5 | Save "notes in Projects that mention launch" as a place | Under 20 seconds |
+| 6 | In the narrow window, find where your tabs went | You found "kept", and believed they'd come back |
 
-Use the Feed as home for a week. Add a line to the day's journal when something annoys you. Measured from history, not memory:
+[navigation-places.html](prototypes/navigation-places.html) has more of the keyboard flows (the `c` diff, rows, the context panel's `m` menu) if you want to go deeper.
 
-- Triage actions per day, and how many were undone within a minute (a high undo rate means a key is in the wrong place).
-- Restores from Trash (each one means a delete was a mistake or Trash was used as "later").
-- How often you open Archive (if never, it's working; if often, archive is being used as "later" and pins might not be enough).
-- Whether you still use `⌘P` more than the Feed to open notes.
+Questions after sessions 1 and 2:
 
-### Session 3: search (after build step 9)
+1. Which one did you want to keep using, on each device? Why?
+2. Did the cards tell you enough to archive without opening the note?
+3. Did the swipe directions feel right? Did you ever swipe the wrong way?
+4. Did the phone and the laptop feel like the same app?
+5. Was anything hidden that you expected to see, or anything shown that felt like clutter?
+6. When something was off on a device (Vim, tabs, Open beside), did the reason make sense, and would you want to turn it on anyway?
 
-Ten real lookups over a few days, each noted with what you typed, whether the first result was right, and whether you used a filter. Success: the first result is right for eight of ten, and filters come to you without the `?` sheet.
+### Session 3: a week on a Preview, phone and laptop (after build step 9)
 
-## 10. Decisions for you
+Use the Feed as home on both for a week. Add a line to the day's journal when something annoys you. Measured from history, not memory:
+
+- Triage actions per day on each device, and how many were undone within a minute. A high undo rate on the phone means a swipe is in the wrong direction or too easy.
+- Restores from Trash. Each one means a delete was a mistake, or Trash was used as "later".
+- How often you open Archive. Never means it's working; often means archive is being used as "later".
+- Whether the keyboard was detected on the devices you have, and whether you had to correct it.
+
+### Session 4: search (after build step 5)
+
+Ten real lookups over a few days, on both devices, each noted with what you typed, whether the first result was right, and whether you used a filter or chip. Success: the first result is right for eight of ten.
+
+## 12. Decisions for you
 
 The choices only you can make. My recommendation is in bold.
 
-1. **Which model?** A: Workbench, B: Feed only, **C: Places and the Feed**.
-2. **What to call the Feed?** **Feed**, Notes (v1's word), or Home.
-3. **Does an agent's edit bring an archived note back to the Feed?** **No; it shows under Agents, marked archived.** Yes (Gmail's way), as a setting.
-4. **Archived notes in `⌘P` and search:** **shown last and marked**, or hidden unless you ask (`is:archived`, v1's way).
-5. **Pins: the workspace's or each person's?** **The workspace's now**, each person's when workspaces are shared. Archive stays the workspace's either way.
-6. **Trash:** **30 days as a setting (`trash.retentionDays`)**, or fixed. And **agents can't purge** (as v1)?
-7. **Embeds in cards:** never, **on the focused card**, or always.
-8. **Trash key:** **both `#` and `dd`**, or one of them. And **`p` for pin**?
-9. **What opens when the app starts:** **your last layout, with the Feed when nothing's open**, or always the Feed.
-10. **Activity bar icons, or text Places?** **Text**, collapsible to nothing with `⌘B`.
-11. **Unseen dots for agents' changes**, which means a small `feed.json` change once per visit: **yes**, or no dots.
-12. **A file tree:** **not in Places** (folders by `in:` and saved searches), or as an optional view for those who want one.
-13. **Bottom panel:** **not until something needs it**, or now for Extension activity.
+**The model**
 
-## 11. Sources
+1. **Which model?** A: Workbench, B: Feed only, **C: Places and the Feed, mobile first**.
+2. **What to call the Feed?** **Feed**, Notes (v1's word), or Home.
+3. **Activity bar icons, or text Places?** **Text**: a sheet on phones, a sidebar on wide screens.
+4. **On wide screens, a list beside the note** (the Feed as a column, notes beside it), **or the Feed as a tab** like any note (the first draft)? **Beside.**
+
+**Phones**
+
+5. **Swipe directions:** **right to archive, left to trash**, or right to pin and left to trash (Apple Notes). Both are settings either way.
+6. **The bottom bar's three places by default:** **Feed, Today, Calendar**, or Feed, Today, Tasks.
+7. **An installable web app (PWA) first, or a native shell?** **A PWA first.** A native shell only if the PWA hits a wall (keyboard detection, haptics, share sheet).
+
+**Devices and extensions**
+
+8. **How extensions say where they apply:** **capabilities they need (`requires`)**, a device class, or expressions.
+9. **Tabs on tablets in portrait (medium width)?** **Yes**, or only from expanded width.
+10. **Keyboard detection:** **assume one on desktops, detect it elsewhere, and keep it once seen**, with Auto, Yes and No per device.
+11. **Per-device overrides** ("On here", "Off here") in a device file: **yes**, or the workspace setting only.
+12. **Device files** in `.common-ink/users/<you>/devices/`: **yes, files with history**, or kept in the browser only (not observable).
+13. **Layout: per device, or shared?** **Per device**, with a new wide device starting from your last wide layout. Shared is how v2 works now.
+
+**The Feed, archive and trash** (from the first draft)
+
+14. **Does an agent's edit bring an archived note back to the Feed?** **No; it shows under Agents, marked archived.**
+15. **Archived notes in search:** **shown last and marked**, or hidden unless you ask (`is:archived`).
+16. **Pins: the workspace's or each person's?** **The workspace's now**, each person's when workspaces are shared.
+17. **Unseen dots for agents' changes** (a small `feed.json` change once per visit): **yes**, or no dots.
+18. **Trash:** **30 days as a setting**, and **agents can't purge**.
+19. **Embeds in cards:** **quiet; live on the focused card with a keyboard; heavy ones wait for a tap on phones**.
+20. **Keys:** **`#` and `dd` to trash, `p` to pin**.
+21. **What opens at start:** **the place you were last on, on this device**, or always the Feed.
+22. **A file tree:** **not in Places** (folders by `in:` and saved searches), or as an optional view.
+23. **Bottom panel:** **not until something needs it**.
+
+## 13. Sources
 
 Navigation and panels
 
@@ -655,3 +1137,30 @@ Common Ink
 
 - PRINCIPLES.md; ADR 0002 (history), 0003 (no frontmatter), 0006 (extensions), 0007 (data sources); docs/extensions.md.
 - Common Ink v1's README, sections "Notes, archive and Trash" and "Search".
+
+Phones and devices
+
+50. Gmail Help, Change your Gmail settings (swipe actions): https://support.google.com/mail/answer/6562?hl=en&co=GENIE.Platform%3DAndroid
+51. Readwise, Reader Public Beta Update #2 (custom swipes): https://readwise.io/reader/update-feb2023
+52. Readwise Docs, Changelog (shorter long swipe): https://docs.readwise.io/changelog
+53. Things Support, Using Gestures: https://culturedcode.com/things/support/articles/2803582/
+54. Apple Support, Use Notes on your iPhone, iPad and iPod touch (pin and delete by swiping): https://support.apple.com/en-us/118442
+55. Bear FAQ, Pin notes and tags: https://bear.app/faq/pin-notes-and-tags/
+56. Bear blog, Take action on multiple notes with the Drop Bar: https://blog.bear.app/2018/02/bear-tips-take-action-on-multiple-notes-with-the-drop-bar/
+57. The Sweet Setup, The best notes app for iPhone and iPad: Bear (swipes on iOS): https://thesweetsetup.com/apps/the-best-note-taking-apps-for-ios/
+58. Craft Help Center, Navigation: https://support.craft.do/en/introduction/navigation
+59. Craft Help Center, Tab Management: https://support.craft.do/en/introduction/navigation/tabs
+60. Linear changelog, Customize your navigation in Linear Mobile: https://linear.app/changelog/2026-01-22-customize-your-navigation-in-linear-mobile
+61. Linear Mobile: https://linear.app/mobile
+62. Obsidian Help, Mobile app: https://obsidian.md/help/mobile
+63. Obsidian Developer Docs, Mobile development: https://docs.obsidian.md/Plugins/Getting%20started/Mobile%20development
+64. Obsidian Developer Docs, PluginManifest (`isDesktopOnly`): https://docs.obsidian.md/Reference/TypeScript+API/PluginManifest
+65. Material Design 3, Breakpoints (window size classes): https://m3.material.io/foundations/layout/applying-layout
+66. Android Developers, Use window size classes: https://developer.android.com/develop/ui/views/layout/use-window-size-classes
+67. MDN, `pointer` media feature: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/pointer
+68. MDN, `any-pointer` media feature: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/any-pointer
+69. MDN, VirtualKeyboard API: https://developer.mozilla.org/en-US/docs/Web/API/VirtualKeyboard_API
+70. MDN, VisualViewport: https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport
+71. VS Code, when clause contexts: https://github.com/microsoft/vscode-docs/blob/main/api/references/when-clause-contexts.md
+72. Apple WWDC24, Elevate your tab and sidebar experience in iPadOS: https://developer.apple.com/videos/play/wwdc2024/10147/
+73. Viewport resize behavior explainer (`interactive-widget`): https://github.com/bramus/viewport-resize-behavior/blob/main/explainer.md

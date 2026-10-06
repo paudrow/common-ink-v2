@@ -195,7 +195,17 @@ body.sec-open #sec { display: block; }
 .ev.cursor { background: var(--selection); }
 .ev .tm { color: var(--muted); font-size: 0.72rem; }
 .callout { font-size: 0.78rem; color: var(--muted); padding: 0.4rem 0.9rem; }
-@media (max-width: 760px) { body { --side-w: 0px; } #side, #sec { display: none !important; } }
+/* Narrow screens: the activity bar moves to the bottom and a side bar view covers the editor. */
+@media (max-width: 760px) {
+  body { grid-template: "main" 1fr "bar" auto / 1fr; }
+  #bar { flex-direction: row; justify-content: space-around; border-right: 0; border-top: 1px solid var(--line); padding: 0.15rem 0; }
+  #bar .grow { display: none; }
+  .act[aria-pressed="true"]::before { left: 8px; right: 8px; top: auto; bottom: -2px; width: auto; height: 2px; }
+  #side { position: fixed; left: 0; right: 0; top: 0; bottom: calc(44px + 0.4rem); z-index: 10; background: var(--bg); }
+  #status { display: none; }
+  #bottom, #sec { display: none !important; }
+  .note { padding: 1rem; }
+}
 </style>
 </head>
 <body>
@@ -578,6 +588,7 @@ function activate(how) {
   if (r.ev) return openTab({ kind: "event", ev: r.ev.id, title: r.ev.title });
 }
 function openTab(t, how) {
+  if (innerWidth <= 760) S.side = false;
   const i = S.tabs.findIndex((x) => x.kind === t.kind && (x.path || x.ev || x.title) === (t.path || t.ev || t.title));
   if (i >= 0) S.activeTab = i;
   else { const p = S.tabs.findIndex((x) => x.preview); if (p >= 0 && how !== "keep") { S.tabs[p] = { ...t, preview: true }; S.activeTab = p; } else { S.tabs.push({ ...t, preview: how !== "keep" }); S.activeTab = S.tabs.length - 1; } }

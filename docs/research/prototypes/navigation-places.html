@@ -258,10 +258,21 @@ body.no-places #places, body.no-panel #panel { display: none; }
 .json { font-family: var(--mono); font-size: 0.78rem; background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; white-space: pre; overflow: auto; margin: 0.4rem 0 1rem; }
 .settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; font-size: 0.82rem; margin: 0.4rem 0 1rem; }
 .settings-grid .mono { color: var(--accent-ink); }
+#mbar { display: none; }
+/* Narrow screens: the same Places, as a drawer from a bottom bar. navigation-mobile.html is the full phone design. */
 @media (max-width: 760px) {
-  body { --places-w: 0px; --panel-w: 0px; }
-  #places, #panel { display: none; }
+  body { grid-template: "main" 1fr "mbar" auto / 1fr; }
+  #places, #panel, #status { display: none; }
+  body.show-places #places { display: flex; position: fixed; inset: 0 auto 0 0; width: min(18rem, 86vw); z-index: 20; background: var(--bg); box-shadow: var(--shadow-lg); }
+  #mbar { grid-area: mbar; display: flex; border-top: 1px solid var(--line); background: var(--bg); }
+  #mbar button { flex: 1; padding: 0.6rem 0; font-size: 0.78rem; color: var(--muted); }
+  .feed, .list { padding: 0 0.6rem 4rem; }
+  .filters .faint, .card .hint, .feed-head .q { display: none !important; }
+  .cal { grid-template-columns: 1fr; }
+  .note { padding: 1rem; }
 }
+@media (max-width: 599px) { .tabs { display: none; } }
+@media (hover: none) { .card .hint { display: none !important; } }
 </style>
 </head>
 <body>
@@ -272,6 +283,7 @@ body.no-places #places, body.no-panel #panel { display: none; }
 </main>
 <aside id="panel" aria-label="Context panel"></aside>
 <footer class="status" id="status"></footer>
+<nav id="mbar" aria-label="Bottom bar"><button data-m="feed">Feed</button><button data-m="search">Search</button><button data-m="today">Today</button><button data-m="places">Places</button></nav>
 <div class="proto" id="proto" hidden>
   <b>Prototype controls</b>
   <label>Theme <select id="pTheme"><option value="">System</option><option>light</option><option>dark</option></select></label>
@@ -637,7 +649,7 @@ function renderPlaces() {
     const dot = r.id === "sources" ? '<span class="dot" title="Google Calendar: synced 3 min ago"></span>' : "";
     return `<div class="place${S.focus === "places" && i === S.placeCursor ? " cursor" : ""}" data-place="${i}" aria-current="${current}" title="${r.query ? esc(r.query) : ""}">${r.kind === "pin" ? '<span class="pin" style="color:var(--accent)">•</span>' : ""}<span class="name">${esc(r.title)}</span>${dot}<span class="count">${placeCount(r)}</span><span class="key">${r.key || ""}</span></div>`;
   }).join("");
-  el.querySelectorAll("[data-place]").forEach((d) => d.addEventListener("click", () => { S.placeCursor = +d.dataset.place; openPlace(nav[+d.dataset.place]); }));
+  el.querySelectorAll("[data-place]").forEach((d) => d.addEventListener("click", () => { S.placeCursor = +d.dataset.place; document.body.classList.remove("show-places"); openPlace(nav[+d.dataset.place]); }));
 }
 function tabTitle(t) {
   return { feed: "Feed", archive: "Archive", trash: "Trash", calendar: "Calendar", tasks: "Tasks", extensions: "Extensions", settings: "Settings", sources: "Sources", results: "Search: " + (t.query || ""), saved: t.title, note: t.path ? titleOf(noteByPath(t.path) || { text: "", path: t.path }) : "", panel: t.title }[t.kind] || t.kind;
@@ -1394,6 +1406,7 @@ function simulateAgent() {
 $("#pAgent").onclick = simulateAgent;
 setTimeout(simulateAgent, 45000);
 
+document.querySelectorAll("#mbar [data-m]").forEach((b) => (b.onclick = () => { const m = b.dataset.m; if (m === "places") document.body.classList.toggle("show-places"); else { document.body.classList.remove("show-places"); openPlace({ id: m }); } }));
 reset();
 render();
 armLive();
