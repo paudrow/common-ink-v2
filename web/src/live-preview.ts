@@ -9,6 +9,7 @@
 import { EditorSelection, EditorState, Facet, Prec, StateField, type Extension, type Line, type Range, type StateCommand } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet, type ViewUpdate, type WidgetType } from "@codemirror/view";
+import { getCM } from "@replit/codemirror-vim";
 
 /** One thing to draw on a line, at document positions. */
 export interface Preview {
@@ -119,6 +120,12 @@ const blockFields = Facet.define<StateField<DecorationSet>>();
  * too. A click lands where it was clicked. (Vim's j and k carry no user event, so this can't wait
  * for one.)
  */
+/** Whether Vim is partway through a command: a count, an operator, a register, or a key waiting for its argument ('j's "j" names a mark). */
+function vimPending(view: EditorView): boolean {
+  const input = (getCM(view) as { state?: { vim?: { inputState?: { prefixRepeat: string[]; motionRepeat: string[]; operator?: string | null; keyBuffer: string[]; registerName?: string } } } } | null)?.state?.vim?.inputState;
+  return !!input && (input.prefixRepeat.length > 0 || input.motionRepeat.length > 0 || !!input.operator || input.keyBuffer.length > 0 || !!input.registerName);
+}
+
 /**
  * Whether the key being handled steps one line up or down (j, k, or an arrow, by the character typed).
  * Only such a step goes into a block at a note's very start or end: a G, a count, a search or a click
@@ -126,8 +133,8 @@ const blockFields = Facet.define<StateField<DecorationSet>>();
  */
 let stepping = false;
 const watchSteps = EditorView.domEventObservers({
-  keydown(e) {
-    stepping = ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey;
+  keydown(e, view) {
+    stepping = ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !vimPending(view);
     // Over once the key is handled: the move it makes comes while it is.
     queueMicrotask(() => (stepping = false));
   },
