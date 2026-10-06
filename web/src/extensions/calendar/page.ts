@@ -65,6 +65,20 @@ function inZone(day: Day, minutes: number, zone: string | undefined): string {
 
 const minutesOf = (time: string) => +time.slice(0, 2) * 60 + +time.slice(3, 5);
 
+/** An event's times, which change together: a new start alone would keep its length instead of its end. */
+const TIMES = ["allDay", "start", "end", "timeZone"];
+
+/**
+ * What a save changes: the fields that differ from the event as the editor opened it, and its times
+ * together if any of them did. Sending the rest as they were would undo what someone else changed
+ * meanwhile, while the editor was open or the save waited offline.
+ */
+function changedFrom<T extends Record<string, unknown>>(opened: T, saved: T): Partial<T> {
+  const differs = (key: string) => JSON.stringify(opened[key]) !== JSON.stringify(saved[key]);
+  const timesMoved = TIMES.some(differs);
+  return Object.fromEntries(Object.entries(saved).filter(([key]) => (TIMES.includes(key) ? timesMoved : differs(key)))) as Partial<T>;
+}
+
 export class CalendarPage {
   readonly root: HTMLElement;
   private body: HTMLElement;
@@ -261,10 +275,18 @@ export class CalendarPage {
       ...VIEWS.map((v) => el("button", { type: "button", "aria-pressed": String(v === view), title: `${VIEW_NAMES[v].label} (${VIEW_NAMES[v].key})`, onclick: () => this.show(v, this.anchor) }, VIEW_NAMES[v].label)),
     );
     if (this.embedded) return;
-    void this.ctx.state.get().then((s) => {
-      const kept = (s ?? {}) as PageState;
-      if (kept.view !== view) void this.ctx.state.set({ ...kept, view });
-    });
+    this.keep({ view });
+  }
+
+  /** The state's changes, each read and written after the last, so quick switches keep the last one. */
+  private keeping = Promise.resolve();
+  private keep(change: PageState) {
+    this.keeping = this.keeping
+      .then(async () => {
+        const kept = ((await this.ctx.state.get()) ?? {}) as PageState;
+        if (Object.entries(change).some(([k, v]) => JSON.stringify(kept[k as keyof PageState]) !== JSON.stringify(v))) await this.ctx.state.set({ ...kept, ...change });
+      })
+      .catch(() => {});
   }
 
   private goto(day: Day, smooth: boolean) {
@@ -400,13 +422,14 @@ export class CalendarPage {
     const draft = this.draftOf(o);
     draft.recurrence = found?.series?.recurrence ?? found?.event.recurrence ?? [];
     const repeating = !!(o.series ?? found?.event.recurrence);
+    const opened = this.fields(draft, zoneFor(o));
     openEditor(at, draft, {
       calendars: this.calendars,
       repeating,
       readOnly: !this.writable(o),
       link: o.link,
       extra: await this.extra(o, found),
-      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, zoneFor(o)), scope)),
+      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, changedFrom(opened, this.fields(d, zoneFor(o))), scope)),
       remove: async (scope) => this.wrote(await this.ctx.data.calendar.remove(o.address, scope), `Deleted ${o.title || "the event"}`),
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
@@ -489,7 +512,7 @@ export class CalendarPage {
           this.hidden ??= new Set();
           if (box.checked) this.hidden.delete(c.id);
           else this.hidden.add(c.id);
-          void this.ctx.state.get().then((s) => this.ctx.state.set({ ...((s ?? {}) as PageState), hidden: [...this.hidden!] }));
+          this.keep({ hidden: [...this.hidden!] });
           this.renderer?.redraw();
         });
         return el("label", { class: "fp-item" }, box, el("span", { class: "cal-swatch", style: { "--calendar": c.color } }), el("span", {}, c.title), c.writable ? null : el("span", { class: "cal-muted" }, "read-only"));
