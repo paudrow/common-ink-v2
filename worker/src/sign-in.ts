@@ -53,9 +53,9 @@ function safeNext(next: string | null): string {
   try {
     const u = new URL(next, base);
     const path = `${u.pathname}${u.search}${u.hash}`;
-    // Measured as it's kept, percent-encoded: longer, and the sign-in cookie carrying it would be past
-    // what a browser keeps.
-    return u.origin === base && !path.startsWith("//") && path.length <= 1500 ? path : "/";
+    // Measured as it's kept, encoded and in JSON (where a backslash is two): longer, and the sign-in
+    // cookie carrying it would be past what a browser keeps.
+    return u.origin === base && !path.startsWith("//") && JSON.stringify(path).length <= 1500 ? path : "/";
   } catch {
     return "/";
   }
