@@ -10,6 +10,7 @@ import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/pe
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
+import { confirmDialog } from "./dialog.ts";
 import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
@@ -914,6 +915,7 @@ export class ExtensionRuntime {
         moveTab: (by) => app.workbench.change((l) => L.shiftTab(l, by)),
         refreshFromServer: (paths) => app.workbench.refreshFromServer(paths),
         notice: (message, actions) => app.workbench.notice(message, actions),
+        confirm: (title, text, yes, how) => confirmDialog(title, text, yes, how?.danger === true),
         canGo: (by) => !!app.workbench.navigation.step(by),
       },
       util: { fuzzyFilter, notePathFor: (name, from) => notePathFor(name, from), label: docLabel },
@@ -923,7 +925,7 @@ export class ExtensionRuntime {
       events: {
         onSaved: (fn) => void app.onSaved.push(guard(fn)),
         onFocus: (fn) => void app.onFocus.push(guard(fn)),
-        onChange: (fn) => void app.onChange.push(guard(({ path, revision, deleted, undoes }: ChangeNotice) => fn({ path, revision, ...(deleted ? { deleted } : {}), ...(undoes ? { undoes } : {}) }))),
+        onChange: (fn) => void app.onChange.push(guard(({ path, revision, deleted, undoes, purged }: ChangeNotice) => fn({ path, revision, ...(deleted ? { deleted } : {}), ...(undoes ? { undoes } : {}), ...(purged ? { purged } : {}) }))),
       },
     };
   }

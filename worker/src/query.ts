@@ -173,7 +173,7 @@ function fromTest(author: Author, value: string): boolean {
   const v = value.toLowerCase();
   if (v === "me") return author.kind === "user";
   if (v === "agent" || v === "extension" || v === "sync") return author.kind === v;
-  const name = author.kind === "user" ? author.email : author.kind === "agent" ? author.name : author.kind === "extension" ? author.id : author.source;
+  const name = author.kind === "user" ? author.email : author.kind === "agent" ? author.name : author.kind === "extension" ? author.id : author.kind === "sync" ? author.source : "retention";
   return name.toLowerCase() === v;
 }
 
