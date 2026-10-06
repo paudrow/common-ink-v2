@@ -280,3 +280,30 @@ test("a restore undone is one note in Trash again, and deleting it forever leave
   assert.deepEqual(await run(store, "trash"), []);
   assert.ok(!JSON.stringify(store.db.all("SELECT * FROM changes")).includes("hunter2"));
 });
+
+test("a note whose restore was undone is in Trash once, as of the delete that undid it", async () => {
+  const { store, write, remove } = workspace();
+  write("n.md", "# n\nline");
+  const d = remove("n.md").file!.revision;
+  const inPlace = await run(store, "restore", { path: "n.md", deleted: d });
+  await run(store, "undo", { revisions: [inPlace.revision as number] });
+  write("t.md", "# t\nold");
+  const d2 = remove("t.md").file!.revision;
+  write("t.md", "# t\nnew");
+  const beside = await run(store, "restore", { path: "t.md", deleted: d2 });
+  await run(store, "undo", { revisions: [beside.revision as number] });
+  const trash = await run(store, "trash");
+  assert.deepEqual(trash.map((t) => t.path), ["t (restored).md", "n.md"]);
+  assert.ok(trash.every((t) => t.revision !== d && t.revision !== d2), "the first deletes aren't listed again");
+});
+
+test("a restored name is shortened a whole character at a time, so an emoji isn't cut in two", async () => {
+  const { store, write, remove } = workspace();
+  const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+  const long = `${"x".repeat(284)}${family}.md`;
+  write(long, "# v1");
+  const d = remove(long).file!.revision;
+  write(long, "# v2");
+  const path = (await run(store, "restore", { path: long, deleted: d })).path as string;
+  assert.equal(path, `${"x".repeat(284)} (restored).md`);
+});

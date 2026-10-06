@@ -25,6 +25,17 @@ const builtIn = (id: string, module: ExtensionModule, more: Record<string, unkno
   folder: `web/src/extensions/${id}`,
 });
 
+/** A laptop, as the runtime reads devices: wide, a mouse, a keyboard. */
+const laptop = {
+  facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true },
+  override: () => undefined,
+  has: () => true,
+  atLeast: () => true,
+  why: () => "",
+  onChange: () => () => {},
+  describe: () => ({}),
+} as never;
+
 /** A host whose context records what extensions do, and which starts nothing until told. */
 function host() {
   const started: string[] = [];
@@ -83,6 +94,7 @@ test("a manifest that's wrong says what's wrong with it", () => {
   assert.equal(wrong({ permissions: { network: { why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any');
   assert.equal(wrong({ permissions: { network: { hosts: ["http://evil.example"], why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any; "http://evil.example" isn\'t one');
   assert.equal(wrong({ permissions: { "files:read": { paths: ["**"] } } }), 'permissions["files:read"].why must be text');
+  assert.equal(wrong({ permissions: { "files:read": { paths: ["!Secret/**"], why: "x" } } }), 'permissions["files:read"].paths are the files it may touch, so none starts with "!": "!Secret/**" does');
   assert.equal(wrong({ contributes: { configuration: { properties: { "other.thing": { type: "boolean" } } } } }), 'Setting "other.thing" must start with "x."');
   assert.equal(wrong({ main: "../escape.js" }), '"main" must be a file in the extension\'s folder, like "index.js"');
   assert.equal(wrong({ main: "index.ts" }), '"main" must be a file in the extension\'s folder, like "index.js"', "only built-ins are compiled");
@@ -295,6 +307,8 @@ test("in the app, a declared command starts its extension the first time it runs
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
+    device: laptop,
+    promoted() {},
   });
   const greet: ExtensionModule = {
     activate(ctx) {
@@ -372,6 +386,8 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
+    device: laptop,
+    promoted() {},
   });
   let ctx!: ExtensionContext;
   await runtime.load([builtIn("copier", { activate: (c) => void (ctx = c) }, { activationEvents: ["onStartup"], permissions: { "clipboard:write": { why: "Copy" } } })], [], [], false, []);

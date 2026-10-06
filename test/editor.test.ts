@@ -8,6 +8,7 @@ Object.assign(globalThis, { window, document: window.document, MutationObserver:
 
 const { EditorView } = await import("@codemirror/view");
 const { EditorSelection } = await import("@codemirror/state");
+const { redo, undo } = await import("@codemirror/commands");
 const { createState, replaceText } = await import("../web/src/editor.ts");
 const { DEFAULTS } = await import("../worker/src/settings.ts");
 
@@ -35,5 +36,18 @@ test("a change from the server to one line of a long note with many blank lines 
   assert.equal(view.state.doc.line(10_001).text, "- item 10000, changed");
   assert.equal(view.state.doc.toString(), next.join("\n"));
   assert.ok(took < 1000, `took ${Math.round(took)}ms`);
+  view.destroy();
+});
+
+test("typing right after a redo, beside what it brought back, is an undo step of its own", () => {
+  const view = new EditorView({ state: createState("alpha\n", { json: false, readOnly: false, settings: DEFAULTS, extensions: [], onUpdate: () => {}, onBlur: () => {} }), parent: document.body });
+  const type = (insert: string) => view.dispatch({ changes: { from: view.state.doc.length - 1, insert }, selection: { anchor: view.state.doc.length - 1 + insert.length }, userEvent: "input.type" });
+  type(" P");
+  undo(view);
+  redo(view);
+  type(" x");
+  assert.equal(view.state.doc.toString(), "alpha P x\n");
+  undo(view);
+  assert.equal(view.state.doc.toString(), "alpha P\n");
   view.destroy();
 });

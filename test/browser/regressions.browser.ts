@@ -410,6 +410,270 @@ browserTest(h, "an edit undone before it was saved isn't brought back by a reloa
   assert.equal(await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Trip" }).count(), 1);
 });
 
+for (const when of ["back online", "still offline"] as const) {
+  browserTest(h, `an edit undone while offline, after its save was held, isn't saved by a reload ${when}`, { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 2, 1);
+    await app.page.context().setOffline(true);
+    await app.keys("dw");
+    // Long enough for its save to fail and the edit to be held, to send once back online.
+    await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent?.includes("1 unsent change"));
+    await app.keys("u");
+    await app.page.waitForTimeout(200);
+    if (when === "back online") await app.page.context().setOffline(false);
+    await app.page.reload().catch(() => {});
+    await app.page.waitForTimeout(1000);
+    await app.page.context().setOffline(false);
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(1500);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n");
+  });
+}
+
+browserTest(h, "leaving the page the moment after an edit is undone doesn't send the edit next time", { scenario: "empty" }, async (app) => {
+  for (let run = 0; run < 3; run++) {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 2, 1);
+    await app.call("slow", "^PUT /api/file", 60_000);
+    await app.keys("dw");
+    await app.page.waitForTimeout(run * 100);
+    await app.keys("u");
+    await app.page.goto("about:blank");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(800);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n", `run ${run}`);
+  }
+});
+
+for (const order of ["B leaves, then A", "A leaves, then B"] as const) {
+  browserTest(h, `one tab's edit undone doesn't let go of another tab's offline edit of the same note (${order})`, { scenario: "empty", allowErrors: [/./] }, async (app) => {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    const b = new App(await app.page.context().newPage(), app.base);
+    for (const x of [app, b]) {
+      await x.goto({}, "Trip");
+      await x.idle();
+    }
+    // Offline in the page itself (requests fail as the page goes, too), as a lost connection is.
+    await app.page.context().setOffline(true);
+    for (const x of [app, b]) await x.call("levers.set", { offline: true });
+    // B's edit, held: its save failed.
+    await b.call("cursor", 2, 1);
+    await b.keys("A fromB<Esc>");
+    await b.page.waitForTimeout(1800);
+    // A's own edit, undone.
+    await app.call("cursor", 2, 1);
+    await app.keys("dw");
+    await app.keys("u");
+    await app.page.waitForTimeout(400);
+    for (const x of order === "B leaves, then A" ? [b, app] : [app, b]) {
+      await x.page.goto("about:blank");
+      await x.page.close();
+    }
+    await app.page.context().setOffline(false);
+    // The offline lever is kept in a cookie for the page's reloads: a new page starts without it.
+    await app.page.context().clearCookies();
+    const c = new App(await app.page.context().newPage(), app.base);
+    await c.goto({}, "Trip");
+    await c.idle();
+    for (let i = 0; i < 20 && (await c.readFile("Trip.md")) !== "# Trip\nalpha beta gamma fromB\n"; i++) await c.page.waitForTimeout(250);
+    assert.equal(await c.readFile("Trip.md"), "# Trip\nalpha beta gamma fromB\n");
+    await c.page.close();
+  });
+}
+
+browserTest(h, "an edit held offline and undone in a tab that closes at once isn't sent by another tab's background send", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+  await app.writeFile("Other.md", "# Other\n");
+  // A page of its own, whose clock runs: its background send is what's tested.
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Other");
+  await other.idle();
+  const a = new App(await app.page.context().newPage(), app.base);
+  await a.goto({}, "Trip");
+  await a.idle();
+  await a.call("cursor", 2, 1);
+  await app.page.context().setOffline(true);
+  await a.keys("dw");
+  await a.page.waitForFunction(() => document.querySelector("#unsent")?.textContent?.includes("1 unsent change"));
+  // The page goes before letting go of what it held in IndexedDB gets there: here, it never does.
+  await a.page.evaluate(() => {
+    IDBObjectStore.prototype.delete = () => ({}) as IDBRequest;
+  });
+  await a.keys("u");
+  await a.page.close();
+  await app.page.context().setOffline(false);
+  // The other tab sends what's held every five seconds, and as it comes back online.
+  await other.page.waitForTimeout(6500);
+  await other.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n");
+  await other.page.close();
+});
+
+browserTest(h, "an edit undone while its failed save is still being held isn't sent by another tab, or when the note opens again", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Other.md", "# Other\n");
+  // A page of its own, whose clock runs: its background send is what's tested.
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Other");
+  await other.idle();
+  const held = () =>
+    other.page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          const open = indexedDB.open("common-ink");
+          open.onsuccess = () => {
+            const count = open.result.transaction("unsent").objectStore("unsent").count();
+            count.onsuccess = () => (resolve(count.result), open.result.close());
+          };
+        }),
+    );
+  // How soon the page goes after the edit is held decides whether a later save of it lets go again: a few tries.
+  for (const note of ["Trip1", "Trip2", "Trip3"]) {
+    await app.writeFile(`${note}.md`, "# Trip\nalpha beta gamma\n");
+    const a = new App(await app.page.context().newPage(), app.base);
+    // Reads of held edits wait while the gate is shut, as a slow device's IndexedDB keeps them waiting.
+    await a.page.addInitScript(() => {
+      const w = window as unknown as { gate?: Promise<void> };
+      const transaction = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<typeof transaction>) {
+        const tx = transaction.apply(this, args);
+        const gate = w.gate;
+        if (gate && (args[1] ?? "readonly") === "readonly" && [args[0]].flat().includes("unsent"))
+          Object.defineProperty(tx, "oncomplete", { configurable: true, set: (fn: (e: Event) => void) => tx.addEventListener("complete", (e) => void gate.then(() => fn.call(tx, e))) });
+        return tx;
+      } as typeof transaction;
+    });
+    await a.goto({}, note);
+    await a.idle();
+    await a.call("cursor", 2, 1);
+    await a.page.evaluate(() => {
+      const w = window as unknown as { gate?: Promise<void>; open?: () => void };
+      w.gate = new Promise((r) => (w.open = r));
+    });
+    await app.page.context().setOffline(true);
+    await a.keys("dw");
+    // Polled by time, not by frame: a page behind another draws no frames.
+    await a.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "offline", undefined, { polling: 20 });
+    // `u` while the failed save is still being held; the page goes the moment it's held.
+    await a.keys("u");
+    await a.page.evaluate(() => (window as unknown as { open: () => void }).open());
+    for (let i = 0; i < 100 && !(await held()); i++) await other.page.waitForTimeout(5);
+    await a.page.close();
+    await app.page.context().setOffline(false);
+    await other.page.waitForTimeout(6500);
+    assert.equal(await app.readFile(`${note}.md`), "# Trip\nalpha beta gamma\n", `${note}: not sent by the other tab`);
+    const again = new App(await app.page.context().newPage(), app.base);
+    await again.goto({}, note);
+    await again.idle();
+    await again.page.waitForTimeout(1500);
+    assert.equal(await app.readFile(`${note}.md`), "# Trip\nalpha beta gamma\n", `${note}: not sent as it opens again`);
+    await again.page.close();
+  }
+  await other.page.close();
+});
+
+browserTest(h, "a clash undone, then redone, writes nothing: its redo would land where theirs has moved", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("u");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.keys("<C-r>");
+  await app.page.waitForTimeout(2000);
+  await app.idle();
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n");
+});
+
+browserTest(h, "a clash undone back to where it started is no clash, and the note takes in theirs", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("u");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.reload();
+  await app.open("Plan");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  assert.equal(await app.page.locator("#save").getAttribute("data-status"), "saved");
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n");
+});
+
+browserTest(h, "after a clash undone starts the undo history afresh, a change typed slowly in insert mode is still one undo step", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("u");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+  await app.call("cursor", 5, 1);
+  await app.keys("A one");
+  await app.page.waitForTimeout(700);
+  await app.keys("<CR>two<Esc>");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("Plan.md")).includes("two"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma one\ntwo\n");
+  await app.keys("u");
+  await app.idle();
+  for (let i = 0; i < 20 && (await app.readFile("Plan.md")).includes("one"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n", "the insert went in one step");
+  await app.keys("u");
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n", "and nothing from before the clash is left to undo");
+});
+
+browserTest(h, "a clash typed away in insert mode starts the undo history afresh, and the rest of that insert is one undo step", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  await app.call("cursor", 3, 1);
+  await app.keys("A first<Esc>");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("Plan.md")).includes("first"); i++) await app.page.waitForTimeout(250);
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("<BS><BS><BS><BS><BS>");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+  // Taking in theirs put the cursor at the line's start; still in insert mode, it goes to the end.
+  await app.keys("<End> one");
+  await app.page.waitForTimeout(700);
+  await app.keys(" two<Esc>");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("Plan.md")).includes("two"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha first\nbeta theirs one two\ngamma\n");
+  await app.keys("u");
+  await app.idle();
+  for (let i = 0; i < 20 && (await app.readFile("Plan.md")).includes("one"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha first\nbeta theirs\ngamma\n", "what was typed after the clash went in one step");
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");
@@ -567,18 +831,28 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
-browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
-  await app.command("Show extensions");
-  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+/**
+ * Hold the pointer down on a button, and say whether the button the press landed on is still on the page
+ * after `meanwhile`. It's the element the page heard pressed, not one found before: the view may be
+ * drawn again between finding a button and pressing it (its catalog arriving, say, on a slow machine).
+ */
+async function heldThrough(app: App, button: import("playwright-core").Locator, meanwhile: () => Promise<unknown>): Promise<boolean> {
   await button.waitFor();
-  const pressed = await button.elementHandle();
   const box = (await button.boundingBox())!;
+  await app.page.evaluate(() => document.addEventListener("pointerdown", (e) => ((window as unknown as { held: Element | null }).held = (e.target as Element).closest("button")), { capture: true, once: true }));
   await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await app.page.mouse.down();
+  await meanwhile();
+  return app.page.evaluate(() => !!(window as unknown as { held: Element | null }).held?.isConnected);
+}
+
+browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
   // A file changes while the button is held: the panel would be drawn again under the pointer.
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForTimeout(800);
-  const same = await pressed!.evaluate((b) => b.isConnected);
+  const same = await heldThrough(app, app.page.locator(".extensions-view button", { hasText: "Install from URL…" }), async () => {
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForTimeout(800);
+  });
   await app.page.mouse.up();
   await app.page.getByText("Install an extension from a URL").waitFor({ timeout: 3000 });
   assert.ok(same, "the button held is still the one on the page");
@@ -663,6 +937,33 @@ browserTest(h, "someone else's change arriving while you type isn't part of your
   await app.idle();
   await app.page.waitForTimeout(500);
   assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "and u has nothing of theirs to take back");
+});
+
+browserTest(h, "an earlier change undone and redone in insert mode isn't taken back by the u for the typing after it", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const saved = async (has: (text: string) => boolean) => {
+    await app.idle();
+    for (let i = 0; i < 30 && !has(await app.readFile("Plan.md")); i++) await app.page.waitForTimeout(200);
+    return app.readFile("Plan.md");
+  };
+  await app.call("cursor", 3, 1);
+  await app.keys("A P<Esc>");
+  assert.equal(await saved((t) => t.includes("alpha P")), "# Plan\n\nalpha P\nbeta\ngamma\n");
+  await app.call("cursor", 4, 1);
+  await app.keys("A");
+  await app.keys("<Mod-z>");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: /^alpha$/ }).waitFor();
+  await app.keys("<Mod-S-z>");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "alpha P" }).waitFor();
+  await app.keys(" x");
+  await app.page.waitForTimeout(700);
+  await app.keys(" y<Esc>");
+  // The redo put the cursor back by the P, so that's where the typing goes.
+  assert.equal(await saved((t) => t.includes(" y")), "# Plan\n\nalpha  x yP\nbeta\ngamma\n");
+  await app.keys("u");
+  assert.equal(await saved((t) => !t.includes(" y")), "# Plan\n\nalpha P\nbeta\ngamma\n", "one u takes back the typing only");
 });
 
 /** The files every window's tabs show, in order. */
@@ -756,15 +1057,10 @@ browserTest(h, "a tab dropped on another window's editor opens there, and its na
 browserTest(h, "a click in an extension's details lands though they're drawn again while the button is held", { scenario: "empty" }, async (app) => {
   await app.command("Show extensions");
   await app.page.locator(".extensions-view .extension-open", { hasText: /^Lists/ }).first().click();
-  const source = app.page.locator(".extension-details button", { hasText: "Source" });
-  await source.waitFor();
-  const pressed = await source.elementHandle();
-  const box = (await source.boundingBox())!;
-  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await app.page.mouse.down();
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForTimeout(800);
-  const same = await pressed!.evaluate((b) => b.isConnected);
+  const same = await heldThrough(app, app.page.locator(".extension-details button", { hasText: "Source" }), async () => {
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForTimeout(800);
+  });
   await app.page.mouse.up();
   assert.ok(same, "the button held is still the one on the page");
   // Source closes the details and opens the extension's code.
@@ -773,16 +1069,14 @@ browserTest(h, "a click in an extension's details lands though they're drawn aga
 
 browserTest(h, "a press whose release the page never hears (another tab took it) doesn't hold the Extensions panel back", { scenario: "empty" }, async (app) => {
   await app.command("Show extensions");
-  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
-  await button.waitFor();
-  const pressed = await button.elementHandle();
-  const box = (await button.boundingBox())!;
-  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await app.page.mouse.down();
-  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere.
-  await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await app.writeFile("Other.md", "# Other\n");
-  await app.page.waitForFunction((b) => !b.isConnected, pressed, { timeout: 3000 });
+  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere. The panel draws
+  // again for the file that changes meanwhile, as soon as the page hears of it (slower on a busy machine).
+  const held = await heldThrough(app, app.page.locator(".extensions-view button", { hasText: "Install from URL…" }), async () => {
+    await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await app.writeFile("Other.md", "# Other\n");
+    await app.page.waitForFunction(() => !(window as unknown as { held: Element | null }).held?.isConnected, null, { timeout: 10_000 });
+  });
+  assert.equal(held, false, "drawn again while the pointer was still down");
   await app.page.mouse.up();
 });
 

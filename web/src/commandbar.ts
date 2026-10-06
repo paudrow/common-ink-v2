@@ -14,6 +14,8 @@ export interface Item {
   section?: string;
   /** Shown quieter: archived. */
   dim?: boolean;
+  /** Off on this device: listed greyed, its detail saying why. */
+  off?: boolean;
   run(): unknown;
 }
 
@@ -209,6 +211,7 @@ export class CommandBar {
       // Search's rows stack a line under the title; the command list's keep a shortcut at the right.
       if (!item.section) li.classList.add("plain");
       if (item.dim) li.classList.add("dim");
+      if (item.off) li.classList.add("off");
       const text = document.createElement("span");
       text.className = "text";
       const label = document.createElement("span");

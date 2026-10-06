@@ -19,6 +19,7 @@ import type { MediaHandle, MediaKind, MediaSpec } from "./media.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { WorkbenchChrome } from "./workbench.ts";
+import type { WidthClass } from "../../worker/src/devices.ts";
 
 export type { Embed, Item, Provider };
 export type { MediaHandle, MediaSpec };
@@ -90,9 +91,29 @@ export interface EventInput {
   recurrence?: string | string[] | null;
 }
 
+/**
+ * The device the app is open in, for code that adapts to it (what a manifest's `requires` can't say):
+ * Calendar draws an agenda on a phone, a board drags by long-press on touch.
+ */
+export interface DeviceApi {
+  /** Whether it has a keyboard (assumed on a desktop, found elsewhere, and kept once found), or a touch screen. */
+  has(capability: "keyboard" | "touch"): boolean;
+  /** The window's width class: compact under 600px, medium, expanded from 840, large from 1200. Changes live. */
+  readonly width: WidthClass;
+  atLeast(min: WidthClass): boolean;
+  /** "fine" with a mouse or trackpad, "coarse" with touch alone. */
+  readonly pointer: "fine" | "coarse";
+  readonly touch: boolean;
+  /** Why the app thinks what it does about one: "a key was pressed that a touch screen's keyboard doesn't send". */
+  why(capability: "keyboard" | "width" | "pointer" | "touch"): string;
+  /** After the width class, the pointer, touch or the keyboard changes. */
+  onChange(fn: (device: DeviceApi) => void): void;
+}
+
 export interface ExtensionContext {
   /** This extension, as its manifest says. */
   extension: ExtensionManifest;
+  device: DeviceApi;
   /** The signed-in person's email, if a person is signed in. */
   me: string | undefined;
   settings: {
@@ -103,8 +124,8 @@ export interface ExtensionContext {
     /** What a command the manifest declares does. */
     register(id: string, run: () => unknown): void;
     run(id: string): boolean;
-    /** Every command, with its title. */
-    all(): Array<{ id: string; title: string }>;
+    /** Every command, with its title, and why it's off on this device if it is ("Off on this device · needs a keyboard"). */
+    all(): Array<{ id: string; title: string; off?: string }>;
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */

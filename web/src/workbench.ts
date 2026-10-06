@@ -11,7 +11,7 @@ import type { Offline, Unsent } from "./offline.ts";
 import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
-import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
+import { createState, forgetHistory, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
 import { layoutProblems } from "./layout-problems.ts";
@@ -131,6 +131,13 @@ export class Workbench {
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
   private chrome: WorkbenchChrome | null = null;
+  /** Where this device's layout is kept (devices/<id>/layout.json), or the workspace's where there's no device file. */
+  layoutPath: FilePath = L.LAYOUT_PATH;
+  /** The layout a device starts from when it has none of its own yet. */
+  firstLayout: () => Promise<L.Layout | null> = async () => null;
+  /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
+  parts: () => Parts = () => ({ tabs: true, splits: true });
+  private shown: Parts = { tabs: true, splits: true };
 
   constructor(
     private host: HTMLElement,
@@ -148,9 +155,9 @@ export class Workbench {
    * it comes back as `missing`, for the app to say so.
    */
   async start(first?: FilePath | null): Promise<{ missing?: FilePath }> {
-    const saved = await this.net.read(L.LAYOUT_PATH);
+    const saved = await this.net.read(this.layoutPath);
     this.layoutRevision = saved.revision;
-    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
+    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || (saved.revision === 0 && (await this.firstLayout())) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
     let missing: FilePath | undefined;
     if (first) {
@@ -257,7 +264,7 @@ export class Workbench {
   /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
   pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
     const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
-    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: this.layoutPath, status: "waiting" }] : files;
   }
 
   /**
@@ -402,7 +409,7 @@ export class Workbench {
     const file = path && this.files.get(path);
     if (!file) return;
     file.session.reload(await this.net.read(file.path));
-    await this.net.release(file.path);
+    await this.net.letGoOwn(file.path);
   }
 
   /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
@@ -421,9 +428,9 @@ export class Workbench {
    * whether the file is open here.
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
-    if (path === L.LAYOUT_PATH) {
+    if (path === this.layoutPath) {
       if (!this.started || revision <= this.layoutRevision || this.layoutSaving) return false;
-      const saved = await this.net.read(L.LAYOUT_PATH);
+      const saved = await this.net.read(this.layoutPath);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;
       if (layout) this.setLayout(layout, { save: false });
@@ -580,7 +587,7 @@ export class Workbench {
       if (unsent) void this.net.hold(unsent);
     }
     if (status === "saved") file.keptAt = undefined;
-    if (status === "saved" && !file.session.dirty) void this.net.release(file.path).then(() => this.net.dropDraft(file.path));
+    if (status === "saved" && !file.session.dirty) void this.net.letGoOwn(file.path);
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
@@ -603,12 +610,26 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
+    const clashed = file.session.status === "conflict";
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
-    // Back to the text the server has (an undo, say): the draft kept of an edit since is no edit now.
+    // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
+    // offline, is no edit now.
     if (draft) void this.net.keepDraft(draft);
-    else void this.net.dropDraft(file.path);
+    else void this.net.letGoOwn(file.path);
+    // A clash undone: the note takes in the server's latest, which it held off while it clashed.
+    if (clashed && file.session.status !== "conflict") {
+      // Its undo and redo steps are of text theirs has replaced: they'd land in the wrong places.
+      queueMicrotask(() => file.views.forEach(forgetHistory));
+      const takeTheirs = (): void =>
+        void this.net.latest(file.path).then(
+          (latest) => file.session.absorb(latest),
+          // Offline: theirs is taken in once the page is back online.
+          () => addEventListener("online", takeTheirs, { once: true }),
+        );
+      takeTheirs();
+    }
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
@@ -665,8 +686,8 @@ export class Workbench {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {
-      let result = await this.net.write(L.LAYOUT_PATH, text, this.layoutRevision);
-      if (result.status === "conflict" && result.file) result = await this.net.write(L.LAYOUT_PATH, text, result.file.revision);
+      let result = await this.net.write(this.layoutPath, text, this.layoutRevision);
+      if (result.status === "conflict" && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
@@ -675,7 +696,29 @@ export class Workbench {
     }
   }
 
+  /**
+   * The device changed: show or put away tabs and windows side by side, as it now has room for. The
+   * layout itself doesn't change, and isn't saved: what's put away comes back when there's room.
+   */
+  refreshParts(): void {
+    const parts = this.parts();
+    if (parts.tabs === this.shown.tabs && parts.splits === this.shown.splits) return;
+    if (this.started) this.render();
+  }
+
+  /** What this device's layout keeps that doesn't show: windows, when they can't be side by side, and tabs, when there's no room for them. */
+  kept(): { windows: number; tabs: number } {
+    const groups = L.groups(this.layout);
+    const windows = this.shown.splits ? 0 : groups.length - 1;
+    const tabs = this.shown.tabs ? 0 : (this.shown.splits ? groups : [this.focusedGroup]).reduce((n, g) => n + Math.max(0, g.tabs.length - 1), 0);
+    return { windows, tabs };
+  }
+
   private render() {
+    this.shown = this.parts();
+    // What doesn't fit is hidden, not taken out (style.css): its editors and frames keep running.
+    this.host.toggleAttribute("data-no-tabs", !this.shown.tabs);
+    this.host.toggleAttribute("data-no-splits", !this.shown.splits);
     const wanted = new Set<string>();
     for (const g of L.groups(this.layout)) for (const t of g.tabs) wanted.add(key(g.id, t));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
@@ -880,6 +923,11 @@ export class Workbench {
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
+}
+
+export interface Parts {
+  tabs: boolean;
+  splits: boolean;
 }
 
 /** The arrangement of splits and windows, without sizes or tabs. */

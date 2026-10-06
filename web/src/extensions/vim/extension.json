@@ -6,6 +6,7 @@
   "main": "index.ts",
   "files": ["index.ts"],
   "activationEvents": ["onStartup"],
+  "requires": { "keyboard": true },
   "permissions": {
     "editor": { "why": "Vim keys in every editor, and the mode in the status bar" }
   },

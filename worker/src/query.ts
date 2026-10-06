@@ -60,8 +60,12 @@ const fold = (s: string) => {
   const d = s.normalize("NFD");
   return d
     .replace(/\p{M}+/gu, (marks, at: number) => {
+      if (at === 0) return marks;
+      // The letter before: a pair of surrogates is one; a lone one is nothing with optional accents.
       const unit = d.charCodeAt(at - 1);
-      return at > 0 && marksOptional(unit >= 0xdc00 && unit <= 0xdfff ? d.codePointAt(at - 2)! : unit) ? "" : marks;
+      const high = at > 1 ? d.charCodeAt(at - 2) : 0;
+      const letter = unit >= 0xdc00 && unit <= 0xdfff && high >= 0xd800 && high <= 0xdbff ? d.codePointAt(at - 2)! : unit;
+      return marksOptional(letter) ? "" : marks;
     })
     .normalize("NFC")
     .toLowerCase();

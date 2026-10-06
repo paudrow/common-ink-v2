@@ -127,6 +127,20 @@ body {
   flex: var(--share, 1) 1 0;
 }
 
+/* What doesn't fit this device's width is put away, not closed (workbench.ts): windows side by side
+   need 840px and tabs 600px. The focused window fills the area; the rest stay in the page, and in the layout. */
+#workbench[data-no-splits] .group:not(.focused),
+#workbench[data-no-splits] .split:not(:has(.group.focused)),
+#workbench[data-no-splits] .resizer,
+#workbench[data-no-tabs] .tabs,
+#workbench[data-no-tabs] .insert,
+#workbench[data-no-tabs] .nav-arrows {
+  display: none;
+}
+#workbench[data-no-splits] .split > * {
+  flex: 1 1 0;
+}
+
 .split.row {
   flex-direction: row;
 }
@@ -404,13 +418,33 @@ button.status-item:hover {
   color: var(--bad);
 }
 
-@media (max-width: 40rem) {
-  body {
+/* Compact width (device.ts marks it on <html>); the media query covers the moment before the app runs. */
+html[data-width="compact"] body {
+  grid-template: "editor" 1fr "panel" auto "status" auto / 1fr;
+}
+html[data-width="compact"] #notes {
+  display: none;
+}
+@media (max-width: 599.98px) {
+  html:not([data-width]) body {
     grid-template: "editor" 1fr "panel" auto "status" auto / 1fr;
   }
-  #notes {
+  html:not([data-width]) #notes {
     display: none;
   }
+}
+
+/* The device lever (?device=phone): the page framed to that device's size, at the top left so what's
+   placed by the window's coordinates still lines up. The transform makes the frame what fixed boxes sit in. */
+html[data-device-frame] {
+  background: var(--line);
+}
+html[data-device-frame] body {
+  width: min(var(--frame-width), 100vw);
+  height: min(var(--frame-height), 100vh);
+  transform: translateZ(0);
+  overflow: hidden;
+  box-shadow: 1px 1px 0 var(--line-strong);
 }
 
 #command-bar {
@@ -535,7 +569,8 @@ button.status-item:hover {
   white-space: nowrap;
 }
 
-#command-bar li.dim .label {
+#command-bar li.dim .label,
+#command-bar li.off {
   color: var(--muted);
 }
 
@@ -2508,4 +2543,89 @@ iframe.webview {
   font: inherit;
   padding: 0.25rem 0.6rem;
   cursor: pointer;
+}
+
+/* This device, in the Extensions view and Settings › This device (device-ui.ts). */
+.device-box {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.device-box .link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.extension-here {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--warn-ink);
+}
+.extension-here-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+:is(#panel, .tab-view) .device-head h3 {
+  margin: 1rem 0 0;
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.device-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.device-facts {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.device-fact {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.device-fact dt {
+  font-weight: 600;
+}
+.device-fact dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+}
+.device-why {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.device-sub {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.device-extensions {
+  list-style: none;
+  padding: 0;
+}
+.device-extensions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
 }

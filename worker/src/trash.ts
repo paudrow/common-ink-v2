@@ -44,7 +44,8 @@ const MAX_PATH = 300;
 export function restoredPath(files: Files, path: FilePath): FilePath | null {
   if (!files.read(path)) return path;
   const folder = path.slice(0, path.lastIndexOf("/") + 1);
-  const name = [...path.slice(folder.length).replace(/\.md$/, "")];
+  // Shortened a whole character at a time, as people see them: an emoji of several code points stays whole.
+  const name = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(path.slice(folder.length).replace(/\.md$/, ""))].map((g) => g.segment);
   for (let n = 1; n <= MAX_RESTORED; n++) {
     const suffix = ` (restored${n > 1 ? ` ${n}` : ""}).md`;
     const kept = [...name];

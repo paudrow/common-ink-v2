@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author } from "../../worker/src/files.ts";
-import { format, matches, parse, select, type MatchContext, type NoteFacts, type Query, type Term } from "../../worker/src/query.ts";
+import { format, matches, parse, select, tokens, type MatchContext, type NoteFacts, type Query, type Term } from "../../worker/src/query.ts";
 import { forAll, type Rng } from "./gen.ts";
 
 const EXTRA = ["due"];
@@ -163,4 +163,18 @@ test("results are the matching notes, archived ones last, newest first when sort
     },
     { runs: 1000 },
   );
+});
+
+test("words are read from any text, lone surrogates and stray marks anywhere in it too", () => {
+  const PIECES = ["a", "é", "é", "́", "\ud800", "\udc00", "😀", "\ud83d", "\ude00", " ", "\n", "한", "का", "שָ"];
+  forAll(
+    (r) => r.array(0, 12, () => r.pick(PIECES)).join(""),
+    (text) => {
+      const words = tokens(text);
+      assert.deepEqual(tokens(text), words, "the same each time");
+      assert.ok(words.every((w) => w.length > 0));
+    },
+    { runs: 3000 },
+  );
+  for (const text of ["\udc00́", "x\udc00́", "\ud800́", "́\udc00"]) assert.doesNotThrow(() => tokens(text), JSON.stringify(text));
 });
