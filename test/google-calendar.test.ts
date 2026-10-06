@@ -254,3 +254,26 @@ test("a sync asked for while one runs is that one, so an older page can't land a
   assert.deepEqual(b, a);
   assert.equal(fake.calls.slice(before).filter((c) => c.startsWith("GET /calendar/v3/users/me/calendarList")).length, 1);
 });
+
+test("an event Google changed after an edit made during a sync comes in on a later sync", async () => {
+  const { fake } = google();
+  let gate: Promise<void> | null = null;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if (gate && String(input).includes("/calendars/primary/events?")) await gate;
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  let open!: () => void;
+  gate = new Promise<void>((r) => (open = r));
+  const syncing = op(store, "sync_calendar", { force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 1" });
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "Room 9" });
+  gate = null;
+  open();
+  await syncing;
+  await op(store, "sync_calendar", { force: true });
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { location?: string } }).event;
+  assert.equal(here.location, "Room 9");
+});
