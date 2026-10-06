@@ -50,6 +50,9 @@ export async function sandboxRoute(req: Request, url: URL, assets: { fetch(req: 
     return new Response(res.body, { headers: { "Content-Type": type, "Access-Control-Allow-Origin": "*", "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400" } });
   }
   const code = /^code\/([^/]+)\/(.+)$/.exec(path);
+  // An extension's code is for its sandboxed host only, whose origin is opaque: never a script for one
+  // of this site's own pages.
+  if (code && req.headers.get("Sec-Fetch-Site") === "same-origin") return new Response("Not found\n", { status: 404 });
   if (code) {
     const id = await verifyCodeToken(await store.sandboxKey(), code[1], Date.now());
     const file = id ? parseFilePath(extensionFilePath(id, code[2])) : null;
