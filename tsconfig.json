@@ -21,6 +21,7 @@
       "common-ink/keys": ["./web/src/keys.ts"],
       "common-ink/layout": ["./web/src/layout.ts"],
       "common-ink/files": ["./worker/src/files.ts"],
+      "common-ink/query": ["./worker/src/query.ts"],
       "common-ink/recurrence": ["./worker/src/recurrence.ts"],
       "common-ink/calendar": ["./worker/src/calendar.ts"],
       "common-ink/uploads": ["./worker/src/uploads.ts"],
