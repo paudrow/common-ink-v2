@@ -170,7 +170,7 @@ browserTest(h, "Tab with nothing to complete moves on to the chips, and the bar 
   await page.keyboard.press("ControlOrMeta+k");
   await field(page).fill("garden");
   await page.keyboard.press("Tab");
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Agents");
+  assert.equal(await page.evaluate(() => !!document.activeElement?.matches("#command-bar .chips button:first-child")), true, "the first chip has focus");
   assert.equal(await bar(page).isVisible(), true);
 });
 
