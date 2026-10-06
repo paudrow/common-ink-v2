@@ -118,6 +118,26 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
+  // Math, a table, a code block and math again, then a task and a table that ends the note.
+  const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";
+  await app.writeFile("Edges.md", text);
+  await app.goto({}, "Edges");
+  await app.idle();
+  await app.call("cursor", 1, 1);
+  const lines: number[] = [];
+  for (let i = 0; i < 16; i++) {
+    lines.push((await where(app)).line);
+    await app.keys(i < 15 ? "j" : "");
+  }
+  for (let i = 0; i < 15; i++) {
+    await app.keys("k");
+    lines.push((await where(app)).line);
+  }
+  const numbers = Array.from({ length: 16 }, (_, i) => i + 1);
+  assert.deepEqual(lines, [...numbers, ...numbers.reverse().slice(1)]);
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
