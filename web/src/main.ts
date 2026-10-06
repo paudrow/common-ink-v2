@@ -9,7 +9,8 @@ import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
+import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
+import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { ago, describeAuthor, docLabel } from "./describe.ts";
@@ -42,6 +43,8 @@ import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
+import { Device } from "./device.ts";
+import { atLeast, deviceOfLayout, here, hereText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
 const dev = await bootLevers();
@@ -128,6 +131,10 @@ const me = await fetch("/api/me")
 // Drafts of unsaved edits are this account's: another one signing in here doesn't see them.
 offline.account = me ?? null;
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
+/** What this browser has, live, and its device file (device.ts). The `device` lever stands in for another. */
+const device = new Device({ me, preset: dev?.levers.device ?? null });
+/** Extensions you turned off on this device, which apply after a reload like turning one off. */
+const offHere = () => Object.entries(device.file.extensions).flatMap(([id, o]) => (o === "off" ? [id] : []));
 const name = docLabel;
 
 /** Where you've been, kept for this tab's session, so a reload keeps it (navigation.ts). */
@@ -205,8 +212,9 @@ const workbench = new Workbench(
       for (const fn of savedListeners) fn(path);
       if (isSettingsFile(path)) void loadSettings();
     },
+    // Keys are hinted only where there's a keyboard to press them.
     shortcut: (command) => {
-      const key = keyFor(command, settings.keybindings);
+      const key = device.has("keyboard") ? keyFor(command, settings.keybindings) : undefined;
       return key && formatKeys(key);
     },
   },
@@ -270,11 +278,18 @@ const settingsUi = settingsEditor({
   catalog: () => catalog,
   openJson: (level) => void openSettings(settingsPath(level)),
   changed: () => void loadSettings(),
+  device: (root) =>
+    renderDevice(root, {
+      device,
+      extensions: () => extensions.host.records.filter((r) => !r.broken).map((r) => ({ manifest: r.manifest, here: extensions.here(r.manifest) })),
+      setOverride: (id, value) => setOverride(id, value),
+      openFile: () => device.path && void workbench.open(device.path, { newTab: true }),
+    }),
 });
 workbench.registerView(settingsUi);
 
-/** Open the settings editor at user or workspace settings, searching for `query` if given. */
-function openSettingsUi(level: Level, query = "") {
+/** Open the settings editor at user or workspace settings, searching for `query` if given, or at This device. */
+function openSettingsUi(level: Shown, query = "") {
   settingsUi.level = level;
   settingsUi.query = query;
   workbench.openView(SETTINGS_VIEW, { newTab: true });
@@ -460,7 +475,9 @@ function pick(how: typeof openHow) {
   bar.open();
 }
 
-const commands = new Commands();
+const commands = new Commands((title, why) => workbench.notice(`${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`));
+/** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
+const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
 commands.register(
   { id: "quickOpen", title: "Search…", run: () => pick("here") },
   {
@@ -478,12 +495,12 @@ commands.register(
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
   { id: "go.back", title: "Go back", run: () => navigate(-1) },
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
-  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
+  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab"), off: needs({ width: "medium" }) },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
   { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
-  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
-  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
-  { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
+  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right"), off: needs({ width: "expanded" }) },
+  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down"), off: needs({ width: "expanded" }) },
+  { id: "window.close", title: "Close window", run: () => workbench.closeGroup(), off: needs({ width: "expanded" }) },
   {
     id: "account.signOut",
     title: "Sign out",
@@ -551,12 +568,79 @@ const extensions = new ExtensionRuntime({
   // It tried something it never asked for: say so once, with where to see what it does ask for.
   undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
+  device,
+  promoted: (id) => {
+    statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()).get(id)!);
+    // Its keybindings join the ones in effect.
+    void loadSettings();
+  },
 });
 /** Who's asking, for a permission prompt: its name, where it's from and who made it, and its details. */
 function askerOf(id: string): Asker {
   const r = extensions.host.records.find((x) => x.id === id);
   return { name: r?.manifest.name ?? id, origin: r ? originOf(r) : "Workspace", publisher: r?.manifest.publisher, showDetails: () => extensionsUi.showDetails(id) };
 }
+
+// The device changed: extensions that now have what they need go in, and views that say what's on here draw again.
+device.onChange((d, was) => {
+  extensions.deviceChanged();
+  workbench.refreshParts();
+  void extensions.promote().then((went) => {
+    if (d.facts.keyboard && !was.keyboard && d.file.keyboard === "auto") {
+      const on = went.length ? `${went.join(", ")} ${went.length === 1 ? "is" : "are"} on` : "shortcuts are on";
+      // On a touch screen it's a guess from the keys pressed: say how to take it back. What went in goes with a reload.
+      if (d.facts.touch)
+        workbench.notice(`Keyboard found: ${on}.`, [
+          { label: "Not a keyboard?", run: () => void device.setKeyboard("no").then(() => went.length && reloadWindow()) },
+          { label: "This device", run: () => openSettingsUi("device") },
+        ]);
+      else workbench.notice(`Keyboard found: ${on} here.`, [{ label: "This device", run: () => openSettingsUi("device") }]);
+    }
+    else if (went.length) workbench.notice(`${went.join(", ")} ${went.length === 1 ? "is" : "are"} on here now.`);
+    extensionsChanged();
+    workbench.refreshView(SETTINGS_VIEW);
+    // Shortcuts are hinted now there's a keyboard (or not, now there isn't).
+    if (d.facts.keyboard !== was.keyboard) workbench.applySettings(settings);
+  });
+});
+
+// Tabs and windows side by side show where the Workbench says they fit; without it, windows need the width they'd need with it.
+workbench.parts = () => {
+  const tabs = extensions.layoutPart("tabs");
+  const splits = extensions.layoutPart("splits");
+  return { tabs: tabs !== undefined ? tabs === null : true, splits: splits !== undefined ? splits === null : device.atLeast("expanded") };
+};
+if (device.layoutPath) workbench.layoutPath = device.layoutPath;
+workbench.firstLayout = firstLayout;
+
+/**
+ * Where a device that has no layout of its own starts: a wide one from the layout of the wide device you
+ * used last (or the workspace's, from before layouts were per device); a narrow one with just what was
+ * on show there, since a phone keeps only what it needs.
+ */
+async function firstLayout(): Promise<L.Layout | null> {
+  const parse = (text: string) => {
+    try {
+      return L.parseLayout(JSON.parse(text));
+    } catch {
+      return null;
+    }
+  };
+  let from: L.Layout | null = null;
+  const layouts = me ? files.filter((f) => f.path !== device.layoutPath && deviceOfLayout(f.path, me)).sort((a, b) => b.revision - a.revision) : [];
+  for (const f of layouts) {
+    const seen = parseDeviceFile((await offline.read(f.path.replace(/layout\.json$/, "device.json") as FilePath)).text).seen;
+    if (seen && atLeast(seen.width, "expanded")) {
+      from = parse((await offline.read(f.path)).text);
+      if (from) break;
+    }
+  }
+  from ??= parse((await offline.read(L.LAYOUT_PATH)).text);
+  return from && (device.atLeast("expanded") ? from : L.onShow(from));
+}
+
+// This device's file changed: in another tab on this device, or by you or an agent. Its changes come in here.
+savedListeners.push((path) => path === device.path && void device.absorb());
 
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
@@ -572,7 +656,7 @@ const reloadSettingsNow = () =>
   JSON.stringify(
     [...catalog.values()].filter((d) => d.reload).map((d) => settings[d.key]),
   );
-const extensionsNeedReload = () => changedExtensions(statesAtStart, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE));
+const extensionsNeedReload = () => changedExtensions(statesAtStart, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()));
 
 function updateReloadLine() {
   if (reloadSettingsAtStart === null) return;
@@ -701,6 +785,13 @@ const extensionDeps: ExtensionsViewDeps = {
     return listed;
   },
   installFromCatalog: (entry) => installAndAnnounce(entry),
+  device: {
+    summary: () => deviceSummary(device),
+    open: () => openSettingsUi("device"),
+    here: (r) => extensions.here(r.manifest),
+    override: (id) => device.override(id),
+    setOverride,
+  },
 };
 const extensionsUi = extensionsView(extensionDeps);
 
@@ -711,7 +802,7 @@ const extensionsUi = extensionsView(extensionDeps);
  */
 async function goLive(id: string, because: Trigger): Promise<boolean> {
   if (SAFE || !(await extensions.addLive(files, id, settings["extensions.trusted"], because))) return false;
-  statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE).get(id)!);
+  statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()).get(id)!);
   catalog = extensions.catalog();
   // Its settings join the catalog, its keybindings the ones in effect, and editors draw its embeds.
   await loadSettings();
@@ -789,6 +880,12 @@ async function installFromCatalog(entry: CatalogEntry) {
     const path = extensionFilePath(entry.id, file);
     await api.write(path, text, (await api.read(path)).revision);
   }
+}
+
+/** Turn an extension on or off on this device, or back to Auto: kept in the device file. Turning one on here puts it in at once. */
+async function setOverride(id: string, value: Override | undefined) {
+  await device.setOverride(id, value);
+  extensionsChanged();
 }
 
 /** The extensions a settings file trusts, or null if it can't be read as JSON. */
@@ -922,13 +1019,15 @@ try {
   // The app's settings first, for which extensions are off; then every manifest, whose settings join
   // the catalog; then settings again, read against it.
   await loadSettings();
+  // This device's file first: what it has and your overrides decide which extensions are on here.
+  await device.load({ read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) });
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
   catalog = extensions.catalog();
   extensions.declare();
   // Embeds draw in notes for the languages extensions that are on declare.
   workbench.extend(embeds({ ...extensions.embedHost, needs: embedNeeds }));
   await loadSettings();
-  statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE);
+  statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere());
   reloadSettingsAtStart = reloadSettingsNow();
   await extensions.start();
   // The Catalog, so a note can offer what its embeds need; editors redraw once it's read.
@@ -952,4 +1051,4 @@ try {
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }
-dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings });
+dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings, device });

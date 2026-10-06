@@ -131,6 +131,37 @@ browserTest(h, "a sandboxed extension that may read only Public/ can't tell from
   }
 });
 
+const OVERLAP = `export default { activate(ctx) {
+  ctx.commands.register("overlap.run", async () => {
+    const r = {};
+    for (const p of ["Secret/Plan.md", "Public/Decoy.md"]) { try { await ctx.files.read(p); r[p] = "reached"; } catch { r[p] = "blocked"; } }
+    r.list = (await ctx.files.list()).map((f) => f.path).filter((p) => p.endsWith(".md"));
+    r.find = (await ctx.search.find("zebra", 20)).flatMap((s) => s.results.map((x) => x.path));
+    await ctx.workbench.notice("OVERLAP " + JSON.stringify(r));
+  });
+} };`;
+
+for (const [label, grants] of [["the earlier one denied", { "files:read:**/*.md": "deny", "files:read:Secret/**": "allow" }], ["the later one denied", { "files:read:**/*.md": "allow", "files:read:Secret/**": "deny" }]] as const) {
+  browserTest(h, `with overlapping scopes (${label}), search and the file list show just what files.read reads`, { scenario: "empty", levers: { permissions: "deny" } }, async ({ page }) => {
+    await writeFile(page, "Public/Decoy.md", "# Decoy\nzebra stripes\n");
+    await writeFile(page, "Secret/Plan.md", "# Zebra acquisition\nzebra terms\n");
+    await writeFile(page, ".common-ink/settings.json", JSON.stringify({ "extensions.permissions": { overlap: grants } }));
+    await install(page, "overlap", {
+      "extension.json": JSON.stringify({ name: "Overlap", activationEvents: ["onCommand:overlap.run"], permissions: { "files:read": { paths: ["**/*.md", "Secret/**"], why: "x" } }, contributes: { commands: [{ command: "overlap.run", title: "Run overlap" }] } }),
+      "index.js": OVERLAP,
+    });
+    await page.reload();
+    await page.waitForFunction(() => (window as unknown as { __commonInk?: unknown }).__commonInk);
+    await runCommand(page, "Run overlap");
+    const said = await notice(page, "OVERLAP");
+    const got = JSON.parse(said.slice(said.indexOf("{"))) as Record<string, string | string[]>;
+    for (const p of ["Secret/Plan.md", "Public/Decoy.md"]) {
+      assert.equal((got.find as string[]).includes(p), got[p] === "reached", `find shows ${p} exactly when files.read reads it`);
+      assert.equal((got.list as string[]).includes(p), got[p] === "reached", `files.list lists ${p} exactly when files.read reads it`);
+    }
+  });
+}
+
 const SLOW = `export default { activate(ctx) {
   ctx.search.provide("slow", { search: () => new Promise(() => {}) });
 } };`;

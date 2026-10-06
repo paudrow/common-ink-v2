@@ -38,6 +38,8 @@ export type ExtensionState =
   | "active"
   /** Turned off in settings. */
   | "off"
+  /** On in settings, but off on this device: it needs something the device hasn't, or you turned it off here. */
+  | "unmet"
   /** Its manifest is wrong, or its code threw while loading or starting. */
   | "failed"
   /** A workspace extension, not loaded because this is safe mode. */
@@ -107,7 +109,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], search: { types: [], filters: [] } },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [], search: { types: [], filters: [] } },
 });
 
 export interface HostOptions {
@@ -265,14 +267,16 @@ export function guarded<A extends unknown[], R>(fn: (...args: A) => R, failed: (
 }
 
 /**
- * Each extension's state as far as a reload is concerned: on or off, and which version of its files. When
- * this differs from what it was at start, the extension needs a reload to match.
+ * Each extension's state as far as a reload is concerned: on or off (everywhere, or here by your
+ * override), and which version of its files. When this differs from what it was at start, the extension
+ * needs a reload to match. What the device has isn't in it: an extension that becomes met goes in live.
  */
-export function extensionStates(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean): Map<string, string> {
+export function extensionStates(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean, offHere: readonly string[] = []): Map<string, string> {
   const states = new Map<string, string>();
-  for (const b of builtIns) states.set(b.manifest.id, `${!disabled.includes(b.manifest.id)}`);
+  const on = (id: string) => !disabled.includes(id) && !offHere.includes(id);
+  for (const b of builtIns) states.set(b.manifest.id, `${on(b.manifest.id)}`);
   if (safe) return states;
-  for (const w of findWorkspaceExtensions(files)) states.set(w.id, `${!disabled.includes(w.id)}:${w.version}`);
+  for (const w of findWorkspaceExtensions(files)) states.set(w.id, `${on(w.id)}:${w.version}`);
   return states;
 }
 

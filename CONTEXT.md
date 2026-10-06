@@ -110,3 +110,10 @@ _Avoid_: Filter (that's one part of a query), search string
 **Archive**:
 A state a note can be in: kept, out of the Feed, shown last in search, still in place and still linked. Its path is listed in `.common-ink/archive.json`; archiving doesn't move or change the note.
 _Avoid_: Hide, move to archive
+
+**Device**:
+One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
+
+**Requirement**:
+What an extension or contribution needs from a device to work, such as a keyboard or a wide screen, declared as `requires`. One that isn't met is off on that device, with the reason shown, unless you turn it on there.
+_Avoid_: Platform, desktop-only, mobile-only

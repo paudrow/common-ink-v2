@@ -54,13 +54,35 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 - **contributes.keybindings.** A `key` like `"Mod-Shift-c"` (Mod is ⌘ on a Mac and Ctrl elsewhere, matched by the character typed) or a Vim normal-mode sequence like `"gC"`, which works while the Vim extension is on. A Vim key with `"operator": true` takes the place of Vim's operator of that key: Lists binds `>` and `<` so `>>`, `>j`, `>ip` and `>` on a selection move list items with their children. Settings can rebind keys.
 - **contributes.configuration.** The extension's settings, as JSON Schema: `type`, `default`, `description`, `enum`, `minimum`, `maximum`, and `appliesAfterReload`. Their keys start with the extension's id. They get their own section in the settings editor, and `ctx.settings.get(key)` reads them.
 - **permissions.** The most the extension may ask for, each with why. See ADR 0006 for the kinds and how asking works.
+- **contributes.layout.** Parts of the windows' layout the extension draws, each with an `id`, a `title` and what it `requires`. The core knows two: `tabs` and `splits` (windows side by side). The Workbench declares tabs from medium width and splits from expanded. Where a part doesn't fit, it's put away and kept: see [Devices](#devices).
+- **requires.** What the extension, or one of its commands, views, embeds or layout parts, needs from the device: `"requires": { "keyboard": true }`, `{ "width": "medium" }` (a width class: `compact`, `medium` from 600px, `expanded` from 840px, `large` from 1200px) or `{ "pointer": "fine" }` (a mouse or trackpad). Each one named must hold. See [Devices](#devices).
+
+## Devices
+
+Each browser you use Common Ink in is a device, with a file of its own: `.common-ink/users/<you>/devices/<id>/device.json`, written the first time the browser opens the app and kept in history. It says what was seen there (the width class, the pointer, touch, and a keyboard once one is found) and your choices for it: `keyboard` (`auto`, `yes` or `no`) and `extensions`, an override per extension (`on` or `off`). Settings › This device shows it.
+
+A keyboard is assumed on a device with a mouse or trackpad that hovers (a desktop). Elsewhere it's found the first time a key arrives that a touch screen's keyboard doesn't send (any key outside a text field, or Escape, Tab, an arrow, or a ⌘ or Ctrl chord in one), and kept from then on.
+
+Whether an extension is on, on a device:
+
+1. `extensions.disabled` in settings turns it off everywhere.
+2. This device's override: "On here" runs it whatever it needs; "Off here" turns it off on this device.
+3. Its `requires`, checked against what the device has.
+4. Otherwise it's on.
+
+Vim needs a keyboard, so it's off on a phone until one is found, and then it starts in the open editors. Without a keyboard, no shortcut is hinted anywhere: `ctx.commands.shortcut()` answers nothing.
+
+Each device keeps its own layout of windows and tabs, beside its device file (`devices/<id>/layout.json`). A new device that's expanded or wider starts from the layout of the wide device you used last; a narrower one starts from just the window and tab that were on show there (or, before any device had a layout, from the workspace's `.common-ink/layout.json`). Within a device, the width changing never closes anything: windows that can't be side by side are put away and the focused one fills the area, tabs are put away below medium, and both come back when there's room. The layout file is written only when you change the layout.
+
+An extension whose requirements aren't met doesn't start, and the Extensions view says why: "Off on this device · needs a keyboard". When they become met, because a keyboard is found or you choose On here, it goes in as the app runs: a sandboxed extension starts at once, and a trusted one that changes editors reaches the open ones through their compartment. Turning one off here applies after a reload. A command, view or embed whose own requirements aren't met stays listed, greyed with why, and comes back when they are: a narrower window puts away what needs width, and doesn't stop anything.
 
 ## The context
 
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
-- `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
+- `ctx.commands.register(id, run)`, `run(id)`, `all()` (each with `off`, why it's off on this device, if it is), `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
 - **A sandboxed extension's calls have limits.** Each carries at most 2,000,000 characters' worth (as JSON), and together at most 10,000,000 characters' worth and 2,000 calls every 10 seconds. Past that a call is refused with the reason, so an extension reading many notes at once (more than about 1,700 in 10 seconds) has to wait and try again. A webview's message to its extension is held to the same size; one that's too big is dropped, with the reason in the webview's console.
+- `ctx.device` is the device, for code that adapts to it rather than requiring something: `has("keyboard")` and `has("touch")`, `width` (its width class) and `atLeast("expanded")`, `pointer` (`"fine"` or `"coarse"`), `touch`, `why("keyboard")` (what the app went by, in words) and `onChange(fn)`, which runs when the width class, the pointer, touch or the keyboard changes. Sandboxed extensions get it too.
 - `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with. Items may say their `section`, an `aside` (a few words at the row's end) and `dim`.

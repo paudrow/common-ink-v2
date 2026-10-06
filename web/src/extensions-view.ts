@@ -13,6 +13,7 @@ import type { Answer } from "../../worker/src/permissions.ts";
 import type { BuiltIn, ExtensionRecord } from "./extension-host.ts";
 import { openModal, type Modal } from "./modal.ts";
 import { ANSWER_WORDS, declaredPermissions, plain } from "./permission-words.ts";
+import { hereText, type Here, type Override, type Requires } from "../../worker/src/devices.ts";
 
 export interface ExtensionsViewDeps {
   records(): readonly ExtensionRecord[];
@@ -45,6 +46,21 @@ export interface ExtensionsViewDeps {
   /** A command's title, for keybindings an extension adds to other extensions' or the app's commands. */
   commandTitle(command: string): string | undefined;
   installFromCatalog(entry: CatalogEntry): Promise<void>;
+  /** This device: what it has, whether each extension is on here, and your overrides. */
+  device: {
+    summary(): string;
+    /** Open Settings › This device. */
+    open(): void;
+    here(record: ExtensionRecord): Here;
+    override(id: string): Override | undefined;
+    setOverride(id: string, value: Override | undefined): Promise<void>;
+  };
+}
+
+/** What a manifest's `requires` asks for, in words: "a keyboard, a screen 600px wide". */
+export function requiresWords(r: Requires | undefined): string {
+  if (!r) return "";
+  return [r.keyboard ? "a keyboard" : "", r.width ? `${r.width} width or wider` : "", r.pointer ? "a mouse or trackpad" : ""].filter(Boolean).join(", ");
 }
 
 function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<string, unknown> = {}, ...children: (Node | string | false | null | undefined)[]): T {
@@ -67,7 +83,7 @@ export function originOf(r: Pick<ExtensionRecord, "builtIn" | "workspace" | "ins
   return r.installedFrom ? "From URL" : "Workspace";
 }
 
-const STATE_TEXT: Record<ExtensionRecord["state"], string> = { active: "On", inactive: "On, starts when used", off: "Off", failed: "Failed", safe: "Not loaded: safe mode" };
+const STATE_TEXT: Record<ExtensionRecord["state"], string> = { active: "On", inactive: "On, starts when used", off: "Off", unmet: "Off on this device", failed: "Failed", safe: "Not loaded: safe mode" };
 
 /** What a manifest says an extension adds, in words, by kind; other commands it binds keys to are named by `titleOf`. Exported for tests. */
 export function contributionLines(m: ExtensionManifest, titleOf: (command: string) => string | undefined = () => undefined): Array<[string, string]> {
@@ -75,16 +91,18 @@ export function contributionLines(m: ExtensionManifest, titleOf: (command: strin
   const title = (command: string) => c.commands.find((x) => x.command === command)?.title ?? titleOf(command) ?? command;
   const views = Object.values(c.views).flat();
   const settings = c.configuration ? Object.keys(c.configuration.properties) : [];
+  const needs = (r: Requires | undefined) => (r ? ` (needs ${requiresWords(r)})` : "");
   const keys = c.keybindings.map((k) => `${"key" in k ? k.key : `${k.vim} (Vim${k.operator ? " operator" : ""})`} → ${title(k.command)}`);
   const menus = Object.entries(c.menus).flatMap(([menu, items]) => (items ?? []).map((i) => `${title(i.command)} (${{ tabMenu: "tab menu", commandBar: "command bar", editorContext: "editor menu", quickOpen: "⌘P" }[menu] ?? menu})`));
   const lines: Array<[string, string[]]> = [
-    ["Commands", c.commands.map((x) => x.title)],
+    ["Needs", m.requires ? [requiresWords(m.requires)] : []],
+    ["Commands", c.commands.map((x) => `${x.title}${needs(x.requires)}`)],
     ["Keybindings", keys],
     ["Menus", menus],
-    ["Views", views.map((v) => v.name)],
+    ["Views", views.map((v) => `${v.name}${needs(v.requires)}`)],
     ["Settings", settings],
     ["Status bar", c.statusBarItems.map((s) => s.id)],
-    ["Embeds", c.embeds.map((e) => `${e.title} (\`\`\`${e.language})`)],
+    ["Embeds", c.embeds.map((e) => `${e.title} (\`\`\`${e.language})${needs(e.requires)}`)],
     ["Link embeds", c.urlEmbeds.map((e) => e.title)],
     ["Data sources", c.dataSources.map((d) => d.title)],
   ];
@@ -196,6 +214,15 @@ export function extensionsView(deps: ExtensionsViewDeps) {
         ? el("p", { className: "banner" }, "Safe mode: only built-in extensions are running. ", focusable(el("button", { textContent: "Leave safe mode", onclick: () => deps.reload(false) }), "leave-safe"))
         : "",
       reload.size ? el("p", { className: "banner" }, "Extension changes apply after reload. ", focusable(el("button", { textContent: "Reload", onclick: () => deps.reload() }), "reload")) : "",
+      // Said only where it changes something: when an extension is on or off here other than by default.
+      !records.some((r) => !r.broken && deps.isOn(r.id) && hereText(deps.device.here(r)))
+        ? ""
+        : el(
+        "p",
+        { className: "device-box" },
+        el("span", { textContent: `This device: ${deps.device.summary()}. ` }),
+        focusable(el("button", { className: "link", textContent: "This device…", title: "Settings › This device: what it has, and the keyboard switch", onclick: () => deps.device.open() }), "device"),
+      ),
       el(
         "div",
         { className: "extensions-top" },
@@ -256,12 +283,15 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     const toggle = focusable(el<HTMLInputElement>("input", { type: "checkbox", checked: deps.isOn(id), ariaLabel: `${name} on`, title: deps.isOn(id) ? "On: turn it off" : "Off: turn it on" }), `on:${id}`);
     toggle.disabled = deps.safe && !r.builtIn;
     toggle.addEventListener("change", () => void deps.setOn(id, toggle.checked));
+    // On here or not, when that's not simply what settings say: "Off on this device · needs a keyboard".
+    const onHere = deps.isOn(id) && !r.broken ? hereText(deps.device.here(r)) : null;
     const open = focusable(
       el(
         "button",
         { className: "extension-open", title: `${name}: what it adds and may ask for`, ariaHasPopup: "dialog", onclick: () => view.showDetails(id) },
         el("span", { className: "extension-name", textContent: name }),
         el("span", { className: "extension-desc", textContent: description }),
+        onHere ? el("span", { className: "extension-here", textContent: onHere }) : null,
       ),
       `open:${id}`,
     );
@@ -332,6 +362,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
       el("p", { className: "extension-meta" }, el("code", { className: "extension-id", textContent: version ? `${id} ${version}` : id }), el("span", { className: "extension-state", textContent: STATE_TEXT[r.state] })),
       description && el("p", { className: "extension-desc", textContent: description }),
       el("label", { className: "extension-toggle" }, toggle, deps.isOn(id) ? "On" : "Off"),
+      deps.isOn(id) && !r.broken ? hereControl(r) : null,
       r.error &&
         el(
           "p",
@@ -361,6 +392,23 @@ export function extensionsView(deps: ExtensionsViewDeps) {
           )
         : null,
     ].filter((x): x is HTMLElement => !!x);
+  }
+
+  /** On this device: Auto (by what it needs), On here or Off here, with what that means now. */
+  function hereControl(r: ExtensionRecord): HTMLElement {
+    const now = deps.device.override(r.id) ?? "auto";
+    const pick = focusable(
+      el<HTMLSelectElement>(
+        "select",
+        { ariaLabel: `${r.manifest.name} on this device` },
+        ...([["auto", "Auto"], ["on", "On here"], ["off", "Off here"]] as const).map(([value, text]) => el("option", { value, textContent: text, selected: value === now })),
+      ),
+      `here:${r.id}`,
+    );
+    pick.addEventListener("change", () => void deps.device.setOverride(r.id, pick.value === "auto" ? undefined : (pick.value as Override)));
+    const text = hereText(deps.device.here(r));
+    const what = r.manifest.requires ? `It needs ${requiresWords(r.manifest.requires)}.` : "It needs nothing in particular.";
+    return el("div", { className: "extension-here-control" }, el("label", {}, "On this device ", pick), el("span", { className: "extension-here", textContent: `${text ?? "On"}. ${what}` }));
   }
 
   /** Your answer for one permission: Ask (none kept), Always allow or Don't allow. A built-in has it unless you say Don't allow. */
