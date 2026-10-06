@@ -1648,6 +1648,14 @@ html[data-device-frame] body {
 }
 
 /* Dialogs (dialog.ts), in a modal: permission prompts, trust, install. */
+/* A confirmation's lines, as written: what it takes, one per line. */
+.dialog > p {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
 .dialog h2 {
   margin: 0 0 0.5rem;
   font-size: 1rem;
@@ -2448,6 +2456,19 @@ iframe.webview {
   height: 3px;
   border-radius: 2px;
   background: linear-gradient(to right, currentColor calc(var(--left) * 100%), var(--line) 0);
+}
+
+.trash-why,
+.trash-earlier {
+  margin: 0.5rem 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.trash-earlier ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+  overflow-wrap: anywhere;
 }
 
 .trash-restore,

@@ -576,14 +576,27 @@ export const OPERATIONS = {
   }),
   trash: op<Record<string, never>>({
     description:
-      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged; `byHand` ones, from history before notes had ids, are kept until a person deletes them forever. Restore one with restore, its path and its revision as `deleted`.",
+      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged; `byHand` ones, from history before notes had ids, are kept until a person deletes them forever. `earlier` lists other parts of the same note, by path and their last text, that deleting it forever takes too. Restore one with restore, its path and its revision as `deleted`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store) => {
       const now = Date.now();
       const days = await retentionOf(store);
       const notes = await Promise.all((await notesInTrash(store, now)).map((d) => withText(store, d)));
-      return notes.map(({ text, ...d }) => ({ ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)) }));
+      return Promise.all(
+        notes.map(async ({ text, earlier, ...d }) => {
+          // Earlier parts of the note, with text other than what it shows: deleting it forever takes them too.
+          const seen = new Set([text]);
+          const parts = [];
+          for (const e of earlier ?? []) {
+            const old = (await store.versionAt(e.path, e.before)) ?? "";
+            if (seen.has(old)) continue;
+            seen.add(old);
+            parts.push({ path: e.path, text: old });
+          }
+          return { ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)), ...(parts.length ? { earlier: parts } : {}) };
+        }),
+      );
     },
   }),
   purge: op<{ deleted: Revision[] }>({

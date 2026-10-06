@@ -307,3 +307,25 @@ test("a restored name is shortened a whole character at a time, so an emoji isn'
   const path = (await run(store, "restore", { path: long, deleted: d })).path as string;
   assert.equal(path, `${"x".repeat(284)} (restored).md`);
 });
+
+test("a note in Trash says what else deleting it forever takes: its earlier parts, with their last text", async () => {
+  const { store, write, remove } = workspace();
+  write("Plan.md", "# Plan\nfirst draft");
+  const d1 = remove("Plan.md").file!.revision;
+  await run(store, "restore", { path: "Plan.md", deleted: d1 });
+  write("Plan.md", "# Plan\nsecond draft");
+  remove("Plan.md");
+  write("Same.md", "# Same\ntext");
+  const d3 = remove("Same.md").file!.revision;
+  await run(store, "restore", { path: "Same.md", deleted: d3 });
+  remove("Same.md");
+  const trash = await run(store, "trash");
+  assert.deepEqual(
+    trash.map((t) => [t.path, t.earlier ?? []]),
+    [
+      ["Same.md", []],
+      ["Plan.md", [{ path: "Plan.md", text: "# Plan\nfirst draft" }]],
+    ],
+    "an earlier part with the same text as the note's is no news",
+  );
+});

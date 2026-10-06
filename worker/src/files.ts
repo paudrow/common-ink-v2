@@ -108,6 +108,11 @@ export interface Deleted {
    * versions was taken for it, or a new file at its path, taken for another, might have been it).
    */
   byHand?: true;
+  /**
+   * Earlier parts of the same note, each ended by a delete before this one (a note restored and
+   * deleted again, or one the backfill took a later file for): a purge takes them too.
+   */
+  earlier?: Array<{ path: FilePath; revision: Revision; before: Revision }>;
 }
 
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
@@ -250,11 +255,15 @@ const SCHEMA: Array<(db: Db) => void> = [
  * somewhere else now; any other starts a note. A purge's own change belongs to none.
  *
  * History doesn't say when a file was restored to an older version while deleted (live writes carry
- * the note on by `Write.from`). Such a restore wrote exactly an earlier version's text, so a new file
- * whose text, not empty, is one of the versions of the note deleted at its path carries that note on.
- * That's a guess (a template's text comes back too), so the note is kept from Trash retention's
+ * the note on by `Write.from`). Most such restores bring back the note as it was when it was deleted,
+ * so a new file whose text is exactly that, for a note deleted at its path, carries that note on, if
+ * the text says more than a heading on its first line: a daily note made again from its template,
+ * `# 2026-10-01`, is a new note. Even so it's a guess, so the note is kept from Trash retention's
  * automatic purge (`purge_by_hand`), and so is a note deleted at a path where a new file didn't carry
- * it on, which might have been it restored to an empty version. Either can still be purged by hand.
+ * it on, which might have been it restored to some other version. Either can still be purged by hand.
+ *
+ * Each change is read once, without its text; a new file's diff, and its path's deletes', are read
+ * when it follows a delete there, and are one text each. Notes are written a run of revisions at a time.
  */
 function notesFromHistory(db: Db): void {
   const noteOf = new Map<number, number>();
@@ -263,21 +272,18 @@ function notesFromHistory(db: Db): void {
   /** Notes that ended at a path with a delete that's still their last change: path → note → delete. */
   const ended = new Map<string, Map<number, number>>();
   const endedAt = new Map<number, string>();
-  /** Each path's versions, by revision: a hash of the text after it, worked out when first needed. */
-  const versions = new Map<string, Map<number, string>>();
-  const versionsOf = (path: string) => {
-    if (!versions.has(path)) {
-      const hashes = new Map<number, string>();
-      let text = lines(db.all<{ text: string }>("SELECT text FROM files WHERE path = ?", path)[0]?.text ?? "");
-      for (const c of db.all<{ revision: number; diff: string }>("SELECT revision, diff FROM changes WHERE path = ? ORDER BY revision DESC", path)) {
-        hashes.set(c.revision, editHash(text.join("\n")));
-        text = patch(text, invert(JSON.parse(c.diff)));
-      }
-      versions.set(path, hashes);
-    }
-    return versions.get(path)!;
+  /** A change's text after it, if it made its file, or before it, if it deleted it: its diff, from or to nothing. */
+  const textOf = (revision: number, deleted: boolean) => {
+    const diff = JSON.parse(db.all<{ diff: string }>("SELECT diff FROM changes WHERE revision = ?", revision)[0].diff) as Diff;
+    return patch(lines(""), deleted ? invert(diff) : diff).join("\n");
   };
-  const EMPTY = editHash("");
+  /** Says more than a heading: something on a line after its first. */
+  const saysMore = (text: string) => text.split("\n").slice(1).some((line) => line.trim() !== "");
+  let run: { note: number; from: number; to: number } | null = null;
+  const flush = () => {
+    if (run) db.run("UPDATE changes SET note = ? WHERE revision BETWEEN ? AND ?", run.note, run.from, run.to);
+    run = null;
+  };
   for (let after = 0; ; ) {
     const page = db.all<{ revision: number; path: string; undoes: number | null; deletes: number; purges: number }>(
       "SELECT revision, path, undoes, deletes, purges FROM changes WHERE revision > ? ORDER BY revision LIMIT 5000",
@@ -291,13 +297,12 @@ function notesFromHistory(db: Db): void {
         let guessed = false;
         const before = ended.get(c.path);
         if (back === undefined && before?.size) {
-          // The note deleted here restored to one of its versions, perhaps: the new file has its text.
-          const hashes = versionsOf(c.path);
-          const hash = hashes.get(c.revision);
-          if (hash !== EMPTY)
-            for (const [r, h] of hashes)
-              if (r < c.revision && h === hash && before.has(noteOf.get(r)!)) {
-                [back, guessed] = [noteOf.get(r), true];
+          // The note deleted here, restored as it was when deleted, perhaps: the new file has its text.
+          const text = textOf(c.revision, false);
+          if (saysMore(text))
+            for (const [other, d] of before)
+              if (textOf(d, true) === text) {
+                [back, guessed] = [other, true];
                 break;
               }
         }
@@ -305,11 +310,15 @@ function notesFromHistory(db: Db): void {
         // A note carried on by a guess is kept from automatic purge, whenever it's deleted.
         if (guessed && note === back) db.run("UPDATE changes SET purge_by_hand = 1 WHERE revision = ?", c.revision);
         // Deletes at this path whose notes this new file didn't carry on: kept from automatic purge.
-        for (const [other, d] of ended.get(c.path) ?? []) if (other !== note) db.run("UPDATE changes SET purge_by_hand = 1 WHERE revision = ?", d);
+        for (const [other, d] of before ?? []) if (other !== note) db.run("UPDATE changes SET purge_by_hand = 1 WHERE revision = ?", d);
         ended.delete(c.path);
       }
       noteOf.set(c.revision, note);
-      db.run("UPDATE changes SET note = ? WHERE revision = ?", note, c.revision);
+      if (run && run.note === note && run.to === c.revision - 1) run.to = c.revision;
+      else {
+        flush();
+        run = { note, from: c.revision, to: c.revision };
+      }
       // The note goes on here, so it no longer ends where it did.
       const was = endedAt.get(note);
       if (was !== undefined) {
@@ -330,6 +339,7 @@ function notesFromHistory(db: Db): void {
     if (page.length < 5000) break;
     after = page.at(-1)!.revision;
   }
+  flush();
 }
 
 /** What an edit id's hash becomes when its note is purged: the id stays, so the edit is refused if it's sent again, but nothing of its text does. */
@@ -570,16 +580,19 @@ export class Files {
    */
   deleted(since: number, until = Infinity): Deleted[] {
     return this.db
-      .all<{ revision: number; path: FilePath; author: string; time: number; purge_by_hand: number }>(
-        `SELECT * FROM (SELECT revision, path, author, time, EXISTS (SELECT 1 FROM changes u WHERE u.note = c.note AND u.purge_by_hand = 1) AS purge_by_hand FROM changes c
+      .all<{ revision: number; path: FilePath; author: string; time: number; note: number; purge_by_hand: number }>(
+        `SELECT * FROM (SELECT revision, path, author, time, note, EXISTS (SELECT 1 FROM changes u WHERE u.note = c.note AND u.purge_by_hand = 1) AS purge_by_hand FROM changes c
           WHERE deletes = 1 AND time < ? AND NOT EXISTS (SELECT 1 FROM changes later WHERE later.note = c.note AND later.revision > c.revision))
           WHERE time >= ? OR purge_by_hand = 1 ORDER BY revision DESC`,
         Number.isFinite(until) ? until : Number.MAX_SAFE_INTEGER,
         since,
       )
-      .map(({ revision, path, author, time, purge_by_hand }) => {
-        const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
-        return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0, ...(purge_by_hand ? { byHand: true as const } : {}) };
+      .map(({ revision, path, author, time, note, purge_by_hand }) => {
+        const before = (p: FilePath, r: Revision) => this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", p, r)[0]?.r ?? 0;
+        const earlier = this.db
+          .all<{ revision: number; path: FilePath }>("SELECT revision, path FROM changes WHERE note = ? AND deletes = 1 AND revision < ? ORDER BY revision DESC", note, revision)
+          .map((d) => ({ ...d, before: before(d.path, d.revision) }));
+        return { path, revision, author: JSON.parse(author) as Author, time, before: before(path, revision), ...(purge_by_hand ? { byHand: true as const } : {}), ...(earlier.length ? { earlier } : {}) };
       });
   }
 

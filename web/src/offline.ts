@@ -490,11 +490,12 @@ export class Offline {
 
   /**
    * A note was deleted forever: nothing of it stays in this browser. Its kept copy, its draft and an
-   * edit held to send all go, so it can't be opened offline, and a held edit can't bring it back.
+   * edit held to send all go, so it can't be opened offline, and a held edit can't bring it back. A new
+   * note made here at the path meanwhile (based on no revision) isn't it, and stays.
    */
   async forget(path: FilePath): Promise<void> {
     await this.kv.del("files", path);
-    await this.landed(path);
+    await this.forgetPurged(path, async () => true);
   }
 
   /** A kept edit the server has: held or drafted, it goes. */

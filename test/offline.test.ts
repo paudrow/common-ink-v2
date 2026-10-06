@@ -572,3 +572,15 @@ test("with no account remembered, an edit held and undone as its page went isn't
     done();
   }
 });
+
+test("a note deleted forever goes from this browser, but a new note made here at its path meanwhile stays", async () => {
+  const { offline } = setup();
+  offline.account = "you@example.com";
+  await offline.hold({ path: "Q.md" as FilePath, text: "# Q\nmade offline, a new note", base: 0, edit: "q1" });
+  await offline.keepDraft({ path: "Q.md" as FilePath, text: "# Q\nnew typing", base: 0, edit: "q2" });
+  await offline.forget("Q.md" as FilePath);
+  assert.equal((await offline.unsentFor("Q.md" as FilePath))?.text, "# Q\nmade offline, a new note");
+  await offline.hold({ path: "Q.md" as FilePath, text: "# Q\nold note, more", base: 4, edit: "q3" });
+  await offline.forget("Q.md" as FilePath);
+  assert.equal(await offline.unsentFor("Q.md" as FilePath), undefined);
+});

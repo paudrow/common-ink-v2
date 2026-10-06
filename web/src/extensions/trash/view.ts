@@ -19,6 +19,18 @@ export interface Trashed {
   daysLeft: number;
   /** Kept until you delete it forever, never purged by Trash retention: from history before notes had ids, where which note it was is a guess. */
   byHand?: true;
+  /** Earlier parts of the same note, with other text, that deleting it forever takes too. */
+  earlier?: Array<{ path: string; text: string }>;
+}
+
+/** Why a note is Kept, in words a phone shows (a tooltip doesn't). */
+export const KEPT_WHY = "Kept until you delete it forever: it was deleted before Common Ink knew which note each change belonged to, so Trash doesn't purge it on its own.";
+
+/** A few words of a note's text: its lines after the heading, run together. */
+export function snippet(text: string): string {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const body = (lines.length > 1 && lines[0].startsWith("#") ? lines.slice(1) : lines).join(" / ");
+  return body.length > 120 ? `${body.slice(0, 119)}…` : body || "(empty)";
 }
 
 export interface TrashEnv {
@@ -80,7 +92,13 @@ export class TrashView {
       const top = document.createElement("div");
       top.className = "trash-top";
       const count = document.createElement("span");
-      count.textContent = `${this.items.length} ${this.items.length === 1 ? "note" : "notes"}, each deleted forever ${this.env.retentionDays()} days after it was deleted`;
+      const kept = this.items.filter((i) => i.byHand).length;
+      const notes = `${this.items.length} ${this.items.length === 1 ? "note" : "notes"}`;
+      count.textContent = !kept
+        ? `${notes}, each deleted forever ${this.env.retentionDays()} days after it was deleted`
+        : kept === this.items.length
+          ? `${notes}, kept until you delete ${kept === 1 ? "it" : "them"} forever`
+          : `${notes}: ${kept} kept until you delete ${kept === 1 ? "it" : "them"} forever, the rest deleted forever ${this.env.retentionDays()} days after they were deleted`;
       const empty = document.createElement("button");
       empty.type = "button";
       empty.className = "trash-empty-all";
@@ -116,7 +134,7 @@ export class TrashView {
     title.textContent = item.title;
     const detail = document.createElement("span");
     detail.className = "trash-detail";
-    detail.textContent = `${item.path} · deleted by ${describeAuthor(item.author, this.env.me)}, ${ago(item.time)}`;
+    detail.textContent = `${item.path} · deleted by ${describeAuthor(item.author, this.env.me)}, ${ago(item.time)}${item.byHand ? " · kept until you delete it forever" : ""}`;
     text.append(title, detail);
     // A mouse dragged across the row (to select its text, say) isn't a click on it.
     let down: { x: number; y: number } | null = null;
@@ -130,7 +148,7 @@ export class TrashView {
     left.className = "trash-left";
     if (item.byHand) {
       left.append("Kept");
-      left.title = "Kept until you delete it forever: it was deleted before Common Ink knew which note each change was, so Trash doesn't purge it on its own";
+      left.title = KEPT_WHY;
     } else {
       left.classList.toggle("soon", item.daysLeft <= 3);
       const bar = document.createElement("span");
@@ -162,6 +180,18 @@ export class TrashView {
       peek.className = "trash-peek";
       peek.textContent = "…";
       void this.env.lastVersion(item).then((t) => (peek.textContent = t || "(empty)"));
+      // What a tooltip can't say on a phone, and what deleting it forever takes besides.
+      const notes: HTMLElement[] = [];
+      if (item.byHand) notes.push(Object.assign(document.createElement("p"), { className: "trash-why", textContent: KEPT_WHY }));
+      if (item.earlier?.length) {
+        const also = document.createElement("div");
+        also.className = "trash-earlier";
+        also.append(Object.assign(document.createElement("p"), { textContent: "Deleting it forever also takes earlier parts of this note:" }));
+        const list = document.createElement("ul");
+        for (const e of item.earlier) list.append(Object.assign(document.createElement("li"), { textContent: `${e.path}: ${snippet(e.text)}` }));
+        also.append(list);
+        notes.push(also);
+      }
       const actions = document.createElement("div");
       actions.className = "trash-actions";
       const back = document.createElement("button");
@@ -174,7 +204,7 @@ export class TrashView {
       gone.append(icon("trash-2", 14), "Delete forever");
       gone.addEventListener("click", () => void this.env.deleteForever(item));
       actions.append(back, gone);
-      inside.append(peek, actions);
+      inside.append(peek, ...notes, actions);
       li.append(inside);
     }
     swipeable(li, body, {

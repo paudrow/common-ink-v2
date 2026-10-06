@@ -286,3 +286,23 @@ browserTest(h, "a sandboxed extension that asks for ctx.events.onChange is told 
   await app.command("Run listener");
   await page.locator(".notice", { hasText: "LISTENER ctx.events.onChange isn't available to sandboxed extensions" }).waitFor();
 });
+
+browserTest(h, "Delete forever says what else it takes: a note's earlier part, with its text", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Plan.md", "# Plan\nfirst draft, with a secret");
+  await deleteNote(app, "Plan.md");
+  await page.evaluate(async () => {
+    const trash = (await (await fetch("/api/trash")).json()) as Array<{ revision: number }>;
+    await fetch("/api/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "Plan.md", deleted: trash[0].revision }) });
+  });
+  await app.writeFile("Plan.md", "# Plan\nsecond draft");
+  await deleteNote(app, "Plan.md");
+  await app.command("Open trash");
+  await rows(page).first().waitFor();
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("Shift+D");
+  const dialog = page.locator(".dialog");
+  await dialog.waitFor();
+  assert.match((await dialog.textContent()) ?? "", /also takes earlier parts of this note:\s*• Plan\.md: first draft, with a secret/);
+  await page.locator(".dialog-actions button", { hasText: "Cancel" }).click();
+});

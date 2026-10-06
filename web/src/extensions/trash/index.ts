@@ -5,7 +5,7 @@
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionModule } from "../../extension-api.ts";
 import { refreshTrashLinks, trashLinks } from "./links.ts";
-import { TrashView, type Trashed } from "./view.ts";
+import { snippet, TrashView, type Trashed } from "./view.ts";
 
 async function call<T>(method: "GET" | "POST", route: string, body?: unknown): Promise<T> {
   const res = await fetch(route, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -46,6 +46,12 @@ const extension: ExtensionModule = {
       }
     };
 
+    /** The earlier parts of notes that a purge takes too, one line each, for its confirmation. */
+    const earlierText = (notes: Trashed[]) => {
+      const parts = notes.flatMap((n) => n.earlier ?? []);
+      return parts.length ? `\n\nThis also takes earlier parts of ${notes.length === 1 ? "this note" : "these notes"}:\n${parts.map((e) => `• ${e.path}: ${snippet(e.text)}`).join("\n")}` : "";
+    };
+
     /** Purge notes, once the person says so: nothing about this can be undone. */
     const purge = async (deleted: Trashed[], ask: { title: string; text: string; yes: string }) => {
       if (!deleted.length || !(await ctx.workbench.confirm(ask.title, ask.text, ask.yes, { danger: true }))) return;
@@ -62,12 +68,17 @@ const extension: ExtensionModule = {
       me: ctx.me,
       retentionDays,
       restore: (item) => restore(item),
+      // Each says all it takes: a note's earlier parts, with other text, go with it.
       deleteForever: (item) =>
-        purge([item], { title: `Delete "${item.title}" forever?`, text: "Its text leaves history, and this can't be undone. History keeps a line saying you deleted it.", yes: "Delete forever" }),
+        purge([item], {
+          title: `Delete "${item.title}" forever?`,
+          text: `Its text leaves history, and this can't be undone. History keeps a line saying you deleted it.${earlierText([item])}`,
+          yes: "Delete forever",
+        }),
       empty: () =>
         purge(items, {
           title: "Empty Trash?",
-          text: `${items.length === 1 ? "The note in Trash is" : `All ${items.length} notes in Trash are`} deleted forever: their text leaves history, and this can't be undone.`,
+          text: `${items.length === 1 ? "The note in Trash is" : `All ${items.length} notes in Trash are`} deleted forever: their text leaves history, and this can't be undone.${earlierText(items)}`,
           yes: "Empty Trash",
         }),
       lastVersion: async (item) => (await call<{ text: string } | null>("GET", `/api/version?${new URLSearchParams({ path: item.path, revision: String(item.before) })}`))?.text ?? "",

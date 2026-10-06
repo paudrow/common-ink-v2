@@ -13,7 +13,7 @@ import { forAll, type Rng } from "./gen.ts";
 const PATHS = ["a.md", "b.md", "a (restored).md", "b (restored).md"] as FilePath[];
 const ME: Author = { kind: "user", email: "ada@example.com" };
 type Step = { op: "write" | "delete" | "undo" | "restoreTo" | "trashRestore" | "purge"; path: FilePath; back: number; k: number };
-// Few texts, an empty one among them, so the same text often comes back in another note.
+// Few texts, an empty one and a bare heading (a template's) among them, so the same text often comes back in another note.
 const step = (r: Rng): Step => ({ op: r.pick(["write", "write", "delete", "undo", "restoreTo", "restoreTo", "trashRestore", "purge"] as const), path: r.pick(PATHS), back: r.int(0, 3), k: r.int(0, 5) });
 
 function build(steps: readonly Step[]) {
@@ -22,7 +22,7 @@ function build(steps: readonly Step[]) {
   for (const s of steps) {
     const current = files.read(s.path);
     const history = files.history(s.path).filter((c) => !c.purged);
-    if (s.op === "write") files.write({ path: s.path, text: s.k ? `${s.path} ${s.k}` : "", base: current?.revision ?? 0, author: ME });
+    if (s.op === "write") files.write({ path: s.path, text: [``, `# t\n`, `# t\n${s.k}`][Math.min(s.k, 2)] + (s.k > 2 ? ` ${s.path}` : ""), base: current?.revision ?? 0, author: ME });
     else if (s.op === "delete" && current) files.write({ path: s.path, text: "", base: current.revision, author: ME, delete: true });
     else if (s.op === "undo") {
       const c = history.at(-1 - s.back);
@@ -114,4 +114,33 @@ test("a delete followed by a new note at its path the backfill can't link stays 
   assert.deepEqual(old.deleted(Date.now() - 1000).map((d) => [d.revision, d.byHand]), [[d1, true]], "still in Trash, long after");
   assert.deepEqual(old.purge([d1], ME).map((p) => p.path), ["n.md"], "and purged by hand");
   assert.equal(old.read("n.md" as FilePath)?.text, "# n\nsecond, a new note");
+});
+
+test("a daily note deleted, then made again from its template, keeps its own row in Trash after the backfill", () => {
+  const { db, files } = build([]);
+  const day = "Journal/2026-10-01.md" as FilePath;
+  const w = (text: string) => files.write({ path: day, text, base: files.read(day)?.revision ?? 0, author: ME }).file!.revision;
+  w("# 2026-10-01\n");
+  w("# 2026-10-01\n- the old day's secret plan\n");
+  const d1 = files.write({ path: day, text: "", base: files.read(day)!.revision, author: ME, delete: true }).file!.revision;
+  w("# 2026-10-01\n");
+  const old = backfill(db);
+  assert.deepEqual(old.deleted(0).map((d) => d.revision), [d1], "the old day is its own note");
+  w("# 2026-10-01\n- today\n");
+  const d2 = old.write({ path: day, text: "", base: old.read(day)!.revision, author: ME, delete: true }).file!.revision;
+  old.purge([d2], ME);
+  assert.ok(JSON.stringify(db.all("SELECT diff FROM changes")).includes("secret plan"), "deleting the new day forever leaves the old day's text");
+});
+
+test("restored to a version other than the one it was deleted with, a note isn't guessed, and stays out of automatic purge", () => {
+  const { db, files } = build([]);
+  const p = "r.md" as FilePath;
+  const r1 = files.write({ path: p, text: "# r\n", base: 0, author: ME }).file!.revision;
+  const r2 = files.write({ path: p, text: "# r\nsecret", base: r1, author: ME }).file!.revision;
+  files.write({ path: p, text: "# r\nsecret, edited", base: r2, author: ME });
+  const d = files.write({ path: p, text: "", base: files.read(p)!.revision, author: ME, delete: true }).file!.revision;
+  files.restore(p, { revision: r2 }, ME);
+  const old = backfill(db);
+  assert.deepEqual(old.deleted(0).map((x) => [x.revision, x.byHand]), [[d, true]], "its delete is in Trash, kept");
+  assert.deepEqual(expired(old, 0, Date.now() + 1), [], "and no purge takes it on its own");
 });
