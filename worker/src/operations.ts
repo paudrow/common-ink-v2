@@ -4,7 +4,7 @@ import { timingFrom, type EditResult, type EventEdit, type LinkingNote, type Ref
 import { isTimeZone, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type Scope } from "./calendar.ts";
 import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
-import { completeTaskIn, TaskError } from "./complete-task.ts";
+import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact } from "./sources.ts";
@@ -31,7 +31,7 @@ export interface Store {
   editApplied(path: FilePath, id: string): Promise<boolean> | boolean;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
-  logDone(path: FilePath, entry: string, day: string, author: Author): Promise<WriteResult> | WriteResult;
+  completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -524,12 +524,9 @@ export const OPERATIONS = {
       return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
-      try {
-        return await completeTaskIn(store, args, author);
-      } catch (err) {
-        if (err instanceof TaskError) throw new OperationError(err.message);
-        throw err;
-      }
+      const ticked = await store.completeTask(args, author);
+      if ("refused" in ticked) throw new OperationError(ticked.refused);
+      return ticked;
     },
   }),
   list_uploads: op<Record<string, never>>({

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { DATA_SCOPES, exchange } from "../worker/src/google.ts";
+import { accessToken, contacts, DATA_SCOPES, exchange } from "../worker/src/google.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { cookie, sign, verify } from "../worker/src/session.ts";
 import { allowedEmails, sessionEmail, signInRoute, type SignInConfig } from "../worker/src/sign-in.ts";
@@ -169,7 +169,7 @@ test("a next= too long for the sign-in cookie still signs you in, landing on the
 });
 
 test("a next= that only grows long once it's percent-encoded still signs you in, landing on the app", async () => {
-  for (const next of [`/${"é".repeat(1999)}`, `/${"😀".repeat(999)}`, `/?q=${'"'.repeat(1996)}`]) {
+  for (const next of [`/${"é".repeat(1999)}`, `/${"😀".repeat(999)}`, `/?q=${'"'.repeat(1996)}`, `/?q=${"\\".repeat(1496)}`, `/#${"\\".repeat(1497)}`]) {
     const { res, stateSetCookie } = await signIn(ada, false, {}, next);
     assert.ok(stateSetCookie.length < 4096, `the sign-in cookie is ${stateSetCookie.length} characters`);
     assert.equal(res.headers.get("Location"), "/");
@@ -259,4 +259,21 @@ test("Google's ID token is checked for this app and a confirmed email", async ()
   const answer = (claims: Record<string, unknown>) => fakeGoogle({ "https://oauth2.googleapis.com/token": { id_token: idToken(claims) } });
   await assert.rejects(exchange(google, "c", "r", "v", answer({ aud: "client-1", iss: "https://evil.example", email: "a@b.c", email_verified: true })), /wasn't for this app/);
   assert.equal((await exchange(google, "c", "r", "v", answer({ aud: "client-1", iss: "accounts.google.com", email: "A@B.C", email_verified: true }))).email, "a@b.c");
+});
+
+test("sign-in, a fresh access token and contacts each give up on a Google that doesn't answer, and say so", { timeout: 5000 }, async () => {
+  // Google, hanging: it answers only by failing once the request is given up.
+  const hanging: typeof fetch = (_input, init) =>
+    new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+  // AbortSignal.timeout's timer doesn't keep Node waiting, so something else has to.
+  const waiting = setInterval(() => {}, 1000);
+  try {
+    const config = { clientId: "c", clientSecret: "s" };
+    const said = "Google didn't answer within 0.05 seconds";
+    await assert.rejects(exchange(config, "code", "https://example.com/auth/google/callback", "verifier", hanging, 50), { message: said });
+    await assert.rejects(accessToken(config, "refresh", hanging, 50), { message: said });
+    await assert.rejects(contacts("token", hanging, 50), { message: said });
+  } finally {
+    clearInterval(waiting);
+  }
 });
