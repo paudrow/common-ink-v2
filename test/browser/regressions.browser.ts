@@ -213,6 +213,42 @@ for (const leave of ["a reload", "leaving the page"] as const) {
   });
 }
 
+for (const [later, text] of [["deleted", "# Trip\n- a\n"], ["changed", "# Trip\n- a\n- packed bags\n"]] as const) {
+  browserTest(h, `a kept edit the server already has isn't sent again when the note opens, though its line was ${later} since`, { scenario: "empty" }, async (app) => {
+    // The edit reached the server as the page went, but the page never heard: its draft stayed, on its old base.
+    await app.writeFile("Other.md", "# Other\n");
+    await app.writeFile("Trip.md", "# Trip\n- a\n");
+    const base = ((await (await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`)).json()) as { revision: number }).revision;
+    await app.writeFile("Trip.md", "# Trip\n- a\n- packed\n");
+    await app.goto({}, "Other");
+    await app.page.evaluate(([base]) => localStorage.setItem(`common-ink.draft:${localStorage.getItem("common-ink:me")}:Trip.md`, JSON.stringify({ path: "Trip.md", text: "# Trip\n- a\n- packed\n", base })), [base]);
+    // Then another device changes the line.
+    const now = ((await (await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`)).json()) as { revision: number }).revision;
+    await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text, base: now }, headers: { "X-Common-Ink-Agent": "Claude" } });
+    await app.open("Trip");
+    await app.idle();
+    await app.page.waitForTimeout(800);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), text);
+    assert.equal(await app.page.locator("#save").getAttribute("data-status"), "saved");
+    assert.equal(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")).length), 0, "the draft is gone");
+  });
+}
+
+browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("o- private<Esc>");
+  const gone = app.page.waitForURL(/sign-out/);
+  await app.command("Sign out");
+  await gone;
+  await app.page.waitForLoadState("load");
+  assert.deepEqual(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:"))), []);
+});
+
 browserTest(h, "a note deleted elsewhere while it's open isn't written back when its tab closes", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n- packed\n");
   await app.writeFile("Other.md", "# Other\n");
