@@ -123,3 +123,21 @@ test("the bar's target: the inbox (or today's daily note), the note it was opene
   assert.deepEqual(targetOf("Other", true, "Projects/Launch.md", daily), { label: "Other", named: "Other", path: null });
   assert.deepEqual(targetOf(null, true, undefined, { label: "Inbox", path: "Inbox.md" }), { label: "Inbox", named: null, path: "Inbox.md" });
 });
+
+test("zero times or a stretch of nothing isn't an end, so it stays words rather than a token that isn't one", () => {
+  assert.equal(line("Stretch daily 0 times"), "- [ ] Stretch 0 times due:2026-09-28 rec:daily");
+  assert.equal(line("Rent monthly for 0 months"), "- [ ] Rent for 0 months due:2026-09-28 rec:monthly");
+  assert.equal(line("Gym every week for 0 weeks"), "- [ ] Gym for 0 weeks due:2026-09-28 rec:weekly");
+});
+
+test("Feb 29 without a year is the next one there is", () => {
+  assert.equal(line("Leap party on feb 29"), "- [ ] Leap party due:2028-02-29");
+  assert.equal(line("Leap party feb 29 2027"), "- [ ] Leap party feb 29 2027");
+});
+
+test("a date that runs on into a range or a longer date stays words, rather than leaving half of it behind", () => {
+  assert.equal(line("Report covers oct 3-oct 9"), "- [ ] Report covers oct 3-oct 9");
+  assert.equal(line("Wrap up jan 5-7"), "- [ ] Wrap up jan 5-7");
+  assert.equal(line("Book it on mar 1 2027-12-31"), "- [ ] Book it 2027-12-31 due:2027-03-01");
+  assert.equal(line("Call mom tomorrow - early"), "- [ ] Call mom - early due:2026-09-29");
+});
