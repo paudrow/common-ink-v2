@@ -1,0 +1,7 @@
+{
+  "pr": 77,
+  "title": "The fake Google follows the scenario's clock from the first start",
+  "steps": [
+    "Local only. `npm run dev -- --fake-google --scenario google` on a new workspace, without --fresh: ⌘⇧P, Show calendar, and the fake Google's week is the week of Oct 5, 2026."
+  ]
+}

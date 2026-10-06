@@ -154,6 +154,27 @@ browserTest(h, "a click with ⌘ or Ctrl, or ⌘⌥↓, doesn't leave a second c
   assert.equal(await app.readFile("C.md"), "# C\n\none\ntwo\n");
 });
 
+browserTest(h, "Vim's > over a paragraph and the list after it shifts every line, and leaves the cursor on the first", { scenario: "empty" }, async (app) => {
+  await app.writeFile("P.md", "# P\n\nSome text\nmore text\n- one\n- two\n\nend\n");
+  await app.goto({}, "P");
+  await app.idle();
+  await app.call("cursor", 3, 1);
+  await app.keys("<Esc>>ip");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("P.md")).includes("  Some"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("P.md"), "# P\n\n  Some text\n  more text\n  - one\n  - two\n\nend\n");
+  assert.deepEqual([(await where(app)).line, (await where(app)).column], [3, 3], "on the first line's first character, as Vim leaves it");
+  await app.keys("u");
+  await app.call("cursor", 4, 1);
+  await app.keys("3<<");
+  await app.call("cursor", 4, 1);
+  await app.keys("3>>");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("P.md")).includes("  more"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("P.md"), "# P\n\nSome text\n  more text\n  - one\n  - two\n\nend\n");
+  assert.equal((await where(app)).line, 4);
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";

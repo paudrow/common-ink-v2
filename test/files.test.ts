@@ -376,6 +376,16 @@ test("JavaScript is a file only as a workspace extension's code", () => {
   assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
 });
 
+test("the last revision given stays the last, even once its changes are gone, as a reset leaves them", () => {
+  const db = memoryDb();
+  const files = new Files(db);
+  files.write({ path: PLAN, text: "# Plan\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
+  db.run("DELETE FROM changes");
+  assert.equal(files.lastRevision(), 2);
+  assert.equal(new Files(memoryDb()).lastRevision(), 0);
+});
+
 test("history filtered by author finds its changes far back in a long history, newest first, and pages with before", () => {
   const files = new Files(memoryDb());
   const agent: Author = { kind: "agent", name: "Claude", by: "ada@example.com" };
