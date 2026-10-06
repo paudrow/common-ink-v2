@@ -209,7 +209,6 @@ const workbench = new Workbench(
     saved(path) {
       for (const fn of savedListeners) fn(path);
       if (isSettingsFile(path)) void loadSettings();
-      if (path === device.path) void device.absorb();
     },
     // Keys are hinted only where there's a keyboard to press them.
     shortcut: (command) => {
@@ -560,8 +559,16 @@ device.onChange((d, was) => {
   extensions.deviceChanged();
   workbench.refreshParts();
   void extensions.promote().then((went) => {
-    if (d.facts.keyboard && !was.keyboard && d.file.keyboard === "auto")
-      workbench.notice(`Keyboard found: ${went.length ? `${went.join(", ")} and shortcuts are` : "shortcuts are"} on here.`, [{ label: "This device", run: () => openSettingsUi("device") }]);
+    if (d.facts.keyboard && !was.keyboard && d.file.keyboard === "auto") {
+      const on = went.length ? `${went.join(", ")} ${went.length === 1 ? "is" : "are"} on` : "shortcuts are on";
+      // On a touch screen it's a guess from the keys pressed: say how to take it back. What went in goes with a reload.
+      if (d.facts.touch)
+        workbench.notice(`Keyboard found: ${on}.`, [
+          { label: "Not a keyboard?", run: () => void device.setKeyboard("no").then(() => went.length && reloadWindow()) },
+          { label: "This device", run: () => openSettingsUi("device") },
+        ]);
+      else workbench.notice(`Keyboard found: ${on} here.`, [{ label: "This device", run: () => openSettingsUi("device") }]);
+    }
     else if (went.length) workbench.notice(`${went.join(", ")} ${went.length === 1 ? "is" : "are"} on here now.`);
     extensionsChanged();
     workbench.refreshView(SETTINGS_VIEW);
@@ -604,6 +611,9 @@ async function firstLayout(): Promise<L.Layout | null> {
   from ??= parse((await offline.read(L.LAYOUT_PATH)).text);
   return from && (device.atLeast("expanded") ? from : L.onShow(from));
 }
+
+// This device's file changed: in another tab on this device, or by you or an agent. Its changes come in here.
+savedListeners.push((path) => path === device.path && void device.absorb());
 
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
