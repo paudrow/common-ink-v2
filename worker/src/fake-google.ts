@@ -136,13 +136,15 @@ export class FakeGoogle {
 }
 
 /**
- * A fake Google with a week of events around `now`, for the browser tests' Workers (FAKE_GOOGLE):
- * a primary calendar in New York with a weekday standup (one occurrence moved), a dentist visit, and
- * a team calendar you can only read.
+ * A fake Google with a week of events around `today`, a day in its calendars' zone (New York), for
+ * the browser tests' Workers (FAKE_GOOGLE): a primary calendar with a weekday standup and a dentist
+ * visit, and a team calendar you can only read.
  */
-export function sampleGoogle(now: number): FakeGoogle {
-  const day = (n: number) => new Date(now + n * 86_400_000).toISOString().slice(0, 10);
-  const NY = "America/New_York";
+export const SAMPLE_ZONE = "America/New_York";
+
+export function sampleGoogle(today: string): FakeGoogle {
+  const NY = SAMPLE_ZONE;
+  const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   const fake = new FakeGoogle();
   fake.addCalendar({ id: "tester@localhost", summary: "Tester", primary: true, accessRole: "owner", backgroundColor: "#4f6bd8", timeZone: NY });
   fake.addCalendar({ id: "team@group.calendar.google.com", summary: "Team", accessRole: "reader", backgroundColor: "#2f9e44", timeZone: NY });

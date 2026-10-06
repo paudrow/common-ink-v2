@@ -535,6 +535,44 @@ function rekeyed(e: Exception, series: CalendarEvent, shift: (s: Day | WallTime)
 }
 
 /**
+ * What taking back a changed occurrence's own changes writes: the occurrence as its series makes it,
+ * while the series still has it. Deleting its record would cancel it in Google. Without the
+ * occurrence in its series any more, the record is deleted.
+ */
+function planUnchange(events: readonly CalendarEvent[], e: CalendarEvent, viewer: string): RecordOp {
+  const back = e.series === undefined ? null : findTarget(events.filter((o) => o.id !== e.id), e.id, viewer);
+  return back?.kind === "occurrence" ? { op: "put", event: back.occurrence, created: false } : { op: "delete", event: e };
+}
+
+/** Whether a changed occurrence is only its series' occurrence written out, with nothing changed on its own. */
+function plainCopy(e: CalendarEvent, series: CalendarEvent, viewer: string): boolean {
+  const made = findTarget([series], e.id, viewer);
+  return made?.kind === "occurrence" && Object.values(MERGED).every((read) => JSON.stringify(read(made.occurrence)) === JSON.stringify(read(e)));
+}
+
+/**
+ * What putting a record back to `back` (an event, or null for none) writes, as undo and restore do.
+ * A changed occurrence with nothing to go back to goes back to how its series makes it. A series takes
+ * with it the occurrences that are only its own written out (an undo leaves them so) at starts it
+ * won't have any more, since they'd show as occurrences of their own.
+ */
+export function planRevert(events: readonly CalendarEvent[], current: CalendarEvent | null, back: CalendarEvent | null, viewer = "UTC"): RecordOp[] {
+  if (!current) return back ? [{ op: "put", event: back, created: true }] : [];
+  if (!back && current.series !== undefined) return [planUnchange(events, current, viewer)];
+  const own: RecordOp = back ? { op: "put", event: back, created: false } : { op: "delete", event: current };
+  if (!current.recurrence) return [own];
+  const keeps = (e: CalendarEvent) => !!back?.recurrence && findTarget([back], e.id, viewer)?.kind === "occurrence";
+  const left = exceptionsOf(events, current.id).filter((e) => plainCopy(e, current, viewer) && !keeps(e));
+  return [own, ...left.map((e) => ({ op: "delete" as const, event: e }))];
+}
+
+/** A moved series' changed occurrences, each record once: one moved onto another's old start takes that record over. */
+function oncePerRecord(ops: RecordOp[], series: CalendarEvent, viewer: string): RecordOp[] {
+  const put = new Set(ops.flatMap((o) => (o.op === "put" ? [o.event.id] : [])));
+  return ops.flatMap((o) => (o.op === "put" ? [o] : put.has(o.event.id) ? [] : [planUnchange([series], o.event, viewer)]));
+}
+
+/**
  * The records an edit writes. `scope` matters only for a series' occurrences: "this" changes that
  * one alone, "following" splits the series there and changes the new part, "all" changes the series
  * (moving every occurrence by as much as this one moved). Occurrences changed on their own keep their
@@ -568,7 +606,7 @@ export function planUpdate(events: readonly CalendarEvent[], target: Target, cha
     const recurrence = own.recurrence !== undefined ? own.recurrence : startsMove ? movedLines(series, timing!, shift, days, viewer) : undefined;
     const put = applied(series, { ...own, timing, recurrence });
     if (!startsMove) return [{ op: "put", event: put, created: false }, ...self.map((e) => ({ op: "put" as const, event: e, created: false }))];
-    return [{ op: "put", event: put, created: false }, ...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))];
+    return [{ op: "put", event: put, created: false }, ...oncePerRecord([...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))], put, viewer)];
   }
 
   const { cut, left } = endBefore(series, occurrence.originalStart, viewer);
