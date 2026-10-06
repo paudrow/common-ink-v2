@@ -30,42 +30,68 @@ test("the sandbox's shells are sandboxed by their own policy wherever they load,
 
 const GRABBY = {
   name: "Grabby",
-  activationEvents: ["onCommand:grabby.run"],
+  activationEvents: ["onCommand:grabby.run", "onCommand:grabby.where"],
   permissions: { "files:write": { paths: ["**"], why: "Tidy everything" } },
-  contributes: { commands: [{ command: "grabby.run", title: "Run Grabby" }] },
+  contributes: {
+    commands: [
+      { command: "grabby.run", title: "Run Grabby" },
+      { command: "grabby.where", title: "Where is Grabby" },
+    ],
+  },
 };
 
+// Each file, as a string, a String object and an array: the frame's messages are structured clones,
+// which keep both, and either reads as the path once something turns it into a string.
 const GRAB = `export default { activate(ctx) {
+  const trust = '{ "extensions.trusted": ["grabby"] }\\n';
   ctx.commands.register("grabby.run", async () => {
     const r = {};
-    const t = async (k, f) => { try { await f(); r[k] = "written"; } catch (e) { r[k] = "refused"; } };
-    await t("note", () => ctx.files.write("Tidy.md", "# Tidy\\n", 0));
-    await t("workspaceSettings", () => ctx.files.write(".common-ink/settings.json", '{ "extensions.trusted": ["grabby"] }\\n', 0));
-    await t("userSettings", () => ctx.files.write(".common-ink/users/tester@localhost/settings.json", '{ "extensions.trusted": ["grabby"] }\\n', 0));
-    await t("ownManifest", () => ctx.files.write(".common-ink/extensions/grabby/extension.json", "{}", 0));
-    await t("anotherExtension", () => ctx.files.write(".common-ink/extensions/other/index.js", "export default { activate() {} };\\n", 0));
+    const t = async (k, p, text) => {
+      for (const [how, path] of [["plain", p], ["boxed", new String(p)], ["array", [p]]]) {
+        try { await ctx.files.write(path, text, 0); r[k + " " + how] = "written"; } catch (e) { r[k + " " + how] = "refused"; }
+      }
+    };
+    await t("note", "Tidy.md", "# Tidy\\n");
+    await t("workspaceSettings", ".common-ink/settings.json", trust);
+    await t("userSettings", ".common-ink/users/" + ctx.me + "/settings.json", trust);
+    await t("ownManifest", ".common-ink/extensions/grabby/extension.json", "{}");
+    await t("anotherExtension", ".common-ink/extensions/other/index.js", "export default { activate() {} };\\n");
     await ctx.workbench.notice("GRABBY " + JSON.stringify(r));
   });
+  ctx.commands.register("grabby.where", () => ctx.workbench.notice("WHERE " + self.origin));
 } };`;
 
 browserTest(
   h,
-  "a sandboxed extension allowed to change every file still can't change who's trusted, what's allowed, or any extension's files",
-  { scenario: "empty", levers: { permissions: "allow" }, allowErrors: [/can't change/] },
+  "a sandboxed extension allowed to change every file still can't change who's trusted, what's allowed, or any extension's files, however it passes the path",
+  { scenario: "empty", levers: { permissions: "allow" }, allowErrors: [/can't change|isn't a file path/] },
   async (app) => {
     await app.writeFile(".common-ink/extensions/grabby/extension.json", JSON.stringify(GRABBY));
     await app.writeFile(".common-ink/extensions/grabby/index.js", GRAB);
     await app.reload();
     await app.command("Run Grabby");
     const said = await app.page.locator(".notice p", { hasText: "GRABBY" }).textContent();
-    assert.deepEqual(JSON.parse(said!.slice(said!.indexOf("{"))), {
-      note: "written",
-      workspaceSettings: "refused",
-      userSettings: "refused",
-      ownManifest: "refused",
-      anotherExtension: "refused",
-    });
+    const written = Object.entries(JSON.parse(said!.slice(said!.indexOf("{")))).filter(([, how]) => how === "written").map(([what]) => what);
+    assert.deepEqual(written, ["note plain"]);
     assert.equal(await app.readFile(".common-ink/settings.json"), "");
+    assert.equal(await app.readFile(".common-ink/users/tester@localhost/settings.json"), "");
     assert.equal(await app.readFile(".common-ink/extensions/other/index.js"), "");
+    await app.reload();
+    await app.command("Where is Grabby");
+    assert.equal(await app.page.locator(".notice p", { hasText: "WHERE" }).textContent(), "Grabby: WHERE null", "still sandboxed after a reload");
   },
 );
+
+test("the Worker refuses an untrusted extension's change to the files that decide trust, but not its own state", async () => {
+  const write = async (path: string, extension: string) => {
+    const current = await fetch(`${h.base}/api/file?path=${encodeURIComponent(path)}`);
+    const base = current.ok ? ((await current.json()) as { revision: number }).revision : 0;
+    return fetch(`${h.base}/api/file`, { method: "PUT", headers: { "X-Common-Ink-Extension": extension }, body: JSON.stringify({ path, text: "{}\n", base }) });
+  };
+  assert.equal((await write(".common-ink/settings.json", "grabby")).status, 403);
+  assert.equal((await write(".common-ink/users/tester@localhost/settings.json", "grabby")).status, 403);
+  assert.equal((await write(".common-ink/extensions/other/index.js", "grabby")).status, 403);
+  assert.equal((await write(".common-ink/extensions/grabby/installed.json", "grabby")).status, 403);
+  assert.equal((await write(".common-ink/extensions/grabby/state.json", "grabby")).status, 200);
+  assert.equal((await write("Grabby was here.md", "grabby")).status, 200);
+});
