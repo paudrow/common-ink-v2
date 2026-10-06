@@ -218,10 +218,13 @@ export class GoogleCalendar implements Adapter {
   }
 
   private async syncCalendar(io: SyncIO, calendar: string, zone: string): Promise<void> {
-    // Read again what the last sync left for a change made here meanwhile. One Google can't find is left as it is.
+    // Read again what the last sync left for a change made here meanwhile. One Google can't find is gone.
     for (const id of io.recheck(calendar)) {
       const res = await this.call("GET", this.path(calendar, id));
-      if (res.status === 404 || res.status === 410) continue;
+      if (res.status === 404 || res.status === 410) {
+        io.remove(calendar, id);
+        continue;
+      }
       if (!res.ok) throw new Error(`Google Calendar answered ${res.status} reading ${id} again`);
       const g = (await res.json()) as GoogleEvent;
       if (g.status === "cancelled" && !g.recurringEventId) io.remove(calendar, g.id);

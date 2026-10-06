@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -385,7 +385,13 @@ export class DataSources {
       const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
       try {
         this.pushing = row.path;
-        const pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar)).finally(() => (this.pushing = null));
+        let pushed: Pushed;
+        try {
+          pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
+        } finally {
+          // In the same step as the row goes below, so no sync sees the row while nothing is pushing it.
+          this.pushing = null;
+        }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
           if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
