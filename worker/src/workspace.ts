@@ -9,6 +9,7 @@ import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
+import { logDone } from "./complete-task.ts";
 import { RESET_CLOSE } from "./levers.ts";
 
 export interface WorkspaceEnv {
@@ -67,9 +68,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, (input, init) => this.fake!.fetch(input, init));
-      this.fake ??= this.sampleFake();
-      if (!sources.syncs) void sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+      // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.sampleFake().fetch(input, init));
+      if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
       return [files, sources];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
@@ -77,9 +78,12 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return [files, sources];
   }
 
-  /** The fake Google's week, around the day the workspace's scenario starts on, or today where its calendars are. */
+  /**
+   * The fake Google, made the first time it's used, so after a seed has said the workspace's scenario:
+   * its week is around the day that scenario starts on, or today where its calendars are.
+   */
   private sampleFake(): FakeGoogle {
-    return sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10));
+    return (this.fake ??= sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10)));
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -93,8 +97,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   // Pages only listen; anything they send is ignored.
   webSocketMessage() {}
 
-  webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code === 1005 ? 1000 : code, "closing");
+  // A page that went without a close frame comes as 1006, which can't be sent back, so the reply is always 1000.
+  webSocketClose(ws: WebSocket) {
+    ws.close(1000, "closing");
   }
 
   list() {
@@ -126,6 +131,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  editApplied(path: FilePath, id: string) {
+    return this.files.editApplied(path, id);
+  }
+
   /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
     return restoreFile(this.files, this.sources, path, at, author);
@@ -134,6 +143,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
   sandboxKey(): string {
     return this.files.secret("sandbox-key");
+  }
+
+  /** Log a task's completion in a daily note, in one step (complete-task.ts). */
+  logDone(path: FilePath, entry: string, day: string, author: Author) {
+    return logDone(this.files, path, entry, day, author);
   }
 
   /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */
@@ -169,7 +183,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * load again. Running it twice ends the same way.
    */
   reset(seed: Seed, pinned: boolean) {
-    const [{ last }] = this.db.all<{ last: number | null }>("SELECT max(revision) AS last FROM changes");
+    const last = this.files.lastRevision();
     this.db.tx(() => {
       for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
         this.db.run(`DROP TABLE "${name}"`);
@@ -182,7 +196,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     }
     this.files.seed(seed);
     this.keepScenario(seed, pinned);
-    if (this.fake) this.fake = this.sampleFake();
+    this.fake = null;
     for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
@@ -191,10 +205,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * give it again, as reconnecting does.
    */
   async fakeGoogle(change: { revoked: boolean }) {
-    if (!this.fake) return null;
-    this.fake.revoked = change.revoked;
+    if (this.env.FAKE_GOOGLE !== "1" || this.env.LEVERS !== "1") return null;
+    this.sampleFake().revoked = change.revoked;
     if (!change.revoked) await this.connectGoogle({ email: "tester@localhost", refreshToken: "fake-2", scopes: DATA_SCOPES });
-    return { revoked: this.fake.revoked };
+    return { revoked: this.sampleFake().revoked };
   }
 
   /** Keep Google's grant, then send what waited for it and sync, soon, without holding up sign-in. */

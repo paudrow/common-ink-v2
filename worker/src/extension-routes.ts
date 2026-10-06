@@ -10,7 +10,8 @@ import { decide, parseGrants } from "./permissions.ts";
 import { linkCard } from "./link-card.ts";
 import { FetchRefused, safeFetch, type SafeFetchOptions } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
-import { userSettingsPath } from "./settings.ts";
+import { userSettingsPath, WORKSPACE_SETTINGS } from "./settings.ts";
+import { setTopLevelKey } from "../../web/src/json-edit.ts";
 import { LIBRARY_NAMES, libraryUrl } from "../../web/src/library-names.ts";
 
 /**
@@ -50,6 +51,9 @@ export async function sandboxRoute(req: Request, url: URL, assets: { fetch(req: 
     return new Response(res.body, { headers: { "Content-Type": type, "Access-Control-Allow-Origin": "*", "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400" } });
   }
   const code = /^code\/([^/]+)\/(.+)$/.exec(path);
+  // An extension's code is for its sandboxed host only, whose origin is opaque: never a script for one
+  // of this site's own pages.
+  if (code && req.headers.get("Sec-Fetch-Site") === "same-origin") return new Response("Not found\n", { status: 404 });
   if (code) {
     const id = await verifyCodeToken(await store.sandboxKey(), code[1], Date.now());
     const file = id ? parseFilePath(extensionFilePath(id, code[2])) : null;
@@ -103,13 +107,16 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     }
     // The app asked you already; this checks again against what's kept, so a page that skips asking gets nothing.
     const once = body.once ? new Set([`${found.manifest.id} network:${host}`, ...(found.manifest.permissions.network?.hosts ?? []).map((h) => `${found.manifest.id} network:${h}`)]) : undefined;
-    const decision = decide(found.manifest, { kind: "network", target: host }, await grantsOf(store, email), { builtIn: found.builtIn, once });
+    const grants = await grantsOf(store, email);
+    const decision = decide(found.manifest, { kind: "network", target: host }, grants, { builtIn: found.builtIn, once });
     if (decision.outcome === "undeclared") return json({ error: `${found.manifest.name} doesn't declare ${host} in its extension.json, so it can't reach it` }, 403);
     if (decision.outcome !== "allow") return json({ error: `${found.manifest.name} isn't allowed to reach ${host}` }, 403);
+    // A redirect is held to the same declaration and answers as the address it started at.
+    const allowHost = (h: string) => decide(found.manifest, { kind: "network", target: h }, grants, { builtIn: found.builtIn, once }).outcome === "allow";
     try {
       // A link's card (title, description, picture) rather than its page.
-      if (body.card) return json(await linkCard(body.url, net));
-      const res = await safeFetch(body.url, { ...net, method: body.method, headers: body.headers, body: body.body });
+      if (body.card) return json(await linkCard(body.url, { ...net, allowHost }));
+      const res = await safeFetch(body.url, { ...net, allowHost, method: body.method, headers: body.headers, body: body.body });
       return json(res);
     } catch (err) {
       if (err instanceof FetchRefused) return json({ error: err.message }, 400);
@@ -172,5 +179,26 @@ async function install(store: Store, raw: string, author: Author, catalog: strin
     const current = await store.read(path);
     await store.write({ path, text, base: current?.revision ?? 0, author });
   }
+  await untrust(store, id, author);
   return { id, name: manifest.name, files: files.map(([f]) => f) };
+}
+
+/**
+ * Take `id` out of every extensions.trusted list, the workspace's and each person's: whoever trusted
+ * an extension by that id trusted other code, so what's just been installed starts sandboxed.
+ */
+async function untrust(store: Store, id: string, author: Author): Promise<void> {
+  for (const { path } of await store.list()) {
+    if (path !== WORKSPACE_SETTINGS && !/^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path)) continue;
+    const file = await store.read(path);
+    let trusted: unknown;
+    try {
+      trusted = JSON.parse(file?.text || "{}")["extensions.trusted"];
+    } catch {
+      continue;
+    }
+    if (!file || !Array.isArray(trusted) || !trusted.includes(id)) continue;
+    const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
+    if (text !== null) await store.write({ path, text, base: file.revision, author });
+  }
 }

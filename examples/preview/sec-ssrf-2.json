@@ -1,0 +1,8 @@
+{
+  "pr": 59,
+  "title": "Safe fetch: redirects held to declared hosts",
+  "steps": [
+    "Open Link embeds tour: cards draw as before.",
+    "Paste a link to a WordPress.com blog post alone on a line: it draws as a card (before, its 192.0.78.x address was refused)."
+  ]
+}

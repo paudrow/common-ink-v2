@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FilePath } from "../worker/src/files.ts";
+import { layoutProblems } from "../web/src/layout-problems.ts";
 import {
   activeFile,
   closeTab,
@@ -216,4 +217,12 @@ test("sizes that add up to 1 but for a float's rounding are read back as written
   const written = { root: { kind: "split", dir: "row", sizes, children: [0, 1, 2].map((i) => ({ kind: "group", id: `g${i}`, tabs: [], active: 0 })) }, focused: "g0" };
   const read = parseLayout(JSON.parse(JSON.stringify(written)))!;
   assert.deepEqual(read.root.kind === "split" ? read.root.sizes : null, sizes);
+});
+
+test("a saved layout whose sizes can't be shares (infinite, or too big to add up) opens with its windows side by side, evenly", () => {
+  const two = (sizes: unknown[]) => parseLayout({ root: { kind: "split", dir: "row", children: [{ kind: "group", id: "g1", tabs: [], active: 0 }, { kind: "group", id: "g2", tabs: [], active: 0 }], sizes }, focus: "g1" })!;
+  for (const odd of [[Infinity, 1], [1e308, 1e308], [Number.MAX_VALUE, 1]]) {
+    const l = two(odd);
+    assert.deepEqual([sizes(l), layoutProblems(l)], [[0.5, 0.5], []], JSON.stringify(odd));
+  }
 });
