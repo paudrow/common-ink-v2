@@ -902,7 +902,8 @@ export class ExtensionRuntime {
             const path = filePath(a);
             if (decidesTrust(path)) {
               this.broker.record(m.id, { kind: "files:write", target: path }, "denied");
-              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: it runs sandboxed, and that decides what extensions may do`);
+              if (path === statePath(m.id)) throw new Error(`${m.name} can't change its own state.json as a file: use ctx.state`);
+              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: sandboxed extensions never change settings or extensions' files`);
             }
             return services.write(path, String(b), Number(c));
           }
