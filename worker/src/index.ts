@@ -5,8 +5,7 @@ import { isExtensionScript, parseFilePath, type Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
-import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type SignInConfig } from "./sign-in.ts";
-import { cookie } from "./session.ts";
+import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
@@ -99,9 +98,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       }
       return secure(new Response("Sign in to use Common Ink.\n", { status: 401 }));
     }
-    // A signed-in browser's cookie goes with requests other sites make; only this site may change things.
+    // A browser sends what signs you in (a cookie, or on this machine the address itself) with requests
+    // other sites make, and says where they came from when one changes something or opens a socket.
+    // Only this site may. The CLI and agents send no Origin.
     const origin = req.headers.get("Origin");
-    if (req.method !== "GET" && origin && origin !== url.origin && cookie(req, SESSION_COOKIE)) {
+    const changes = (req.method !== "GET" && req.method !== "HEAD") || req.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
     // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
@@ -113,7 +115,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
-    const levers = leversOn(env);
+    const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
       // The app's page may frame the hosts of the link embeds that are on for this person.
