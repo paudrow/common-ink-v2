@@ -271,3 +271,23 @@ test("a held edit that landed, for a note not open, isn't sent again by the back
   assert.equal(s.store.files.read(TRIP)?.text, "# Trip\n- a\n");
   assert.deepEqual(await s.offline.unsent(), []);
 });
+
+test("of a draft kept as the page went and one typed after it came back, the newer is the one", async () => {
+  const items = new Map<string, string>();
+  const storage = { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k) };
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  try {
+    const s = await kept();
+    // The page went (kept at once), came back from the browser's back-forward cache, and typing went on.
+    s.offline.keepDraftsNow([{ path: TRIP, text: "# Trip\n- a\n- went\n", base: 1, edit: "w" }]);
+    const went = JSON.parse(items.values().next().value!) as { time: number };
+    items.set([...items.keys()][0], JSON.stringify({ ...went, path: TRIP, text: "# Trip\n- a\n- went\n", base: 1, edit: "w", time: Date.now() - 60_000 }));
+    await s.offline.keepDraft({ path: TRIP, text: "# Trip\n- a\n- went\n- and more\n", base: 1, edit: "t" });
+    assert.equal((await opened(s))?.edit.text, "# Trip\n- a\n- went\n- and more\n");
+    // And the other way: the page went after the last typing.
+    s.offline.keepDraftsNow([{ path: TRIP, text: "# Trip\n- a\n- last\n", base: 1, edit: "l" }]);
+    assert.equal((await opened(s))?.edit.text, "# Trip\n- a\n- last\n");
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});

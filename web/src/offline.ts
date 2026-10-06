@@ -268,13 +268,17 @@ export class Offline {
   /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
   private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
+    let went: Unsent | undefined;
     try {
       const kept = localStorage.getItem(this.draftKey(path));
-      if (kept) return JSON.parse(kept) as Unsent;
+      if (kept) went = JSON.parse(kept) as Unsent;
     } catch {
       // Not there, or not readable: the one kept as it was typed.
     }
-    return this.kv.get<Unsent>("meta", this.draftKey(path));
+    const typed = await this.kv.get<Unsent>("meta", this.draftKey(path));
+    // The newer of the two: a page that went and came back (the browser's back-forward cache) kept on
+    // typing after the one kept as it went.
+    return went && typed ? ((typed.time ?? 0) > (went.time ?? 0) ? typed : went) : (went ?? typed);
   }
 
   /**
