@@ -14,14 +14,31 @@ export function retentionDays(workspaceSettings: string): number {
 /** Notes in Trash: deleted within the last `days`. Other files deleted are in history, not Trash. */
 export const inTrash = (deleted: readonly Deleted[], days: number, now: number) => deleted.filter((d) => isNote(d.path) && d.time >= now - days * DAY);
 
-/** Where a restored note goes: its own path while that's free, else "<name> (restored).md", then "(restored 2)" and on. */
-export function restoredPath(files: Files, path: FilePath): FilePath {
+/** How many "(restored N)" names Restore tries beside a taken path before it says there's no free name. */
+const MAX_RESTORED = 100;
+
+/** The longest a path can be (parseFilePath). */
+const MAX_PATH = 300;
+
+/**
+ * Where a restored note goes: its own path while that's free, else "<name> (restored).md", then
+ * "(restored 2)" and on, the name shortened to fit a path's length. Null when none of those is free,
+ * or no name fits under its folder.
+ */
+export function restoredPath(files: Files, path: FilePath): FilePath | null {
   if (!files.read(path)) return path;
-  const stem = path.replace(/\.md$/, "");
-  for (let n = 1; ; n++) {
-    const next = parseFilePath(`${stem} (restored${n > 1 ? ` ${n}` : ""}).md`);
+  const folder = path.slice(0, path.lastIndexOf("/") + 1);
+  const name = [...path.slice(folder.length).replace(/\.md$/, "")];
+  for (let n = 1; n <= MAX_RESTORED; n++) {
+    const suffix = ` (restored${n > 1 ? ` ${n}` : ""}).md`;
+    const kept = [...name];
+    while (kept.length && folder.length + kept.join("").length + suffix.length > MAX_PATH) kept.pop();
+    const stem = kept.join("").trimEnd();
+    if (!stem) return null;
+    const next = parseFilePath(`${folder}${stem}${suffix}`);
     if (next && !files.read(next)) return next;
   }
+  return null;
 }
 
 /**
@@ -29,9 +46,10 @@ export function restoredPath(files: Files, path: FilePath): FilePath {
  * delete, so it comes back with its whole history; if another note has the path now, as a new note
  * beside it that records which delete it undoes. If it was archived when it was deleted, it's archived again.
  */
-export function restoreFromTrash(files: Files, d: Deleted, author: Author): { path: FilePath; revision: Revision } {
+export function restoreFromTrash(files: Files, d: Deleted, author: Author): { path: FilePath; revision: Revision } | { error: string } {
   return files.atomically(() => {
     const path = restoredPath(files, d.path);
+    if (!path) return { error: `There's no free name to restore ${d.path} beside the note there now: rename or move that note, then restore again` };
     let revision: Revision;
     if (path === d.path) {
       const [undone] = files.undo([d.revision], author);
