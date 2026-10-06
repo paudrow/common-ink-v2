@@ -2,7 +2,9 @@
 // clock, permission prompts, the network extensions reach and being offline, each set from the page's
 // address and kept in a cookie, so they last across reloads and the Worker sees them too. They're on
 // only where everyone is a dev user anyway (`npm run dev`, the browser tests and Previews): production
-// sets neither LEVERS nor DEV_USER, so there the cookie is ignored and the page never loads them.
+// sets neither LEVERS nor DEV_USER, so there the cookie is ignored and the page never loads them, and
+// even if it did, commonink.app isn't an address the dev user signs in at.
+import { devHost } from "./hosts.ts";
 
 export interface Levers {
   /** Where the page's clock starts, as local time ("2026-10-05T09:00"); it runs on from there. "real" is the real clock. */
@@ -71,9 +73,9 @@ export function leversCookie(levers: Levers): string {
   return `${LEVERS_COOKIE}=${encodeURIComponent(leverParams(levers).toString())}; Path=/; SameSite=Lax`;
 }
 
-/** Whether this Worker honours levers: only where LEVERS is on and everyone is a dev user. */
-export function leversOn(env: { LEVERS?: string; DEV_USER?: string }): boolean {
-  return env.LEVERS === "1" && !!env.DEV_USER;
+/** Whether this request gets levers: only where LEVERS is on and everyone is the dev user, on an address the dev user signs in at. */
+export function leversOn(env: { LEVERS?: string; DEV_USER?: string }, url: URL): boolean {
+  return env.LEVERS === "1" && !!env.DEV_USER && devHost(url.hostname);
 }
 
 /** The instant a `now` lever names: a date alone is its local midnight. Null for the real clock. */
