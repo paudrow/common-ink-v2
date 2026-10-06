@@ -67,9 +67,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, (input, init) => this.fake!.fetch(input, init));
+      // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.fake!.fetch(input, init));
       this.fake ??= this.sampleFake();
-      if (!sources.syncs) void sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+      if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
       return [files, sources];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
