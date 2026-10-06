@@ -95,6 +95,8 @@ export class DataSources {
   private adapters: Partial<Record<SourceId, Adapter>>;
   /** The flush running now: flushes take turns, so no edit goes out twice. */
   private flushing: Promise<unknown> = Promise.resolve();
+  /** The sync running now: one asked for meanwhile is this one, so an older page can't land after a newer one. */
+  private syncing: Promise<SourceState> | null = null;
   /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
   private refusals = new Map<number, string>();
 
@@ -437,13 +439,19 @@ export class DataSources {
    * Bring the calendar source's own changes in, after sending what's waiting. Each record it changes
    * is a change by its sync. Safe to run again at any point: it picks up from its sync tokens.
    */
-  async sync(): Promise<SourceState> {
+  sync(): Promise<SourceState> {
+    this.syncing ??= this.syncOnce().finally(() => (this.syncing = null));
+    return this.syncing;
+  }
+
+  private async syncOnce(): Promise<SourceState> {
     const source = this.calendarSource;
     const adapter = this.adapters[source];
     if (!adapter?.sync || !this.syncs) return this.sourceState(source, this.connected(source));
     await this.flush(source);
     try {
-      await adapter.sync(this.syncIO(source));
+      const [{ since }] = this.db.all<{ since: number | null }>("SELECT max(revision) AS since FROM changes");
+      await adapter.sync(this.syncIO(source, since ?? 0));
       this.setState(source, { lastSync: this.now(), error: undefined, reconnect: false });
     } catch (err) {
       this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: (err as Error).message });
@@ -468,9 +476,16 @@ export class DataSources {
     return !st.reconnect && (st.lastSync ?? 0) + ms <= this.now();
   }
 
-  private syncIO(source: SourceId): SyncIO {
+  /**
+   * What a sync writes through. A record with an edit waiting to go out, or changed here since the
+   * sync began, is left as it is: the page it came on may be older than the edit, and the next sync
+   * brings Google's version of it.
+   */
+  private syncIO(source: SourceId, since: Revision): SyncIO {
     const author = SYNC_AUTHOR[source];
-    const pending = (path: string) => this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+    const pending = (path: string) =>
+      this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0 ||
+      this.db.all("SELECT 1 FROM changes WHERE path = ? AND revision > ? AND author != ? LIMIT 1", path, since, JSON.stringify(author)).length > 0;
     const write = (path: FilePath, text: string | null) => {
       const current = this.files.read(path);
       if (text === null) {

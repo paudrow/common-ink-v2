@@ -245,3 +245,12 @@ test("a sync that was already under way when an edit went out leaves the edit as
   assert.deepEqual([g.summary, g.location, g.description], ["Dentist (Dr Lee)", "14 High Street", "Bring forms"]);
   assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, "the next edit went with the etag Google gave ours, not the page's older one");
 });
+
+test("a sync asked for while one runs is that one, so an older page can't land after a newer one", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  const before = fake.calls.length;
+  const [a, b] = await Promise.all([store.sources.sync(), store.sources.sync()]);
+  assert.deepEqual(b, a);
+  assert.equal(fake.calls.slice(before).filter((c) => c.startsWith("GET /calendar/v3/users/me/calendarList")).length, 1);
+});
