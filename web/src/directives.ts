@@ -20,7 +20,12 @@ export interface DirectiveLine {
 }
 
 const NAME = "([a-z][\\w-]*)";
-const BRACES = "(?:\\{([^}\\n]*)\\})?";
+/**
+ * What's in a directive's braces: anything but a brace or a quote, or a quoted value, which may hold a
+ * brace. Each character can be read only one way, so a long line takes no longer than its length.
+ * An unquoted quote (q=don't) makes the line text, not a directive.
+ */
+const BRACES = `(?:\\{((?:[^}"'\\n]|"[^"\\n]*"|'[^'\\n]*')*)\\})?`;
 /** `::name{…}` alone on its line. */
 export const LEAF = new RegExp(`^::${NAME}${BRACES}\\s*$`, "i");
 /** `:::name{…}` opening a container. */

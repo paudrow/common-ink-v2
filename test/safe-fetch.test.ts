@@ -104,3 +104,57 @@ test("a redirect to another site doesn't take the caller's own headers with it",
     ["https://elsewhere.example/three", { Accept: "application/json" }],
   ]);
 });
+
+test("only 192.0.0.0/24 and 192.0.2.0/24 are reserved in 192.0, so WordPress.com's addresses can be fetched", () => {
+  for (const ip of ["192.0.0.8", "192.0.2.1"]) assert.ok(isPrivateIPv4(ip), ip);
+  for (const ip of ["192.0.78.9", "192.0.66.220"]) assert.ok(!isPrivateIPv4(ip), ip);
+});
+
+test("a body that stops coming is stopped too, as taking too long", async () => {
+  const fetcher = ((_url: string, init: RequestInit) =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("partial"));
+            init.signal!.addEventListener("abort", () => c.error(Object.assign(new Error("aborted"), { name: "TimeoutError" })));
+          },
+        }),
+      ),
+    )) as typeof fetch;
+  const keepAlive = setTimeout(() => {}, 1000);
+  await assert.rejects(safeFetch("https://slow.example/", { fetcher, resolve: publicDns, timeoutMs: 20 }), new FetchRefused("It took too long"));
+  clearTimeout(keepAlive);
+});
+
+test("each redirect's host must be one the caller allows, and a body isn't sent on to another site", async () => {
+  const fetched: string[] = [];
+  const fetcher = (async (url: string, init: RequestInit) => {
+    fetched.push(`${init.method} ${url} ${init.body ?? ""}`);
+    if (url === "https://api.example/go") return new Response(null, { status: 302, headers: { location: "https://undeclared.example/" } });
+    if (url === "https://api.example/post") return new Response(null, { status: 307, headers: { location: "https://other.example/inbox" } });
+    if (url === "https://api.example/here") return new Response(null, { status: 307, headers: { location: "/there" } });
+    return new Response("ok");
+  }) as typeof fetch;
+  const allowHost = (host: string) => host === "api.example" || host === "other.example";
+  await assert.rejects(safeFetch("https://api.example/go", { fetcher, resolve: publicDns, allowHost }), new FetchRefused("It was sent on to undeclared.example, which it may not reach"));
+  await assert.rejects(safeFetch("https://api.example/post", { fetcher, resolve: publicDns, allowHost, method: "POST", body: "secret" }), new FetchRefused("It was sent on to other.example with its body, which only a request to the same site may be"));
+  const same = await safeFetch("https://api.example/here", { fetcher, resolve: publicDns, allowHost, method: "POST", body: "note" });
+  assert.equal(same.url, "https://api.example/there");
+  assert.deepEqual(fetched, ["GET https://api.example/go ", "POST https://api.example/post secret", "POST https://api.example/here note", "POST https://api.example/there note"]);
+});
+
+test("the documentation ranges and the old 6to4 relay are refused too", () => {
+  for (const ip of ["198.51.100.7", "203.0.113.9", "192.88.99.1"]) assert.ok(isPrivateIPv4(ip), ip);
+  for (const ip of ["198.51.101.7", "203.0.114.9", "192.88.100.1"]) assert.ok(!isPrivateIPv4(ip), ip);
+});
+
+test("a redirect to something that isn't http(s) says so, before asking whether its host is allowed", async () => {
+  const fetcher = (async () => new Response(null, { status: 302, headers: { location: "ftp://files.example/x" } })) as typeof fetch;
+  await assert.rejects(safeFetch("https://api.example/go", { fetcher, resolve: publicDns, allowHost: (h) => h === "api.example" }), new FetchRefused("Only http and https addresses can be fetched"));
+});
+
+test("IPv6's benchmarking, ORCHID, documentation (3fff::/20), SRv6 and dummy ranges are refused; the globally reachable ones beside them aren't", () => {
+  for (const ip of ["2001:2::1", "2001:2:0:ffff::1", "2001:10::1", "2001:1f::1", "3fff::1", "3fff:fff::1", "5f00::1", "100:0:0:1::1"]) assert.ok(isPrivateIPv6(ip), ip);
+  for (const ip of ["2001:20::1", "2001:2f::1", "2001:4:112::1", "2001:3::1", "4000::1", "100:0:0:2::1"]) assert.ok(!isPrivateIPv6(ip), ip);
+});

@@ -44,3 +44,12 @@ browserTest(h, "a record opens as JSON that can't be edited, and the Data source
   assert.equal(made.status, "saved");
   await app.page.locator(".data-source .counts", { hasText: "3 calendars · 12 events" }).waitFor();
 });
+
+browserTest(h, "on the day the clocks go back, the Calendar view still heads the next day's events Tomorrow", { scenario: "calendar", open: "Calendar tour", timezone: "America/Chicago", levers: { now: "2026-11-01T10:00" } }, async (app) => {
+  // Sunday Nov 1 has 25 hours in Chicago: 24 hours after its midnight is still Nov 1.
+  await app.command("Show calendar");
+  await app.page.locator(".event").first().waitFor();
+  const heads = await app.page.locator("#panel h3").allTextContents();
+  assert.ok(heads.includes("Tomorrow"), JSON.stringify(heads));
+  assert.ok(!heads.some((h) => /November 2/.test(h)), JSON.stringify(heads));
+});

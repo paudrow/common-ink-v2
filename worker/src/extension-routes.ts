@@ -10,7 +10,8 @@ import { decide, parseGrants } from "./permissions.ts";
 import { linkCard } from "./link-card.ts";
 import { FetchRefused, safeFetch, type SafeFetchOptions } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
-import { userSettingsPath } from "./settings.ts";
+import { userSettingsPath, WORKSPACE_SETTINGS } from "./settings.ts";
+import { setTopLevelKey } from "../../web/src/json-edit.ts";
 import { LIBRARY_NAMES, libraryUrl } from "../../web/src/library-names.ts";
 
 /**
@@ -50,6 +51,9 @@ export async function sandboxRoute(req: Request, url: URL, assets: { fetch(req: 
     return new Response(res.body, { headers: { "Content-Type": type, "Access-Control-Allow-Origin": "*", "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400" } });
   }
   const code = /^code\/([^/]+)\/(.+)$/.exec(path);
+  // An extension's code is for its sandboxed host only, whose origin is opaque: never a script for one
+  // of this site's own pages.
+  if (code && req.headers.get("Sec-Fetch-Site") === "same-origin") return new Response("Not found\n", { status: 404 });
   if (code) {
     const id = await verifyCodeToken(await store.sandboxKey(), code[1], Date.now());
     const file = id ? parseFilePath(extensionFilePath(id, code[2])) : null;
@@ -103,13 +107,16 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     }
     // The app asked you already; this checks again against what's kept, so a page that skips asking gets nothing.
     const once = body.once ? new Set([`${found.manifest.id} network:${host}`, ...(found.manifest.permissions.network?.hosts ?? []).map((h) => `${found.manifest.id} network:${h}`)]) : undefined;
-    const decision = decide(found.manifest, { kind: "network", target: host }, await grantsOf(store, email), { builtIn: found.builtIn, once });
+    const grants = await grantsOf(store, email);
+    const decision = decide(found.manifest, { kind: "network", target: host }, grants, { builtIn: found.builtIn, once });
     if (decision.outcome === "undeclared") return json({ error: `${found.manifest.name} doesn't declare ${host} in its extension.json, so it can't reach it` }, 403);
     if (decision.outcome !== "allow") return json({ error: `${found.manifest.name} isn't allowed to reach ${host}` }, 403);
+    // A redirect is held to the same declaration and answers as the address it started at.
+    const allowHost = (h: string) => decide(found.manifest, { kind: "network", target: h }, grants, { builtIn: found.builtIn, once }).outcome === "allow";
     try {
       // A link's card (title, description, picture) rather than its page.
-      if (body.card) return json(await linkCard(body.url, net));
-      const res = await safeFetch(body.url, { ...net, method: body.method, headers: body.headers, body: body.body });
+      if (body.card) return json(await linkCard(body.url, { ...net, allowHost }));
+      const res = await safeFetch(body.url, { ...net, allowHost, method: body.method, headers: body.headers, body: body.body });
       return json(res);
     } catch (err) {
       if (err instanceof FetchRefused) return json({ error: err.message }, 400);
@@ -145,7 +152,7 @@ export async function extensionApi(req: Request, url: URL, email: string, author
 class InstallError extends Error {}
 
 /** Copy an extension's files from where it's published into the workspace, as changes by `author`. */
-async function install(store: Store, raw: string, author: Author, catalog: string | undefined, net: Pick<SafeFetchOptions, "fetcher" | "resolve">): Promise<{ id: string; name: string; files: string[] }> {
+async function install(store: Store, raw: string, author: Author, catalog: string | undefined, net: Pick<SafeFetchOptions, "fetcher" | "resolve">): Promise<{ id: string; name: string; files: string[]; untrusted: boolean }> {
   const manifestUrl = raw.endsWith("extension.json") ? raw : `${raw.replace(/\/?$/, "/")}extension.json`;
   const res = await safeFetch(manifestUrl, { ...net, maxBytes: 64_000 });
   if (res.status !== 200) throw new InstallError(`${manifestUrl} answered ${res.status}`);
@@ -167,10 +174,55 @@ async function install(store: Store, raw: string, author: Author, catalog: strin
   }
   // Where it came from, so the app can say so ("From URL") and you can tell its code isn't your own.
   files.push(["installed.json", `${JSON.stringify({ from: res.url, ...(catalog ? { catalog } : {}) })}\n`]);
+  // Trust goes first: if it can't, nothing new is written under an id someone trusts.
+  const untrusted = await untrust(store, id, author);
   for (const [file, text] of files) {
     const path = extensionFilePath(id, file);
     const current = await store.read(path);
     await store.write({ path, text, base: current?.revision ?? 0, author });
   }
-  return { id, name: manifest.name, files: files.map(([f]) => f) };
+  return { id, name: manifest.name, files: files.map(([f]) => f), untrusted };
+}
+
+/** Whether a settings file's text lists `id` as trusted. */
+function trusts(text: string, id: string): boolean {
+  try {
+    const trusted = JSON.parse(text || "{}")["extensions.trusted"];
+    return Array.isArray(trusted) && trusted.includes(id);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Take `id` out of every extensions.trusted list, the workspace's and each person's: whoever trusted
+ * an extension by that id trusted other code, so what's about to be installed starts sandboxed. True
+ * if it was in one. Throws if a settings file that names trusted extensions can't be read or changed.
+ */
+async function untrust(store: Store, id: string, author: Author): Promise<boolean> {
+  let took = false;
+  for (const { path } of await store.list()) {
+    if (path !== WORKSPACE_SETTINGS && !/^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path)) continue;
+    for (let tries = 0; ; tries++) {
+      const file = await store.read(path);
+      if (!file) break;
+      let trusted: unknown;
+      try {
+        trusted = JSON.parse(file.text || "{}")["extensions.trusted"];
+      } catch {
+        if (!file.text.includes('"extensions.trusted"')) break;
+        throw new InstallError(`${path} isn't valid JSON, so ${id} can't be taken out of the extensions it trusts. Fix it first.`);
+      }
+      if (!Array.isArray(trusted) || !trusted.includes(id)) break;
+      const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
+      const result = text === null ? null : await store.write({ path, text, base: file.revision, author });
+      // Merged with someone else's change, it's checked again: theirs may have trusted it once more.
+      if (result && result.status !== "conflict" && !trusts(result.file.text, id)) {
+        took = true;
+        break;
+      }
+      if (tries === 2) throw new InstallError(`${id} couldn't be taken out of the extensions ${path} trusts, as it kept changing. Try again.`);
+    }
+  }
+  return took;
 }

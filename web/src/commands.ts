@@ -6,6 +6,8 @@ export interface Command {
   id: string;
   title: string;
   run(): unknown;
+  /** Why it's off on this device, if it is ("Off on this device · needs a screen 840px wide"): listed greyed, and running it says so instead. */
+  off?(): string | null;
 }
 
 export type { Keybinding } from "../../worker/src/settings.ts";
@@ -13,6 +15,9 @@ import type { Keybinding } from "../../worker/src/settings.ts";
 
 export class Commands {
   private byId = new Map<string, Command>();
+
+  /** @param refused says why a command that's off on this device didn't run. */
+  constructor(private refused: (title: string, why: string) => void = () => {}) {}
 
   register(...commands: Command[]): void {
     for (const c of commands) this.byId.set(c.id, c);
@@ -26,7 +31,9 @@ export class Commands {
   run(id: string): boolean {
     const command = this.byId.get(id);
     if (!command) return false;
-    void command.run();
+    const off = command.off?.();
+    if (off) this.refused(command.title, off);
+    else void command.run();
     return true;
   }
 
@@ -37,13 +44,19 @@ export class Commands {
   runForKey(id: string): boolean {
     const command = this.byId.get(id);
     if (!command) return false;
+    const off = command.off?.();
+    if (off) return (this.refused(command.title, off), true);
     return command.run() !== false;
   }
 }
 
-/** The command a key press is bound to, if any. A later binding for the same key wins, and a null command unbinds it. */
+/**
+ * The command a key press is bound to, if any. A later binding for the same key wins, and a null command
+ * unbinds it. A binding the character typed matches comes before one matched by where the key sits, so
+ * ⌘⇧E isn't taken for ⌘⇧. when the layout map says that key types a dot.
+ */
 export function commandForKey(e: KeyLike, bindings: readonly Keybinding[], mac?: boolean): string | null {
-  for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac)) return bindings[i].command;
+  for (const byPlace of [false, true]) for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac, byPlace)) return bindings[i].command;
   return null;
 }
 

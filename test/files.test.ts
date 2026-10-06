@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { patch } from "node-diff3";
-import { authorKey, Files, parseFilePath, SEED_AUTHOR, type Author, type FilePath, type Seed } from "../worker/src/files.ts";
+import { authorKey, Files, parseFilePath, SEED_AUTHOR, type Author, type Db, type FilePath, type Seed } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
 
 const ada: Author = { kind: "user", email: "ada@example.com" };
@@ -287,7 +287,7 @@ test("starting twice, or from an empty database, ends in the same shape", () => 
   const first = tables();
   new Files(db);
   assert.deepEqual(tables(), first);
-  assert.deepEqual(first, ["changes", "connections", "files", "meta"]);
+  assert.deepEqual(first, ["changes", "connections", "edits", "files", "meta"]);
 });
 
 test("a Preview database with an undo column already, and no record of it, starts fine", () => {
@@ -374,4 +374,197 @@ test("JavaScript is a file only as a workspace extension's code", () => {
   assert.equal(parseFilePath(".common-ink/plugins/word-count/index.js"), null);
   assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
   assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
+});
+
+test("the last revision given stays the last, even once its changes are gone, as a reset leaves them", () => {
+  const db = memoryDb();
+  const files = new Files(db);
+  files.write({ path: PLAN, text: "# Plan\n", base: 0, author: ada });
+  files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
+  db.run("DELETE FROM changes");
+  assert.equal(files.lastRevision(), 2);
+  assert.equal(new Files(memoryDb()).lastRevision(), 0);
+});
+
+test("history filtered by author finds its changes far back in a long history, newest first, and pages with before", () => {
+  const files = new Files(memoryDb());
+  const agent: Author = { kind: "agent", name: "Claude", by: "ada@example.com" };
+  const byAgent: number[] = [];
+  for (let i = 1; i <= 2500; i++) {
+    const result = files.write({ path: "Log.md" as FilePath, text: `${i}\n`, base: files.read("Log.md" as FilePath)?.revision ?? 0, author: i % 900 === 0 ? agent : ada });
+    if (i % 900 === 0) byAgent.push(result.status === "conflict" ? -1 : result.file.revision);
+  }
+  assert.deepEqual(byAgent, [900, 1800]);
+  const found = files.recent({ author: "agent:Claude:ada@example.com", limit: 5 });
+  assert.deepEqual(found.map((c) => c.revision), [1800, 900]);
+  assert.deepEqual(found.map((c) => authorKey(c.author)), ["agent:Claude:ada@example.com", "agent:Claude:ada@example.com"]);
+  assert.deepEqual(files.recent({ author: "agent:Claude:ada@example.com", before: 1800 }).map((c) => c.revision), [900]);
+  assert.deepEqual(files.recent({ path: "Log.md" as FilePath, limit: 3, before: 1001 }).map((c) => c.revision), [1000, 999, 998]);
+});
+
+test("history and diffs of more than a hundred changes at once work within a Durable Object's 100-parameter limit", () => {
+  const files = new Files(memoryDb());
+  const revisions: number[] = [];
+  for (let i = 1; i <= 150; i++) {
+    const result = files.write({ path: "Log.md" as FilePath, text: `${i}\n`, base: files.read("Log.md" as FilePath)?.revision ?? 0, author: ada });
+    if (result.status !== "conflict") revisions.push(result.file.revision);
+  }
+  assert.deepEqual(files.recent({ limit: 120 }).map((c) => c.revision), revisions.slice(-120).reverse());
+  assert.deepEqual(files.recent({ path: "Log.md" as FilePath, author: "user:ada@example.com", limit: 101 }).length, 101);
+  const [diff] = files.combined(revisions);
+  assert.deepEqual([diff.path, diff.runs.length, diff.runs[0].before, diff.runs[0].after], ["Log.md", 1, "", "150\n"]);
+});
+
+test("open pages hear of changes only once they're kept: a write rolled back announces nothing", () => {
+  const heard: number[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => heard.push(n.revision));
+  files.write({ path: PLAN, text: "# Plan\n", base: 0, author: ada });
+  assert.throws(() => files.seed({ id: "s", notes: [{ path: "Good.md", text: "# Good\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+  assert.equal(files.read("Good.md" as FilePath), null, "the seed was rolled back");
+  const next = files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
+  assert.deepEqual(heard, [1, next.file!.revision]);
+});
+
+/** An in-memory database whose transactions nest with savepoints, as a Durable Object's transactionSync does. */
+function nestingDb(): Db {
+  const db = memoryDb();
+  let depth = 0;
+  return {
+    ...db,
+    tx: (fn) => {
+      const point = `p${depth++}`;
+      db.raw.exec(`SAVEPOINT ${point}`);
+      try {
+        const out = fn();
+        db.raw.exec(`RELEASE ${point}`);
+        return out;
+      } catch (err) {
+        db.raw.exec(`ROLLBACK TO ${point}`);
+        db.raw.exec(`RELEASE ${point}`);
+        throw err;
+      } finally {
+        depth--;
+      }
+    },
+  };
+}
+
+test("a transaction inside another announces its changes with the outer one's, once it commits", () => {
+  const heard: string[] = [];
+  const db = nestingDb();
+  const files = new Files(db, Date.now, (n) => heard.push(`${n.path}${(db as ReturnType<typeof memoryDb>).raw?.isTransaction ? " (before commit)" : ""}`));
+  files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
+    files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
+  });
+  assert.deepEqual(heard, ["Outer.md", "Inner.md"]);
+});
+
+test("one inside another that fails takes the outer one with it, even if the outer one catches the error: none of it is kept or heard", () => {
+  const heard: string[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => heard.push(n.path));
+  assert.throws(() =>
+    files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
+      files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
+      assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+    }),
+  );
+  assert.deepEqual([heard, files.list()], [[], []]);
+  files.write({ path: "After.md" as FilePath, text: "a\n", base: 0, author: ada });
+  assert.deepEqual(heard, ["After.md"], "the next transaction is its own");
+});
+
+test("a page whose announcement fails doesn't keep the others from hearing", () => {
+  const heard: string[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => {
+    if (n.path === "A.md") throw new Error("socket gone");
+    heard.push(n.path);
+  });
+  const log = console.error;
+  console.error = () => {};
+  try {
+    files.writeAll([
+      { path: "A.md" as FilePath, text: "a\n", base: 0, author: ada },
+      { path: "B.md" as FilePath, text: "b\n", base: 0, author: ada },
+    ]);
+  } finally {
+    console.error = log;
+  }
+  assert.deepEqual(heard, ["B.md"]);
+});
+
+test("a one-line save to a long note, and a merge into one from a stale base, take moments, not seconds", () => {
+  // A blank line in every ten: each blank matches every other, which made the whole-text diff slow.
+  const before = Array.from({ length: 10_000 }, (_, i) => (i % 10 === 9 ? "" : `line ${i}`));
+  const edit = (at: number, line: string, from = before) => from.map((l, i) => (i === at ? line : l));
+  const notes = workspace();
+  const first = notes.write({ path: PLAN, text: before.join("\n"), base: 0, author: ada });
+  const timed = (fn: () => void) => {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  };
+  let theirs = first;
+  const save = timed(() => (theirs = notes.write({ path: PLAN, text: edit(9_000, "theirs").join("\n"), base: first.file!.revision, author: bot })));
+  let merged = theirs;
+  const merge = timed(() => (merged = notes.write({ path: PLAN, text: edit(100, "mine").join("\n"), base: first.file!.revision, author: ada })));
+  assert.equal(merged.status, "merged");
+  assert.deepEqual(merged.file?.text, edit(100, "mine", edit(9_000, "theirs")).join("\n"));
+  assert.ok(save < 1000, `a one-line save took ${Math.round(save)} ms`);
+  assert.ok(merge < 1000, `a merge from a stale base took ${Math.round(merge)} ms`);
+});
+
+test("an edit's id is kept once it's saved or merged, not when it clashes, so a page that went can ask", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "one\ntwo\nthree\n", base: 0, author: ada, edit: "first" });
+  assert.equal(notes.editApplied(PLAN, "first"), true);
+  notes.write({ path: PLAN, text: "one\ntwo\nthree!\n", base: 1, author: bot });
+  // A stale base merged in is applied.
+  assert.equal(notes.write({ path: PLAN, text: "one!\ntwo\nthree\n", base: 1, author: ada, edit: "merged" }).status, "merged");
+  assert.equal(notes.editApplied(PLAN, "merged"), true);
+  // A clash saves nothing, so it isn't.
+  assert.equal(notes.write({ path: PLAN, text: "uno\ntwo\nthree\n", base: 1, author: ada, edit: "clashed" }).status, "conflict");
+  assert.equal(notes.editApplied(PLAN, "clashed"), false);
+  assert.equal(notes.editApplied(PLAN, "never"), false);
+  assert.equal(notes.editApplied("Other.md" as FilePath, "first"), false);
+});
+
+test("an edit id is kept for 30 days, however many edits come after it", () => {
+  let clock = 0;
+  const notes = new Files(memoryDb(), () => clock);
+  notes.write({ path: PLAN, text: "0\n", base: 0, author: ada, edit: "first" });
+  for (let i = 1; i <= 200; i++) notes.write({ path: PLAN, text: `${i}\n`, base: i, author: ada, edit: `e${i}` });
+  assert.equal(notes.editApplied(PLAN, "first"), true, "after 200 more");
+  clock = 31 * 86_400_000;
+  notes.write({ path: PLAN, text: "later\n", base: 201, author: ada, edit: "later" });
+  assert.equal(notes.editApplied(PLAN, "first"), false, "a month on");
+  assert.equal(notes.editApplied(PLAN, "later"), true);
+});
+
+test("an edit id is for one text: sent again with other text, it's refused, not said to be saved", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada });
+  notes.write({ path: PLAN, text: "# Trip\n- A\n", base: 1, author: bot, edit: "edit-1" });
+  const again = notes.write({ path: PLAN, text: "# Trip\n- A\n- B\n", base: 2, author: bot, edit: "edit-1" });
+  assert.equal(again.status, "conflict");
+  assert.equal(again.status === "conflict" && again.reason, "This edit id was already used for different text");
+  assert.equal(notes.read(PLAN)?.text, "# Trip\n- A\n");
+});
+
+test("an edit sent again after its file was deleted doesn't bring the file back", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada, edit: "made" });
+  notes.write({ path: PLAN, text: "", base: 1, author: bot, delete: true });
+  assert.equal(notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada, edit: "made" }).status, "conflict");
+  assert.equal(notes.read(PLAN), null);
+});
+
+test("an edit sent again with its id, after the file moved on, is in already: it isn't merged in a second time", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 0, author: ada });
+  notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  // Someone deletes the line it added; then the same edit arrives again, on its old base.
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 2, author: bot });
+  const again = notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  assert.deepEqual(again, { status: "saved", file: { path: PLAN, text: "# Trip\n- a\n", revision: 3 } });
+  assert.equal(notes.history(PLAN).length, 3);
 });

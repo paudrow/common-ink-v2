@@ -5,16 +5,21 @@
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
-import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { inGlobs } from "../../worker/src/globs.ts";
+import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
-import { PermissionBroker } from "./broker.ts";
+import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
+import type { Search } from "./search.ts";
+import type { Query } from "../../worker/src/query.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
+import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { newEventId, type Scope } from "../../worker/src/calendar.ts";
@@ -29,12 +34,16 @@ import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
 import type { StatusItems } from "./status-items.ts";
 import type { Workbench, WorkbenchChrome } from "./workbench.ts";
+import { here, hereText, type Here, type Requires } from "../../worker/src/devices.ts";
+import type { DeviceReader } from "./device.ts";
+import type { DeviceApi } from "./extension-api.ts";
 
 /** What of the app extensions reach, through their contexts. */
 export interface RuntimeApp {
   me: string | undefined;
   commands: Commands;
   bar: CommandBar;
+  search: Search;
   panels: Panels;
   workbench: Workbench;
   offline: Offline;
@@ -56,6 +65,9 @@ export interface RuntimeApp {
   undeclared: ConstructorParameters<typeof PermissionBroker>[0]["undeclared"];
   /** An extension's state, error or activity changed. */
   changed(): void;
+  device: DeviceReader;
+  /** An extension that was off on this device went in, now the device has what it needs (or you turned it on here). */
+  promoted(id: string): void;
 }
 
 type DataApi = Omit<ExtensionContext["data"], "connect" | "calendar"> & { calendar: Omit<ExtensionContext["data"]["calendar"], "onChange"> };
@@ -85,7 +97,7 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined,
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
       // The id is made here, so an edit held offline and sent twice makes one event.
-      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
+      create: (event) => send("POST", { ...event, id: newEventId() }, `Add ${event.title}`),
       update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
       remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },
@@ -102,6 +114,12 @@ interface Services {
   write(path: FilePath, text: string, base: number): ReturnType<typeof api.writeAs>;
   /** Files it may read, of all there are. Asks for each declared scope it needs, once. */
   list(): Promise<FileSummary[]>;
+  /**
+   * What it may read, as globs for search's `within`: its declared files:read scopes in order, those
+   * not allowed as "!scope", since the first scope that covers a path decides (coveringKey). None if
+   * it may read nothing.
+   */
+  readable(): Promise<string[]>;
   fetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string }): Promise<ExtensionResponse>;
   card(url: string): ReturnType<typeof api.extensionCard>;
   check(ask: Ask): Promise<void>;
@@ -150,6 +168,35 @@ function filePath(value: unknown): FilePath {
   const path = parseFilePath(value);
   if (!path) throw new Error(`${typeof value === "string" ? value : "That"} isn't a file path`);
   return path;
+}
+
+/**
+ * An event's fields, as a sandboxed extension passed them: each one an event has, of its type. Fields
+ * an event doesn't have are left out; one of the wrong type is refused, not guessed at.
+ */
+function eventInput(value: unknown): EventInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("An event's fields have to be an object");
+  const o = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const take = (k: string, ok: (v: unknown) => boolean, what: string) => {
+    if (!(k in o) || o[k] === undefined) return;
+    if (!ok(o[k])) throw new Error(`An event's ${k} has to be ${what}`);
+    out[k] = o[k];
+  };
+  const text = (v: unknown) => typeof v === "string";
+  const textOrNull = (v: unknown) => typeof v === "string" || v === null;
+  for (const k of ["title", "start", "end", "calendar"]) take(k, text, "text");
+  for (const k of ["timeZone", "location", "description"]) take(k, textOrNull, "text or null");
+  take("allDay", (v) => typeof v === "boolean", "true or false");
+  take("recurrence", (v) => textOrNull(v) || (Array.isArray(v) && v.every(text)), "a rule, a list of rules, or null");
+  return out as EventInput;
+}
+
+/** Which occurrences of a series an edit is for, or none (the Worker's default); anything else is refused. */
+function scopeOf(value: unknown): Scope | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "this" || value === "following" || value === "all") return value;
+  throw new Error('A scope is "this", "following" or "all"');
 }
 
 /** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
@@ -201,9 +248,80 @@ export class ExtensionRuntime {
     });
   }
 
-  /** Read every extension's manifest. */
-  load(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean, trusted: readonly string[]): Promise<void> {
-    return this.host.load(builtIns, files, (path) => this.app.offline.read(path), disabled, safe, trusted);
+  /** Read every extension's manifest. One that's off on this device (it needs what the device hasn't) is marked so, and doesn't start. */
+  async load(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean, trusted: readonly string[]): Promise<void> {
+    await this.host.load(builtIns, files, (path) => this.app.offline.read(path), disabled, safe, trusted);
+    for (const r of this.host.records) if (r.state === "inactive" && !this.here(r.manifest).on) r.state = "unmet";
+  }
+
+  /** Whether an extension is on on this device, and why: your override for it here, then what it requires. */
+  here(m: ExtensionManifest): Here {
+    return here(m.requires, this.app.device.facts, this.app.device.override(m.id));
+  }
+
+  /** Why something an extension adds is off on this device, if it is: the extension's own needs, then the contribution's. */
+  offHere(m: ExtensionManifest, requires: Requires | undefined): string | null {
+    const whole = this.here(m);
+    if (!whole.on) return hereText(whole);
+    if (whole.by === "you") return null;
+    return hereText(here(requires, this.app.device.facts));
+  }
+
+  /**
+   * Whether a part of the layout an extension draws ("tabs", "splits") is out on this device: null if it
+   * is, why it isn't if it isn't, and undefined if no extension that's on draws it.
+   */
+  layoutPart(id: string): string | null | undefined {
+    const m = this.host.on().find((x) => x.contributes.layout.some((p) => p.id === id));
+    return m && this.offHere(m, m.contributes.layout.find((p) => p.id === id)!.requires);
+  }
+
+  /** A command's shortcut as shown, where there's a keyboard to press it: without one, keys aren't hinted anywhere. */
+  private shortcut(id: string): string | undefined {
+    const key = this.app.device.has("keyboard") ? keyFor(id, this.app.settings().keybindings) : undefined;
+    return key && formatKeys(key);
+  }
+
+  /** Every command, with why it's off on this device if it is. */
+  private allCommands(): Array<{ id: string; title: string; off?: string }> {
+    return this.app.commands.all().map((c) => {
+      const off = c.off?.();
+      return { id: c.id, title: c.title, ...(off ? { off } : {}) };
+    });
+  }
+
+  /**
+   * The device changed (a keyboard was found, the window widened) or you changed what's on here: put in
+   * each extension that was off here and now isn't, as the app runs. Its code starts, and one that changes
+   * editors reaches open ones through their compartment. One that stops being met keeps running: what it
+   * adds is greyed until it's met again, and turning it off here applies after a reload. Returns the
+   * names of the ones that went in.
+   */
+  async promote(): Promise<string[]> {
+    const went: string[] = [];
+    for (const r of this.host.records) {
+      if (r.state !== "unmet" || !this.here(r.manifest).on) continue;
+      went.push(r.manifest.name);
+      r.state = "inactive";
+      this.declareOne(r.manifest);
+      this.app.promoted(r.id);
+      this.broker.cause(r.id, { kind: "startup" });
+      if (r.manifest.activationEvents.includes("onStartup")) await this.host.activate(r);
+    }
+    this.app.changed();
+    return went;
+  }
+
+  /** What sandboxed extensions are told about the device. */
+  private deviceSnapshot() {
+    // The width class is enough for a frame to adapt to; the pixels would say more about the screen than it needs.
+    const { px: _px, ...facts } = this.app.device.facts;
+    return { facts, why: { ...this.app.device.describe().why, width: `the window is ${facts.width} width` } };
+  }
+
+  /** Tell sandboxed extensions the device changed. */
+  deviceChanged(): void {
+    for (const host of this.sandboxes.values()) host.event("device", this.deviceSnapshot());
   }
 
   /** Every setting, the app's and installed extensions', on or off: they're all listed, so you can set one before turning it on. */
@@ -244,6 +362,11 @@ export class ExtensionRuntime {
     const w = findWorkspaceExtensions(files).find((x) => x.id === id);
     const record = w && (await this.host.add(w, (path) => this.app.offline.read(path)));
     if (!record) return false;
+    // Installed, but off on this device: it goes in when the device has what it needs.
+    if (!this.here(record.manifest).on) {
+      record.state = "unmet";
+      return true;
+    }
     this.declareOne(record.manifest);
     this.broker.cause(id, because);
     if (record.manifest.activationEvents.includes("onStartup")) await this.host.activate(record);
@@ -256,6 +379,7 @@ export class ExtensionRuntime {
       this.app.commands.register({
         id: c.command,
         title: c.title,
+        off: () => this.offHere(m, c.requires),
         run: () => {
           this.broker.cause(m.id, { kind: "command", title: c.title });
           // Started already, its answer comes back at once: false declines a key (commands.runForKey).
@@ -268,6 +392,8 @@ export class ExtensionRuntime {
         id: view.id,
         title: view.name,
         render: async (el: HTMLElement) => {
+          const off = this.offHere(m, view.requires);
+          if (off) return void (el.textContent = `${view.name}: ${off.charAt(0).toLowerCase()}${off.slice(1)}. It shows when this device has what it needs.`);
           this.broker.cause(m.id, { kind: "view", name: view.name });
           await this.activateFor(`onView:${view.id}`, (x) => Object.values(x.contributes.views).flat().some((v) => v.id === view.id));
           const renderer = this.renderers.get(view.id);
@@ -345,6 +471,13 @@ export class ExtensionRuntime {
   private async drawEmbed(el: HTMLElement, embed: Embed, tools: HTMLElement): Promise<void> {
     const declares = (m: ExtensionManifest) => m.contributes.embeds.some((e) => e.language === embed.language);
     const drawer = this.host.on().find(declares);
+    const contribution = drawer?.contributes.embeds.find((e) => e.language === embed.language);
+    const off = drawer && contribution && this.offHere(drawer, contribution.requires);
+    if (off) {
+      el.classList.add("cm-embed-missing");
+      el.textContent = `${contribution.title}: ${off.charAt(0).toLowerCase()}${off.slice(1)}.`;
+      return;
+    }
     if (drawer) this.broker.cause(drawer.id, { kind: "embed", title: drawer.contributes.embeds.find((e) => e.language === embed.language)!.title, note: embed.note });
     await this.activateFor(`onEmbed:${embed.language}`, declares);
     const draw = this.embedDrawers.get(embed.language);
@@ -431,8 +564,17 @@ export class ExtensionRuntime {
     }
   }
 
+  /** Each extension's state writes, one after another, in the order asked: two at once would clash. */
+  private stateWrites = new Map<string, Promise<void>>();
+
   /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
-  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+  private writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const write = (this.stateWrites.get(m.id) ?? Promise.resolve()).catch(() => {}).then(() => this.sendState(m, value));
+    this.stateWrites.set(m.id, write);
+    return write;
+  }
+
+  private async sendState(m: ExtensionManifest, value: unknown): Promise<void> {
     const path = statePath(m.id);
     const text = `${JSON.stringify(value, null, 2)}\n`;
     for (let tries = 0; tries < 3; tries++) {
@@ -462,6 +604,12 @@ export class ExtensionRuntime {
   private services(m: ExtensionManifest): Services {
     const app = this.app;
     const check = (ask: Ask) => this.broker.check(m, ask);
+    // Each declared scope is asked about as a whole, all at once, so they're one prompt.
+    const readable = async () => {
+      const scopes = m.permissions["files:read"]?.paths ?? [];
+      const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
+      return answers.some((a) => a.status === "fulfilled") ? scopes.map((scope, i) => (answers[i].status === "fulfilled" ? scope : `!${scope}`)) : [];
+    };
     return {
       check,
       read: async (path) => {
@@ -473,12 +621,11 @@ export class ExtensionRuntime {
         // In history, the change is the extension's, acting for you.
         return api.writeAs(m.id, path, text, base);
       },
+      readable,
+      // The files `readable` admits, as files.read decides each.
       list: async () => {
-        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
-        const scopes = m.permissions["files:read"]?.paths ?? [];
-        const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
-        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
-        return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
+        const may = inGlobs(await readable());
+        return app.files().filter((f) => may(f.path));
       },
       fetch: async (url, init) => {
         const host = hostOf(url);
@@ -547,9 +694,25 @@ export class ExtensionRuntime {
       if (!m.permissions.editor) throw new Error(`${m.id} needs the "editor" permission in its extension.json to change note editors`);
     };
     const asked = new Set<string>();
+    const device: DeviceApi = {
+      has: (capability) => app.device.has(capability),
+      get width() {
+        return app.device.facts.width;
+      },
+      atLeast: (min) => app.device.atLeast(min),
+      get pointer() {
+        return app.device.facts.pointer;
+      },
+      get touch() {
+        return app.device.facts.touch;
+      },
+      why: (capability) => app.device.why(capability),
+      onChange: (fn) => void app.device.onChange(guard(() => fn(device))),
+    };
     return {
       extension: m,
       me: app.me,
+      device,
       settings: { get: <T>(key: string) => app.settings()[key] as T },
       commands: {
         register: (id, run) => {
@@ -557,11 +720,8 @@ export class ExtensionRuntime {
           this.handlers.set(id, guard(run));
         },
         run: (id) => app.commands.run(id),
-        all: () => app.commands.all().map((c) => ({ id: c.id, title: c.title })),
-        shortcut: (id) => {
-          const key = keyFor(id, app.settings().keybindings);
-          return key && formatKeys(key);
-        },
+        all: () => this.allCommands(),
+        shortcut: (id) => this.shortcut(id),
         keybindings: () => this.allKeybindings(),
         menu: (id) => this.menu(id),
       },
@@ -593,8 +753,16 @@ export class ExtensionRuntime {
       },
       statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {
-        provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
+        provide: (p) => app.bar.provide({ ...p, items: guard((q: string, update?: (items: Item[]) => void) => p.items(q, update && guard(update)), []) }),
         open: (text) => app.bar.open(text),
+      },
+      search: {
+        provide: (type, p) => {
+          if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+          app.search.provide(type, { search: guard((q: Query, limit: number, within?: readonly string[]) => p.search(q, limit, within), []) }, m.id);
+        },
+        find: (text, limit = 20, progress) => app.search.find(text, limit, progress && guard(progress)),
+        filterKeys: () => app.search.extraKeys(),
       },
       views: {
         register: (id, renderer) => {
@@ -635,6 +803,36 @@ export class ExtensionRuntime {
           );
         },
       },
+      media: (() => {
+        // Every part of it needs the media permission, as the manifest says.
+        const may = () => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play or control media`);
+        };
+        const of = (id: number) => (may(), mediaSession(id));
+        return {
+          session: (spec) => {
+            may();
+            return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+          },
+          current: () => {
+            may();
+            const s = currentMedia();
+            return s && mediaInfo(s);
+          },
+          onChange: (fn) => (may(), void onMedia(guard(fn))),
+          play: (id) => of(id)?.play(),
+          pause: (id) => of(id)?.pause(),
+          stop: (id) => {
+            const s = of(id);
+            if (s) stopMedia(s);
+          },
+          reveal: (id) => {
+            const s = of(id);
+            if (s?.el) revealMedia(s);
+            else if (s?.note) void app.workbench.open(s.note);
+          },
+        };
+      })(),
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
@@ -734,8 +932,28 @@ export class ExtensionRuntime {
     const services = this.services(m);
     const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
+    /** A new webview, kept by id for its extension's messages; ones whose frame has gone (a closed window's embed) go then. */
+    const keep = (view: Webview) => {
+      for (const [id, v] of webviews) if (!v.frame.isConnected) webviews.delete(id);
+      webviews.set(view.id, view);
+    };
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    // An edit's answer names the events it wrote: only for an extension that may read them already.
+    const readAsk: Ask = { kind: "data:calendar:read" };
+    // Its words, a refusal's included, can name the event: they go as they are only to one that may read it.
+    const canRead = () => decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk);
+    const mayRead = async (edit: Promise<EditResult>): Promise<Partial<EditResult>> => {
+      let r: EditResult;
+      try {
+        r = await edit;
+      } catch (err) {
+        if (canRead() || err instanceof PermissionDenied) throw err;
+        throw new Error(`The calendar refused ${m.name}'s change to the event`);
+      }
+      if (canRead()) return r;
+      return { status: r.status, address: r.address, ...(r.error ? { error: `The calendar doesn't have ${m.name}'s change yet` } : {}) };
+    };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -748,11 +966,9 @@ export class ExtensionRuntime {
           case "commands.run":
             return app.commands.run(a);
           case "commands.all":
-            return app.commands.all().map((x) => ({ id: x.id, title: x.title }));
-          case "commands.shortcut": {
-            const key = keyFor(a, app.settings().keybindings);
-            return key && formatKeys(key);
-          }
+            return this.allCommands();
+          case "commands.shortcut":
+            return this.shortcut(a);
           case "commands.keybindings":
             return this.allKeybindings();
           case "statusBar.set":
@@ -770,6 +986,42 @@ export class ExtensionRuntime {
             return;
           case "commandBar.open":
             return app.bar.open(a);
+          case "search.provide": {
+            const type = String(a);
+            if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+            const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+            app.search.provide(
+              type,
+              {
+                search: async (query, limit, within) => {
+                  const results = (await host.invoke(`search:${type}`, query, limit, within).catch(() => [])) as unknown[];
+                  return (Array.isArray(results) ? results : []).flatMap((r) => {
+                    const o = (r ?? {}) as Record<string, unknown>;
+                    if (typeof o.title !== "string" || typeof o.run !== "string") return [];
+                    const path = parseFilePath(o.path) ?? undefined;
+                    return [{ title: o.title, path, detail: text(o.detail), aside: text(o.aside), dim: o.dim === true, run: () => host.invoke(`item:${o.run}`).catch(failed) }];
+                  });
+                },
+              },
+              m.id,
+            );
+            return;
+          }
+          case "search.find": {
+            // What search finds is what the extension could read itself, and it's scoped to that before
+            // anything is ranked, limited or counted, so what it can't read never takes a place in its
+            // results or says it's there: notes and tasks in the files:read scopes it's allowed (asked
+            // about as a whole, as files.list does), events with data:calendar:read, contacts with
+            // data:contacts:read, and its own kinds; of other kinds, results in files it may read.
+            const may = (ask: Ask) => services.check(ask).then(() => true, () => false);
+            const readable = await services.readable();
+            const [calendar, contacts] = await Promise.all([m.permissions["data:calendar:read"] ? may({ kind: "data:calendar:read" }) : false, m.permissions["data:contacts:read"] ? may({ kind: "data:contacts:read" }) : false]);
+            const whole = (type: string) => app.search.ownerOf(type) === m.id || (type === "event" && calendar) || (type === "contact" && contacts);
+            const sections = await app.search.find(String(a), typeof b === "number" ? Math.min(b, 100) : 20, undefined, (type) => (whole(type) ? null : readable));
+            return sections.map(({ results, note: _note, ...s }) => ({ ...s, results: results.map(({ run: _run, ...r }) => r) }));
+          }
+          case "search.filterKeys":
+            return app.search.extraKeys();
           case "views.register":
             if (!declaresView(a)) throw new Error(`View "${a}" isn't declared in ${m.id}'s contributes.views`);
             this.renderers.set(a, {
@@ -777,7 +1029,7 @@ export class ExtensionRuntime {
                 // A webview keeps running between redraws; only a missing one is made again.
                 if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
                 const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`view:${a}`, view.id).catch((err) => (failed(err), showDrawError(el, `${m.name}'s view`, err)));
               },
             });
@@ -789,7 +1041,7 @@ export class ExtensionRuntime {
             this.embedDrawers.set(a, (el, embed, tools) =>
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
@@ -821,7 +1073,8 @@ export class ExtensionRuntime {
             const path = filePath(a);
             if (decidesTrust(path)) {
               this.broker.record(m.id, { kind: "files:write", target: path }, "denied");
-              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: it runs sandboxed, and that decides what extensions may do`);
+              if (path === statePath(m.id)) throw new Error(`${m.name} can't change its own state.json as a file: use ctx.state`);
+              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: sandboxed extensions never change settings or extensions' files`);
             }
             return services.write(path, String(b), Number(c));
           }
@@ -838,6 +1091,7 @@ export class ExtensionRuntime {
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
+            await services.check({ kind: "data:calendar:read" });
             return data.status();
           case "data.sync":
             return data.sync(a === "force");
@@ -848,11 +1102,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(b as Parameters<DataApi["calendar"]["create"]>[0]);
+            return mayRead(data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return data.calendar.update(a, b as EventInput, (c ?? undefined) as Scope | undefined);
+            return mayRead(data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return data.calendar.remove(a, (b ?? undefined) as Scope | undefined);
+            return mayRead(data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
@@ -876,7 +1130,9 @@ export class ExtensionRuntime {
     );
     this.sandboxes.set(m.id, host);
     const code = record.builtIn && !record.workspace ? `${location.origin}/sandbox/builtin/${m.id}/${m.main}` : `${location.origin}/sandbox/code/${await api.sandboxToken(m.id)}/${m.main}`;
-    await host.start(code, this.ownSettings(m.id), app.me);
+    await host.start(code, this.ownSettings(m.id), app.me, this.deviceSnapshot());
   }
 }
 
+/** A session as extensions see it. */
+const mediaInfo = (s: MediaSession) => ({ id: s.id, title: s.title, kind: s.kind, playing: s.playing, note: noteOfMedia(s) ?? s.note ?? null });

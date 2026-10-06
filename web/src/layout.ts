@@ -1,7 +1,7 @@
 // Windows, tabs and splits as data: a tree of splits whose leaves are groups of tabs, and the group
 // that has focus. Each split knows how it shares its space. Every change is a pure function from one
-// layout to the next. The layout is saved as a JSON file (.common-ink/layout.json) and read back
-// through parseLayout.
+// layout to the next. Each device's layout is saved as a JSON file (.common-ink/users/<you>/devices/
+// <id>/layout.json; .common-ink/layout.json before layouts were per device) and read back through parseLayout.
 import { parseFilePath, type FilePath } from "../../worker/src/files.ts";
 
 export type GroupId = string;
@@ -86,7 +86,8 @@ function normalize(sizes: number[]): number[] {
   const total = sizes.reduce((a, b) => a + b, 0);
   // Sizes that add up to 1, give or take a float's rounding, are kept as they are: a layout read back is the one written.
   if (Math.abs(total - 1) < 1e-9) return sizes;
-  return total > 0 ? sizes.map((s) => s / total) : even(sizes.length);
+  // Shares need a total that's a number: sizes too big to add up (or infinite) share evenly.
+  return total > 0 && Number.isFinite(total) ? sizes.map((s) => s / total) : even(sizes.length);
 }
 
 /** A split, tidied: no empty children, no split of one, and a split inside a split the same way joins it. */
@@ -244,6 +245,13 @@ export function split(layout: Layout, where: Direction, path?: FilePath): Layout
 /** Close every group but the focused one. */
 export function only(layout: Layout): Layout {
   return { root: focused(layout), focus: layout.focus };
+}
+
+/** Just what's on show: the focused window, with only its tab on show. Where a phone starts from another device's layout. */
+export function onShow(layout: Layout): Layout {
+  const g = focused(layout);
+  const tab = activeTab(g);
+  return { root: { ...g, tabs: tab ? [tab] : [], active: 0 }, focus: g.id };
 }
 
 export function focusGroup(layout: Layout, id: GroupId): Layout {
@@ -417,7 +425,9 @@ export function parseLayout(value: unknown): Layout | null {
     if (o.kind === "split" && (o.dir === "row" || o.dir === "column") && Array.isArray(o.children) && o.children.length >= 1) {
       const children = o.children.map(node);
       if (!children.every((c) => c !== null)) return null;
-      const sizes = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && s > 0) ? (o.sizes as number[]) : even(children.length);
+      const given = Array.isArray(o.sizes) && o.sizes.length === children.length && o.sizes.every((s) => typeof s === "number" && Number.isFinite(s) && s > 0) ? normalize(o.sizes as number[]) : null;
+      // A share next to nothing would be a window no one can see or grab: such sizes share evenly.
+      const sizes = given && given.every((s) => s > 1e-6) ? given : even(children.length);
       // Tidied as any split is: one child stands alone, a split the same way joins its parent, sizes add up to 1.
       return makeSplit(o.dir, children.map((c, i) => ({ node: c as Node, size: sizes[i] })));
     }

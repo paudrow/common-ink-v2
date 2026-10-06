@@ -10,8 +10,8 @@
 // of JSON, and the last line says whether the page logged any errors. It exits 1 if a step failed or
 // the page logged an error (unless --allow-errors).
 //
-// Setup: --url, --scenario, --viewport 1200x800, --dark, --now <time>, --permissions allow|deny|ask,
-//        --net replay|live, --offline, --allow-errors
+// Setup: --url, --scenario, --device phone|tablet|laptop, --viewport 1200x800, --dark, --now <time>,
+//        --permissions allow|deny|ask, --net replay|live, --offline, --allow-errors
 // Steps: --open <note>, --keys <keys>, --type <text>, --click <selector>, --command <title>, --cursor <line[:col]>,
 //        --wait idle|<ms>|<selector>, --dump state|<field>, --check overlaps|lineShift|layoutFill|all,
 //        --probe-embeds, --eval <js>, --screenshot <file>, --reload, --set-offline on|off
@@ -20,6 +20,7 @@ import { parseArgs } from "node:util";
 import type { Page } from "playwright-core";
 import { ensureBuilt, isExpectedConsoleError, launchChrome, startWorker, type LocalWorker } from "../test/browser/launch.ts";
 import { parseKeys, playwrightKey } from "../web/src/dev/key-notation.ts";
+import { PRESETS, type Preset } from "../web/src/device.ts";
 
 const STEPS = ["open", "keys", "type", "click", "command", "cursor", "wait", "dump", "check", "probe-embeds", "eval", "screenshot", "reload", "set-offline"] as const;
 const { values, tokens } = parseArgs({
@@ -28,7 +29,8 @@ const { values, tokens } = parseArgs({
   options: {
     url: { type: "string" },
     scenario: { type: "string" },
-    viewport: { type: "string", default: "1200x800" },
+    viewport: { type: "string" },
+    device: { type: "string" },
     dark: { type: "boolean" },
     now: { type: "string" },
     permissions: { type: "string" },
@@ -40,7 +42,10 @@ const { values, tokens } = parseArgs({
 });
 
 const out = (step: string, value: unknown) => console.log(JSON.stringify({ step, value }));
-const [width, height] = values.viewport!.split("x").map(Number);
+// A device stands in for a phone, a tablet or a laptop: its size, touch, and the `device` lever for the rest.
+const device = values.device as Preset | undefined;
+if (device && !(device in PRESETS)) throw new Error(`--device is phone, tablet or laptop, not ${device}`);
+const [width, height] = (values.viewport ?? (device ? `${PRESETS[device].width}x${PRESETS[device].height}` : "1200x800")).split("x").map(Number);
 
 let local: LocalWorker | null = null;
 if (!values.url) ensureBuilt();
@@ -50,7 +55,8 @@ const errors: string[] = [];
 try {
   local = values.url ? null : await startWorker();
   const base = (values.url ?? local!.base).replace(/\/$/, "");
-  const context = await browser.newContext({ viewport: { width, height }, colorScheme: values.dark ? "dark" : "light" });
+  const touch = !!device && PRESETS[device].touch;
+  const context = await browser.newContext({ viewport: { width, height }, colorScheme: values.dark ? "dark" : "light", hasTouch: touch, isMobile: touch });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
@@ -60,7 +66,7 @@ try {
     if (!res.ok()) throw new Error(`Couldn't reset to ${values.scenario}: ${res.status()} ${await res.text()} (has this app test levers?)`);
   }
   const levers = new URLSearchParams();
-  for (const k of ["now", "permissions", "net"] as const) if (values[k]) levers.set(k, values[k]!);
+  for (const k of ["now", "permissions", "net", "device"] as const) if (values[k]) levers.set(k, values[k]!);
   if (values.offline) levers.set("offline", "1");
   await page.goto(`${base}/${levers.size ? `?${levers}` : ""}`);
   await ready(page);

@@ -6,12 +6,16 @@
   let port = null;
   let me;
   let settings = {};
+  // What the device has ({ facts, why }), from the app, and again whenever it changes.
+  let device = { facts: { width: "compact", pointer: "coarse", touch: false, keyboard: false }, why: {} };
+  const widths = ["compact", "medium", "expanded", "large"];
   let next = 0;
   const calls = new Map();
   const handlers = new Map();
-  const listeners = { saved: [], focus: [], records: [] };
+  const listeners = { saved: [], focus: [], records: [], device: [] };
   const webviewListeners = new Map();
   let providers = 0;
+  let ctx = null;
   let items = 0;
 
   const call = (method, ...args) =>
@@ -111,6 +115,25 @@
         },
         open: (text) => call("commandBar.open", text),
       },
+      search: {
+        provide(type, provider) {
+          // Each search's results replace the last one's, so their handlers don't pile up.
+          let previous = [];
+          handlers.set(`search:${type}`, async (query, limit, within) => {
+            for (const run of previous) handlers.delete(`item:${run}`);
+            previous = [];
+            return (await provider.search(query, limit, within)).map((result) => {
+              const run = `search-${type}:${++items}`;
+              previous.push(run);
+              handlers.set(`item:${run}`, () => result.run());
+              return { title: result.title, path: result.path, detail: result.detail, aside: result.aside, dim: result.dim, run };
+            });
+          });
+          return call("search.provide", type);
+        },
+        find: (text, limit) => call("search.find", text, limit),
+        filterKeys: () => call("search.filterKeys"),
+      },
       embeds: {
         register(language, provider) {
           handlers.set(`embed:${language}`, (webviewId, embed) => provider.resolve(webview(webviewId), embed));
@@ -162,6 +185,21 @@
         notice: (message) => call("workbench.notice", message),
       },
       events: { onSaved: (fn) => void listeners.saved.push(fn), onFocus: (fn) => void listeners.focus.push(fn) },
+      device: {
+        has: (capability) => (capability === "keyboard" ? device.facts.keyboard : capability === "touch" ? device.facts.touch : false),
+        get width() {
+          return device.facts.width;
+        },
+        atLeast: (min) => widths.indexOf(device.facts.width) >= widths.indexOf(min),
+        get pointer() {
+          return device.facts.pointer;
+        },
+        get touch() {
+          return device.facts.touch;
+        },
+        why: (capability) => device.why[capability] || "",
+        onChange: (fn) => void listeners.device.push(fn),
+      },
       util: { fuzzyFilter, label: (path) => path.replace(/\.md$/, "") },
     };
   }
@@ -171,10 +209,12 @@
     if (m.t === "start") {
       me = m.me;
       settings = m.settings || {};
+      if (m.device) device = m.device;
       try {
         const mod = await import(m.code);
         if (!mod.default || typeof mod.default.activate !== "function") throw new Error(`${m.extension.main} must export default { activate(ctx) { … } }`);
-        await mod.default.activate(context(m.extension));
+        ctx = context(m.extension);
+        await mod.default.activate(ctx);
         port.postMessage({ t: "ready" });
       } catch (err) {
         port.postMessage({ t: "failed", message: err && err.message ? err.message : String(err) });
@@ -194,6 +234,10 @@
       }
     } else if (m.t === "event") {
       if (m.name === "settings") settings = m.args[0];
+      else if (m.name === "device") {
+        device = m.args[0];
+        for (const fn of listeners.device) fn(ctx.device);
+      }
       else if (m.name === "webview.message") for (const fn of webviewListeners.get(m.args[0]) || []) fn(m.args[1]);
       else for (const fn of listeners[m.name] || []) fn(...m.args);
     }

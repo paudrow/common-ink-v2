@@ -4,13 +4,16 @@ import { timingFrom, type EditResult, type EventEdit, type LinkingNote, type Ref
 import { isTimeZone, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type Scope } from "./calendar.ts";
 import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
-import { completeTaskIn, TaskError } from "./complete-task.ts";
+import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
-import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { format, parse, problems, type Query } from "./query.ts";
+import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
+import type { SearchOptions, SearchResults } from "./search.ts";
+import { isNote, parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -28,8 +31,13 @@ export interface Store {
   contacts(email: string, query: string): Promise<Contact[]>;
   combined(revisions: Revision[]): Promise<FileDiff[]> | FileDiff[];
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
+  editApplied(path: FilePath, id: string): Promise<boolean> | boolean;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
+  completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
+  /** Delete a note, and take it out of the archive with it (archive.ts). */
+  deleteNote(w: Write): Promise<WriteResult> | WriteResult;
+  search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -60,7 +68,8 @@ const isoTime = (v: unknown, fallback: Date): string | null => {
 const MAX_FILE_BYTES = 1_000_000;
 
 type Args = Record<string, unknown>;
-type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+/** `internal`: the operation failed in a way the caller can't fix, which is logged; `error` says so in a sentence. */
+type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; internal?: true };
 
 export interface Operation<T = unknown> {
   description: string;
@@ -80,11 +89,27 @@ function count(v: unknown): number | undefined {
 }
 
 const PATH = { type: "string", description: 'A file\'s path, like "Projects/Plan.md" or ".common-ink/layout.json"' };
+const EDIT = { type: "string", description: "An id you give this edit, to ask later (edit_applied) whether it was applied, when you couldn't hear the answer" };
+const isEditId = (v: unknown): v is string => typeof v === "string" && /^[\w-]{1,64}$/.test(v);
 const ADDRESS = { type: "string", description: "An event's address, like event:google/primary/abc123, from list_events" };
 const ZONE = { type: "string", description: "An IANA time zone, like America/New_York" };
 const TIME = { type: "string", description: "A wall time like 2026-10-05T09:00, or a day like 2026-10-05 for all day" };
 const SCOPE = { type: "string", enum: ["this", "following", "all"], description: "For an occurrence of a repeating event: this one, this and following, or all of them" };
 const RECURRENCE = { type: ["string", "array", "null"], items: { type: "string" }, description: "weekly, 2w, mon,thu, 1st-tue, last-fri… or RRULE lines" };
+
+/** Path globs, as a list or, from a URL's query, a list in JSON: undefined if there are none, null if they aren't globs. */
+function globsOf(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  let list = value;
+  if (typeof value === "string") {
+    try {
+      list = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return Array.isArray(list) && list.length <= 50 && list.every((g) => typeof g === "string" && g.length > 0 && g.length <= 500) ? (list as string[]) : null;
+}
 
 const zoneOf = (v: unknown): string | null => (v === undefined || v === "" ? "UTC" : typeof v === "string" && isTimeZone(v) ? v : null);
 const scopeOf = (v: unknown): Scope | undefined | null => (v === undefined || v === "" ? undefined : v === "this" || v === "following" || v === "all" ? v : null);
@@ -152,10 +177,13 @@ function op<T>(o: Operation<T>): Operation<T> {
 
 export const OPERATIONS = {
   list_files: op<Record<string, never>>({
-    description: "List every file in the workspace (notes and workspace JSON) with its revision.",
+    description: "List every file in the workspace (notes and workspace JSON) with its revision. Archived notes say `archived: true`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
-    run: async (store) => store.list(),
+    run: async (store) => {
+      const archived = await archivedIn(store);
+      return (await store.list()).map((f) => (archived.has(f.path) ? { ...f, archived: true } : f));
+    },
   }),
   read_file: op<{ path: WorkspaceFile["path"] }>({
     description: "Read a file's text and revision. Pass the revision back as `base` when you write it.",
@@ -171,7 +199,7 @@ export const OPERATIONS = {
       "Write a file's whole text, given the revision you read (`base`, or 0 for a new file). If it changed since, your edit is merged in; if it can't be, nothing is saved and you get the current file back.",
     input: {
       type: "object",
-      properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 } },
+      properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 }, edit: EDIT },
       required: ["path", "text", "base"],
     },
     parse: (a) => {
@@ -182,7 +210,8 @@ export const OPERATIONS = {
       if (isReadOnly(path)) return fail(`${path} is written by Common Ink and can't be changed`);
       if (typeof a.text !== "string" || new TextEncoder().encode(a.text).length > MAX_FILE_BYTES) return fail('"text" must be a string under 1 MB');
       if (base === undefined) return fail('"base" must be the revision you started from, or 0 for a new file');
-      return ok({ path, text: a.text, base });
+      if (a.edit !== undefined && !isEditId(a.edit)) return fail('"edit" must be an id of letters, digits, - and _, up to 64');
+      return ok({ path, text: a.text, base, ...(a.edit !== undefined ? { edit: a.edit as string } : {}) });
     },
     run: async (store, w, author) => store.write({ ...w, author }),
   }),
@@ -199,7 +228,7 @@ export const OPERATIONS = {
       if (!base) return fail('"base" must be the revision you read');
       return ok({ path, base });
     },
-    run: async (store, { path, base }, author) => store.write({ path, text: "", base, author, delete: true }),
+    run: async (store, { path, base }, author) => (isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true })),
   }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
@@ -429,6 +458,15 @@ export const OPERATIONS = {
       return text === null ? null : { path, revision, text };
     },
   }),
+  edit_applied: op<{ path: FilePath; edit: string }>({
+    description: "Whether an edit you gave an id (write_file's `edit`) was applied to a file: for when you couldn't hear write_file's answer.",
+    input: { type: "object", properties: { path: PATH, edit: EDIT }, required: ["path", "edit"] },
+    parse: (a) => {
+      const path = parseFilePath(a.path);
+      return path && isEditId(a.edit) ? ok({ path, edit: a.edit }) : fail('"path" must be a file\'s path and "edit" an id you gave write_file');
+    },
+    run: async (store, { path, edit }) => ({ path, edit, applied: await store.editApplied(path, edit) }),
+  }),
   restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } }>({
     description:
       "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone.",
@@ -479,6 +517,43 @@ export const OPERATIONS = {
       throw new OperationError("The labels file kept changing; try again");
     },
   }),
+  search: op<{ query: string; limit: number; zone: string; within?: string[] }>({
+    description:
+      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. `within` searches only notes whose paths its globs admit: the first glob a path matches decides, a glob admitting it and a "!glob" leaving it out, as in ["!Projects/Old/**", "Projects/**"]. A search reads the text of at most 1000 notes, in its order, so its first results are right: `more` says there were more to read (then `total` counts those read), so add words or filters. Events are list_events\'.',
+    input: {
+      type: "object",
+      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE, within: { type: "array", items: { type: "string" }, maxItems: 50 } },
+      required: ["query"],
+    },
+    parse: (a) => {
+      if (typeof a.query !== "string" || a.query.length > 1000) return fail('"query" is the query, like launch in:Projects/ -is:archived');
+      const zone = zoneOf(a.zone);
+      if (!zone) return fail('"zone" is a time zone, like America/New_York');
+      const within = globsOf(a.within);
+      if (within === null) return fail('"within" is a list of up to 50 path globs, like ["Projects/**"] (in a URL, as JSON)');
+      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), zone, ...(within ? { within } : {}) });
+    },
+    run: async (store, { query, limit, zone, within }) => {
+      const q = parse(query);
+      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, archived: await archivedIn(store), within })) };
+    },
+  }),
+  archive: op<{ paths: FilePath[] }>({
+    description:
+      "Archive notes: they stay where they are, unchanged and still linked, but leave the Feed and come last in search, marked archived. It's one change to .common-ink/archive.json, by you; undo its revision to take it back. Says the change's revision (null if they were all archived already) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      for (const path of paths) if (!(await store.read(path))) throw new OperationError(`There's no note at ${path}`);
+      return setArchived(store, paths, true, author);
+    },
+  }),
+  unarchive: op<{ paths: FilePath[] }>({
+    description: "Take notes out of the archive, back into the Feed. One change to .common-ink/archive.json, by you. Says the change's revision (null if none of them was archived) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => setArchived(store, paths, false, author),
+  }),
   list_embeds: op<Record<string, never>>({
     description:
       "The embeds notes can hold, which extensions draw in place. Each comes with its name, its syntax, what it does, its key=value arguments, what its body holds (if anything), an example to copy, and whether its extension is on here. Write each the way its syntax says: a leaf is one line, `::timer{duration=25m label=\"Focus\"}`; a container wraps markdown, `:::kanban` on a line, its markdown, then `:::` on a line; a fence is a code block, its name and arguments on the opening line. Extensions installed from the Extensions view's Catalog add more.",
@@ -486,9 +561,9 @@ export const OPERATIONS = {
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
   }),
-  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
+  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today: string }>({
     description:
-      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. `today` is the person's day (YYYY-MM-DD) where they are, which is what done: and last: say. Both changes are yours; undo them together with both revisions.",
     input: {
       type: "object",
       properties: {
@@ -496,25 +571,22 @@ export const OPERATIONS = {
         line: { type: "integer", minimum: 1, description: "The task's line number, from 1" },
         text: { type: "string", description: "The task's line as you read it, so a note that changed meanwhile isn't ticked in the wrong place" },
         done: { type: "boolean", description: "false to untick it" },
-        today: { type: "string", description: "The person's day, YYYY-MM-DD" },
+        today: { type: "string", description: "The person's day where they are, YYYY-MM-DD" },
       },
-      required: ["path", "line"],
+      required: ["path", "line", "today"],
     },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const line = count(a.line);
       if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
       if (!line) return fail('"line" must be the task\'s line number, from 1');
-      if (a.today !== undefined && (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today))) return fail('"today" must be a day like 2026-10-05');
-      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today as string | undefined });
+      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:');
+      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
-      try {
-        return await completeTaskIn(store, args, author);
-      } catch (err) {
-        if (err instanceof TaskError) throw new OperationError(err.message);
-        throw err;
-      }
+      const ticked = await store.completeTask(args, author);
+      if ("refused" in ticked) throw new OperationError(ticked.refused);
+      return ticked;
     },
   }),
   list_uploads: op<Record<string, never>>({
@@ -545,6 +617,29 @@ export const OPERATIONS = {
   }),
 };
 
+/** Notes' paths, from an operation's arguments. */
+function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
+  const paths = Array.isArray(v) ? v.map(parseFilePath) : [];
+  if (!paths.length || paths.length > 500 || !paths.every((p): p is FilePath => !!p && p.endsWith(".md"))) return fail('"paths" must be a list of notes\' paths, ending in .md');
+  return ok({ paths: [...new Set(paths)] });
+}
+
+async function archivedIn(store: Store): Promise<Set<string>> {
+  return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
+}
+
+/** Archive or unarchive notes: one change to the archive file. A write that meets another's is merged as a set (archive.ts). */
+async function setArchived(store: Store, paths: FilePath[], archived: boolean, author: Author): Promise<{ revision: Revision | null; archived: FilePath[] }> {
+  const file = await store.read(ARCHIVE_PATH);
+  const current = readArchive(file?.text ?? "");
+  if (!current) throw new OperationError(`${ARCHIVE_PATH} isn't valid JSON with an "archived" list, so it wasn't changed. Fix it, or put back an earlier version from History.`);
+  const next = withArchived(current, paths, archived);
+  if (next.archived.join("\n") === current.archived.join("\n")) return { revision: null, archived: next.archived };
+  const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
+  if (result.status === "conflict") throw new OperationError("The archive changed meanwhile and couldn't be merged; try again");
+  return { revision: result.file.revision, archived: parseArchive(result.file.text) };
+}
+
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */
 export class OperationError extends Error {}
 
@@ -563,6 +658,7 @@ export async function runOperation(name: OperationName, args: Args, store: Store
     // Data sources fail in ways the caller can fix (connect Google); say how instead of a 500.
     if (name === "data_sources" || name === "list_contacts") return fail((err as Error).message);
     if (err instanceof OperationError) return fail(err.message);
-    throw err;
+    console.error("Operation failed:", name, err);
+    return { ok: false, internal: true, error: `Something went wrong running ${name}. It's been logged; try again.` };
   }
 }

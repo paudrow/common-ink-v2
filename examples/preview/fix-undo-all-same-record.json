@@ -1,0 +1,7 @@
+{
+  "pr": 98,
+  "title": "Undo all by an agent covers its several edits of one event",
+  "steps": [
+    "Have an agent (bin/common-ink event set …) rename an event, then give it a place. In History, filter by that agent and undo all of its changes: the event is back as it was, with no conflict."
+  ]
+}

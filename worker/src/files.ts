@@ -2,7 +2,8 @@
 // in tests. A file is a note (markdown) or workspace JSON (app state such as the layout, in .common-ink/).
 // Every write is recorded as a change with its author, and a file's text is what its changes add up to
 // (ADR 0002). The files table keeps the latest text so reads are cheap.
-import { diff3Merge, diffPatch, patch, type IPatchRes } from "node-diff3";
+import { patch, type IPatchRes } from "node-diff3";
+import { lineMerge, linePatch } from "./line-diff.ts";
 
 export type SqlValue = string | number | null;
 
@@ -116,7 +117,7 @@ export interface HistoryQuery {
  * and was merged with what changed since, so `file.text` is new to the writer. "conflict": it couldn't
  * be merged, nothing changed, and `file` is the current file.
  */
-export type WriteResult = { status: "saved" | "merged"; file: WorkspaceFile } | { status: "conflict"; file: WorkspaceFile | null };
+export type WriteResult = { status: "saved" | "merged"; file: WorkspaceFile } | { status: "conflict"; file: WorkspaceFile | null; reason?: string };
 
 export interface Write {
   path: FilePath;
@@ -126,6 +127,8 @@ export interface Write {
   undoes?: Revision;
   /** Delete the file instead: `text` is ignored, and `base` must be its revision. */
   delete?: true;
+  /** An id the writer gave this edit, to ask later whether it was applied: a page that went before it heard back. */
+  edit?: string;
 }
 
 /**
@@ -151,6 +154,9 @@ function textHash(text: string): string {
 }
 
 const lines = (text: string) => text.split("\n");
+
+/** A Durable Object's SQLite binds at most 100 parameters in a statement, so a list goes in pieces this long. */
+const chunks = <T>(xs: readonly T[], size = 100): T[][] => Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, (i + 1) * size));
 
 const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
 
@@ -187,7 +193,29 @@ const SCHEMA: Array<(db: Db) => void> = [
   (db) => {
     if (!hasColumn(db, "changes", "deletes")) db.run("ALTER TABLE changes ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0");
   },
+  // 4. The ids writers gave their edits, by file, once applied: with a hash of the text sent, and when.
+  (db) => {
+    db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
+    db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
+  },
 ];
+
+/** How long an edit's id is kept: a page that went asks about it when its note next opens there. */
+const EDIT_DAYS = 30;
+
+/** A hash of an edit's text, to tell whether its id is sent again with the same text: two 32-bit halves (cyrb53) and its length. */
+function editHash(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
+}
 
 type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
 const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
@@ -206,11 +234,62 @@ export class Files {
     private now: () => number = Date.now,
     /** Told of every change once it's recorded. */
     private announce: (notice: ChangeNotice) => void = () => {},
-    /** Told of every file's new text (null: deleted) inside the change's transaction, to keep indexes of files. */
-    private observe: (path: FilePath, text: string | null) => void = () => {},
+    /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
+    private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
+    /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
+    private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
+  }
+
+  /** Changes made in the transaction running now, announced once it's kept. */
+  private heard: ChangeNotice[] = [];
+  /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
+  private depth = 0;
+  /** A transaction inside the one running now failed: the outer one is rolled back too, even if it caught the error. */
+  private innerFailed = false;
+
+  /**
+   * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest. One
+   * inside another is part of the outer one, since SQLite has one transaction at a time: it can't be
+   * rolled back alone, so if it fails, the outer one fails as it ends, whether or not it caught the
+   * error, and none of either is kept.
+   */
+  private tx<T>(fn: () => T): T {
+    this.depth++;
+    try {
+      if (this.depth > 1) return fn();
+      this.innerFailed = false;
+      const out = this.db.tx(() => {
+        const out = fn();
+        if (this.innerFailed) throw new Error("A write inside this one failed, so none of them were kept");
+        return out;
+      });
+      const notices = this.heard;
+      this.heard = [];
+      for (const notice of notices) {
+        try {
+          this.announce(notice);
+        } catch (err) {
+          console.error("Announcing a change failed:", err);
+        }
+      }
+      return out;
+    } catch (err) {
+      if (this.depth > 1) this.innerFailed = true;
+      // Rolled back: nobody hears of any of it.
+      else this.heard = [];
+      throw err;
+    } finally {
+      this.depth--;
+    }
+  }
+
+  /** Run `fn` as one transaction: its writes all happen, or none do, and nothing comes between them. */
+  atomically<T>(fn: () => T): T {
+    return this.tx(fn);
   }
 
   /** Every file but data sources' records, which are listed by their kind (records.ts). */
@@ -244,20 +323,27 @@ export class Files {
   /** Changes across the workspace, newest first, optionally for one file or one author. */
   recent(q: HistoryQuery = {}): Change[] {
     const limit = Math.min(Math.max(1, q.limit ?? 50), 500);
-    const rows = this.db.all<ChangeRow>(
-      `SELECT * FROM changes WHERE (?1 IS NULL OR path = ?1) AND (?2 IS NULL OR revision < ?2) ORDER BY revision DESC`,
-      q.path ?? null,
-      q.before ?? null,
-    );
-    const undoneBy = this.undoneBy();
-    const out: Change[] = [];
-    for (const row of rows) {
-      const change = toChange(row);
-      if (q.author && authorKey(change.author) !== q.author) continue;
-      out.push({ ...change, undoneBy: undoneBy(change.revision) });
-      if (out.length >= limit) break;
+    // Who made each change is read a page at a time, and only the chosen changes whole, so a long history is never all in memory.
+    const chosen: Revision[] = [];
+    for (let before = q.before ?? null; chosen.length < limit; ) {
+      // One statement per shape, so SQLite pages by the index (changes_by_path, or the revision itself).
+      const where = [...(q.path ? ["path = ?"] : []), ...(before !== null ? ["revision < ?"] : [])];
+      const page = this.db.all<{ revision: number; author: string }>(
+        `SELECT revision, author FROM changes ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY revision DESC LIMIT 1000`,
+        ...(q.path ? [q.path] : []),
+        ...(before !== null ? [before] : []),
+      );
+      for (const { revision, author } of page) {
+        if (chosen.length < limit && (!q.author || authorKey(JSON.parse(author)) === q.author)) chosen.push(revision);
+      }
+      if (page.length < 1000) break;
+      before = page.at(-1)!.revision;
     }
-    return out;
+    const undoneBy = this.undoneBy();
+    return chunks(chosen)
+      .flatMap((some) => this.db.all<ChangeRow>(`SELECT * FROM changes WHERE revision IN (${some.map(() => "?").join(",")})`, ...some))
+      .sort((a, b) => b.revision - a.revision)
+      .map((row) => ({ ...toChange(row), undoneBy: undoneBy(row.revision) }));
   }
 
   /** Which undo, if any, is in effect for a change: the latest undo of it that hasn't been undone itself. */
@@ -279,7 +365,7 @@ export class Files {
    * reverse into the file as it is now, so later edits elsewhere in the file stay.
    */
   undo(revisions: Revision[], author: Author): UndoResult[] {
-    return this.db.tx(() =>
+    return this.tx(() =>
       [...new Set(revisions)]
         .sort((a, b) => b - a)
         .map((revision) => {
@@ -289,7 +375,7 @@ export class Files {
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
-          const undone = merge(current?.text ?? "", after, before);
+          const undone = (this.mergeFor(change.path) ?? merge)(current?.text ?? "", after, before);
           if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
           if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
           const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
@@ -305,7 +391,7 @@ export class Files {
    */
   combined(revisions: Revision[]): FileDiff[] {
     const chosen = new Set(revisions);
-    const paths = [...new Set(this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${[...chosen].map(() => "?").join(",") || "NULL"})`, ...chosen).map((r) => r.path))];
+    const paths = [...new Set(chunks([...chosen]).flatMap((some) => this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${some.map(() => "?").join(",")})`, ...some).map((r) => r.path)))];
     return paths.sort().map((path) => {
       const history = this.history(path);
       const runs: DiffRun[] = [];
@@ -337,7 +423,7 @@ export class Files {
    * lost: the changes since stay in history, and this one can be undone like any other.
    */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): WriteResult | null {
-    return this.db.tx(() => {
+    return this.tx(() => {
       const revision =
         "revision" in at
           ? at.revision
@@ -354,16 +440,21 @@ export class Files {
    * edits are merged line by line; if they touch the same lines, nothing is saved.
    */
   write(w: Write): WriteResult {
-    return this.db.tx(() => this.apply(w));
+    return this.tx(() => this.apply(w));
   }
 
   /** Several writes in one transaction, with `also` run in it after them: all of it happens, or none. */
   writeAll(ws: readonly Write[], also: () => void = () => {}): WriteResult[] {
-    return this.db.tx(() => {
+    return this.tx(() => {
       const results = ws.map((w) => this.apply(w));
       also();
       return results;
     });
+  }
+
+  /** The highest revision ever given, even once its changes are gone (as after a reset): 0 before any. */
+  lastRevision(): Revision {
+    return this.db.all<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'changes'")[0]?.seq ?? 0;
   }
 
   /** A random secret by name, made the first time it's asked for and kept from then on. */
@@ -384,7 +475,7 @@ export class Files {
    * seeded: a demo the PR changed shows as it is now, and what was there is in history.
    */
   seed(seed: Seed): void {
-    this.db.tx(() => {
+    this.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
       if (applied?.value === seed.id) return;
       const added = new Set<string>();
@@ -424,7 +515,32 @@ export class Files {
     });
   }
 
-  private apply({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
+  private apply(w: Write): WriteResult {
+    const hash = w.edit === undefined ? "" : editHash(w.text);
+    const known = w.edit === undefined ? undefined : this.db.all<{ hash: string }>("SELECT hash FROM edits WHERE path = ? AND id = ?", w.path, w.edit)[0];
+    if (known) {
+      const current = this.read(w.path);
+      // Sent again by a page that never heard the answer: it's in already, and the file is as it is now.
+      if (known.hash === hash) return current ? { status: "saved", file: current } : { status: "conflict", file: null, reason: "That edit was applied, and the file has been deleted since" };
+      // An id is for one text: another under it would be lost, said to be saved.
+      return { status: "conflict", file: current, reason: "This edit id was already used for different text" };
+    }
+    const result = this.applyWrite(w);
+    // Applied, even as a merge or with nothing left to change: the writer may ask by its id.
+    if (w.edit !== undefined && result.status !== "conflict") {
+      const now = this.now();
+      this.db.run("INSERT OR IGNORE INTO edits(path, id, revision, hash, time) VALUES (?, ?, ?, ?, ?)", w.path, w.edit, result.file.revision, hash, now);
+      this.db.run("DELETE FROM edits WHERE time < ?", now - EDIT_DAYS * 86_400_000);
+    }
+    return result;
+  }
+
+  /** Whether the edit a writer gave this id was applied to the file. */
+  editApplied(path: FilePath, id: string): boolean {
+    return this.db.all("SELECT 1 FROM edits WHERE path = ? AND id = ?", path, id).length > 0;
+  }
+
+  private applyWrite({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
     // A delete is never merged: it has to be of the file as it is.
@@ -433,12 +549,12 @@ export class Files {
     let status: "saved" | "merged" = "saved";
     if (!deleting && base !== (current?.revision ?? 0)) {
       const baseText = this.textAt(path, base);
-      const merged = baseText === null ? null : merge(text, baseText, currentText);
+      const merged = baseText === null ? null : (this.mergeFor(path) ?? merge)(text, baseText, currentText);
       if (merged === null) return { status: "conflict", file: current };
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
     if (current && next === currentText && !deleting) return { status, file: current };
-    const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
+    const diff = JSON.stringify(linePatch(lines(currentText), lines(next)));
     this.db.run(
       "INSERT INTO changes(path, author, base, diff, time, undoes, deletes) VALUES (?, ?, ?, ?, ?, ?, ?)",
       path, JSON.stringify(author), base, diff, this.now(), undoes ?? null, deleting ? 1 : 0,
@@ -446,16 +562,16 @@ export class Files {
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
-      this.observe(path, null);
-      this.announce({ path, revision, author });
+      this.observe(path, null, revision);
+      this.heard.push({ path, revision, author });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
-    this.observe(path, next);
-    this.announce({ path, revision, author });
+    this.observe(path, next, revision);
+    this.heard.push({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }
 
@@ -473,9 +589,10 @@ export class Files {
   }
 }
 
+/** A three-way merge of a file's text: mine and theirs, from base. Null when they can't be merged. */
+export type Merge = (mine: string, base: string, theirs: string) => string | null;
+
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {
-  const regions = diff3Merge(lines(mine), lines(base), lines(theirs), { excludeFalseConflicts: true });
-  if (regions.some((r) => r.conflict)) return null;
-  return regions.flatMap((r) => r.ok ?? []).join("\n");
+  return lineMerge(lines(mine), lines(base), lines(theirs))?.join("\n") ?? null;
 }

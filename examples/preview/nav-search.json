@@ -1,0 +1,10 @@
+{
+  "pr": 157,
+  "title": "Search: one bar for notes, tasks and events, by words and filters",
+  "steps": [
+    "Press ⌘K (Ctrl+K off a Mac) and type garden: notes come first, with the line that matched, then the task \"Ask @jane about the #garden plan\".",
+    "Add \" fr\" and press Tab: it's from:. Type a and press Tab: from:agent. The sample notes are an agent's, so they stay.",
+    "Type payday type:event and press Enter: Calendar opens on the next payday, with it selected.",
+    "At phone width (under 600px; your browser's device mode at 375×812 will do), ⌘K fills the screen. Type pay and tap the Tasks chip: the query becomes pay type:task. Tap Pay rent to open Chores at it; Cancel closes search."
+  ]
+}
