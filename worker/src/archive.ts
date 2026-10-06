@@ -7,7 +7,7 @@
 // other path's archiving as it is now and changes only the paths it changed. So undoing one archive
 // never clashes with another, from an agent or another tab. A note's archiving ends with the note:
 // deleting it takes its path out, in the same transaction.
-import { isNote, parseFilePath, type FilePath, type Files, type Write, type WriteResult } from "./files.ts";
+import { isNote, merge, parseFilePath, type Author, type FilePath, type Files, type Revision, type Write, type WriteResult } from "./files.ts";
 
 export const ARCHIVE_PATH = parseFilePath(".common-ink/archive.json")!;
 
@@ -51,11 +51,12 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 /**
  * Three-way merge of archive files as sets: theirs, with what mine archived and unarchived since base.
- * Other keys take mine where mine changed them, else theirs. Null if a side can't be read.
+ * Other keys take mine where mine changed them, else theirs. If a side can't be read (a hand edit
+ * broke it, or fixed it), they're merged line by line, as any file is, so history can still undo it.
  */
 export function mergeArchive(mine: string, base: string, theirs: string): string | null {
   const [m, b, t] = [readArchive(mine), readArchive(base), readArchive(theirs)];
-  if (!m || !b || !t) return null;
+  if (!m || !b || !t) return merge(mine, base, theirs);
   const added = m.archived.filter((p) => !b.archived.includes(p));
   const removed = b.archived.filter((p) => !m.archived.includes(p));
   const keys = new Set([...Object.keys(m.rest), ...Object.keys(b.rest), ...Object.keys(t.rest)]);
@@ -82,4 +83,20 @@ export function deleteNote(files: Files, w: Write): WriteResult {
     if (file && archive?.archived.includes(w.path)) files.write({ path: ARCHIVE_PATH, text: archiveText(withArchived(archive, [w.path], false)), base: file.revision, author: w.author });
     return result;
   });
+}
+
+/**
+ * Notes brought back by undoing their deletes, archived again if they were archived when deleted: a
+ * delete took the note out of the archive (deleteNote), and undoing it should put the note back as it was.
+ */
+export function archiveAgain(files: Files, restored: ReadonlyArray<{ path: FilePath; deleted: Revision }>, author: Author): void {
+  const archivedAt = (revision: Revision) => {
+    const [last] = files.recent({ path: ARCHIVE_PATH, before: revision, limit: 1 });
+    return readArchive(last ? (files.versionAt(ARCHIVE_PATH, last.revision) ?? "") : "")?.archived ?? [];
+  };
+  const again = restored.filter(({ path, deleted }) => files.read(path) && archivedAt(deleted).includes(path)).map((r) => r.path);
+  const file = files.read(ARCHIVE_PATH);
+  const now = readArchive(file?.text ?? "");
+  const missing = again.filter((p) => now && !now.archived.includes(p));
+  if (now && missing.length) files.write({ path: ARCHIVE_PATH, text: archiveText(withArchived(now, missing, true)), base: file?.revision ?? 0, author });
 }

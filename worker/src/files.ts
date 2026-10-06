@@ -247,32 +247,40 @@ export class Files {
   private heard: ChangeNotice[] = [];
   /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
   private depth = 0;
+  /** A transaction inside the one running now failed: the outer one is rolled back too, even if it caught the error. */
+  private innerFailed = false;
 
   /**
    * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
    * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest. One
-   * inside another is part of the outer one: SQLite has one transaction at a time.
+   * inside another is part of the outer one, since SQLite has one transaction at a time: it can't be
+   * rolled back alone, so if it fails, the outer one fails as it ends, whether or not it caught the
+   * error, and none of either is kept.
    */
   private tx<T>(fn: () => T): T {
-    const mark = this.heard.length;
     this.depth++;
     try {
-      const out = this.depth > 1 ? fn() : this.db.tx(fn);
-      if (this.depth === 1) {
-        const notices = this.heard;
-        this.heard = [];
-        for (const notice of notices) {
-          try {
-            this.announce(notice);
-          } catch (err) {
-            console.error("Announcing a change failed:", err);
-          }
+      if (this.depth > 1) return fn();
+      this.innerFailed = false;
+      const out = this.db.tx(() => {
+        const out = fn();
+        if (this.innerFailed) throw new Error("A write inside this one failed, so none of them were kept");
+        return out;
+      });
+      const notices = this.heard;
+      this.heard = [];
+      for (const notice of notices) {
+        try {
+          this.announce(notice);
+        } catch (err) {
+          console.error("Announcing a change failed:", err);
         }
       }
       return out;
     } catch (err) {
-      // This transaction's changes were rolled back; an outer one's stay.
-      this.heard.length = mark;
+      if (this.depth > 1) this.innerFailed = true;
+      // Rolled back: nobody hears of any of it.
+      else this.heard = [];
       throw err;
     } finally {
       this.depth--;

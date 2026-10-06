@@ -146,3 +146,17 @@ browserTest(h, "on a phone, a notice hides none of the note and goes by itself",
   assert.equal(covered, 0, "no line of the note is under the notice");
   await notice.waitFor({ state: "detached", timeout: 12_000 });
 });
+
+browserTest(h, "a notice shown on a wide screen goes by itself once the window narrows to a phone's", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Alpha.md", "# Alpha\n");
+  await app.open("Alpha");
+  await app.call("idle");
+  await app.command("Archive this note");
+  const notice = page.locator(".notice", { hasText: "Archived" });
+  await notice.waitFor();
+  await page.waitForTimeout(500);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.mouse.move(0, 0);
+  await notice.waitFor({ state: "detached", timeout: 12_000 });
+});

@@ -5,7 +5,7 @@
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
 import { SearchIndex } from "./search.ts";
-import { ARCHIVE_PATH, mergeArchive } from "./archive.ts";
+import { ARCHIVE_PATH, archiveAgain, mergeArchive } from "./archive.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -792,7 +792,14 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
   const change = (r: Revision) => files.recent({ before: r + 1, limit: 1 }).find((c) => c.revision === r);
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
   const plain = revisions.filter((r) => !isRecord(r));
-  const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
+  // A note's delete undone brings back its archiving too, in the same transaction.
+  const out: UndoResult[] = plain.length
+    ? files.atomically(() => {
+        const results = files.undo(plain, author);
+        archiveAgain(files, results.flatMap((u) => (u.status === "undone" && change(u.revision)?.deleted ? [{ path: change(u.revision)!.path, deleted: u.revision }] : [])), author);
+        return results;
+      })
+    : [];
   const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]
