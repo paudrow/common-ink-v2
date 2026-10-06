@@ -1,0 +1,7 @@
+{
+  "pr": 78,
+  "title": "An unexpected failure answers in JSON",
+  "steps": [
+    "Nothing should look different. Agents: a tool call that fails for a reason the agent can't fix answers as a tool error that says so, instead of failing the request."
+  ]
+}

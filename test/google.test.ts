@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { DATA_SCOPES, exchange } from "../worker/src/google.ts";
 import { runOperation } from "../worker/src/operations.ts";
-import { sign, verify } from "../worker/src/session.ts";
+import { cookie, sign, verify } from "../worker/src/session.ts";
 import { allowedEmails, sessionEmail, signInRoute, type SignInConfig } from "../worker/src/sign-in.ts";
 import { fixtures } from "../worker/src/sources.ts";
 import { memoryStore } from "./store.ts";
@@ -132,7 +132,7 @@ test("sign-in's cookies are __Host- cookies, so another subdomain such as v1's c
 test("signing out from the app ends the session and clears what the browser kept; another site, or a picture in a note, only gets the button", async () => {
   const url = new URL(`${ORIGIN}/auth/sign-out`);
   const signOut = (init: RequestInit) => signInRoute(new Request(url, init), url, config, async () => true).then((r) => r!);
-  const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
+  const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax", "ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
   const fromApp: RequestInit[] = [
     { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } },
     { headers: { "Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate" } },
@@ -160,6 +160,37 @@ test("signing out from the app ends the session and clears what the browser kept
   const forged = await signOut({ method: "POST", headers: { Origin: "https://v1.commonink.app" } });
   assert.equal(forged.status, 403);
   assert.deepEqual(forged.headers.getSetCookie(), []);
+});
+
+test("a next= too long for the sign-in cookie still signs you in, landing on the app", async () => {
+  const { res } = await signIn(ada, false, {}, `/?note=${"x".repeat(5000)}`);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("Location"), "/");
+});
+
+test("declining at Google says so, with a way to try again", async () => {
+  const startUrl = new URL(`${ORIGIN}/auth/google`);
+  const start = await signInRoute(new Request(startUrl), startUrl, config, async () => true);
+  const state = new URL(start!.headers.get("Location")!).searchParams.get("state");
+  const url = new URL(`${ORIGIN}/auth/google/callback?error=access_denied&state=${state}`);
+  const res = await signInRoute(new Request(url, { headers: { Cookie: start!.headers.get("Set-Cookie")!.split(";")[0] } }), url, config, async () => true);
+  assert.equal(res!.status, 400);
+  assert.match(await res!.text(), /<title>You didn't allow sign-in · Common Ink<\/title>.*<a href="\/auth\/google">Try again<\/a>/s);
+});
+
+test("signing out also expires the cookies v1 left on this address", async () => {
+  const url = new URL(`${ORIGIN}/auth/sign-out`);
+  const res = await signInRoute(new Request(url, { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } }), url, config, async () => true);
+  assert.deepEqual(res!.headers.getSetCookie(), [
+    "__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+    "ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+  ]);
+});
+
+test("a cookie that isn't validly encoded is no cookie, not an error", async () => {
+  const req = new Request(ORIGIN, { headers: { Cookie: "__Host-ci_session=%zz; constructor=1; __proto__=2" } });
+  assert.equal(await sessionEmail(req, config), null);
+  assert.equal(cookie(new Request(ORIGIN, { headers: { Cookie: "a=1; a=2; toString=3" } }), "toString"), "3");
 });
 
 test("connecting data asks for calendar and contacts offline, and keeps Google's refresh token", async () => {
