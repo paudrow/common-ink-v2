@@ -5,14 +5,13 @@ import { isExtensionScript, parseFilePath, type Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
-import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type SignInConfig } from "./sign-in.ts";
-import { cookie } from "./session.ts";
+import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
-import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
+import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { statePath } from "./extensions.ts";
+import { extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
@@ -42,6 +41,8 @@ const HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
+  // Browsers ignore it over plain HTTP (npm run dev), so it's the same everywhere.
+  "Strict-Transport-Security": "max-age=31536000",
 };
 
 /** Hosts a page may frame, handed from `handle` to `fetch`, and never sent. */
@@ -90,7 +91,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       teamDomain: env.ACCESS_TEAM_DOMAIN,
       aud: env.ACCESS_AUD,
       devUser: env.DEV_USER,
-      sessionEmail: (r) => sessionEmail(r, env.SESSION_SECRET),
+      sessionEmail: (r) => sessionEmail(r, signIn),
     });
     if (!who) {
       // A person opening the app goes to sign in; anything else is told no.
@@ -99,21 +100,26 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       }
       return secure(new Response("Sign in to use Common Ink.\n", { status: 401 }));
     }
-    // A signed-in browser's cookie goes with requests other sites make; only this site may change things.
+    // A browser sends what signs you in (a cookie, or on this machine the address itself) with requests
+    // other sites make, and says where they came from when one changes something or opens a socket.
+    // Only this site may. The CLI and agents send no Origin.
     const origin = req.headers.get("Origin");
-    if (req.method !== "GET" && origin && origin !== url.origin && cookie(req, SESSION_COOKIE)) {
+    const changes = (req.method !== "GET" && req.method !== "HEAD") || req.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
-    // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
+    // A trusted workspace extension's code, from its files, so the page can import it under
+    // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
     const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
     if (code && isExtensionScript(code)) {
-      const file = await (workspace as unknown as Store).read(code);
+      const trusted = await idsIn(workspace as unknown as Store, "extensions.trusted", who.kind === "user" ? who.email : null);
+      const file = trusted.has(extensionFileOf(code)?.id ?? "") ? await (workspace as unknown as Store).read(code) : null;
       if (!file) return secure(new Response("No such file\n", { status: 404 }));
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
-    const levers = leversOn(env);
+    const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
       // The app's page may frame the hosts of the link embeds that are on for this person.
@@ -211,7 +217,8 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
 }
 
 /**
- * An upload's bytes, under the type its name gives. Every one is served sandboxed, so an SVG or a PDF
+ * An upload's bytes, under the type its name gives (not the type in the uploads file, which anyone who
+ * can write files can change). Every one is served sandboxed, so an SVG or a PDF
  * opened by itself can't run script as this site; anything that isn't an image, audio, video, PDF or
  * plain text downloads instead of opening.
  */
@@ -237,12 +244,13 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
   const blob = await env.UPLOADS.get(blobKey(upload.hash));
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  const type = typeFor(upload.name);
   return sandboxed(
     new Response(blob.body, {
       headers: {
-        "Content-Type": upload.type,
+        "Content-Type": type,
         "Content-Length": String(upload.size),
-        "Content-Disposition": `${showsInline(upload.type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
+        "Content-Disposition": `${showsInline(type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
       },
     }),
   );
