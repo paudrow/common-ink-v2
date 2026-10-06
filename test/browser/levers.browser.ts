@@ -64,7 +64,10 @@ browserTest(h, "reset empties the workspace back to its scenario, revisions keep
   await reloaded;
   await app.ready();
   const after = await app.state();
-  assert.deepEqual([...new Set(after.history.map((c) => c.path))].sort(), [".common-ink/layout.json", "Lists tour.md"]);
+  const paths = [...new Set(after.history.map((c) => c.path))].sort();
+  const devices = paths.filter((p) => /^\.common-ink\/users\/[^/]+\/devices\/[^/]+\/device\.json$/.test(p));
+  assert.equal(devices.length, 1, "the page writes this device's file as it starts");
+  assert.deepEqual(paths.filter((p) => !devices.includes(p)), [".common-ink/layout.json", "Lists tour.md"]);
   assert.ok(Math.min(...after.history.map((c) => c.revision)) > before, "the new seed's revisions come after the old ones");
   assert.equal(after.focus.path, "Lists tour.md", "opens on the scenario's note");
 });

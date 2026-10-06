@@ -11,7 +11,7 @@ import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PA
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { extensionFileOf, statePath } from "./extensions.ts";
+import { EXTENSION_ID, extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
@@ -191,6 +191,11 @@ function signInConfig(env: Env): SignInConfig | null {
 /** The API routes, each running one workspace operation with its arguments from the query and the body. */
 const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
+  "GET /api/search": "search",
+  "POST /api/archive": "archive",
+  "GET /api/trash": "trash",
+  "POST /api/purge": "purge",
+  "POST /api/unarchive": "unarchive",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
   // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.
@@ -215,9 +220,6 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/labels": "labels",
   "POST /api/labels": "add_label",
 };
-
-/** An extension's id, as manifests and folders have it. */
-const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);

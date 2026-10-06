@@ -4,13 +4,17 @@
 // connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
-import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { DAY, purgeExpired, restoreFromTrash, retentionOf } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
+import { deleteNote } from "./archive.ts";
 import { RESET_CLOSE } from "./levers.ts";
+import type { Query } from "./query.ts";
+import type { SearchIndex, SearchOptions } from "./search.ts";
 
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
@@ -37,12 +41,16 @@ export interface SeededScenario {
   pinned: boolean;
 }
 
+/** How soon after Delete forever the search index is merged: long enough to take a run of them, or Empty Trash, in one. */
+const MERGE_AFTER = 30_000;
+
 export class Workspace extends DurableObject<WorkspaceEnv> {
   private db: Db;
   /** The fake Google a browser test's Worker uses (FAKE_GOOGLE), kept while the object lives. */
   private fake: FakeGoogle | null = null;
   private files: Files;
   private sources: DataSources;
+  private index: SearchIndex;
 
   constructor(ctx: DurableObjectState, env: WorkspaceEnv) {
     super(ctx, env);
@@ -52,11 +60,13 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       run: (query, ...params) => void sql.exec(query, ...params),
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
-    [this.files, this.sources] = this.open();
+    [this.files, this.sources, this.index] = this.open();
+    // Trash retention needs the alarm even in a workspace that never syncs.
+    void ctx.blockConcurrencyWhile(() => this.scheduleAlarm());
   }
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
-  private open(): [Files, DataSources] {
+  private open(): [Files, DataSources, SearchIndex] {
     const announce = (notice: ChangeNotice) => {
       const message = JSON.stringify({ type: "change", ...notice });
       for (const ws of this.ctx.getWebSockets()) {
@@ -69,13 +79,13 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
       // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.sampleFake().fetch(input, init));
+      const { files, sources, search } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.sampleFake().fetch(input, init));
       if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
-      return [files, sources];
+      return [files, sources, search];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
-    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google, tokenKey: this.env.SESSION_SECRET }, announce);
-    return [files, sources];
+    const { files, sources, search } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google, tokenKey: this.env.SESSION_SECRET }, announce);
+    return [files, sources, search];
   }
 
   /**
@@ -145,6 +155,33 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.secret("sandbox-key");
   }
 
+  deleted(since: number) {
+    return this.files.deleted(since);
+  }
+
+  restoreDeleted(d: Deleted, author: Author) {
+    return restoreFromTrash(this.files, d, author);
+  }
+
+  /** Delete notes forever; the search index is merged soon after, by the alarm, once for any number of purges. */
+  async purge(deletes: Revision[], author: Author) {
+    const purged = this.files.purge(deletes, author);
+    if (this.index.mergeDue()) await this.scheduleAlarm();
+    return purged;
+  }
+
+  retention() {
+    return retentionOf(this.files);
+  }
+
+  search(query: Query, options: SearchOptions) {
+    return this.index.search(query, options);
+  }
+
+  deleteNote(w: Write) {
+    return deleteNote(this.files, w);
+  }
+
   /** Tick a task and log its completion, in one step (complete-task.ts). */
   completeTask(args: TaskArgs, author: Author) {
     return completeTaskIn(this.files, args, author);
@@ -185,11 +222,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   reset(seed: Seed, pinned: boolean) {
     const last = this.files.lastRevision();
     this.db.tx(() => {
-      for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
-        this.db.run(`DROP TABLE "${name}"`);
-      }
+      // Virtual tables first: dropping one drops its own tables (the search index's), which are then gone.
+      const tables = this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY sql NOT LIKE 'CREATE VIRTUAL%'");
+      for (const { name } of tables) this.db.run(`DROP TABLE IF EXISTS "${name}"`);
     });
-    [this.files, this.sources] = this.open();
+    [this.files, this.sources, this.index] = this.open();
     if (last) {
       this.db.run("DELETE FROM sqlite_sequence WHERE name = 'changes'");
       this.db.run("INSERT INTO sqlite_sequence(name, seq) VALUES ('changes', ?)", last);
@@ -218,16 +255,50 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return ok;
   }
 
-  /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
+  /**
+   * The one alarm a Durable Object has, for three timers: Trash retention's purge, once a day; merging
+   * the search index soon after a purge, so no purged words stay in its blocks; and syncing while Google
+   * is connected (every 10 minutes, and soon after connecting). Each runs whatever the others do, and the
+   * next alarm is always set.
+   */
   async alarm() {
-    await this.sources.sealTokens();
-    await this.sources.sync();
-    await this.scheduleSync();
+    try {
+      const now = Date.now();
+      if (now >= this.retentionDue()) {
+        try {
+          purgeExpired(this.files, now);
+        } finally {
+          this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(now + DAY));
+        }
+      }
+    } catch (err) {
+      console.error("Trash retention failed:", err);
+    }
+    try {
+      this.index.mergePurged();
+    } catch (err) {
+      console.error("Merging the search index failed:", err);
+    }
+    try {
+      await this.sources.sealTokens();
+      await this.sources.sync();
+    } finally {
+      await this.scheduleAlarm();
+    }
   }
 
-  private async scheduleSync() {
-    if (!this.sources.syncs) return;
-    const next = Date.now() + SYNC_EVERY;
+  /** When Trash retention next purges: a minute after the workspace first opens, then daily. */
+  private retentionDue(): number {
+    const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'retention-next'");
+    if (row) return Number(row.value);
+    const first = Date.now() + 60_000;
+    this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?)", String(first));
+    return first;
+  }
+
+  /** Set the alarm for whichever comes first: the next sync, the next purge, or a merge of the search index a purge left due. */
+  private async scheduleAlarm() {
+    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue(), this.index.mergeDue() ? Date.now() + MERGE_AFTER : Infinity);
     const set = await this.ctx.storage.getAlarm();
     if (!set || set > next) await this.ctx.storage.setAlarm(next);
   }
@@ -235,7 +306,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** Sync now if it hasn't in the last half minute (a calendar view opening asks); always, if `force`. */
   async syncSources(force = false) {
     if (force || this.sources.due(30_000)) await this.sources.sync();
-    await this.scheduleSync();
+    await this.scheduleAlarm();
     return this.sources.status("").sources[0];
   }
 

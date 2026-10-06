@@ -60,7 +60,7 @@ One recorded edit to the workspace, with its author, a diff and the revision it 
 _Avoid_: Commit, event, op
 
 **Author**:
-Who made a change: the user, a named agent, an extension or sync.
+Who made a change: the user, a named agent, an extension, sync, or Trash retention (which purges notes that have been in Trash too long).
 
 **Label**:
 A name given to a note's state at one revision, so it can be found, opened and restored later.
@@ -103,32 +103,24 @@ The app with only built-in extensions running, for when a workspace extension br
 
 ## Navigation
 
-**Place**:
-Somewhere you can go in the app: the Feed, Today, Tasks, Calendar, a pinned note, a saved search, Sources, Archive, Trash, Extensions or Settings. Places are a sheet on a phone and a sidebar on a wide screen.
-_Avoid_: Activity, section, tab (a tab holds an open window)
-
-**Feed**:
-The notes you and your agents changed, newest first, as cards you can read and triage. It's the query `-is:archived sort:edited`.
-_Avoid_: Notes list, inbox, home
-
-**Saved search**:
-A query with a name, kept as a place.
-_Avoid_: Smart folder, filter
-
-**Pin**:
-Keeping a note at the top of the Feed and in Places. Pins are the workspace's while a workspace has one person.
-_Avoid_: Star, favourite
+**Query**:
+Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
+_Avoid_: Filter (that's one part of a query), search string
 
 **Archive**:
-A state a note can be in: out of the Feed, shown last in search, still in place and still linked. Archiving doesn't move the note.
+A state a note can be in: kept, out of the Feed, shown last in search, still in place and still linked. Its path is listed in `.common-ink/archive.json`; archiving doesn't move or change the note.
 _Avoid_: Hide, move to archive
 
 **Trash**:
-The notes deleted in the last 30 days (a setting). It's a view over history: restoring a note undoes its delete.
+The notes deleted in the last `trash.retentionDays` days (30 by default), whatever is at their paths now. It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history, or beside the note that has its path now.
 _Avoid_: Bin, recycle
 
+**Note** (in history):
+Which changes are one note's, decided as each is written: a change to a file is its note's; one that brings a deleted note back (Restore, beside a new note too) carries that note on; any other that makes a file starts a note. A note is a file at one path at a time.
+_Avoid_: Lifetime (worked out from history afterwards, which a purge can change)
+
 **Purge**:
-Removing a deleted note's text from history, after its time in Trash or on Delete forever. Only the person can purge, never an agent, and each purge leaves a change saying so.
+Removing a deleted note's text from history, every change of that note at every path it had, after its time in Trash or on Delete forever. Only the person can purge, never an agent, and each purge leaves a change saying who purged what and when.
 _Avoid_: Hard delete, permanent delete (in code)
 
 **Device**:

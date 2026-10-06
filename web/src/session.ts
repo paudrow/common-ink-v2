@@ -79,6 +79,8 @@ export class Session {
 
   edited(): void {
     if (this.status === "saved") this.set(this.dirty ? "unsaved" : "saved");
+    // A clash undone (or typed back to what it was based on): nothing of yours is left to clash.
+    else if (this.status === "conflict" && !this.dirty) this.set("saved");
   }
 
   /** Save if there's anything to save. After a conflict, only an explicit save (`:w`) tries again. */

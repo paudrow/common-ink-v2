@@ -24,7 +24,7 @@ export const PACKAGES = [
 export const APP_MODULES = {
   "common-ink/live-preview": { file: "web/src/live-preview.ts", exports: ["blockHeight", "blockPreview", "collapsedBlockAt", "livePreview", "measureBlock", "previewEnabled", "revealedLines", "touches"] },
   "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
-  "common-ink/layout": { file: "web/src/layout.ts", exports: ["LAYOUT_PATH", "activeFile", "activeTab", "closeTab", "closeTabs", "cycleGroup", "cycleTab", "emptyLayout", "equalize", "fileTab", "focusDirection", "focusGroup", "focused", "groups", "insertTab", "keepFile", "keepTab", "moveTab", "moveTabDirection", "neighbor", "only", "openTab", "openableKey", "openableOf", "parseLayout", "rects", "resizeFocused", "resizeSplit", "selectTab", "shiftTab", "showInTab", "split", "splitAt"] },
+  "common-ink/layout": { file: "web/src/layout.ts", exports: ["LAYOUT_PATH", "activeFile", "activeTab", "closeTab", "closeTabs", "cycleGroup", "cycleTab", "emptyLayout", "equalize", "fileTab", "focusDirection", "focusGroup", "focused", "groups", "insertTab", "keepFile", "keepTab", "moveTab", "moveTabDirection", "neighbor", "onShow", "only", "openTab", "openableKey", "openableOf", "parseLayout", "rects", "resizeFocused", "resizeSplit", "selectTab", "shiftTab", "showInTab", "split", "splitAt"] },
   "common-ink/editor-file": { file: "web/src/editor-file.ts", exports: ["editorFile"] },
   "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
   "common-ink/recurrence": {
@@ -35,7 +35,9 @@ export const APP_MODULES = {
     file: "worker/src/calendar.ts",
     exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planRevert", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
   },
-  "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
+  "common-ink/icons": { file: "web/src/icons.ts", exports: ["ICON_PATHS", "icon"] },
+  "common-ink/query": { file: "worker/src/query.ts", exports: ["FILTERS", "asksFor", "format", "holds", "inGlobs", "matches", "matchesWords", "ordered", "parse", "problems", "select", "sortOf", "titleOf", "tokens"] },
+  "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "RETENTION", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {
     file: "worker/src/uploads.ts",
     exports: ["MAX_UPLOAD_BYTES", "UPLOADS_PATH", "addUpload", "blobKey", "cleanName", "findUpload", "isImage", "parseUploads", "placeName", "sha256", "showsInline", "typeFor", "uploadUrl", "uploadsText"],

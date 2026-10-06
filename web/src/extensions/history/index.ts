@@ -264,7 +264,7 @@ class HistoryPanel {
         box,
         el("span", { className: "who", textContent: describeAuthor(c.author, this.ctx.me) }),
         el("span", { className: "when", textContent: ago(c.time), title: new Date(c.time).toLocaleString() }),
-        el("span", { className: "stat", textContent: c.deleted ? "Deleted" : diffStat(c) }),
+        el("span", { className: "stat", textContent: c.purged ? "Deleted forever" : c.deleted ? "Deleted" : diffStat(c) }),
       ),
       // What the change means, from the extensions that know (tasks: "Completed 'Pay rent' (due Oct 1)").
       ...[this.ctx.changes.summary(c)].filter((s) => s).map((s) => el("div", { className: "described", textContent: s })),
@@ -273,7 +273,7 @@ class HistoryPanel {
         { className: "meta" },
         el("span", { textContent: `#${c.revision}${this.scope === "all" ? ` · ${c.path}` : ""}${c.undoes ? ` · undid #${c.undoes}` : ""}${c.undoneBy ? " · undone" : ""}` }),
         // Undo a change, or redo it by undoing its undo. An undo itself is redone from the change it undid.
-        c.undoes ? "" : el("button", { className: "undo", textContent: c.undoneBy ? "Redo" : "Undo", onclick: stop(() => this.undo([c.undoneBy ?? c.revision])) }),
+        c.undoes || c.purged ? "" : el("button", { className: "undo", textContent: c.undoneBy ? "Redo" : "Undo", onclick: stop(() => this.undo([c.undoneBy ?? c.revision])) }),
       ),
       ...labels.map((l) =>
         el(
