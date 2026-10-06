@@ -83,15 +83,13 @@ export const api = {
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
     return data as { id: string; name: string; files: string[] };
   },
-  async history(path: FilePath): Promise<Array<{ revision: Revision }>> {
-    return (await ok(await fetch(`/api/history?${new URLSearchParams({ path, limit: "50" })}`))).json();
+  /** Whether the edit sent with this id was applied, for a page that never heard back. */
+  async editApplied(path: FilePath, edit: string): Promise<boolean> {
+    return ((await (await ok(await fetch(`/api/edit?${new URLSearchParams({ path, edit })}`))).json()) as { applied: boolean }).applied;
   },
-  async version(path: FilePath, revision: Revision): Promise<string | null> {
-    const res = await fetch(`/api/version?${new URLSearchParams({ path, revision: String(revision) })}`);
-    return res.status === 404 ? null : (((await (await ok(res)).json()) as { text?: string } | null)?.text ?? null);
-  },
-  async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
-    const body = JSON.stringify({ path, text, base });
+  /** `edit` names the text, to ask later whether it landed; `keepalive` sends it as the page goes. */
+  async write(path: FilePath, text: string, base: Revision, edit?: string, keepalive = false): Promise<WriteResult> {
+    const body = JSON.stringify({ path, text, base, ...(edit ? { edit } : {}) });
     const res = await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
     return (res.status === 409 ? res : await ok(res)).json();
   },

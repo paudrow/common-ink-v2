@@ -4,7 +4,7 @@
 // (link-embeds.browser.ts).
 import assert from "node:assert/strict";
 import { browserTest, harness } from "./harness.ts";
-import type { App } from "./pages.ts";
+import { App } from "./pages.ts";
 
 const h = harness();
 
@@ -213,18 +213,27 @@ for (const leave of ["a reload", "leaving the page"] as const) {
   });
 }
 
+/** A note's revision and text on the server. */
+async function onServer(app: App, path = "Trip.md") {
+  return (await (await app.page.context().request.get(`${app.base}/api/file?path=${encodeURIComponent(path)}`)).json()) as { revision: number; text: string };
+}
+
+/** Leave a draft in this browser as a page that went before hearing back would have. */
+async function leaveDraft(app: App, draft: { text: string; base: number; edit: string }) {
+  await app.page.evaluate((d) => localStorage.setItem(`common-ink.draft:${localStorage.getItem("common-ink:me")}:Trip.md`, JSON.stringify({ path: "Trip.md", time: Date.now(), ...d })), draft);
+}
+
 for (const [later, text] of [["deleted", "# Trip\n- a\n"], ["changed", "# Trip\n- a\n- packed bags\n"]] as const) {
   browserTest(h, `a kept edit the server already has isn't sent again when the note opens, though its line was ${later} since`, { scenario: "empty" }, async (app) => {
-    // The edit reached the server as the page went, but the page never heard: its draft stayed, on its old base.
     await app.writeFile("Other.md", "# Other\n");
     await app.writeFile("Trip.md", "# Trip\n- a\n");
-    const base = ((await (await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`)).json()) as { revision: number }).revision;
-    await app.writeFile("Trip.md", "# Trip\n- a\n- packed\n");
+    const { revision: base } = await onServer(app);
+    // The edit reached the server as the page went, with its id, but the page never heard: its draft stayed, on its old base.
+    await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text: "# Trip\n- a\n- packed\n", base, edit: "went" } });
     await app.goto({}, "Other");
-    await app.page.evaluate(([base]) => localStorage.setItem(`common-ink.draft:${localStorage.getItem("common-ink:me")}:Trip.md`, JSON.stringify({ path: "Trip.md", text: "# Trip\n- a\n- packed\n", base })), [base]);
+    await leaveDraft(app, { text: "# Trip\n- a\n- packed\n", base, edit: "went" });
     // Then another device changes the line.
-    const now = ((await (await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`)).json()) as { revision: number }).revision;
-    await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text, base: now }, headers: { "X-Common-Ink-Agent": "Claude" } });
+    await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text, base: (await onServer(app)).revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
     await app.open("Trip");
     await app.idle();
     await app.page.waitForTimeout(800);
@@ -232,6 +241,37 @@ for (const [later, text] of [["deleted", "# Trip\n- a\n"], ["changed", "# Trip\n
     assert.equal(await app.readFile("Trip.md"), text);
     assert.equal(await app.page.locator("#save").getAttribute("data-status"), "saved");
     assert.equal(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")).length), 0, "the draft is gone");
+  });
+}
+
+for (const choice of ["Restore", "Discard"] as const) {
+  browserTest(h, `a kept edit that never reached the server, on a note changed since, waits for you to ${choice.toLowerCase()} it`, { scenario: "empty" }, async (app) => {
+    await app.writeFile("Other.md", "# Other\n");
+    await app.writeFile("Trip.md", "# Trip\n- a\n");
+    const { revision: base } = await onServer(app);
+    await app.goto({}, "Other");
+    await leaveDraft(app, { text: "# Trip\n- a\n- packed\n", base, edit: "lost" });
+    await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text: "# Trip to Rome\n- a\n", base }, headers: { "X-Common-Ink-Agent": "Claude" } });
+    await app.open("Trip");
+    await app.idle();
+    // Nothing's sent or merged unseen: the note stays as it is, and the status bar says there's an edit to settle.
+    assert.equal(await app.readFile("Trip.md"), "# Trip to Rome\n- a\n");
+    assert.equal(await app.page.locator("#save").getAttribute("data-status"), "conflict");
+    assert.match((await app.page.locator("#save").textContent()) ?? "", /^Unsaved edit from \d{1,2}:\d\d/);
+    await app.page.locator("#unsent", { hasText: "can't be merged" }).waitFor();
+    await app.reload();
+    await app.open("Trip");
+    await app.idle();
+    assert.equal(await app.page.locator("#save").getAttribute("data-status"), "conflict", "a reload keeps it to settle");
+    await app.command("Compare your edit with the one it clashes with, and keep yours or theirs");
+    const dialog = app.page.locator(".clash");
+    await dialog.locator("h2", { hasText: /^Unsaved edit from / }).waitFor();
+    await dialog.locator("button", { hasText: choice }).click();
+    await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), choice === "Restore" ? "# Trip\n- a\n- packed\n" : "# Trip to Rome\n- a\n");
+    assert.equal(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")).length), 0, "nothing's kept now");
+    assert.equal(await app.page.locator("#unsent").textContent(), "");
   });
 }
 
@@ -247,6 +287,54 @@ browserTest(h, "signing out forgets this browser's kept edits, so the next accou
   await gone;
   await app.page.waitForLoadState("load");
   assert.deepEqual(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:"))), []);
+});
+
+browserTest(h, "signing out in another tab stops this one keeping its typing", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("o- private<Esc>");
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Other");
+  await other.idle();
+  const gone = other.page.waitForURL(/sign-out/);
+  await other.command("Sign out");
+  await gone;
+  await other.page.waitForLoadState("load");
+  await app.keys("o- more private<Esc>");
+  await app.page.goto("about:blank");
+  const drafts = () => other.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")));
+  assert.deepEqual(await drafts(), []);
+  await other.page.close();
+});
+
+browserTest(h, "a sign-out typed in the address bar straight after typing leaves nothing of it to come back", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("o- private<Esc>");
+  // The page can't see where it's going: it keeps its draft as it goes, after sign-out cleared storage.
+  await app.page.goto(`${app.base}/auth/sign-out`);
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n");
+  assert.deepEqual(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:"))), []);
+});
+
+browserTest(h, "a session that's over forgets the drafts kept for it", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await leaveDraft(app, { text: "# Trip\n- private\n", base: 1, edit: "p" });
+  await app.page.route("**/api/me", (r) => r.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Sign in" }) }));
+  await app.page.reload();
+  await app.page.waitForFunction(() => !Object.keys(localStorage).some((k) => k.startsWith("common-ink.draft:")));
 });
 
 browserTest(h, "a note deleted elsewhere while it's open isn't written back when its tab closes", { scenario: "empty" }, async (app) => {

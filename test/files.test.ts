@@ -512,3 +512,14 @@ test("a file keeps only its latest edit ids", () => {
   assert.equal(notes.editApplied(PLAN, "e10"), true);
   assert.equal(notes.editApplied(PLAN, "e9"), false);
 });
+
+test("an edit sent again with its id, after the file moved on, is in already: it isn't merged in a second time", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 0, author: ada });
+  notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  // Someone deletes the line it added; then the same edit arrives again, on its old base.
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 2, author: bot });
+  const again = notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  assert.deepEqual(again, { status: "saved", file: { path: PLAN, text: "# Trip\n- a\n", revision: 3 } });
+  assert.equal(notes.history(PLAN).length, 3);
+});

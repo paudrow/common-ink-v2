@@ -27,7 +27,7 @@ import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState, editText } from "./editor.ts";
-import { showClash } from "./conflict.ts";
+import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
@@ -81,9 +81,35 @@ const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const offline = new Offline(idbKV(), api);
 
+/** Signing out, here or in another tab: this browser keeps no edits of the account's from now on. */
+const accounts = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("common-ink.account");
+accounts?.addEventListener("message", (e) => {
+  if (e.data === "signed-out") void offline.forgetDrafts();
+});
+function signingOut() {
+  void offline.forgetDrafts();
+  accounts?.postMessage("signed-out");
+}
+// A link or a script here going to sign-out, as well as the command. (One typed in the address bar can't be seen.)
+(window as { navigation?: EventTarget }).navigation?.addEventListener("navigate", (e) => {
+  const to = (e as Event & { destination?: { url: string } }).destination?.url;
+  if (to && new URL(to).pathname === "/auth/sign-out") signingOut();
+});
+
+// Who was signed in is remembered from the start, before anything's typed. Not remembered, this
+// browser's storage was cleared (a sign-out does) since: a draft is there only because a page that was
+// going wrote it after, and it's the session's that ended.
+try {
+  if (localStorage.getItem("common-ink:me") === null) void offline.forgetDrafts();
+} catch {}
+
 /** Who's signed in, remembered so the app knows offline too. */
 const me = await fetch("/api/me")
-  .then((r) => r.json())
+  .then((r) => {
+    // The session's over: nothing kept for whoever was signed in is used, or kept on.
+    if (r.status === 401) signingOut();
+    return r.json();
+  })
   .then((who: { kind: string; email?: string }) => {
     try {
       if (who.email) localStorage.setItem("common-ink:me", who.email);
@@ -312,6 +338,7 @@ async function resolveConflict(): Promise<boolean> {
     .then((r) => (r.ok ? (r.json() as Promise<Array<{ author: Parameters<typeof describeAuthor>[0] }>>) : []))
     .catch(() => []);
   const who = latest[0] ? describeAuthor(latest[0].author, me) : "Someone";
+  const kept = workbench.keptAt(path);
   showClash({
     where: docLabel(path),
     who: who.charAt(0).toUpperCase() + who.slice(1),
@@ -320,6 +347,7 @@ async function resolveConflict(): Promise<boolean> {
     keepMine: () => void session.adopt(theirs).then(() => session.save(true)),
     useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
     returnTo: () => view.contentDOM,
+    keptAt: kept === undefined ? undefined : keptWhen(kept),
   });
   return true;
 }
@@ -443,7 +471,7 @@ commands.register(
     title: "Sign out",
     run: () => {
       // Nothing of this account's is kept in this browser for whoever signs in next.
-      offline.forgetDrafts();
+      signingOut();
       location.assign("/auth/sign-out");
     },
   },
@@ -776,7 +804,7 @@ window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
-  for (const u of unsaved) void api.write(u.path, u.text, u.base, true).catch(() => {});
+  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
 });
 
 // The app's own files, kept by a service worker so it opens offline.

@@ -478,6 +478,9 @@ export class Files {
   }
 
   private apply(w: Write): WriteResult {
+    // Sent again by a page that never heard the answer: it's in already, and the file is as it is now.
+    const current = w.edit && this.editApplied(w.path, w.edit) ? this.read(w.path) : null;
+    if (current) return { status: "saved", file: current };
     const result = this.applyWrite(w);
     // Applied, even as a merge or with nothing left to change: the writer may ask by its id.
     if (w.edit && result.status !== "conflict") {

@@ -12,6 +12,7 @@ export interface KV {
   set(store: Store, key: string, value: unknown): Promise<void>;
   del(store: Store, key: string): Promise<void>;
   all<T>(store: Store): Promise<T[]>;
+  keys(store: Store): Promise<string[]>;
 }
 
 type Store = "files" | "unsent" | "meta" | "ops";
@@ -35,16 +36,18 @@ export interface Unsent {
   base: Revision;
   /** The server refused to merge it: the same lines changed there. Opening the file shows what to do. */
   conflict?: boolean;
+  /** The id this text was sent with, to ask the server whether it landed. */
+  edit?: string;
+  /** When this browser kept it. */
+  time?: number;
 }
 
 export interface Network {
   list(): Promise<FileSummary[]>;
   read(path: FilePath): Promise<WorkspaceFile>;
-  write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
-  /** A file's changes, newest first: their revisions. */
-  history?(path: FilePath): Promise<Array<{ revision: Revision }>>;
-  /** A file's text at one of its revisions, or null. */
-  version?(path: FilePath, revision: Revision): Promise<string | null>;
+  write(path: FilePath, text: string, base: Revision, edit?: string): Promise<WriteResult>;
+  /** Whether the server applied the edit sent with this id. */
+  editApplied(path: FilePath, edit: string): Promise<boolean>;
 }
 
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
@@ -132,9 +135,9 @@ export class Offline {
   }
 
   /** Send a write. Reaching the server keeps its answer in the cache; not reaching it throws, as fetch does. */
-  async write(path: FilePath, text: string, base: Revision): Promise<WriteResult> {
+  async write(path: FilePath, text: string, base: Revision, edit?: string): Promise<WriteResult> {
     try {
-      const result = await this.net.write(path, text, base);
+      const result = await this.net.write(path, text, base, edit);
       this.reached(true);
       if (result.file) await this.kv.set("files", path, result.file);
       return result;
@@ -146,7 +149,7 @@ export class Offline {
 
   /** Keep an edit that couldn't be sent, so it survives a reload. */
   async hold(unsent: Unsent): Promise<void> {
-    await this.kv.set("unsent", unsent.path, unsent);
+    await this.kv.set("unsent", unsent.path, { ...unsent, time: unsent.time ?? Date.now() });
     this.changed();
   }
 
@@ -222,7 +225,7 @@ export class Offline {
    * again. Quietly: it isn't waiting to be sent, it's only kept.
    */
   async keepDraft(unsent: Unsent): Promise<void> {
-    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), unsent);
+    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), { ...unsent, time: Date.now() });
   }
 
   /**
@@ -233,45 +236,61 @@ export class Offline {
     if (!this.account) return;
     for (const d of drafts) {
       try {
-        localStorage.setItem(this.draftKey(d.path), JSON.stringify(d));
+        localStorage.setItem(this.draftKey(d.path), JSON.stringify({ ...d, time: Date.now() }));
       } catch {
         // Full, or not allowed: the draft kept as it was typed is the one there is.
       }
     }
   }
 
-  /**
-   * The note's edit that wasn't saved: kept as the page went, or else as it was typed. One the server
-   * already has goes instead: its last request did arrive, as it usually does, and sending it again
-   * would bring back what's been changed or deleted since.
-   */
-  async draftFor(path: FilePath): Promise<Unsent | undefined> {
+  /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
+  private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
-    let draft: Unsent | undefined;
     try {
       const kept = localStorage.getItem(this.draftKey(path));
-      if (kept) draft = JSON.parse(kept) as Unsent;
+      if (kept) return JSON.parse(kept) as Unsent;
     } catch {
       // Not there, or not readable: the one kept as it was typed.
     }
-    draft ??= await this.kv.get<Unsent>("meta", this.draftKey(path));
-    if (draft && (await this.arrived(draft))) {
-      await this.dropDraft(path);
-      return undefined;
-    }
-    return draft;
+    return this.kv.get<Unsent>("meta", this.draftKey(path));
   }
 
-  /** Whether a revision after a draft's base gave its exact text. Not knowing (offline), it hasn't. */
-  private async arrived(draft: Unsent): Promise<boolean> {
-    if (!this.net.history || !this.net.version) return false;
+  /**
+   * The edit this browser kept of a note that the server may not have, as the note opens with the
+   * server's `latest`: one it couldn't send (held), or one typed as the page went (a draft). Sending
+   * one the server already has would bring back what was changed or deleted since, and merging one it
+   * doesn't have into a note that's moved on would do it unseen. So:
+   * - the server's text, or an edit the server says it applied, got there: it goes;
+   * - one based on the server's latest picks up where it left off, to be sent;
+   * - otherwise it's a clash, kept and shown for you to restore or discard.
+   * Offline, a held edit is used as it was; a draft waits, unused, until the server can say.
+   */
+  async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean } | undefined> {
+    const held = await this.unsentFor(latest.path);
+    const edit = held ?? (await this.draftFor(latest.path));
+    if (!edit) return undefined;
+    if (held?.conflict) return { edit, clash: true };
+    const unknown = held ? { edit, clash: false } : undefined;
+    if (!this.online) return unknown;
+    if (edit.text === latest.text) return void (await this.landed(latest.path));
+    if (edit.base === latest.revision) return { edit, clash: false };
+    let applied = false;
     try {
-      const later = (await this.net.history(draft.path)).filter((c) => c.revision > draft.base).slice(0, 20);
-      for (const c of later) if ((await this.net.version(draft.path, c.revision)) === draft.text) return true;
+      applied = !!edit.edit && (await this.net.editApplied(latest.path, edit.edit));
     } catch {
-      // Offline: kept, to send when it can.
+      return unknown;
     }
-    return false;
+    if (applied) return void (await this.landed(latest.path));
+    const clash = { ...edit, conflict: true };
+    await this.hold(clash);
+    await this.dropDraft(latest.path);
+    return { edit: clash, clash: true };
+  }
+
+  /** A kept edit the server has: held or drafted, it goes. */
+  private async landed(path: FilePath): Promise<void> {
+    await this.release(path);
+    await this.dropDraft(path);
   }
 
   /** The note is saved: its kept edit can go. */
@@ -284,14 +303,15 @@ export class Offline {
     await this.kv.del("meta", this.draftKey(path));
   }
 
-  /** Signing out: every draft kept in localStorage goes, and none is kept as the page goes. */
-  forgetDrafts(): void {
+  /** Signed out: every account's drafts go, and none is kept again as the page goes. */
+  async forgetDrafts(): Promise<void> {
+    this.account = null;
     try {
       for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) localStorage.removeItem(key);
     } catch {
       // Nothing to forget.
     }
-    this.account = null;
+    for (const key of await this.kv.keys("meta")) if (key.startsWith(DRAFT)) await this.kv.del("meta", key);
   }
 
   /**
@@ -305,7 +325,7 @@ export class Offline {
       if (skip(u.path) || u.conflict) continue;
       let result: WriteResult;
       try {
-        result = await this.write(u.path, u.text, u.base);
+        result = await this.write(u.path, u.text, u.base, u.edit);
       } catch (err) {
         if (unreachable(err)) break;
         throw err;
@@ -331,6 +351,7 @@ export function memoryKV(): KV {
     set: async (store, key, value) => void s(store).set(key, structuredClone(value)),
     del: async (store, key) => void s(store).delete(key),
     all: async <T>(store: Store) => [...s(store).values()] as T[],
+    keys: async (store: Store) => [...s(store).keys()],
   };
 }
 
@@ -359,5 +380,6 @@ export function idbKV(name = "common-ink"): KV {
     set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key)),
     del: (store, key) => run(store, "readwrite", (s) => s.delete(key)),
     all: (store) => run(store, "readonly", (s) => s.getAll()),
+    keys: async (store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys())).map(String),
   };
 }

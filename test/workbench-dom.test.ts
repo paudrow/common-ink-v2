@@ -25,8 +25,7 @@ async function workbench(layout: unknown, notes: Record<string, string> = {}) {
   const files = new Map<string, { text: string; revision: number }>([[LAYOUT_PATH, { text: JSON.stringify(layout), revision: 1 }], ...Object.entries(notes).map(([path, text]) => [path, { text, revision: 1 }] as [string, { text: string; revision: number }])]);
   const net = {
     read: async (path: string) => ({ path, ...(files.get(path) ?? { text: `# ${path}`, revision: 1 }) }),
-    unsentFor: async () => null,
-    draftFor: async () => undefined,
+    keptEdit: async () => undefined,
     keepDraft: async () => {},
     dropDraft: async () => {},
     write: async (path: string, text: string, base: number) => {

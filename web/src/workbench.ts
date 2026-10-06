@@ -8,6 +8,7 @@ import { Compartment, EditorSelection, Transaction, type Extension } from "@code
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
 import type { Offline } from "./offline.ts";
+import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
 import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
@@ -33,6 +34,8 @@ interface OpenFile {
    * then what its last editor showed when it went, for a save still to come or the next editor.
    */
   startText: string;
+  /** When the edit it opened with was kept, if that edit clashed: one that never reached the server. */
+  keptAt?: number;
 }
 
 /** Something an extension draws in a window's tab, such as History. */
@@ -211,9 +214,14 @@ export class Workbench {
     return this.files.has(path);
   }
 
-  /** Every file that isn't saved, for the page closing. */
+  /** When a note's clashing edit was kept, if it's one it opened with that never reached the server. */
+  keptAt(path: FilePath): number | undefined {
+    return this.files.get(path)?.keptAt;
+  }
+
+  /** Every file that isn't saved, for the page closing to send. Not one that clashes: it's held, to settle. */
   unsaved() {
-    return [...this.files.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
+    return [...this.files.values()].flatMap((d) => (d.session.status === "conflict" || !d.session.unsaved ? [] : [d.session.unsaved]));
   }
 
   /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
@@ -461,11 +469,12 @@ export class Workbench {
     const open = this.files.get(path);
     if (open) return open;
     const fetched = await this.net.read(path);
-    // An edit this browser couldn't send before: it picks up where it left off, on its old base.
-    // Or one typed here that the page went before saving: kept as it was typed.
-    const held = (await this.net.unsentFor(path)) ?? (await this.net.draftFor(path));
+    // An edit kept in this browser that the server doesn't have: it picks up where it left off, on its
+    // old base, or shows as a clash when the note has moved on since.
+    const kept = await this.net.keptEdit(fetched);
     const again = this.files.get(path);
     if (again) return again;
+    const held = kept?.edit;
     const startText = held?.text ?? fetched.text;
     const file: OpenFile = {
       path,
@@ -483,21 +492,36 @@ export class Workbench {
             else file.startText = text;
           },
         },
-        (path, text, base) => this.net.write(path, text, base),
+        (path, text, base, edit) => this.net.write(path, text, base, edit),
         (status) => this.statusChanged(file, status),
+        kept?.clash ? "conflict" : "saved",
+        held?.edit ? { id: held.edit, text: held.text } : null,
       ),
     };
     this.files.set(path, file);
-    if (held && !held.conflict) file.timer = window.setTimeout(() => void file.session.save(), 0);
-    if (held?.conflict) this.on.status("conflict", `${label(path)} has an unsent edit that clashes with the server's. :w tries again; :e! loads the server's version.`);
+    if (held && !kept.clash) file.timer = window.setTimeout(() => void file.session.save(), 0);
+    if (kept?.clash) file.keptAt = held?.time ?? Date.now();
+    if (path === this.focusedPath) this.on.status(file.session.status, this.saying(file));
     return file;
+  }
+
+  /** What the status bar says of a file's save, when it isn't the usual: an edit it opened with that never got there. */
+  private saying(file: OpenFile): string | undefined {
+    if (file.session.status === "conflict" && file.keptAt !== undefined) return `Unsaved edit from ${keptWhen(file.keptAt)}: the note changed since. Restore or discard it.`;
   }
 
   private primary(file: OpenFile): EditorView | undefined {
     return file.views.values().next().value;
   }
 
+  /** Keep an edit that clashes with the server's in this browser, as it is now, so a reload doesn't lose it. */
+  private holdClash(file: OpenFile) {
+    const unsent = file.session.unsaved;
+    if (unsent) void this.net.hold({ ...unsent, conflict: true });
+  }
+
   private statusChanged(file: OpenFile, status: SaveStatus) {
+    if (status === "conflict") this.holdClash(file);
     if (status === "offline") {
       clearTimeout(file.timer);
       file.timer = window.setTimeout(() => void file.session.save(), RETRY_MS);
@@ -505,6 +529,7 @@ export class Workbench {
       const unsent = file.session.unsaved;
       if (unsent) void this.net.hold(unsent);
     }
+    if (status === "saved") file.keptAt = undefined;
     if (status === "saved" && !file.session.dirty) void this.net.release(file.path).then(() => this.net.dropDraft(file.path));
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
@@ -512,7 +537,7 @@ export class Workbench {
     }
     if (status === "saved") this.on.saved(file.path);
     this.renderTabs();
-    if (file.path === this.focusedPath) this.on.status(status);
+    if (file.path === this.focusedPath) this.on.status(status, this.saying(file));
   }
 
   private viewUpdate(file: OpenFile, view: EditorView, u: ViewUpdate) {
@@ -529,6 +554,7 @@ export class Workbench {
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
     file.session.edited();
+    if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
     if (draft) void this.net.keepDraft(draft);
     // Editing a file keeps its preview tabs open.
@@ -796,7 +822,8 @@ export class Workbench {
   private afterFocus() {
     const view = this.focusedView;
     this.on.focus(this.focusedPath);
-    this.on.status(this.focusedSession?.status ?? null);
+    const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
+    this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
