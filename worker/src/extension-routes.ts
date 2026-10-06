@@ -184,6 +184,16 @@ async function install(store: Store, raw: string, author: Author, catalog: strin
   return { id, name: manifest.name, files: files.map(([f]) => f), untrusted };
 }
 
+/** Whether a settings file's text lists `id` as trusted. */
+function trusts(text: string, id: string): boolean {
+  try {
+    const trusted = JSON.parse(text || "{}")["extensions.trusted"];
+    return Array.isArray(trusted) && trusted.includes(id);
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Take `id` out of every extensions.trusted list, the workspace's and each person's: whoever trusted
  * an extension by that id trusted other code, so what's about to be installed starts sandboxed. True
@@ -206,7 +216,8 @@ async function untrust(store: Store, id: string, author: Author): Promise<boolea
       if (!Array.isArray(trusted) || !trusted.includes(id)) break;
       const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
       const result = text === null ? null : await store.write({ path, text, base: file.revision, author });
-      if (result && result.status !== "conflict") {
+      // Merged with someone else's change, it's checked again: theirs may have trusted it once more.
+      if (result && result.status !== "conflict" && !trusts(result.file.text, id)) {
         took = true;
         break;
       }
