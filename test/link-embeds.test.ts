@@ -88,6 +88,10 @@ test("a link alone on its line is an embed; one in a sentence, a list or code is
   addMarkdownSyntax((await import("@lezer/markdown")).GFM);
   const doc = ["# Links", "", "https://youtu.be/dQw4w9WgXcQ", "", "See https://example.com here.", "", "- https://example.com/in-a-list", "", "<https://example.com/angle>", "", "```", "https://example.com/code", "```", ""].join("\n");
   const view = new EditorView({ state: createState(doc, { json: false, readOnly: false, settings: DEFAULTS, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
+  // The first parse has a time budget: on a busy machine it can stop before the last lines, as a page's
+  // would. The embeds are read from a whole tree here, as the page reads them once it's parsed.
+  const { forceParsing } = await import("@codemirror/language");
+  forceParsing(view, view.state.doc.length, 5000);
   assert.deepEqual(
     findUrlEmbeds(view.state, { urlEmbed: (url) => (url.includes("youtu") ? "youtube" : "link-card") }).map((e) => [e.url, e.id]),
     [
