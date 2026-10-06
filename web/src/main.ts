@@ -93,6 +93,8 @@ const me = await fetch("/api/me")
       return undefined;
     }
   });
+// Drafts of unsaved edits are this account's: another one signing in here doesn't see them.
+offline.account = me ?? null;
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = docLabel;
 
@@ -386,7 +388,15 @@ commands.register(
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
-  { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
+  {
+    id: "account.signOut",
+    title: "Sign out",
+    run: () => {
+      // Nothing of this account's is kept in this browser for whoever signs in next.
+      offline.forgetDrafts();
+      location.assign("/auth/sign-out");
+    },
+  },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },

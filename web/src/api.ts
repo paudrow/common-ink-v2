@@ -83,6 +83,13 @@ export const api = {
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
     return data as { id: string; name: string; files: string[] };
   },
+  async history(path: FilePath): Promise<Array<{ revision: Revision }>> {
+    return (await ok(await fetch(`/api/history?${new URLSearchParams({ path, limit: "50" })}`))).json();
+  },
+  async version(path: FilePath, revision: Revision): Promise<string | null> {
+    const res = await fetch(`/api/version?${new URLSearchParams({ path, revision: String(revision) })}`);
+    return res.status === 404 ? null : (((await (await ok(res)).json()) as { text?: string } | null)?.text ?? null);
+  },
   async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
     const body = JSON.stringify({ path, text, base });
     const res = await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });

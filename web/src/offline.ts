@@ -41,6 +41,10 @@ export interface Network {
   list(): Promise<FileSummary[]>;
   read(path: FilePath): Promise<WorkspaceFile>;
   write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
+  /** A file's changes, newest first: their revisions. */
+  history?(path: FilePath): Promise<Array<{ revision: Revision }>>;
+  /** A file's text at one of its revisions, or null. */
+  version?(path: FilePath, revision: Revision): Promise<string | null>;
 }
 
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
@@ -205,13 +209,20 @@ export class Offline {
     return this.kv.get<Unsent>("unsent", path);
   }
 
+  /** Who's signed in: drafts are kept for them alone, and none without one. */
+  account: string | null = null;
+
+  private draftKey(path: FilePath) {
+    return `${DRAFT}${this.account}:${path}`;
+  }
+
   /**
    * Keep what an open note's editor has that isn't saved yet, as it's typed: a page that goes before
    * its save does (a reload, a closed tab, its last request lost) finds it here when the note opens
    * again. Quietly: it isn't waiting to be sent, it's only kept.
    */
-  keepDraft(unsent: Unsent): Promise<void> {
-    return this.kv.set("meta", `draft:${unsent.path}`, unsent);
+  async keepDraft(unsent: Unsent): Promise<void> {
+    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), unsent);
   }
 
   /**
@@ -219,34 +230,68 @@ export class Offline {
    * localStorage's do.
    */
   keepDraftsNow(drafts: Unsent[]): void {
+    if (!this.account) return;
     for (const d of drafts) {
       try {
-        localStorage.setItem(`${DRAFT}${d.path}`, JSON.stringify(d));
+        localStorage.setItem(this.draftKey(d.path), JSON.stringify(d));
       } catch {
         // Full, or not allowed: the draft kept as it was typed is the one there is.
       }
     }
   }
 
-  /** The note's edit that wasn't saved: kept as the page went, or else as it was typed. */
+  /**
+   * The note's edit that wasn't saved: kept as the page went, or else as it was typed. One the server
+   * already has goes instead: its last request did arrive, as it usually does, and sending it again
+   * would bring back what's been changed or deleted since.
+   */
   async draftFor(path: FilePath): Promise<Unsent | undefined> {
+    if (!this.account) return undefined;
+    let draft: Unsent | undefined;
     try {
-      const kept = localStorage.getItem(`${DRAFT}${path}`);
-      if (kept) return JSON.parse(kept) as Unsent;
+      const kept = localStorage.getItem(this.draftKey(path));
+      if (kept) draft = JSON.parse(kept) as Unsent;
     } catch {
       // Not there, or not readable: the one kept as it was typed.
     }
-    return this.kv.get<Unsent>("meta", `draft:${path}`);
+    draft ??= await this.kv.get<Unsent>("meta", this.draftKey(path));
+    if (draft && (await this.arrived(draft))) {
+      await this.dropDraft(path);
+      return undefined;
+    }
+    return draft;
+  }
+
+  /** Whether a revision after a draft's base gave its exact text. Not knowing (offline), it hasn't. */
+  private async arrived(draft: Unsent): Promise<boolean> {
+    if (!this.net.history || !this.net.version) return false;
+    try {
+      const later = (await this.net.history(draft.path)).filter((c) => c.revision > draft.base).slice(0, 20);
+      for (const c of later) if ((await this.net.version(draft.path, c.revision)) === draft.text) return true;
+    } catch {
+      // Offline: kept, to send when it can.
+    }
+    return false;
   }
 
   /** The note is saved: its kept edit can go. */
   async dropDraft(path: FilePath): Promise<void> {
     try {
-      localStorage.removeItem(`${DRAFT}${path}`);
+      localStorage.removeItem(this.draftKey(path));
     } catch {
       // Nothing kept there.
     }
-    await this.kv.del("meta", `draft:${path}`);
+    await this.kv.del("meta", this.draftKey(path));
+  }
+
+  /** Signing out: every draft kept in localStorage goes, and none is kept as the page goes. */
+  forgetDrafts(): void {
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) localStorage.removeItem(key);
+    } catch {
+      // Nothing to forget.
+    }
+    this.account = null;
   }
 
   /**
