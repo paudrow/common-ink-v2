@@ -574,7 +574,7 @@ export class DataSources {
     };
     // A cancelled occurrence its series doesn't have cancels nothing, as Google keeps one for an
     // occurrence moved off its start. Kept, it would block undoing that move, and cancel the
-    // occurrence once the series came back to it.
+    // occurrence once the series came back to it. What's here at its id goes, as Google ended it.
     const cancelled: Array<{ event: CalendarEvent; etag: string | null }> = [];
     const cancels = (e: CalendarEvent) => {
       const series = readEvent(this.files.read(eventPath(e.calendar, e.series ?? ""))?.text ?? "");
@@ -595,7 +595,10 @@ export class DataSources {
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
-        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) if (cancels(event)) put(event, etag);
+        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) {
+          if (cancels(event)) put(event, etag);
+          else dropEvent(eventPath(event.calendar, event.id));
+        }
         this.setToken(source, calendar, token);
         this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
