@@ -1,0 +1,14 @@
+{
+  "pr": 34,
+  "title": "A playing video floats while its note is out of sight",
+  "steps": [
+    "Open Floating video and play the video. Then ⌘-click another note in the sidebar to open it in a new tab: the video floats in a small window in the bottom right, still playing, named with its note. Drag it by its bar.",
+    "Click the floating window's bar and use the arrow keys to move it (Shift for bigger steps); Home, a double-click on the bar, or Reset floating video position (command bar) puts it back in the corner. Make the browser window small: the floating window stays on screen.",
+    "Press ↩ (Back to note): the note's tab shows, and the video docks back in place, still playing.",
+    "Scroll down until the video is out of view: it floats. Scroll back: it docks.",
+    "While it plays, close the note's tab: it keeps floating. ↩ opens the note again, and it docks, without restarting.",
+    "✕ pauses it and closes the window. The mini player (bottom right) can play it again.",
+    "Play the Spotify track, then open another tab: it plays on unseen, and the mini player names it with a link back to its note. Pause it there, or with the keyboard's media keys.",
+    "In settings, \"media.whenHidden\": \"pause\" pauses whatever plays when its note goes out of sight, and \"keepPlaying\" plays on unseen, without floating."
+  ]
+}
