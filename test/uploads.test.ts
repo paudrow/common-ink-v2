@@ -92,3 +92,21 @@ test("an upload while the bytes' store is down is refused, says so, and records 
   assert.deepEqual(result, { status: "refused", error: "photo.png wasn't uploaded: uploads can't be stored right now. Try again in a minute." });
   assert.equal(files.read(UPLOADS_PATH), null);
 });
+
+test("an upload's bytes are read only up to the limit, however the body comes", async () => {
+  const { bytesUpTo } = await import("../worker/src/body.ts");
+  let pulled = 0;
+  const body = (chunks: number, size: number) =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled++ >= chunks) return controller.close();
+        controller.enqueue(new Uint8Array(size).fill(7));
+      },
+    });
+  const small = await bytesUpTo(body(3, 4), 100);
+  assert.deepEqual(small && [...new Uint8Array(small)], Array(12).fill(7));
+  pulled = 0;
+  assert.equal(await bytesUpTo(body(1000, 40), 100), null);
+  assert.ok(pulled < 10, `it stopped reading at the limit, after ${pulled} chunks`);
+  assert.equal((await bytesUpTo(null, 100))?.byteLength, 0);
+});
