@@ -60,6 +60,9 @@ function secure(res: Response, frameHosts: readonly string[] = []): Response {
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+/** Where a page sends its last save with navigator.sendBeacon. */
+const BEACON = "/api/file/beacon";
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -108,6 +111,11 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     const changes = (req.method !== "GET" && req.method !== "HEAD") || req.headers.get("Upgrade")?.toLowerCase() === "websocket";
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
+    }
+    // A save sent with sendBeacon is a simple request, with no preflight, so it has to show it's from
+    // this site rather than only not say otherwise. Browsers always say where a beacon came from.
+    if (url.pathname === BEACON && origin !== url.origin && req.headers.get("Sec-Fetch-Site") !== "same-origin") {
+      return secure(page("Not from here", "<p>That request didn't say it came from this site.</p>", 403));
     }
     // A trusted workspace extension's code, from its files, so the page can import it under
     // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
@@ -174,6 +182,8 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
+  // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.
+  "POST /api/file/beacon": "write_file",
   "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
