@@ -443,9 +443,11 @@ export class CalendarPage {
   private async move(o: Occurrence, to: Moved, at: DOMRect) {
     const scope: Scope | null | undefined = o.series ? await chooseScope(at, "Save") : undefined;
     if (scope === null) return this.renderer?.redraw();
+    // Dragged late, a timed event runs past midnight: its end is that many minutes into the next day.
+    const roll = (day: Day, minutes: number) => inZone(addDays(day, Math.floor(minutes / (24 * 60))), minutes % (24 * 60), o.timeZone);
     const change = to.allDay
       ? { allDay: true, start: to.startDay, end: to.endDay }
-      : { allDay: false, start: inZone(to.startDay, to.start, o.timeZone), end: inZone(to.endDay, to.end, o.timeZone), timeZone: zoneFor(o) };
+      : { allDay: false, start: roll(to.startDay, to.start), end: roll(to.endDay, to.end), timeZone: zoneFor(o) };
     try {
       this.wrote(await this.ctx.data.calendar.update(o.address, change, scope));
     } catch (err) {
