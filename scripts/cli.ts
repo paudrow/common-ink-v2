@@ -124,8 +124,8 @@ const commands: Record<string, () => Promise<void>> = {
   },
   async restore() {
     const path = positional()[0];
-    const { data } = await api<{ status: string }>("POST", "/api/restore", { path });
-    print(data, () => `Restored ${path}, with its history.`);
+    const { data } = await api<{ status: string; path: string }>("POST", "/api/restore", { path });
+    print(data, () => (data.path === path ? `Restored ${path}, with its history.` : `Restored as ${data.path}: another note has ${path} now.`));
   },
   async upload() {
     const nameFlag = take("--name", true);

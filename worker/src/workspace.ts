@@ -4,13 +4,14 @@
 // connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
-import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
-import { DAY, purgeExpired } from "./trash.ts";
+import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { restoreFromTrash } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
+import { deleteNote } from "./archive.ts";
 import { RESET_CLOSE } from "./levers.ts";
 import type { Query } from "./query.ts";
 import type { SearchIndex, SearchOptions } from "./search.ts";
@@ -57,8 +58,6 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
     [this.files, this.sources, this.index] = this.open();
-    // Trash retention needs the alarm even in a workspace that never syncs.
-    void ctx.blockConcurrencyWhile(() => this.scheduleAlarm());
   }
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
@@ -155,12 +154,16 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.deleted(since);
   }
 
-  purge(paths: FilePath[], author: Author) {
-    return this.files.purge(paths, author);
+  restoreDeleted(d: Deleted, author: Author) {
+    return restoreFromTrash(this.files, d, author);
   }
 
   search(query: Query, options: SearchOptions) {
     return this.index.search(query, options);
+  }
+
+  deleteNote(w: Write) {
+    return deleteNote(this.files, w);
   }
 
   /** Tick a task and log its completion, in one step (complete-task.ts). */
@@ -236,33 +239,16 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return ok;
   }
 
-  /**
-   * The one alarm a Durable Object has, for two timers: syncing while Google is connected (every 10
-   * minutes, and soon after connecting), and Trash retention's purge, once a day.
-   */
+  /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
   async alarm() {
-    const now = Date.now();
-    if (now >= this.retentionDue()) {
-      purgeExpired(this.files, now);
-      this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(now + DAY));
-    }
     await this.sources.sealTokens();
     await this.sources.sync();
-    await this.scheduleAlarm();
+    await this.scheduleSync();
   }
 
-  /** When Trash retention next purges: a minute after the workspace first opens, then daily. */
-  private retentionDue(): number {
-    const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'retention-next'");
-    if (row) return Number(row.value);
-    const first = Date.now() + 60_000;
-    this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?)", String(first));
-    return first;
-  }
-
-  /** Set the alarm for whichever comes first: the next sync, or the next purge. */
-  private async scheduleAlarm() {
-    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue());
+  private async scheduleSync() {
+    if (!this.sources.syncs) return;
+    const next = Date.now() + SYNC_EVERY;
     const set = await this.ctx.storage.getAlarm();
     if (!set || set > next) await this.ctx.storage.setAlarm(next);
   }
@@ -270,7 +256,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** Sync now if it hasn't in the last half minute (a calendar view opening asks); always, if `force`. */
   async syncSources(force = false) {
     if (force || this.sources.due(30_000)) await this.sources.sync();
-    await this.scheduleAlarm();
+    await this.scheduleSync();
     return this.sources.status("").sources[0];
   }
 

@@ -79,63 +79,83 @@ browserTest(h, ":trash moves the note on show to Trash, and Undo brings it back"
   assert.deepEqual(await page.evaluate(async () => (await (await fetch("/api/trash")).json()) as unknown[]), []);
 });
 
-const historyOf = (page: Page, path: string) =>
-  page.evaluate(async (path) => ((await (await fetch(`/api/history?path=${encodeURIComponent(path)}`)).json()) as Array<{ purged?: true; deleted?: true; author: { kind: string } }>).map((c) => `${c.purged ? "purged" : c.deleted ? "deleted" : "written"} by ${c.author.kind}`), path);
-
-browserTest(h, "D deletes a note forever after asking: its text leaves history, and one line says who did it", { scenario: "empty" }, async (app) => {
+browserTest(h, "a deleted note stays in Trash when a new note takes its path, and restores beside it", { scenario: "empty" }, async (app) => {
   const { page } = app;
-  await app.writeFile("Secret.md", "# Secret\nthe code is 1234");
-  await deleteNote(app, "Secret.md");
+  await app.writeFile("Untitled 1.md", "# Untitled 1\nimportant first draft");
+  await deleteNote(app, "Untitled 1.md");
+  await app.writeFile("Untitled 1.md", "# Untitled 1\nsomething else");
   await app.command("Open trash");
   await rows(page).first().waitFor();
   await page.locator(".trash-view").focus();
-  await page.keyboard.press("Shift+D");
-  await page.locator(".dialog-actions button", { hasText: "Cancel" }).click();
-  assert.equal(await rows(page).count(), 1, "Cancel keeps it");
-  await page.locator(".trash-view").focus();
-  await page.keyboard.press("Shift+D");
-  await page.locator(".dialog-actions button", { hasText: "Delete forever" }).click();
-  await page.locator(".trash-empty").waitFor();
-  assert.deepEqual(await historyOf(page, "Secret.md"), ["purged by user"]);
-  const old = await page.context().request.get(new URL("/api/version?path=Secret.md&revision=1", page.url()).href);
-  assert.equal(old.status(), 404, "its old text can't be read");
+  await page.keyboard.press("r");
+  await page.locator(".notice", { hasText: 'Restored "Untitled 1" as Untitled 1 (restored).md: another note has Untitled 1.md now' }).waitFor();
+  assert.equal(await app.readFile("Untitled 1 (restored).md"), "# Untitled 1\nimportant first draft");
+  assert.equal(await app.readFile("Untitled 1.md"), "# Untitled 1\nsomething else");
 });
 
-browserTest(h, "Empty Trash deletes every note in it forever, after asking", { scenario: "empty" }, async (app) => {
+browserTest(h, "r restores the selected note, even when another delete comes in above it", { scenario: "empty" }, async (app) => {
   const { page } = app;
-  for (const name of ["One", "Two"]) {
-    await app.writeFile(`${name}.md`, `# ${name}`);
-    await deleteNote(app, `${name}.md`);
+  for (const n of ["One", "Two", "Three"]) {
+    await app.writeFile(`${n}.md`, `# ${n}\n`);
+    await deleteNote(app, `${n}.md`);
   }
+  await app.writeFile("Agent target.md", "# Agent target\n");
   await app.command("Open trash");
-  await rows(page).nth(1).waitFor();
-  await page.locator(".trash-empty-all").click();
-  await page.locator(".dialog-actions button", { hasText: "Empty Trash" }).click();
-  await page.locator(".trash-empty").waitFor();
-  assert.deepEqual([await historyOf(page, "One.md"), await historyOf(page, "Two.md")], [["purged by user"], ["purged by user"]]);
+  await rows(page).nth(2).waitFor();
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("j");
+  const chosen = await page.locator(".trash-row[aria-selected=true]").getAttribute("data-path");
+  await deleteNote(app, "Agent target.md");
+  await rows(page).nth(3).waitFor();
+  assert.equal(await page.locator(".trash-row[aria-selected=true]").getAttribute("data-path"), chosen);
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("r");
+  await page.waitForFunction((p) => fetch(`/api/file?path=${encodeURIComponent(p)}`).then((r) => r.ok), chosen!);
+  assert.equal(await exists(page, "Agent target.md"), false);
 });
 
-browserTest(h, "on a phone, a swipe left asks, then deletes forever", { scenario: "empty", viewport: { width: 375, height: 812 }, touch: true }, async (app) => {
+browserTest(h, "after :trash the note's tab closes and it leaves the notes list", { scenario: "empty" }, async (app) => {
   const { page } = app;
-  await app.writeFile("Groceries.md", "# Groceries\nEggs");
+  await app.writeFile("Draft.md", "# Draft\nhalf an idea");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.open("Draft");
+  await app.call("idle");
+  await page.locator(".tab-editor:not([hidden]) .cm-content").first().focus();
+  await app.keys("<Esc>:trash<CR>");
+  await page.locator(".notice", { hasText: "Moved" }).waitFor();
+  await page.waitForFunction(() => ![...document.querySelectorAll("#notes a")].some((a) => a.textContent === "Draft"));
+  const tabs = ((await app.call("state")) as { windows: Array<{ tabs: Array<{ label: string }> }> }).windows.flatMap((w) => w.tabs.map((t) => t.label));
+  assert.equal(tabs.includes("Draft"), false, JSON.stringify(tabs));
+});
+
+browserTest(h, "a link says In Trash by where it points from its note: relative links, and names with spaces", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Plan.md", "# Plan (root)\n");
+  await app.writeFile("Projects/Plan.md", "# Plan (projects)\n");
+  await app.writeFile("Projects/Gone.md", "# Gone\n");
+  await app.writeFile("My Note.md", "# My Note\n");
+  await app.writeFile("Projects/Index.md", "# Index\nA [md link](Plan.md)\nB [[Plan]]\nC [md to gone](Gone.md)\nD [spaced](<../My Note.md>)\n");
+  for (const p of ["Plan.md", "Projects/Gone.md", "My Note.md"]) await deleteNote(app, p);
+  await app.open("Projects/Index.md");
+  await page.locator(".tab-editor:not([hidden]) .trash-link").nth(2).waitFor();
+  const lines = await page.locator(".tab-editor:not([hidden]) .cm-line").evaluateAll((ls) => ls.filter((l) => l.querySelector(".trash-link")).map((l) => (l.textContent ?? "").slice(0, 1)));
+  assert.deepEqual(lines, ["B", "C", "D"]);
+});
+
+browserTest(h, "a mouse drag across a row doesn't open it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Groceries.md", "# Groceries\n");
   await deleteNote(app, "Groceries.md");
   await app.command("Open trash");
   const row = rows(page).first();
   await row.waitFor();
-  const box = (await row.boundingBox())!;
-  const cdp = await page.context().newCDPSession(page);
-  const at = (x: number) => [{ x, y: box.y + box.height / 2 }];
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(330) });
-  for (let x = 300; x >= 60; x -= 30) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(x) });
-  assert.match((await row.getAttribute("data-swipe")) ?? "", /delete armed/, "red, and ready to delete");
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  // The tap on the dialog's button goes through the same touch input as the swipe, as a finger's would.
-  const button = page.locator(".dialog-actions button", { hasText: "Delete forever" });
-  await button.waitFor();
-  const b = (await button.boundingBox())!;
-  const tap = [{ x: b.x + b.width / 2, y: b.y + b.height / 2 }];
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: tap });
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await page.locator(".trash-empty").waitFor();
-  assert.deepEqual(await historyOf(page, "Groceries.md"), ["purged by user"]);
+  const b = (await row.boundingBox())!;
+  await page.mouse.move(b.x + 30, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 200, b.y + b.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator(".trash-peek").count(), 0);
+  await row.locator(".trash-look").click();
+  await page.locator(".trash-inside button", { hasText: "Restore" }).waitFor();
 });

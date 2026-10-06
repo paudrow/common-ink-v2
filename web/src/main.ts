@@ -3,7 +3,7 @@
 import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type ChangeNotice, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
@@ -15,7 +15,7 @@ import { commandForKey, Commands, keyFor } from "./commands.ts";
 import { ago, describeAuthor, docLabel } from "./describe.ts";
 import { Search } from "./search.ts";
 import { format } from "../../worker/src/query.ts";
-import { connectLive } from "./live.ts";
+import { afterBurst, connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import * as L from "./layout.ts";
@@ -78,6 +78,7 @@ let settings: Settings = DEFAULTS;
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
+const changeListeners: Array<(notice: ChangeNotice) => void> = [];
 const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
@@ -533,6 +534,7 @@ const extensions = new ExtensionRuntime({
   openFromBar,
   lastFile: () => lastFile,
   onSaved: savedListeners,
+  onChange: changeListeners,
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
@@ -823,8 +825,9 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
-    // A modal has the keys while it's up: its own, and Tab and Escape.
-    if (modalOpen()) return;
+    // A modal has the keys while it's up: its own, and Tab and Escape. So does the command bar while
+    // it has focus: off a Mac, its Ctrl-k and Ctrl-p move through what it lists, not open it again.
+    if (modalOpen() || bar.hasFocus) return;
     const id = commandForKey(e, settings.keybindings);
     // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
     if (!id || !commands.runForKey(id)) return;
@@ -852,10 +855,25 @@ window.addEventListener("pagehide", () => {
 // The app's own files, kept by a service worker so it opens offline.
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
 // Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
-let historyTimer2 = 0;
+// Extensions hear of every file that changed, once a burst of changes ends (the history view redraws, say).
+const heardChange = afterBurst(400, (path) => savedListeners.forEach((fn) => fn(path)));
 let recordsTimer = 0;
 connectLive({
   async change(notice) {
+    for (const fn of changeListeners) fn(notice);
+    // A deleted note isn't left open to type into: its windows' tabs close, unless it has changes not yet
+    // saved, which stay, with a word on where it went.
+    if (notice.deleted && isNote(notice.path)) {
+      void refreshList();
+      const who = notice.author.kind === "user" && notice.author.email === me ? "" : ` by ${describeAuthor(notice.author, me)}`;
+      if (workbench.pending().some((p) => p.path === notice.path)) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}: your changes are still here, and Restore in Trash brings the note back.`);
+      else if (L.groups(workbench.layout).some((g) => g.tabs.some((t) => "file" in t && t.file === notice.path))) {
+        workbench.forget([notice.path]);
+        if (who) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}`);
+      }
+      heardChange(notice.path);
+      return;
+    }
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
     // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.
@@ -872,9 +890,7 @@ connectLive({
     // A new file, or an extension's (which may have been deleted): list them again.
     if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/extensions/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
-    // Extensions hear of it as of any change to a file (the history view redraws, say).
-    clearTimeout(historyTimer2);
-    historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
+    heardChange(notice.path);
   },
   // Back after a gap: send what's waiting, then catch up on files that changed meanwhile. One path
   // for both, whether the gap was a dropped socket or a whole offline spell.

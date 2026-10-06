@@ -145,8 +145,12 @@ export interface ExtensionContext {
   search: {
     /** Answer a kind of result the manifest declares in contributes.search.types, given the query read with `common-ink/query`. */
     provide(type: string, provider: SearchProvider): void;
-    /** What a query finds, a section per kind of result, as the search screen shows it. */
-    find(text: string, limit?: number): Promise<SearchSection[]>;
+    /**
+     * What a query finds, a section per kind of result, as the search screen shows it; `progress` hears
+     * the sections found so far as each comes. A sandboxed extension gets only what it could read
+     * itself: notes and tasks it may read (files:read), events with data:calendar:read, and its own kinds.
+     */
+    find(text: string, limit?: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]>;
     /** The filter keys extensions add (`due`), for `parse(text, keys)`. */
     filterKeys(): string[];
   };
@@ -302,7 +306,7 @@ export interface ExtensionContext {
     /** The items that fuzzily match `query`, best first. */
     fuzzyFilter<T>(query: string, items: readonly T[], text: (item: T) => string): T[];
     /** The note a name like "Projects/Plan" means, or null if it can't be one. */
-    notePathFor(name: string): FilePath | null;
+    notePathFor(name: string, from?: FilePath): FilePath | null;
     /** A file's name as people see it: "Projects/Plan", "User settings". */
     label(path: FilePath): string;
   };
@@ -319,6 +323,8 @@ export interface ExtensionContext {
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
+    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file or undid another change. Trusted extensions only. */
+    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number }) => void): void;
   };
 }
 

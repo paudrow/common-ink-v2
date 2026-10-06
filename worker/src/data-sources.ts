@@ -5,6 +5,7 @@
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
 import { SearchIndex } from "./search.ts";
+import { ARCHIVE_PATH, mergeArchive } from "./archive.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -747,14 +748,19 @@ export function openWorkspace(
 ): { files: Files; sources: DataSources; search: SearchIndex } {
   const records = new Records(db);
   const search = new SearchIndex(db);
-  const files = new Files(db, Date.now, announce, (path, text) => {
-    records.observe(path, text);
-    search.observe(path, text);
-  });
+  const files = new Files(
+    db,
+    Date.now,
+    announce,
+    (path, text, revision) => {
+      records.observe(path, text);
+      search.observe(path, text, revision);
+    },
+    (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
+  );
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  // Workspaces from before search get their index here, once, as do indexes from before secure deletes.
-  search.secure();
-  if (!search.complete()) search.rebuild(files.under(""));
+  // Workspaces from before search, or from before its index's shape, get their index here, once.
+  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
   return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
 }
 

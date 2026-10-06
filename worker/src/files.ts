@@ -37,10 +37,7 @@ export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path)
  * extension acting for the person using it, or a data source's sync bringing in what changed there
  * ("google-calendar").
  */
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string } | { kind: "retention" };
-
-/** Trash retention: who purges notes that have been in Trash longer than trash.retentionDays. */
-export const RETENTION: Author = { kind: "retention" };
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string };
 
 /** One string per author, for filtering history by who made a change. */
 export function authorKey(a: Author): string {
@@ -53,8 +50,6 @@ export function authorKey(a: Author): string {
       return `sync:${a.source}`;
     case "agent":
       return `agent:${a.name}${a.by ? `:${a.by}` : ""}`;
-    case "retention":
-      return "retention";
   }
 }
 
@@ -86,11 +81,6 @@ export interface Change {
   undoneBy?: Revision | null;
   /** The change deleted the file. Undoing it brings the file back. */
   deleted?: true;
-  /**
-   * The file's history was purged here: every change to it before this one is gone, text and all, and
-   * this one says who purged it and when. It has no text, and undo can't reach it.
-   */
-  purged?: true;
 }
 
 /** A file in Trash: its delete change, and its text just before. */
@@ -100,9 +90,8 @@ export interface Deleted {
   revision: Revision;
   author: Author;
   time: number;
-  /** The file's last revision before the delete, whose text is `text`. */
+  /** The file's last revision before the delete: its text then is the note in Trash. 0 if it had none. */
   before: Revision;
-  text: string;
 }
 
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
@@ -220,10 +209,6 @@ const SCHEMA: Array<(db: Db) => void> = [
     db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
     db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
   },
-  // 5. A change can say a file's history was purged.
-  (db) => {
-    if (!hasColumn(db, "changes", "purges")) db.run("ALTER TABLE changes ADD COLUMN purges INTEGER NOT NULL DEFAULT 0");
-  },
 ];
 
 /** How long an edit's id is kept: a page that went asks about it when its note next opens there. */
@@ -243,14 +228,8 @@ function editHash(text: string): string {
   return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
 }
 
-type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number; purges: number };
-const toChange = ({ deletes, purges, ...row }: ChangeRow): Change => ({
-  ...row,
-  author: JSON.parse(row.author),
-  diff: JSON.parse(row.diff),
-  ...(deletes ? { deleted: true as const } : {}),
-  ...(purges ? { purged: true as const } : {}),
-});
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
+const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
 /** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
@@ -258,6 +237,10 @@ export interface ChangeNotice {
   path: FilePath;
   revision: Revision;
   author: Author;
+  /** The change deleted the file. */
+  deleted?: true;
+  /** The change undid this one (a restore from Trash is one). */
+  undoes?: Revision;
 }
 
 export class Files {
@@ -266,8 +249,10 @@ export class Files {
     private now: () => number = Date.now,
     /** Told of every change once it's recorded. */
     private announce: (notice: ChangeNotice) => void = () => {},
-    /** Told of every file's new text (null: deleted) inside the change's transaction, to keep indexes of files. */
-    private observe: (path: FilePath, text: string | null) => void = () => {},
+    /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
+    private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
+    /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
+    private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
@@ -280,13 +265,14 @@ export class Files {
 
   /**
    * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
-   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest.
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest. One
+   * inside another is part of the outer one: SQLite has one transaction at a time.
    */
   private tx<T>(fn: () => T): T {
     const mark = this.heard.length;
     this.depth++;
     try {
-      const out = this.db.tx(fn);
+      const out = this.depth > 1 ? fn() : this.db.tx(fn);
       if (this.depth === 1) {
         const notices = this.heard;
         this.heard = [];
@@ -306,6 +292,11 @@ export class Files {
     } finally {
       this.depth--;
     }
+  }
+
+  /** Run `fn` as one transaction: its writes all happen, or none do, and nothing comes between them. */
+  atomically<T>(fn: () => T): T {
+    return this.tx(fn);
   }
 
   /** Every file but data sources' records, which are listed by their kind (records.ts). */
@@ -388,12 +379,10 @@ export class Files {
           const [row] = this.db.all<ChangeRow>("SELECT * FROM changes WHERE revision = ?", revision);
           if (!row) return { revision, status: "missing" as const };
           const change = toChange(row);
-          // A purge took the text it would need, on purpose.
-          if (change.purged) return { revision, status: "missing" as const };
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
-          const undone = merge(current?.text ?? "", after, before);
+          const undone = (this.mergeFor(change.path) ?? merge)(current?.text ?? "", after, before);
           if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
           if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
           const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
@@ -431,42 +420,25 @@ export class Files {
   }
 
   /**
-   * Files deleted since a time and not there now: each one's delete, the latest change to it, newest
-   * first. This is what's in Trash; restoring one undoes its delete.
+   * Deletes since a time that are in effect, newest first: each is a file in Trash, whatever is at its
+   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one. Only
+   * revisions and times are read here; a deleted file's text is `versionAt(path, before)`, when asked.
    */
   deleted(since: number): Deleted[] {
+    const undoneBy = this.undoneBy();
     return this.db
-      .all<ChangeRow>(
-        `SELECT * FROM changes c WHERE c.deletes = 1 AND c.time >= ? AND c.path NOT IN (SELECT path FROM files)
-          AND c.revision = (SELECT max(revision) FROM changes WHERE path = c.path) ORDER BY c.revision DESC`,
-        since,
-      )
-      .map((row) => {
-        const { revision, path, author, time } = toChange(row);
+      .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
+      .filter((d) => undoneBy(d.revision) === null)
+      .map(({ revision, path, author, time }) => {
         const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
-        return { path, revision, author, time, before: before?.r ?? 0, text: before?.r ? (this.textAt(path, before.r) ?? "") : "" };
+        return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
       });
   }
 
-  /**
-   * Take deleted files' text out of history: every change to each goes, with the ids of edits to it,
-   * and one change takes their place, with no text, saying who purged it and when. Only a file that's
-   * deleted is purged, and only its own changes are touched: other files' histories don't refer to
-   * them. Says which were purged, by the purge change's revision; a path that isn't deleted, or has
-   * nothing left to purge, is left out.
-   */
-  purge(paths: readonly FilePath[], author: Author): Array<{ path: FilePath; revision: Revision }> {
-    return this.tx(() =>
-      [...new Set(paths)].flatMap((path) => {
-        if (this.read(path) || !this.db.all("SELECT 1 FROM changes WHERE path = ? AND purges = 0 LIMIT 1", path).length) return [];
-        this.db.run("DELETE FROM changes WHERE path = ? AND purges = 0", path);
-        this.db.run("DELETE FROM edits WHERE path = ?", path);
-        this.db.run("INSERT INTO changes(path, author, base, diff, time, undoes, deletes, purges) VALUES (?, ?, 0, '[]', ?, NULL, 0, 1)", path, JSON.stringify(author), this.now());
-        const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
-        this.heard.push({ path, revision, author });
-        return [{ path, revision }];
-      }),
-    );
+  /** A file's text just before a revision (of any file): "" if it had none yet. */
+  textBefore(path: FilePath, revision: Revision): string {
+    const [row] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+    return row?.r ? (this.textAt(path, row.r) ?? "") : "";
   }
 
   /** A file's text at one of its revisions, or null if it never had that revision. */
@@ -606,7 +578,7 @@ export class Files {
     let status: "saved" | "merged" = "saved";
     if (!deleting && base !== (current?.revision ?? 0)) {
       const baseText = this.textAt(path, base);
-      const merged = baseText === null ? null : merge(text, baseText, currentText);
+      const merged = baseText === null ? null : (this.mergeFor(path) ?? merge)(text, baseText, currentText);
       if (merged === null) return { status: "conflict", file: current };
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
@@ -619,16 +591,16 @@ export class Files {
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
-      this.observe(path, null);
-      this.heard.push({ path, revision, author });
+      this.observe(path, null, revision);
+      this.heard.push({ path, revision, author, deleted: true, ...(undoes ? { undoes } : {}) });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
-    this.observe(path, next);
-    this.heard.push({ path, revision, author });
+    this.observe(path, next, revision);
+    this.heard.push({ path, revision, author, ...(undoes ? { undoes } : {}) });
     return { status, file: { path, text: next, revision } };
   }
 
@@ -645,6 +617,9 @@ export class Files {
     return text.join("\n");
   }
 }
+
+/** A three-way merge of a file's text: mine and theirs, from base. Null when they can't be merged. */
+export type Merge = (mine: string, base: string, theirs: string) => string | null;
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {

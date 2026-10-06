@@ -1,7 +1,8 @@
-// Trash's rules, one place for the operations and the Durable Object's daily purge: how long a deleted
-// note stays (trash.retentionDays, a workspace setting), and which have been there longer.
-import { RETENTION, type Deleted, type FilePath, type Files } from "./files.ts";
-import { parseSettings, SETTINGS, WORKSPACE_SETTINGS } from "./settings.ts";
+// Trash's rules, one place for the operations and the Durable Object: how long a deleted note stays
+// (trash.retentionDays, a workspace setting), which deletes are in Trash, and restoring one.
+import { ARCHIVE_PATH, archiveText, readArchive, withArchived } from "./archive.ts";
+import { isNote, parseFilePath, type Author, type Deleted, type FilePath, type Files, type Revision } from "./files.ts";
+import { parseSettings, SETTINGS } from "./settings.ts";
 
 export const DAY = 86_400_000;
 
@@ -11,13 +12,40 @@ export function retentionDays(workspaceSettings: string): number {
 }
 
 /** Notes in Trash: deleted within the last `days`. Other files deleted are in history, not Trash. */
-export const inTrash = (deleted: readonly Deleted[], days: number, now: number) => deleted.filter((d) => d.path.endsWith(".md") && d.time >= now - days * DAY);
+export const inTrash = (deleted: readonly Deleted[], days: number, now: number) => deleted.filter((d) => isNote(d.path) && d.time >= now - days * DAY);
 
-/** Notes deleted longer ago than `days`: what the daily purge takes. */
-export const expired = (deleted: readonly Deleted[], days: number, now: number): FilePath[] => deleted.filter((d) => d.path.endsWith(".md") && d.time < now - days * DAY).map((d) => d.path);
+/** Where a restored note goes: its own path while that's free, else "<name> (restored).md", then "(restored 2)" and on. */
+export function restoredPath(files: Files, path: FilePath): FilePath {
+  if (!files.read(path)) return path;
+  const stem = path.replace(/\.md$/, "");
+  for (let n = 1; ; n++) {
+    const next = parseFilePath(`${stem} (restored${n > 1 ? ` ${n}` : ""}).md`);
+    if (next && !files.read(next)) return next;
+  }
+}
 
-/** Purge the notes that have been in Trash longer than trash.retentionDays, as changes by Trash retention. */
-export function purgeExpired(files: Files, now: number) {
-  const days = retentionDays(files.read(WORKSPACE_SETTINGS)?.text ?? "");
-  return files.purge(expired(files.deleted(0), days, now), RETENTION);
+/**
+ * Bring a note in Trash back, in one transaction. At its own path, if that's free, by undoing its
+ * delete, so it comes back with its whole history; if another note has the path now, as a new note
+ * beside it that records which delete it undoes. If it was archived when it was deleted, it's archived again.
+ */
+export function restoreFromTrash(files: Files, d: Deleted, author: Author): { path: FilePath; revision: Revision } {
+  return files.atomically(() => {
+    const path = restoredPath(files, d.path);
+    let revision: Revision;
+    if (path === d.path) {
+      const [undone] = files.undo([d.revision], author);
+      if (undone.status !== "undone" || !undone.file) throw new Error(`${d.path} couldn't be restored (${undone.status})`);
+      revision = undone.file.revision;
+    } else {
+      const result = files.write({ path, text: files.versionAt(d.path, d.before) ?? "", base: 0, author, undoes: d.revision });
+      if (result.status === "conflict") throw new Error(`${path} couldn't be written`);
+      revision = result.file.revision;
+    }
+    const wasArchived = readArchive(files.textBefore(ARCHIVE_PATH, d.revision))?.archived.includes(d.path);
+    const file = files.read(ARCHIVE_PATH);
+    const now = readArchive(file?.text ?? "");
+    if (wasArchived && now && !now.archived.includes(path)) files.write({ path: ARCHIVE_PATH, text: archiveText(withArchived(now, [path], true)), base: file?.revision ?? 0, author });
+    return { path, revision };
+  });
 }

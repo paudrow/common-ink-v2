@@ -544,6 +544,11 @@ button.status-item:hover {
   font-size: 0.8rem;
 }
 
+#command-bar li.plain > .detail {
+  font: 0.75rem var(--mono);
+  align-self: center;
+}
+
 #command-bar .aside {
   flex: none;
   color: var(--faint);
@@ -916,11 +921,22 @@ button.status-item:hover {
   margin: 0;
 }
 
-/* On a phone, a notice is a bar at the bottom, as a snackbar is, clear of the note's top. */
+/* A notice sits below a note's top line (an archived note's), not over it. */
+.editors:has(> .tab-editor:not([hidden]) .cm-panels-top) > .notice {
+  top: 3rem;
+}
+
+/* On a phone, a notice is a bar at the bottom, as a snackbar is, and the note makes room for it, so it
+   hides none of the note's lines. */
 @media (max-width: 599.98px) {
-  .notice {
+  .notice,
+  .editors:has(> .tab-editor:not([hidden]) .cm-panels-top) > .notice {
     top: auto;
-    bottom: 1rem;
+    bottom: 0.75rem;
+  }
+
+  .editors:has(> .notice) > .tab-editor {
+    bottom: 4.5rem;
   }
 }
 

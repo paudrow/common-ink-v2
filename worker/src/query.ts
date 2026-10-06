@@ -47,14 +47,24 @@ export interface Filter {
   test(note: NoteFacts, value: string, ctx: MatchContext): boolean | undefined;
 }
 
-const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+/**
+ * Text as search compares it: accents dropped where they're optional, as on Latin, Greek, Hebrew and
+ * Arabic letters (é, ά, ָ, َ), and kept where they make another letter (й, が, ा); then lower case.
+ */
+const fold = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/([\p{Script=Latin}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Arabic}])\p{M}+/gu, "$1")
+    .normalize("NFC")
+    .toLowerCase();
 
 /**
- * Text as the words full-text search sees: runs of letters and digits, lower case, without accents.
- * SQLite's FTS5 `unicode61` tokenizer splits text the same way, so the index and this agree.
+ * Text as the words search sees: runs of letters, digits and the marks that are part of them, folded.
+ * The full-text index is given these words, already folded (search.ts), so the index and this agree in
+ * every script.
  */
 export function tokens(text: string): string[] {
-  return fold(text).match(/[\p{L}\p{N}]+/gu) ?? [];
+  return fold(text).match(/[\p{L}\p{N}\p{M}\p{Co}]+/gu) ?? [];
 }
 
 /**
@@ -72,10 +82,20 @@ export function holds(haystack: readonly string[], needle: readonly string[]): b
   return false;
 }
 
-/** A note's title: its first `# ` heading, or its file name. */
+/** A note's title: its first `# ` heading, without closing #s, or its file name. Linear in the text's length. */
 export function titleOf(path: string, text: string): string {
-  const heading = /^# +(.+?)\s*#*\s*$/m.exec(text)?.[1]?.trim();
-  return heading || (path.split("/").pop() ?? path).replace(/\.md$/, "");
+  for (const line of text.split("\n")) {
+    if (!/^# /.test(line)) continue;
+    let end = line.length;
+    while (end > 1 && (line[end - 1] === " " || line[end - 1] === "\t" || line[end - 1] === "\r")) end--;
+    let hashes = end;
+    while (hashes > 1 && line[hashes - 1] === "#") hashes--;
+    // Closing #s count only after a space ("# C#" keeps its #).
+    if (hashes < end && (line[hashes - 1] === " " || line[hashes - 1] === "\t")) end = hashes;
+    const heading = line.slice(1, end).trim();
+    if (heading) return heading;
+  }
+  return (path.split("/").pop() ?? path).replace(/\.md$/, "");
 }
 
 const DAY = 86_400_000;
@@ -120,7 +140,7 @@ const SORTS = ["relevance", "edited", "title"] as const;
 
 /** What `has:` looks for in a note's text. */
 const HAS_TESTS: Record<(typeof HAS)[number], RegExp> = {
-  task: /^\s*[-*+] \[[ xX]\]/m,
+  task: /^[ \t]*[-*+] \[[ xX]\]/m,
   embed: /^:{2,3}[a-zA-Z][\w-]*/m,
   event: /\]\(event:/,
 };
@@ -299,7 +319,8 @@ export function matches(query: Query, note: NoteFacts, ctx: MatchContext): boole
   if (!matchesWords(query, `${note.title}\n${note.text}`)) return false;
   const anyOf = new Map<string, boolean>();
   for (const t of query.terms) {
-    if (t.kind !== "filter" || !t.value) continue;
+    // A filter still being typed, and the order, say nothing about which notes match.
+    if (t.kind !== "filter" || !t.value || t.key === "sort") continue;
     const filter = BY_KEY.get(t.key);
     const passed = filter?.test(note, t.value, ctx);
     if (passed === undefined) return false;

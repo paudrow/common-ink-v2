@@ -2,9 +2,12 @@
 // [[Name]] links, and markdown links to a .md file.
 import { RangeSetBuilder, StateEffect } from "@codemirror/state";
 import { Decoration, ViewPlugin, WidgetType, type DecorationSet, type EditorView, type ViewUpdate } from "@codemirror/view";
+import { editorFile } from "common-ink/editor-file";
 import { icon } from "common-ink/icons";
+import type { FilePath } from "../../../../worker/src/files.ts";
 
-const LINK = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]|\[[^\]]*\]\(\s*<?([^)\s>]+\.md)>?(?:#[^)\s]*)?\s*\)/g;
+/** A [[Name]] link (from the workspace's top), or a markdown link to a .md file (from the linking note's folder), <with spaces> or not. */
+const LINK = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]|\[[^\]]*\]\(\s*(?:<([^>]+\.md)(?:#[^>]*)?>|([^)\s]+\.md)(?:#[^)\s]*)?)\s*\)/g;
 
 const trashChanged = StateEffect.define<null>();
 
@@ -15,8 +18,8 @@ const views = new Set<EditorView>();
 export const refreshTrashLinks = () => views.forEach((v) => v.dispatch({ effects: trashChanged.of(null) }));
 
 export interface LinkEnv {
-  /** The note a link's target names, if it's in Trash. */
-  inTrash(target: string): string | null;
+  /** The note a link's target names, from `from`'s folder (null: the workspace's top), if it's in Trash. */
+  inTrash(target: string, from: FilePath | null): string | null;
   restore(path: string): void;
 }
 
@@ -58,12 +61,13 @@ function decorate(view: EditorView, env: LinkEnv): DecorationSet {
     }
   };
   const doc = view.state.doc;
+  const note = view.state.facet(editorFile);
   for (const { from, to } of view.visibleRanges) {
     for (let n = Math.max(doc.lineAt(from).number, drawn + 1); n <= doc.lineAt(to).number; n++) {
       drawn = n;
       const line = doc.line(n);
       for (const m of line.text.matchAll(LINK)) {
-        const path = env.inTrash(target(m[1] ?? m[2]));
+        const path = m[1] !== undefined ? env.inTrash(target(m[1]), null) : env.inTrash(target(m[2] ?? m[3]), note);
         if (path) out.add(line.from + m.index + m[0].length, line.from + m.index + m[0].length, Decoration.widget({ widget: new InTrash(path, env), side: 1 }));
       }
     }
