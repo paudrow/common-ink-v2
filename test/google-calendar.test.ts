@@ -526,3 +526,32 @@ for (const [what, series, move] of moves) {
     });
   }
 }
+
+test("a series moved, synced, undone, synced and moved again by hand ends where its first move did, here and in Google", async () => {
+  const fake = new FakeGoogle();
+  fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
+  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  const month = { from: "2026-10-01T00:00:00-07:00", to: "2026-11-01T00:00:00-07:00", zone: LA };
+  const shown = async () => ((await op(store, "list_events", month)) as Occurrence[]).map((o) => `${o.start.slice(0, 16)} ${o.title}`);
+  const move = { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA };
+  await op(store, "sync_calendar", {});
+  const before = await shown();
+  const since = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  const moved = await shown();
+  const mine = store.files.recent({ limit: 100 }).filter((c) => c.revision > since && c.author.kind === "user").map((c) => c.revision);
+  const undone = (await op(store, "undo", { revisions: mine })) as Array<{ status: string }>;
+  assert.deepEqual(undone.filter((u) => u.status !== "undone"), []);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), before, "the undo, synced, is the series as it was");
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), moved);
+});
