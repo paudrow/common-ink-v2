@@ -133,7 +133,7 @@ browserTest(h, "a sandboxed extension's call is refused past a size, and writing
   await app.command("Run Biggy");
   const said = (await app.page.locator(".notice p", { hasText: "BIGGY" }).textContent())!;
   assert.deepEqual(JSON.parse(said.slice(said.indexOf("["))), [
-    "Biggy sent more than 2 MB in one call",
+    "Biggy sent more than 2,000,000 characters' worth in one call",
     "Biggy can't change its own state.json as a file: use ctx.state",
   ]);
   assert.equal(await app.readFile("Big.md"), "");

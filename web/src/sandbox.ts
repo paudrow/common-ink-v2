@@ -33,15 +33,20 @@ export function plainValue(v: unknown, depth = 0): boolean {
   return Object.getPrototypeOf(v) === Object.prototype && Object.values(v).every((x) => plainValue(x, depth + 1));
 }
 
-/** The most text one call from a frame may carry: twice what a file may hold. */
-const MAX_CALL_TEXT = 2_000_000;
+/** The most one call to or answer from a frame may carry, in characters as JSON would write it: twice what a file may hold. */
+const MAX_CALL = 2_000_000;
+/** How much a frame's calls may carry together in a moment, and how long that moment is. */
+const SHARE = 10_000_000;
+const SHARE_MS = 10_000;
 
-/** How much text a plain value holds, its keys included. */
-function textSize(v: unknown): number {
-  if (typeof v === "string") return v.length;
-  if (Array.isArray(v)) return v.reduce((n: number, x) => n + textSize(x), 0);
-  if (v && typeof v === "object") return Object.entries(v).reduce((n, [k, x]) => n + k.length + textSize(x), 0);
-  return 0;
+const counted = (n: number) => n.toLocaleString("en-US");
+
+/** About how many characters a plain value takes as JSON, its keys, numbers and commas included. */
+export function payloadSize(v: unknown): number {
+  if (typeof v === "string") return v.length + 2;
+  if (Array.isArray(v)) return v.reduce((n: number, x) => n + payloadSize(x) + 1, 2);
+  if (v && typeof v === "object") return Object.entries(v).reduce((n, [k, x]) => n + k.length + 4 + payloadSize(x), 2);
+  return String(v).length;
 }
 
 /** A frame's MessagePort, once its shell has loaded: the only way the app and the frame talk. */
@@ -66,6 +71,8 @@ export class SandboxHost {
   private frame: HTMLIFrameElement | null = null;
   private pending = new Map<string, Pending>();
   private next = 0;
+  /** What its calls carried lately, and when: its share of a moment. */
+  private sent: Array<{ at: number; size: number }> = [];
 
   constructor(
     private extension: ExtensionManifest,
@@ -99,7 +106,8 @@ export class SandboxHost {
         else if (m.t === "result" || m.t === "reject") {
           const p = this.pending.get(m.id!);
           this.pending.delete(m.id!);
-          if (m.t === "result") p?.resolve(m.value);
+          if (m.t === "result" && payloadSize(m.value) > MAX_CALL) p?.reject(new Error(`${this.extension.name} answered with more than ${counted(MAX_CALL)} characters' worth`));
+          else if (m.t === "result") p?.resolve(m.value);
           else p?.reject(new Error(m.message));
         }
       };
@@ -111,7 +119,12 @@ export class SandboxHost {
   private async answer(id: string, method: string, args: unknown[]) {
     try {
       if (typeof method !== "string" || !Array.isArray(args) || !args.every(plainValue)) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
-      if (textSize(args) > MAX_CALL_TEXT) throw new Error(`${this.extension.name} sent more than 2 MB in one call`);
+      const size = payloadSize(args);
+      if (size > MAX_CALL) throw new Error(`${this.extension.name} sent more than ${counted(MAX_CALL)} characters' worth in one call`);
+      const now = Date.now();
+      this.sent = this.sent.filter((s) => now - s.at < SHARE_MS);
+      if (this.sent.reduce((n, s) => n + s.size, size) > SHARE) throw new Error(`${this.extension.name} is sending too much at once: it can send ${counted(SHARE)} characters' worth every ${SHARE_MS / 1000} seconds`);
+      this.sent.push({ at: now, size });
       this.port!.postMessage({ t: "result", id, value: (await this.dispatch(method, args)) ?? null });
     } catch (err) {
       this.port!.postMessage({ t: "reject", id, message: (err as Error).message });
@@ -211,7 +224,8 @@ export class Webview {
       });
       port.onmessage = (e) => {
         const m = e.data as { type: string; data?: unknown; id?: number; height?: number; drawn?: WebviewStatus["drawn"] };
-        if (m.type === "message") onMessage(m.data);
+        // A webview's page is the extension's too: what it sends its extension is held to the size of a call.
+        if (m.type === "message" && payloadSize(m.data) <= MAX_CALL) onMessage(m.data);
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
         if (m.type === "loaded") {
           this.status.loaded = true;
