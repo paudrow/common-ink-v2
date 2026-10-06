@@ -13,6 +13,8 @@ export interface SafeFetchOptions {
   maxRedirects?: number;
   /** Keep the body's bytes too (`bytes`), for a picture. */
   binary?: boolean;
+  /** Whether a host may be reached: the first address's, and each redirect's to another origin (an extension's declared hosts, say). */
+  allowHost?: (host: string) => boolean;
   /** For tests: the fetch and DNS lookup to use. */
   fetcher?: typeof fetch;
   resolve?: (host: string) => Promise<string[]>;
@@ -37,7 +39,7 @@ const DEFAULTS = { maxBytes: 1_000_000, timeoutMs: 8_000, maxRedirects: 3 };
 export function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true;
-  const [a, b] = parts;
+  const [a, b, c] = parts;
   return (
     a === 0 ||
     a === 10 ||
@@ -45,7 +47,7 @@ export function isPrivateIPv4(ip: string): boolean {
     (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 0) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
     a >= 224
@@ -177,6 +179,7 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
   for (let hop = 0; ; hop++) {
     const refused = refuseUrl(url);
     if (refused) throw new FetchRefused(refused);
+    if (hop === 0 && o.allowHost && !o.allowHost(new URL(url).hostname)) throw new FetchRefused(`${new URL(url).hostname} isn't a host it may reach`);
     await checkResolved(new URL(url).hostname.toLowerCase(), resolve);
     let res: Response;
     try {
@@ -189,13 +192,24 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
     if (res.status >= 300 && res.status < 400 && location) {
       if (hop >= maxRedirects) throw new FetchRefused("Too many redirects");
       const next = new URL(location, url);
-      // A key meant for one site isn't handed to the next.
-      if (next.origin !== new URL(url).origin) headers = Object.fromEntries(Object.entries(headers).filter(([k]) => SAFE_HEADERS.test(k)));
-      url = next.toString();
       if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) [method, body] = ["GET", undefined];
+      if (next.origin !== new URL(url).origin) {
+        if (o.allowHost && !o.allowHost(next.hostname)) throw new FetchRefused(`It was sent on to ${next.hostname}, which it may not reach`);
+        // A body and a key meant for one site aren't handed to the next.
+        if (body !== undefined && method !== "GET" && method !== "HEAD") throw new FetchRefused(`It was sent on to ${next.hostname} with its body, which only a request to the same site may be`);
+        headers = Object.fromEntries(Object.entries(headers).filter(([k]) => SAFE_HEADERS.test(k)));
+      }
+      url = next.toString();
       continue;
     }
-    const { body: text, bytes, truncated } = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    let read: Awaited<ReturnType<typeof readCapped>>;
+    try {
+      read = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    } catch (err) {
+      if ((err as Error).name === "TimeoutError" || signal.aborted) throw new FetchRefused("It took too long");
+      throw new FetchRefused(`${new URL(url).host} stopped answering: ${(err as Error).message}`);
+    }
+    const { body: text, bytes, truncated } = read;
     return { url, status: res.status, headers: Object.fromEntries(res.headers), body: text, truncated, ...(o.binary ? { bytes } : {}) };
   }
 }

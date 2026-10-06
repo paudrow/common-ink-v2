@@ -156,7 +156,8 @@ export class DataSources {
   async disconnect(email: string): Promise<void> {
     const token = await this.opened(this.token(email));
     if (token && this.settings.google) {
-      await this.fetcher("https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) }).catch(() => {});
+      const signal = AbortSignal.timeout(3000);
+      await this.fetcher("https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }), signal }).catch(() => {});
     }
     this.db.run("DELETE FROM connections WHERE email = ? AND provider = 'google'", email);
   }

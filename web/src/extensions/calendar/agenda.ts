@@ -10,6 +10,8 @@ const CHUNK = 30;
 
 export class Agenda implements CalendarView {
   readonly root: HTMLElement;
+  /** Its listeners, let go of when it goes. */
+  private listening = new AbortController();
   private list: HTMLElement;
   private days = CHUNK;
   private onScreen: Occurrence[] = [];
@@ -28,7 +30,7 @@ export class Agenda implements CalendarView {
         this.days += CHUNK;
         this.draw();
       }
-    }, { passive: true });
+    }, { passive: true, signal: this.listening.signal });
     this.root.addEventListener("click", (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>(".cal-row");
       const o = row && this.onScreen.find((x) => x.address === row.dataset.address);
@@ -102,6 +104,7 @@ export class Agenda implements CalendarView {
   }
 
   destroy() {
+    this.listening.abort();
     this.root.remove();
   }
 }
