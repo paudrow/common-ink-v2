@@ -109,7 +109,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [] },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [] },
 });
 
 export interface HostOptions {

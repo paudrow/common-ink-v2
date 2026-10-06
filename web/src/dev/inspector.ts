@@ -154,9 +154,12 @@ export function makeInspector(app: DevApp, kept: Kept) {
             : null,
         vim: vimOf(view),
         layout: workbench.layout,
+        kept: workbench.kept(),
         windows: groups.map((g, i) => {
           const r = els[i]?.getBoundingClientRect();
-          return { id: g.id, focused: g.id === workbench.layout.focus, rect: r && { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }, tabs: workbench.tabs(g.id) };
+          // A window that doesn't fit the device's width is kept, not shown (workbench.ts): it has no size on screen.
+          const suspended = !!els[i] && !els[i].getClientRects().length;
+          return { id: g.id, focused: g.id === workbench.layout.focus, suspended, rect: r && { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }, tabs: workbench.tabs(g.id) };
         }),
         pending: workbench.pending(),
         save: { status: document.getElementById("save")?.dataset.status ?? "", text: document.getElementById("save")?.textContent ?? "" },

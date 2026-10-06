@@ -42,7 +42,7 @@ browserTest(h, "on a phone, an extension that needs a keyboard is off with why, 
   await app.page.keyboard.press("Escape");
   await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
   assert.deepEqual(await demoSaw(app), { width: "compact", keyboard: true }, "in, without a reload; and ctx.device answers in the sandbox");
-  assert.deepEqual((await app.state()).notices, ["Keyboard found: Keys demo and shortcuts are on here."]);
+  assert.deepEqual((await app.state()).notices, ["Keyboard found: Vim, Keys demo and shortcuts are on here."]);
   await app.page.waitForFunction(() => !document.querySelector('.extension-row[data-extension="keys-demo"] .extension-here'));
   await app.idle();
   assert.equal(JSON.parse(await app.readFile(devicePath("lever-phone"))).seen.keyboard, true, "kept once found");

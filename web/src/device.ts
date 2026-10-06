@@ -3,7 +3,7 @@
 // what was seen here and your overrides (worker/src/devices.ts). A keyboard is assumed on a desktop,
 // found elsewhere the first time a key a touch screen's keyboard doesn't send arrives, and kept once
 // found. The `device` lever stands in for a phone, a tablet or a laptop, and frames the page to its size.
-import { deviceName, devicePath, deviceText, parseDeviceFile, widthClassOf, atLeast, type DeviceFile, type Facts, type KeyboardChoice, type Override, type WidthClass } from "../../worker/src/devices.ts";
+import { deviceLayoutPath, deviceName, devicePath, deviceText, parseDeviceFile, widthClassOf, atLeast, type DeviceFile, type Facts, type KeyboardChoice, type Override, type WidthClass } from "../../worker/src/devices.ts";
 import type { FilePath, Revision, WriteResult } from "../../worker/src/files.ts";
 
 export type Preset = "phone" | "tablet" | "laptop";
@@ -67,6 +67,8 @@ export type DeviceReader = Pick<Device, "facts" | "override" | "has" | "atLeast"
 export class Device {
   readonly id: string | null;
   readonly path: FilePath | null;
+  /** This device's own layout of windows and tabs. */
+  readonly layoutPath: FilePath | null;
   readonly preset: Preset | null;
   /** The file as this browser has it: kept in step with device.json, and written when it changes. */
   file: DeviceFile;
@@ -82,6 +84,7 @@ export class Device {
     this.preset = o.preset;
     this.id = deviceId(o.preset);
     this.path = o.me && this.id ? devicePath(o.me, this.id) : null;
+    this.layoutPath = o.me && this.id ? deviceLayoutPath(o.me, this.id) : null;
     const root = o.root ?? document.documentElement;
     if (o.preset) {
       root.dataset.deviceFrame = o.preset;

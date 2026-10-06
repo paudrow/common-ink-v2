@@ -127,6 +127,20 @@ body {
   flex: var(--share, 1) 1 0;
 }
 
+/* What doesn't fit this device's width is put away, not closed (workbench.ts): windows side by side
+   need 840px and tabs 600px. The focused window fills the area; the rest stay in the page, and in the layout. */
+#workbench[data-no-splits] .group:not(.focused),
+#workbench[data-no-splits] .split:not(:has(.group.focused)),
+#workbench[data-no-splits] .resizer,
+#workbench[data-no-tabs] .tabs,
+#workbench[data-no-tabs] .insert,
+#workbench[data-no-tabs] .nav-arrows {
+  display: none;
+}
+#workbench[data-no-splits] .split > * {
+  flex: 1 1 0;
+}
+
 .split.row {
   flex-direction: row;
 }
