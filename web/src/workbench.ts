@@ -441,7 +441,8 @@ export class Workbench {
     if (open) return open;
     const fetched = await this.net.read(path);
     // An edit this browser couldn't send before: it picks up where it left off, on its old base.
-    const held = await this.net.unsentFor(path);
+    // Or one typed here that the page went before saving: kept as it was typed.
+    const held = (await this.net.unsentFor(path)) ?? (await this.net.draftFor(path));
     const again = this.files.get(path);
     if (again) return again;
     const startText = held?.text ?? fetched.text;
@@ -483,7 +484,7 @@ export class Workbench {
       const unsent = file.session.unsaved;
       if (unsent) void this.net.hold(unsent);
     }
-    if (status === "saved" && !file.session.dirty) void this.net.release(file.path);
+    if (status === "saved" && !file.session.dirty) void this.net.release(file.path).then(() => this.net.dropDraft(file.path));
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
@@ -507,6 +508,8 @@ export class Workbench {
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
     file.session.edited();
+    const draft = file.session.unsaved;
+    if (draft) void this.net.keepDraft(draft);
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);

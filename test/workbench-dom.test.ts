@@ -26,6 +26,9 @@ async function workbench(layout: unknown, notes: Record<string, string> = {}) {
   const net = {
     read: async (path: string) => ({ path, ...(files.get(path) ?? { text: `# ${path}`, revision: 1 }) }),
     unsentFor: async () => null,
+    draftFor: async () => undefined,
+    keepDraft: async () => {},
+    dropDraft: async () => {},
     write: async (path: string, text: string, base: number) => {
       files.set(path, { text, revision: base + 1 });
       return { status: "saved", file: { path, text, revision: base + 1 } };

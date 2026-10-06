@@ -49,6 +49,9 @@ export const unreachable = (err: unknown) => err instanceof TypeError || (err as
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 
+/** Where a note's unsaved edit is kept, by path, as the page goes. */
+const DRAFT = "common-ink.draft:";
+
 export class Offline {
   /** Whether the last request reached the server. */
   online = true;
@@ -200,6 +203,50 @@ export class Offline {
 
   unsentFor(path: FilePath): Promise<Unsent | undefined> {
     return this.kv.get<Unsent>("unsent", path);
+  }
+
+  /**
+   * Keep what an open note's editor has that isn't saved yet, as it's typed: a page that goes before
+   * its save does (a reload, a closed tab, its last request lost) finds it here when the note opens
+   * again. Quietly: it isn't waiting to be sent, it's only kept.
+   */
+  keepDraft(unsent: Unsent): Promise<void> {
+    return this.kv.set("meta", `draft:${unsent.path}`, unsent);
+  }
+
+  /**
+   * Keep unsaved edits at once, as the page goes. IndexedDB's writes may not finish before it's gone;
+   * localStorage's do.
+   */
+  keepDraftsNow(drafts: Unsent[]): void {
+    for (const d of drafts) {
+      try {
+        localStorage.setItem(`${DRAFT}${d.path}`, JSON.stringify(d));
+      } catch {
+        // Full, or not allowed: the draft kept as it was typed is the one there is.
+      }
+    }
+  }
+
+  /** The note's edit that wasn't saved: kept as the page went, or else as it was typed. */
+  async draftFor(path: FilePath): Promise<Unsent | undefined> {
+    try {
+      const kept = localStorage.getItem(`${DRAFT}${path}`);
+      if (kept) return JSON.parse(kept) as Unsent;
+    } catch {
+      // Not there, or not readable: the one kept as it was typed.
+    }
+    return this.kv.get<Unsent>("meta", `draft:${path}`);
+  }
+
+  /** The note is saved: its kept edit can go. */
+  async dropDraft(path: FilePath): Promise<void> {
+    try {
+      localStorage.removeItem(`${DRAFT}${path}`);
+    } catch {
+      // Nothing kept there.
+    }
+    await this.kv.del("meta", `draft:${path}`);
   }
 
   /**

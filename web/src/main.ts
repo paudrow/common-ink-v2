@@ -713,7 +713,10 @@ void learnLayout();
 
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
-  for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
+  const unsaved = workbench.unsaved();
+  // Kept first, where it's sure to be written: the request may never arrive.
+  offline.keepDraftsNow(unsaved);
+  for (const u of unsaved) void api.write(u.path, u.text, u.base, true).catch(() => {});
 });
 
 // The app's own files, kept by a service worker so it opens offline.
