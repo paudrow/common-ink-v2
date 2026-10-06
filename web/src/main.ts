@@ -1,6 +1,7 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
 import { mediaHooks, whenHiddenOf } from "./media.ts";
+import { resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
@@ -388,6 +389,7 @@ commands.register(
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
+  { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },

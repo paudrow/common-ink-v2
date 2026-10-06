@@ -40,7 +40,7 @@ interface Live {
   played: boolean;
   /** The floating window's bar, made the first time it floats. */
   bar?: HTMLElement;
-  /** Where its floating window is, from the page's bottom right corner. */
+  /** Where its floating window was put, from the page's bottom right corner: it shows there, or as near as the page allows. */
   corner?: Corner;
 }
 
@@ -50,23 +50,39 @@ interface Corner {
 }
 
 const FLOAT = "common-ink.media-float";
+/** Where a floating window goes first: above the mini player. Each more window floating goes this much above the last. */
+const HOME: Corner = { right: 16, bottom: 88 };
+const STACK = 220;
+/** How far an arrow key moves a floating window (with Shift, four times as far). */
+const NUDGE = 16;
+
 /** Where a floating window goes: where the last one was dragged to, or above the mini player. */
 function floatCorner(): Corner {
   try {
     const c = JSON.parse(localStorage.getItem(FLOAT) ?? "null") as Corner | null;
-    if (c && Number.isFinite(c.right) && Number.isFinite(c.bottom)) return c;
+    if (c && Number.isFinite(c.right) && Number.isFinite(c.bottom)) return { right: c.right, bottom: c.bottom };
   } catch {
     // Without storage, it goes to the usual place.
   }
-  return { right: 16, bottom: 88 };
+  return HOME;
 }
-function keepCorner(c: Corner) {
+function keepCorner(c: Corner | null) {
   try {
-    localStorage.setItem(FLOAT, JSON.stringify(c));
+    if (c) localStorage.setItem(FLOAT, JSON.stringify(c));
+    else localStorage.removeItem(FLOAT);
   } catch {
     // Kept for this page only.
   }
 }
+
+/**
+ * A floating window's spot, kept on the page: all of it, or, on a page smaller than it, its top left
+ * (where its bar is). Whatever asked for the spot (a drag, a spot kept from a bigger window, the stack).
+ */
+export function onPage(c: Corner, size: { width: number; height: number }, page: { width: number; height: number }): Corner {
+  return { right: Math.min(Math.max(c.right, 0), page.width - size.width), bottom: Math.min(Math.max(c.bottom, 0), page.height - size.height) };
+}
+
 /** Every floating window, in the order they started floating: each new one goes above the last. */
 const floating = new Set<HTMLElement>();
 
@@ -379,7 +395,7 @@ export class Lives {
     if (!floating.has(el)) {
       // Each new window goes above the ones already floating.
       const base = floatCorner();
-      live.corner = { right: base.right, bottom: base.bottom + [...floating].filter((f) => f.isConnected).length * 220 };
+      live.corner = { right: base.right, bottom: base.bottom + [...floating].filter((f) => f.isConnected).length * STACK };
       floating.add(el);
     }
     if (!live.bar) live.bar = this.floatBar(key, live);
@@ -392,8 +408,30 @@ export class Lives {
     if (note.textContent !== name) note.textContent = name;
     el.classList.remove("is-hidden");
     el.classList.add("is-floating");
-    el.style.right = `${live.corner!.right}px`;
-    el.style.bottom = `${live.corner!.bottom}px`;
+    this.pin(live);
+  }
+
+  /** Put a floating window where it was put, kept on the page. */
+  private pin(live: Live) {
+    const at = onPage(live.corner!, { width: live.el.offsetWidth, height: live.el.offsetHeight }, { width: innerWidth, height: innerHeight });
+    const [r, b] = [`${at.right}px`, `${at.bottom}px`];
+    if (live.el.style.right !== r) live.el.style.right = r;
+    if (live.el.style.bottom !== b) live.el.style.bottom = b;
+  }
+
+  /** Move a floating window to a spot (kept on the page), and float the next one there. */
+  private moveFloat(live: Live, to: Corner) {
+    live.corner = onPage(to, { width: live.el.offsetWidth, height: live.el.offsetHeight }, { width: innerWidth, height: innerHeight });
+    this.pin(live);
+  }
+
+  /** Floating windows back where they first go, stacked above the mini player; the next one floats there too. */
+  resetFloats(n: { stacked: number }) {
+    for (const live of this.lives.values()) {
+      if (!live.floating) continue;
+      live.corner = { right: HOME.right, bottom: HOME.bottom + n.stacked++ * STACK };
+      this.pin(live);
+    }
   }
 
   /** Back in the note, over its slot. */
@@ -410,7 +448,10 @@ export class Lives {
     const bar = document.createElement("div");
     bar.className = "media-float-bar";
     bar.setAttribute("role", "group");
-    bar.setAttribute("aria-label", "Floating video");
+    bar.setAttribute("aria-label", "Floating video: drag it, or move it with the arrow keys; Home puts it back in the corner");
+    bar.title = "Drag to move · double-click to put it back in the corner";
+    // Reached with Tab: the arrow keys move it, as a drag does.
+    bar.tabIndex = 0;
     const label = document.createElement("span");
     label.className = "label";
     const title = document.createElement("span");
@@ -436,15 +477,10 @@ export class Lives {
       if ((e.target as HTMLElement).closest("button") || e.button !== 0) return;
       e.preventDefault();
       bar.setPointerCapture(e.pointerId);
-      const from = { x: e.clientX, y: e.clientY, ...live.corner! };
-      const move = (m: PointerEvent) => {
-        const rect = live.el.getBoundingClientRect();
-        const right = Math.min(Math.max(from.right - (m.clientX - from.x), 0), innerWidth - rect.width);
-        const bottom = Math.min(Math.max(from.bottom - (m.clientY - from.y), 0), innerHeight - rect.height);
-        live.corner = { right, bottom };
-        live.el.style.right = `${right}px`;
-        live.el.style.bottom = `${bottom}px`;
-      };
+      // From where it shows, which may be nearer than where it was put, on a smaller page.
+      const shown = live.el.getBoundingClientRect();
+      const from = { x: e.clientX, y: e.clientY, right: innerWidth - shown.right, bottom: innerHeight - shown.bottom };
+      const move = (m: PointerEvent) => this.moveFloat(live, { right: from.right - (m.clientX - from.x), bottom: from.bottom - (m.clientY - from.y) });
       const up = () => {
         bar.removeEventListener("pointermove", move);
         bar.removeEventListener("pointerup", up);
@@ -454,6 +490,23 @@ export class Lives {
       bar.addEventListener("pointermove", move);
       bar.addEventListener("pointerup", up);
       bar.addEventListener("pointercancel", up);
+    });
+    bar.addEventListener("dblclick", (e) => {
+      if (!(e.target as HTMLElement).closest("button")) resetFloats();
+    });
+    bar.addEventListener("keydown", (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "Home") {
+        e.preventDefault();
+        return resetFloats();
+      }
+      const by = e.shiftKey ? NUDGE * 4 : NUDGE;
+      const step = ({ ArrowLeft: [by, 0], ArrowRight: [-by, 0], ArrowUp: [0, by], ArrowDown: [0, -by] } as Record<string, [number, number]>)[e.key];
+      if (!step) return;
+      e.preventDefault();
+      const shown = live.el.getBoundingClientRect();
+      this.moveFloat(live, { right: innerWidth - shown.right + step[0], bottom: innerHeight - shown.bottom + step[1] });
+      keepCorner(live.corner!);
     });
     return bar;
   }
@@ -564,6 +617,16 @@ export class Lives {
 const byView = new WeakMap<EditorView, Lives>();
 /** Every keeper, its editor open or not. */
 const all = new Set<Lives>();
+
+/** Put every floating window back above the mini player, and forget the spot they were dragged to. */
+export function resetFloats() {
+  keepCorner(null);
+  const n = { stacked: 0 };
+  for (const lives of all) lives.resetFloats(n);
+}
+
+// The page resized: floating windows stay on it (and go back toward where they were put, as it grows).
+if (typeof addEventListener !== "undefined") addEventListener("resize", () => all.forEach((l) => l.place()));
 
 // What plays changed: a video that started or stopped may float, dock or go.
 if (typeof queueMicrotask !== "undefined")

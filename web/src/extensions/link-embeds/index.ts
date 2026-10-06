@@ -132,10 +132,12 @@ export default {
 
     // Posts say how tall they are by message, and players whether they play: each goes to its own frame.
     const sizes = new Map<Window, (height: number) => void>();
-    const players = new WeakMap<Window, (data: unknown) => void>();
+    const players = new WeakMap<Window, { origin: string; heard(data: unknown): void }>();
     window.addEventListener("message", (e) => {
       const from = e.source as Window | null;
-      const player = from && players.get(from);
+      // A player is heard only from its site: its frame may have gone to another page since.
+      const found = from && players.get(from);
+      const player = found && e.origin === found.origin ? found.heard : null;
       const resize = from && sizes.get(from);
       if (!player && !resize) return;
       let data: unknown = e.data;
@@ -165,10 +167,13 @@ export default {
         const from = frame.contentWindow;
         if (!from) return;
         let heard = false;
-        players.set(from, (data) => {
-          heard = true;
-          const said = p.heard(data);
-          if (said) media.set(said);
+        players.set(from, {
+          origin: p.origin,
+          heard: (data) => {
+            heard = true;
+            const said = p.heard(data);
+            if (said) media.set(said);
+          },
         });
         if (!p.hello) return;
         let tries = 0;

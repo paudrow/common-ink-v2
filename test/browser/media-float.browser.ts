@@ -89,22 +89,33 @@ async function waitFor(yes: () => Promise<boolean>, what: string) {
   assert.fail(`waited for: ${what}`);
 }
 
+/**
+ * Press a fake player's Play, as a person would, once the page in its frame has started its player.
+ * Chrome can drop the first click into a frame from another site just after it's drawn: press again.
+ */
+async function press(app: App, frame: string, playing: string) {
+  await app.page.locator(frame).first().waitFor();
+  const f = (await (await app.page.$(frame))!.contentFrame())!;
+  await f.waitForFunction(() => "player" in window);
+  for (let tries = 0; ; tries++) {
+    await app.page.frameLocator(frame).first().locator("#play").click();
+    const on = await f.waitForFunction(playing, null, { timeout: 3000 }).then(() => true, () => false);
+    if (on) return;
+    if (tries === 3) assert.fail(`${frame}: its player never started`);
+  }
+}
+const VIDEO_PLAYS = "window.player.state === 1";
+const TRACK_PLAYS = "window.player.paused === false";
+
 /** Open the video's note, and press its player's Play, as a person would. */
 async function playVideo(app: App) {
   await app.writeFile("Video.md", NOTE);
   await app.goto({}, "Video");
   await app.page.locator(FRAME).waitFor();
-  await app.page.frameLocator(FRAME).locator("#play").waitFor();
+  // Watched from once the page in its frame has loaded.
+  await (await (await app.page.$(FRAME))!.contentFrame())!.waitForFunction(() => "player" in window);
   await app.page.evaluate(WATCH);
-  // Pressed once it's ready: the page in the frame has started its player.
-  const f = await (await app.page.$(FRAME))!.contentFrame();
-  await f!.waitForFunction(() => "player" in window);
-  // Chrome can drop the first click into a frame from another site just after it's drawn: press again.
-  for (let tries = 0; ; tries++) {
-    await app.page.frameLocator(FRAME).locator("#play").click();
-    const on = await f!.waitForFunction(() => (window as unknown as { player: { state: number } }).player.state === 1, null, { timeout: 3000 }).then(() => true, () => false);
-    if (on || tries === 3) break;
-  }
+  await press(app, FRAME, VIDEO_PLAYS);
   // The app hears it: the mini player names it, by the title the player gave, and its note.
   await app.page.waitForFunction(() => /Fake video/.test(document.querySelector(".mini-player:not([hidden])")?.textContent ?? ""));
 }
@@ -225,7 +236,7 @@ browserTest(h, "a playing track doesn't float: it plays on unseen, in the mini p
   const TRACK = '.cm-url-embed[data-url-embed="spotify"] iframe';
   await app.writeFile("Track.md", "# Track\n\nhttps://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC\n");
   await app.goto({}, "Track");
-  await app.page.frameLocator(TRACK).locator("#play").click();
+  await press(app, TRACK, TRACK_PLAYS);
   await app.page.waitForFunction(() => /Spotify track/.test(document.querySelector(".mini-player:not([hidden])")?.textContent ?? ""));
   await openWelcomeInNewTab(app);
   await app.page.waitForTimeout(300);
@@ -254,4 +265,103 @@ browserTest(h, 'with "media.whenHidden": "keepPlaying", a video plays on unseen;
   await waitFor(async () => (await video(app)).state === 2, "pause: it pauses");
   assert.equal(await app.page.locator(`${BOX}.is-floating`).count(), 0, "pause: it doesn't float");
   await app.writeFile(".common-ink/settings.json", "{}\n");
+});
+
+/** Where each floating window is, and whether all of it is on the page. */
+const floats = (app: App) =>
+  app.page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".cm-embed.is-floating")].map((box) => {
+      const r = box.getBoundingClientRect();
+      return { top: Math.round(r.top) + 0, left: Math.round(r.left) + 0, onPage: r.top >= -0.5 && r.left >= -0.5 && r.bottom <= innerHeight + 0.5 && r.right <= innerWidth + 0.5 };
+    }),
+  );
+
+browserTest(h, "a floating window stays on the page: dragged to a corner and the page made smaller, a spot kept from a bigger page, and windows stacked", { sites: SITES, viewport: { width: 1400, height: 900 } }, async (app) => {
+  await playVideo(app);
+  await openWelcomeInNewTab(app);
+  await floating(app, true);
+  // Dragged to the top left, then the page made smaller: it stays on it, all of it.
+  const bar = (await app.page.locator(`${BOX} .media-float-bar .label`).boundingBox())!;
+  await app.page.mouse.move(bar.x + 10, bar.y + 10);
+  await app.page.mouse.down();
+  await app.page.mouse.move(5, 5, { steps: 8 });
+  await app.page.mouse.up();
+  assert.deepEqual(await floats(app), [{ top: 0, left: 0, onPage: true }], "dragged to the top left corner");
+  await app.page.setViewportSize({ width: 900, height: 600 });
+  await waitFor(async () => (await floats(app)).every((f) => f.onPage), "on the smaller page");
+  assert.deepEqual(await floats(app), [{ top: 0, left: 0, onPage: true }], "the smaller page: still in its corner");
+  // Grown again, it's where it was put.
+  await app.page.setViewportSize({ width: 1400, height: 900 });
+  await waitFor(async () => (await floats(app))[0]?.top === 0 && (await floats(app))[0]?.left === 0, "where it was put");
+
+  // A spot kept from a bigger page, on a small one: on the page.
+  await app.page.evaluate(() => localStorage.setItem("common-ink.media-float", JSON.stringify({ right: 1080, bottom: 677.53 })));
+  await app.page.setViewportSize({ width: 800, height: 500 });
+  await playVideo(app);
+  await openWelcomeInNewTab(app);
+  await floating(app, true);
+  await waitFor(async () => (await floats(app)).every((f) => f.onPage), "a spot kept from a bigger page");
+  assert.equal((await floats(app)).length, 1);
+});
+
+browserTest(h, "three windows floating at once are all on the page, their bars in reach", { sites: SITES, viewport: { width: 1200, height: 700 } }, async (app) => {
+  const ids = ["aqz-KE-bpKQ", "YE7VzlLtp-4", "eRsGyueVLvQ"];
+  await app.writeFile("Three.md", `# Three\n\n${ids.map((id) => `https://www.youtube.com/watch?v=${id}`).join("\n\n")}\n`);
+  await app.goto({}, "Three");
+  for (let i = 0; i < 3; i++) await press(app, `${BOX} >> nth=${i} >> iframe`, VIDEO_PLAYS);
+  await waitFor(async () => (await app.page.locator(".mini-player:not([hidden])").count()) === 1, "the mini player");
+  await openWelcomeInNewTab(app);
+  await waitFor(async () => (await floats(app)).length === 3, "three floating");
+  const all = await floats(app);
+  assert.ok(all.every((f) => f.onPage), `all on the page: ${JSON.stringify(all)}`);
+});
+
+browserTest(h, "a floating window moves with the arrow keys from its bar, and Home, a double-click or Reset floating video position put it back", { sites: SITES }, async (app) => {
+  await playVideo(app);
+  await openWelcomeInNewTab(app);
+  await floating(app, true);
+  const home = (await floats(app))[0];
+  await app.page.locator(`${BOX} .media-float-bar`).focus();
+  await app.page.keyboard.press("ArrowLeft");
+  await app.page.keyboard.press("ArrowUp");
+  await app.page.keyboard.press("Shift+ArrowUp");
+  const moved = (await floats(app))[0];
+  assert.deepEqual([home.left - moved.left, home.top - moved.top], [16, 80], "16px a key, 64 with Shift");
+  assert.equal((await video(app)).state, 1, "moving it doesn't stop it");
+  await app.page.keyboard.press("Home");
+  assert.deepEqual((await floats(app))[0], home, "Home: back in the corner");
+  await app.page.keyboard.press("ArrowLeft");
+  await app.page.locator(`${BOX} .media-float-bar .label`).dblclick();
+  assert.deepEqual((await floats(app))[0], home, "a double-click: back in the corner");
+  await app.page.keyboard.press("ArrowLeft");
+  await app.command("Reset floating video position");
+  await waitFor(async () => JSON.stringify((await floats(app))[0]) === JSON.stringify(home), "Reset floating video position");
+  assert.equal(await app.page.evaluate(() => localStorage.getItem("common-ink.media-float")), null, "and the spot is forgotten");
+  assert.deepEqual(await watched(app), untouched);
+});
+
+/** A page on another site the app may frame, posting what a player would: playing, with a title. */
+const IMPOSTOR = `<!doctype html><script>
+  window.posted = 0;
+  const send = () => {
+    window.posted++;
+    parent.postMessage(JSON.stringify({ event: "onStateChange", info: 1 }), "*");
+    parent.postMessage(JSON.stringify({ event: "infoDelivery", info: { playerState: 1, videoData: { title: "Impostor" } } }), "*");
+    parent.postMessage({ type: "playback_update", payload: { isPaused: false } }, "*");
+  };
+  send();
+  setInterval(send, 100);
+</script>`;
+
+browserTest(h, "a player is heard only from its own site: its frame sent to another site the app frames can't say it plays", { sites: { ...SITES, "platform.twitter.com": IMPOSTOR } }, async (app) => {
+  await app.writeFile("Video.md", NOTE);
+  await app.goto({}, "Video");
+  const f = (await (await app.page.$(FRAME))!.contentFrame())!;
+  await f.waitForFunction(() => "player" in window);
+  // The frame goes to a page on X's site (one the page's policy lets it frame), in the same frame.
+  await f.evaluate(() => (location.href = "https://platform.twitter.com/impostor")).catch(() => {});
+  const impostor = async () => (await (await app.page.$(FRAME))!.contentFrame())?.evaluate(() => (window as unknown as { posted?: number }).posted ?? 0).catch(() => 0);
+  await waitFor(async () => ((await impostor()) ?? 0) > 5, "the impostor has said it plays, again and again");
+  assert.equal(await app.page.locator(".mini-player:not([hidden])").count(), 0, "nothing plays, as far as the app knows");
+  assert.equal(await app.page.evaluate(() => document.body.innerText.includes("Impostor")), false, "its title shows nowhere");
 });

@@ -613,28 +613,36 @@ export class ExtensionRuntime {
           );
         },
       },
-      media: {
-        session: (spec) => {
-          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play media`);
-          return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
-        },
-        current: () => {
-          const s = currentMedia();
-          return s && mediaInfo(s);
-        },
-        onChange: (fn) => void onMedia(guard(fn)),
-        play: (id) => mediaSession(id)?.play(),
-        pause: (id) => mediaSession(id)?.pause(),
-        stop: (id) => {
-          const s = mediaSession(id);
-          if (s) stopMedia(s);
-        },
-        reveal: (id) => {
-          const s = mediaSession(id);
-          if (s?.el) revealMedia(s);
-          else if (s?.note) void app.workbench.open(s.note);
-        },
-      },
+      media: (() => {
+        // Every part of it needs the media permission, as the manifest says.
+        const may = () => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play or control media`);
+        };
+        const of = (id: number) => (may(), mediaSession(id));
+        return {
+          session: (spec) => {
+            may();
+            return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+          },
+          current: () => {
+            may();
+            const s = currentMedia();
+            return s && mediaInfo(s);
+          },
+          onChange: (fn) => (may(), void onMedia(guard(fn))),
+          play: (id) => of(id)?.play(),
+          pause: (id) => of(id)?.pause(),
+          stop: (id) => {
+            const s = of(id);
+            if (s) stopMedia(s);
+          },
+          reveal: (id) => {
+            const s = of(id);
+            if (s?.el) revealMedia(s);
+            else if (s?.note) void app.workbench.open(s.note);
+          },
+        };
+      })(),
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
