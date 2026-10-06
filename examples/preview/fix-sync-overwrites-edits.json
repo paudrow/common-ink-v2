@@ -1,0 +1,7 @@
+{
+  "pr": 44,
+  "title": "Edits made while the calendar syncs stay as made",
+  "steps": [
+    "A Preview's Sample calendar doesn't sync, so this shows with `npm run dev -- --fake-google`. ⌘⇧P, Show calendar, then rename an event straight away, while the calendar is still syncing. The new name stays, and Google has it after the next sync."
+  ]
+}
