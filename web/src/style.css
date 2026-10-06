@@ -2010,6 +2010,8 @@ iframe.webview {
 
 @media (prefers-reduced-motion: reduce) {
   .cal-scroll, .cal-strip { scroll-behavior: auto; }
+  /* The network dot shows steadily instead of pulsing. */
+  #net-activity { animation: none; }
 }
 
 /* An event link in a note, drawn as its day, time and title (links.ts). */
