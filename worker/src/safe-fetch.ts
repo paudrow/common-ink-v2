@@ -13,7 +13,7 @@ export interface SafeFetchOptions {
   maxRedirects?: number;
   /** Keep the body's bytes too (`bytes`), for a picture. */
   binary?: boolean;
-  /** Whether a host may be reached, checked again on every redirect (an extension's declared hosts, say). */
+  /** Whether a host may be reached: the first address's, and each redirect's to another origin (an extension's declared hosts, say). */
   allowHost?: (host: string) => boolean;
   /** For tests: the fetch and DNS lookup to use. */
   fetcher?: typeof fetch;
@@ -179,6 +179,7 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
   for (let hop = 0; ; hop++) {
     const refused = refuseUrl(url);
     if (refused) throw new FetchRefused(refused);
+    if (hop === 0 && o.allowHost && !o.allowHost(new URL(url).hostname)) throw new FetchRefused(`${new URL(url).hostname} isn't a host it may reach`);
     await checkResolved(new URL(url).hostname.toLowerCase(), resolve);
     let res: Response;
     try {
