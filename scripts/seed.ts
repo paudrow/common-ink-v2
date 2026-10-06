@@ -101,7 +101,10 @@ export function fillDates(text: string, today: string): string {
   });
 }
 
-export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
+/** Today here, as the page has it: in CI that's UTC's; on your machine, your own. */
+const localToday = () => new Date().toLocaleDateString("en-CA");
+
+export function buildSeed(sections: Section[], pr: PullRequest, today = localToday()): Seed {
   const notes = [
     // Kept as you edit them, unless the PR changes them (Files.seed tells).
     ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, path: fillDates(n.path, today), text: fillDates(n.text, today), replace: false }))),
@@ -150,7 +153,7 @@ export function readScenarios(dir: string, catalog = path.join(dir, "../../web/p
 }
 
 /** A scenario's seed: its sections' notes and its own, dated from its clock, opening on its note. */
-export function scenarioSeed(scenario: Scenario, sections: Section[], today = new Date().toISOString().slice(0, 10)): Seed {
+export function scenarioSeed(scenario: Scenario, sections: Section[], today = localToday()): Seed {
   const picked = scenario.sections.map((slug) => {
     const section = sections.find((s) => s.slug === slug);
     if (!section) throw new Error(`Scenario ${scenario.name}: no examples/preview/${slug}.json`);

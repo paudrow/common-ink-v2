@@ -56,7 +56,7 @@ const base64 = (bytes: Uint8Array) => {
 };
 
 /** A link's card, its page and picture fetched safely. */
-export async function linkCard(url: string, options: Pick<SafeFetchOptions, "fetcher" | "resolve"> = {}): Promise<LinkCard> {
+export async function linkCard(url: string, options: Pick<SafeFetchOptions, "fetcher" | "resolve" | "allowHost"> = {}): Promise<LinkCard> {
   const page = await safeFetch(url, { ...options, maxBytes: 512_000, headers: { Accept: "text/html,application/xhtml+xml" } });
   const type = page.headers["content-type"] ?? "";
   if (page.status !== 200 || !/html/i.test(type)) return { url, title: new URL(url).hostname, description: "", site: new URL(url).hostname.replace(/^www\./, ""), image: null };
