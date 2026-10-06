@@ -5,6 +5,8 @@ import { test } from "node:test";
 import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
+import { GoogleCalendar } from "../worker/src/google-calendar.ts";
+import { Refusal } from "../worker/src/adapter.ts";
 import type { GoogleEvent } from "../worker/src/google-calendar.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { recordPath } from "../worker/src/records.ts";
@@ -217,6 +219,18 @@ test("edits made at once go to Google once each, in order", async () => {
     fake.calls.slice(before).filter((c) => !c.startsWith("POST /token")),
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
+});
+
+test("a Google call that never answers fails after the timeout, so the edit waits in the outbox instead of holding up the rest", async () => {
+  const hung: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+  const adapter = new GoogleCalendar({ clientId: "c", clientSecret: "s" }, async () => "refresh", hung, Date.now, 50);
+  const event = { id: "dentist", calendar: "primary", title: "Dentist", status: "confirmed" as const, allDay: false as const, start: "2026-10-06T14:30:00", end: "2026-10-06T15:15:00" };
+  const started = Date.now();
+  // Node doesn't wait on AbortSignal.timeout's timer by itself.
+  const alive = setInterval(() => {}, 10);
+  await assert.rejects(adapter.push({ op: "put", event, created: false }, null), (err: Error) => !(err instanceof Refusal) && err.message === "Google didn't answer within 0.05 seconds").finally(() => clearInterval(alive));
+  assert.ok(Date.now() - started < 1000);
 });
 
 test("moving a whole series a day moves changed occurrences next to each other along, and Google keeps both", async () => {
