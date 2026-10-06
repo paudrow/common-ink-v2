@@ -121,14 +121,38 @@ export const rememberedHeight = (key: string): number => heights().get(key) ?? b
 /** Each slot's keeper, for a widget's destroy, which only gets its DOM. */
 const owners = new WeakMap<HTMLElement, Lives>();
 
+/** How many frames the editor holds still after a change before its boxes stop being watched. */
+const STILL = 10;
+
+/** What a box inherited from the editor's content, where CodeMirror drew widgets: kept so it looks the same here. */
+const INHERITED = ["font-family", "font-size", "line-height", "color", "letter-spacing", "white-space", "word-break", "overflow-wrap", "tab-size"];
+
+/** What the app does when an embed's box is used. main.ts sets it. */
+export const embedHooks: {
+  /** Focus came into a box: its editor's window is the focused one, as if the box were in it. */
+  focused(view: EditorView): void;
+} = { focused: () => {} };
+
 /** The document's layer for embeds' boxes: above the editors, below menus, the command bar and dialogs. */
 let appLayer: HTMLElement | null = null;
 function documentLayer(): HTMLElement {
   if (appLayer?.isConnected) return appLayer;
-  appLayer = document.createElement("div");
-  appLayer.className = "embed-layer";
-  document.body.append(appLayer);
-  return appLayer;
+  const layer = (appLayer = document.createElement("div"));
+  layer.className = "embed-layer";
+  document.body.append(layer);
+  // While something is dragged in from outside the boxes (a tab, a note, a file), they let it through to
+  // the window under them, which shows where it will land. A drag inside a box (a board's card) stays its own.
+  const through = (on: boolean) => layer.classList.toggle("is-passing", on);
+  document.addEventListener("dragstart", (e) => through(!layer.contains(e.target as Node)), true);
+  document.addEventListener("dragenter", (e) => {
+    if (!e.relatedTarget && e.dataTransfer?.types.includes("Files")) through(true);
+  }, true);
+  // Dragged off the page: a file's drag ends there (a tab's ends with dragend).
+  document.addEventListener("dragleave", (e) => {
+    if (!e.relatedTarget && e.dataTransfer?.types.includes("Files")) through(false);
+  }, true);
+  for (const end of ["dragend", "drop"]) document.addEventListener(end, () => through(false), true);
+  return layer;
 }
 
 export class Lives {
@@ -199,6 +223,8 @@ export class Lives {
     this.ready?.observe(this.layer, { subtree: true, attributes: true, attributeFilter: ["data-pending"] });
     // A wheel over a frame scrolls this layer: the note scrolls with it.
     this.scroller.addEventListener("scroll", this.fromLayer, { passive: true });
+    // Focus in a box (a click on its button, into its frame) is focus in its editor's window.
+    this.scroller.addEventListener("focusin", () => this.view && embedHooks.focused(this.view));
     this.adopt(view);
     all.add(this);
   }
@@ -216,7 +242,14 @@ export class Lives {
   /** Until this time, the layer's scroll events are its following the editor's, not a wheel over a frame. */
   private following = 0;
 
+  /** The note scrolled: the layer follows now, and the boxes are placed again once layout settles. */
   private fromEditor = () => {
+    this.follow();
+    this.settle();
+  };
+
+  /** Scroll the layer as the editor is scrolled, as tall and wide as what it scrolls. */
+  private follow() {
     if (!this.view) return;
     const { scrollTop, scrollLeft, scrollHeight, scrollWidth } = this.view.scrollDOM;
     // As tall as the editor's content (which grows as CodeMirror draws more), so it can follow all the way.
@@ -227,15 +260,14 @@ export class Lives {
       this.scroller.scrollTop = scrollTop;
       this.scroller.scrollLeft = scrollLeft;
     }
-    this.settle();
-  };
+  }
 
   /**
    * Place everything again in the next frame, when layout is settled: a placement made in the middle
    * of an update (the editor scrolling to keep the cursor in view, say) is set right.
    */
   settle() {
-    if (this.settling || typeof requestAnimationFrame === "undefined") return;
+    if (this.settling || !this.lives.size || typeof requestAnimationFrame === "undefined") return;
     this.settling = requestAnimationFrame(() => {
       this.settling = 0;
       this.place();
@@ -252,15 +284,16 @@ export class Lives {
   };
 
   /**
-   * For a second after anything happens: if the editor moved on the page without resizing (something
-   * above it came or went), place the boxes again. Every place() starts it again.
+   * For a few frames after anything happens: if the editor moved on the page without resizing (something
+   * above it came or went), place the boxes again. It stops once the editor holds still for STILL frames,
+   * and never runs for an editor with no boxes: idle, nothing runs each frame.
    */
   private watch() {
     this.still = 0;
-    if (this.watching || !this.view || typeof requestAnimationFrame === "undefined") return;
+    if (this.watching || !this.view || !this.lives.size || typeof requestAnimationFrame === "undefined") return;
     const tick = () => {
       const view = this.view;
-      if (!view || !this.lives.size || !view.dom.isConnected || ++this.still > 60) return void (this.watching = 0);
+      if (!view || !this.lives.size || !view.dom.isConnected || ++this.still > STILL) return void (this.watching = 0);
       const r = view.scrollDOM.getBoundingClientRect();
       if (r.top !== this.shown.top || r.left !== this.shown.left || r.width !== this.shown.width || r.height !== this.shown.height) this.place();
       this.watching = requestAnimationFrame(tick);
@@ -347,9 +380,9 @@ export class Lives {
       const themed = `embed-themes ${[...view.dom.classList].filter((c) => c !== "cm-editor" && c !== "cm-focused").join(" ")}`;
       if (this.themed.className !== themed) {
         this.themed.className = themed;
-        // And the text the editor's scroller gives what's in it, as a box there had.
-        const font = getComputedStyle(editor);
-        for (const p of ["font-family", "font-size", "line-height", "color", "letter-spacing"]) this.themed.style.setProperty(p, font.getPropertyValue(p));
+        // And the text the editor's content gives what's in it (a widget's DOM was in it), as a box there had.
+        const font = getComputedStyle(view.contentDOM);
+        for (const p of INHERITED) this.themed.style.setProperty(p, font.getPropertyValue(p));
       }
       const box = this.scroller.style;
       box.visibility = "";
@@ -359,7 +392,7 @@ export class Lives {
       box.height = `${size.height}px`;
       this.layer.style.height = `${size.inner}px`;
       this.layer.style.width = `${size.innerWidth}px`;
-      this.fromEditor();
+      this.follow();
     } else this.scroller.style.visibility = "hidden";
     const when = mediaHooks.whenHidden();
     for (const { live, at, seen } of spots) {
