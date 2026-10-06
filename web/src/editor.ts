@@ -102,7 +102,7 @@ export function createState(
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
       slots.livePreview.of(s.livePreview),
-      history(),
+      historySlot.of(history()),
       drawSelection(),
       // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
       // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
@@ -146,6 +146,19 @@ export function editText(view: EditorView, text: string) {
 
 /** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
 const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
+
+/** The editor's undo history, in a slot of its own so it can be started afresh (see forgetHistory). */
+const historySlot = new Compartment();
+
+/**
+ * Start the undo history afresh: the text it would undo and redo has been replaced under it (theirs
+ * taken in where yours clashed), so its steps would land in the wrong places. Not during an update.
+ */
+export function forgetHistory(view: EditorView): void {
+  const kept = historySlot.get(view.state);
+  view.dispatch({ effects: historySlot.reconfigure([]) });
+  view.dispatch({ effects: historySlot.reconfigure(kept ?? []) });
+}
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
 export function replaceText(view: EditorView, text: string, flash = false) {

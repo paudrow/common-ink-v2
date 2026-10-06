@@ -385,6 +385,58 @@ browserTest(h, "leaving the page the moment after an edit is undone doesn't send
   }
 });
 
+for (const order of ["B leaves, then A", "A leaves, then B"] as const) {
+  browserTest(h, `one tab's edit undone doesn't let go of another tab's offline edit of the same note (${order})`, { scenario: "empty", allowErrors: [/./] }, async (app) => {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    const b = new App(await app.page.context().newPage(), app.base);
+    for (const x of [app, b]) {
+      await x.goto({}, "Trip");
+      await x.idle();
+    }
+    // Offline in the page itself (requests fail as the page goes, too), as a lost connection is.
+    await app.page.context().setOffline(true);
+    for (const x of [app, b]) await x.call("levers.set", { offline: true });
+    // B's edit, held: its save failed.
+    await b.call("cursor", 2, 1);
+    await b.keys("A fromB<Esc>");
+    await b.page.waitForTimeout(1800);
+    // A's own edit, undone.
+    await app.call("cursor", 2, 1);
+    await app.keys("dw");
+    await app.keys("u");
+    await app.page.waitForTimeout(400);
+    for (const x of order === "B leaves, then A" ? [b, app] : [app, b]) {
+      await x.page.goto("about:blank");
+      await x.page.close();
+    }
+    await app.page.context().setOffline(false);
+    // The offline lever is kept in a cookie for the page's reloads: a new page starts without it.
+    await app.page.context().clearCookies();
+    const c = new App(await app.page.context().newPage(), app.base);
+    await c.goto({}, "Trip");
+    await c.idle();
+    for (let i = 0; i < 20 && (await c.readFile("Trip.md")) !== "# Trip\nalpha beta gamma fromB\n"; i++) await c.page.waitForTimeout(250);
+    assert.equal(await c.readFile("Trip.md"), "# Trip\nalpha beta gamma fromB\n");
+  });
+}
+
+browserTest(h, "a clash undone, then redone, writes nothing: its redo would land where theirs has moved", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("u");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.keys("<C-r>");
+  await app.page.waitForTimeout(2000);
+  await app.idle();
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n");
+});
+
 browserTest(h, "a clash undone back to where it started is no clash, and the note takes in theirs", { scenario: "empty" }, async (app) => {
   await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
   await app.goto({}, "Plan");

@@ -38,8 +38,12 @@ export interface Unsent {
   conflict?: boolean;
   /** The id this text was sent with, to ask the server whether it landed. */
   edit?: string;
-  /** When this browser kept it. */
+  /** When this browser kept it, for saying so ("Unsaved edit from 10:42"). */
   time?: number;
+  /** The page that kept it: only that page lets go of it for being undone or saved. */
+  owner?: string;
+  /** In what order it was kept, among everything this browser keeps: a clock can be set back, this can't. */
+  seq?: number;
 }
 
 export interface Network {
@@ -64,6 +68,13 @@ type Verdict = "landed" | "send" | "clash";
 
 /** Where a note's unsaved edit is kept, by path, as the page goes. */
 const DRAFT = "common-ink.draft:";
+/** Where a page marks, as it goes, the notes whose edits it undid: by account, page and path. */
+const CLEAN = "common-ink.clean:";
+/** Every key in localStorage, read before any is removed. */
+const storedKeys = () => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!);
+
+/** The last order number this browser gave something it kept. */
+const SEQ = "common-ink.seq";
 
 export class Offline {
   /** Whether the last request reached the server. */
@@ -153,12 +164,27 @@ export class Offline {
     }
   }
 
+  /** This page, among the pages of the app open in this browser. */
+  readonly page = Math.random().toString(36).slice(2);
+  private seqHere = 0;
+
+  /** The next order number: kept in localStorage, so it counts up across pages and reloads. */
+  private nextSeq(): number {
+    try {
+      const next = Math.max(Number(localStorage.getItem(SEQ)) || 0, this.seqHere) + 1;
+      localStorage.setItem(SEQ, String(next));
+      return (this.seqHere = next);
+    } catch {
+      return ++this.seqHere;
+    }
+  }
+
   /** Keep an edit that couldn't be sent, so it survives a reload. */
   async hold(unsent: Unsent): Promise<void> {
     // When it was first held: held again as its sends keep failing, it's still the edit from then.
     const before = unsent.time === undefined ? await this.unsentFor(unsent.path) : undefined;
     const time = unsent.time ?? (before && before.edit === unsent.edit ? before.time : undefined) ?? Date.now();
-    await this.kv.set("unsent", unsent.path, { ...unsent, time });
+    await this.kv.set("unsent", unsent.path, { ...unsent, time, owner: unsent.owner ?? this.page, seq: this.nextSeq() });
     this.changed();
   }
 
@@ -234,7 +260,7 @@ export class Offline {
    * again. Quietly: it isn't waiting to be sent, it's only kept.
    */
   async keepDraft(unsent: Unsent): Promise<void> {
-    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), { ...unsent, time: Date.now() });
+    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), { ...unsent, time: Date.now(), owner: this.page, seq: this.nextSeq() });
   }
 
   /**
@@ -245,7 +271,7 @@ export class Offline {
     if (!this.account) return;
     for (const d of drafts) {
       try {
-        localStorage.setItem(this.draftKey(d.path), JSON.stringify({ ...d, time: Date.now() }));
+        localStorage.setItem(this.draftKey(d.path), JSON.stringify({ ...d, time: Date.now(), owner: this.page, seq: this.nextSeq() }));
       } catch {
         // Full, or not allowed: the draft kept as it was typed is the one there is.
       }
@@ -260,18 +286,42 @@ export class Offline {
     if (!this.account) return;
     for (const path of paths) {
       try {
-        localStorage.setItem(this.draftKey(path), JSON.stringify({ path, clean: true, time: Date.now() }));
+        localStorage.setItem(this.cleanKey(this.page, path), String(this.nextSeq()));
       } catch {
         // Not allowed: the letting go as it happened is what there is.
       }
     }
   }
 
-  /** What was kept in localStorage for a note as the page went: its draft, or that it had none. */
-  private keptAsWent(path: FilePath): (Unsent & { clean?: true }) | undefined {
+  private cleanKey(page: string, path: FilePath) {
+    return `${CLEAN}${this.account}:${page}:${path}`;
+  }
+
+  /** The order number of a page's mark that it went with its edits of a note undone, if it left one. */
+  private cleanMark(page: string | undefined, path: FilePath): number | undefined {
+    if (!page) return undefined;
+    try {
+      const mark = localStorage.getItem(this.cleanKey(page, path));
+      return mark === null ? undefined : Number(mark);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Every page's mark for a note goes: what they were about is gone. */
+  private dropCleanMarks(path: FilePath) {
+    try {
+      for (const key of storedKeys()) if (key.startsWith(`${CLEAN}${this.account}:`) && key.endsWith(`:${path}`)) localStorage.removeItem(key);
+    } catch {
+      // Nothing to drop.
+    }
+  }
+
+  /** What was kept in localStorage for a note as the page went. */
+  private keptAsWent(path: FilePath): Unsent | undefined {
     try {
       const kept = localStorage.getItem(this.draftKey(path));
-      return kept ? (JSON.parse(kept) as Unsent & { clean?: true }) : undefined;
+      return kept ? (JSON.parse(kept) as Unsent) : undefined;
     } catch {
       return undefined;
     }
@@ -280,9 +330,25 @@ export class Offline {
   /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
   private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
-    const went = this.keptAsWent(path);
-    if (went && !went.clean) return went;
-    return this.kv.get<Unsent>("meta", this.draftKey(path));
+    return this.keptAsWent(path) ?? this.kv.get<Unsent>("meta", this.draftKey(path));
+  }
+
+  /**
+   * This page takes over a kept edit it opened a note with: from now on it's this page's to let go of
+   * (by saving it, or undoing it), wherever it was kept.
+   */
+  private async takeOver(edit: Unsent, held: boolean): Promise<Unsent> {
+    const mine = { ...edit, owner: this.page };
+    if (held) await this.kv.set("unsent", edit.path, { ...mine, seq: this.nextSeq() });
+    else if (this.account) {
+      await this.keepDraft(mine);
+      try {
+        localStorage.removeItem(this.draftKey(edit.path));
+      } catch {
+        // Not there.
+      }
+    }
+    return mine;
   }
 
   /**
@@ -297,26 +363,31 @@ export class Offline {
    */
   async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean; checked: boolean } | undefined> {
     const held = await this.unsentFor(latest.path);
-    const edit = held ?? (await this.draftFor(latest.path));
-    const clean = this.account ? this.keptAsWent(latest.path) : undefined;
-    // Nothing kept: a mark that the page went with the note as saved has done its work.
-    if (!edit) return void (clean?.clean && (await this.dropDraft(latest.path)));
-    // The page that kept it went with the note as saved (its edits undone): it's no edit now.
-    if (clean?.clean && (edit.time ?? 0) <= clean.time!) return void (await this.landed(latest.path));
+    const kept = held ?? (await this.draftFor(latest.path));
+    // Nothing kept: any page's mark that it went with the note as saved has done its work.
+    if (!kept) return void (this.account && this.dropCleanMarks(latest.path));
+    // The page that kept it went with its edits undone, after it kept this: it's no edit now.
+    const mark = this.account ? this.cleanMark(kept.owner, latest.path) : undefined;
+    if (mark !== undefined && (kept.seq ?? 0) <= mark) {
+      this.dropCleanMarks(latest.path);
+      return void (await this.landed(latest.path));
+    }
+    // Used to open the note, it's this page's to carry on from here; one only kept (offline) stays as it was.
+    const take = (edit: Unsent) => this.takeOver(edit, !!held);
     // A clash typed back to the server's own text is no clash.
     if (held?.conflict && this.online && held.text === latest.text) return void (await this.landed(latest.path));
-    if (held?.conflict) return { edit, clash: true, checked: true };
-    const unknown = held ? { edit, clash: false, checked: false } : undefined;
-    if (!this.online) return unknown;
+    if (held?.conflict) return { edit: await take(kept), clash: true, checked: true };
+    const unknown = async () => (held ? { edit: await take(kept), clash: false, checked: false } : undefined);
+    if (!this.online) return unknown();
     let verdict: Verdict;
     try {
-      verdict = await this.verdict(edit, latest, !!held);
+      verdict = await this.verdict(kept, latest, !!held);
     } catch {
-      return unknown;
+      return unknown();
     }
     if (verdict === "landed") return void (await this.landed(latest.path));
-    if (verdict === "send") return { edit, clash: false, checked: true };
-    const clash = { ...edit, conflict: true };
+    if (verdict === "send") return { edit: await take(kept), clash: false, checked: true };
+    const clash = { ...kept, conflict: true, owner: this.page };
     await this.hold(clash);
     await this.dropDraft(latest.path);
     return { edit: clash, clash: true, checked: true };
@@ -358,6 +429,23 @@ export class Offline {
     await this.dropDraft(path);
   }
 
+  /**
+   * This page's edit of a note is no more (saved, or undone): what it kept of it goes, wherever it was
+   * kept. Another page's edit of the same note, kept in the same place, stays: it's still that page's.
+   */
+  async letGoOwn(path: FilePath): Promise<void> {
+    const held = await this.unsentFor(path);
+    if (held && held.owner === this.page) await this.release(path);
+    if (!this.account) return;
+    if (this.keptAsWent(path)?.owner === this.page)
+      try {
+        localStorage.removeItem(this.draftKey(path));
+      } catch {
+        // Not there.
+      }
+    if ((await this.kv.get<Unsent>("meta", this.draftKey(path)))?.owner === this.page) await this.kv.del("meta", this.draftKey(path));
+  }
+
   /** The note is saved: its kept edit can go. */
   async dropDraft(path: FilePath): Promise<void> {
     try {
@@ -373,6 +461,11 @@ export class Offline {
     this.account = null;
     try {
       for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) localStorage.removeItem(key);
+    } catch {
+      // Nothing to forget.
+    }
+    try {
+      for (const key of storedKeys()) if (key.startsWith(CLEAN)) localStorage.removeItem(key);
     } catch {
       // Nothing to forget.
     }

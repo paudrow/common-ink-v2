@@ -204,7 +204,8 @@ test("offline, a kept draft waits unused until the server can say, and a held ed
   assert.equal((await opened(s))?.edit.edit, "d", "still kept for when it's back");
   await s.offline.hold({ path: TRIP, text: "# Trip\n- a\n- held\n", base: 1, edit: "h" });
   s.setUp(false);
-  assert.deepEqual(await opened(s), { edit: { path: TRIP, text: "# Trip\n- a\n- held\n", base: 1, edit: "h", time: (await s.offline.unsentFor(TRIP))!.time }, clash: false, checked: false });
+  const found = await opened(s);
+  assert.deepEqual([found?.edit.text, found?.edit.edit, found?.clash, found?.checked], ["# Trip\n- a\n- held\n", "h", false, false]);
 });
 
 test("a held edit sent twice, the first answer lost, writes once", async () => {
@@ -238,7 +239,7 @@ test("a held edit that landed, for a note not open, isn't sent again by the back
 
 test("a note whose edits were undone as the page went: what was kept of them before isn't sent next time", async () => {
   const items = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k) }, configurable: true });
+  Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k), key: (i: number) => [...items.keys()][i] ?? null, get length() { return items.size; } }, configurable: true });
   try {
     const s = await kept();
     await s.offline.keepDraft({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw", time: Date.now() - 100 });
@@ -246,7 +247,7 @@ test("a note whose edits were undone as the page went: what was kept of them bef
     s.offline.keepCleanNow([TRIP]);
     assert.equal(await opened(s), undefined);
     assert.deepEqual(await s.offline.unsent(), [], "the held edit goes too");
-    assert.equal(items.size, 0, "and the mark with it");
+    assert.deepEqual([...items.keys()].filter((k) => !k.endsWith(".seq")), [], "and the mark with it");
     // An edit made after the mark (another page, later) is kept as usual.
     s.offline.keepCleanNow([TRIP]);
     await new Promise((r) => setTimeout(r, 5));
@@ -263,4 +264,56 @@ test("a clash typed back to the server's own text is no clash when the note open
   await s.offline.hold({ path: TRIP, text: "# Trip\n- b\n", base: 1, edit: "c", conflict: true });
   assert.equal(await opened(s), undefined);
   assert.deepEqual(await s.offline.unsent(), []);
+});
+
+/** Two pages of the app in one browser, keeping edits in the same place, as two tabs do. */
+async function twoPages() {
+  const items = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k), key: (i: number) => [...items.keys()][i] ?? null, get length() { return items.size; } }, configurable: true });
+  const store = memoryStore();
+  const kv = memoryKV();
+  const net: Network = {
+    list: async () => store.files.list(),
+    read: async (path) => store.files.read(path) ?? { path, text: "", revision: 0 },
+    write: async (path, text, base, edit) => store.files.write({ path, text, base, author: you, ...(edit ? { edit } : {}) }),
+    editApplied: async (path, edit) => store.files.editApplied(path, edit),
+  };
+  const a = new Offline(kv, net);
+  const b = new Offline(kv, net);
+  a.account = b.account = "you@example.com";
+  store.files.write({ path: TRIP, text: "# Trip\n- a\n", base: 0, author: you });
+  return { a, b, store, items, done: () => delete (globalThis as { localStorage?: unknown }).localStorage };
+}
+
+test("one page's edit undone doesn't let go of another page's edit of the same note", async () => {
+  const { a, b, done } = await twoPages();
+  try {
+    // B has an edit held offline, and its draft; A edits the same note and undoes it.
+    await b.hold({ path: TRIP, text: "# Trip\n- a\n- B's\n", base: 1, edit: "b" });
+    await b.keepDraft({ path: TRIP, text: "# Trip\n- a\n- B's\n", base: 1, edit: "b" });
+    await a.letGoOwn(TRIP);
+    assert.equal((await a.unsentFor(TRIP))?.text, "# Trip\n- a\n- B's\n", "B's held edit stays");
+    // As A goes, its mark is about its own edits only.
+    a.keepCleanNow([TRIP]);
+    b.keepDraftsNow([{ path: TRIP, text: "# Trip\n- a\n- B's\n", base: 1, edit: "b" }]);
+    assert.equal((await a.keptEdit((await a.read(TRIP))))?.edit.text, "# Trip\n- a\n- B's\n", "B's edit opens the note");
+    // And B lets go of its own.
+    await b.letGoOwn(TRIP);
+  } finally {
+    done();
+  }
+});
+
+test("what's kept is ordered by a count, not the clock: a clock set back doesn't make a later edit older", async () => {
+  const { a, done } = await twoPages();
+  const now = Date.now;
+  try {
+    a.keepCleanNow([TRIP]);
+    Date.now = () => now() - 3_600_000;
+    await a.keepDraft({ path: TRIP, text: "# Trip\n- a\n- later\n", base: 1, edit: "l" });
+    assert.equal((await a.keptEdit(await a.read(TRIP)))?.edit.text, "# Trip\n- a\n- later\n");
+  } finally {
+    Date.now = now;
+    done();
+  }
 });
