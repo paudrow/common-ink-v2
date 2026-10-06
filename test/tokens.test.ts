@@ -39,7 +39,7 @@ test("a refresh token is kept sealed under a key from a secret, and Google still
 test("a token kept before sealing still works and is sealed when tokens are put right; under another key, it's as if nobody connected", async () => {
   const db = memoryDb();
   const { sent, fetcher } = fakeGoogle();
-  openWorkspace(db, { fixtures: false, google }, undefined, fetcher).sources.connect(ada);
+  await openWorkspace(db, { fixtures: false, google }, undefined, fetcher).sources.connect(ada);
   assert.deepEqual(stored(db), ["1//refresh-ada"]);
   const { sources } = openWorkspace(db, { fixtures: false, google, tokenKey: "session-secret-1" }, undefined, fetcher);
   await sources.sealTokens();

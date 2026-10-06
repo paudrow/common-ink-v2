@@ -14,7 +14,7 @@ const ada: Author = { kind: "user", email: "ada@example.com" };
 const LA = "America/Los_Angeles";
 
 /** Ada's Google: a primary calendar in Los Angeles, a shared one she can only read, and one she can only see free/busy times of. */
-function google() {
+async function google() {
   const fake = new FakeGoogle();
   fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", backgroundColor: "#4F6BD8", timeZone: LA });
   fake.addCalendar({ id: "team@group.calendar.google.com", summary: "Team", accessRole: "reader", backgroundColor: "#2f9e44", timeZone: "UTC", selected: false });
@@ -25,7 +25,7 @@ function google() {
   fake.put("ada@example.com", { id: "dentist", summary: "Dentist", location: "12 High Street", start: { dateTime: "2026-10-06T21:30:00Z" }, end: { dateTime: "2026-10-06T22:15:00Z" } });
   fake.put("team@group.calendar.google.com", { id: "offsite", summary: "Offsite", start: { date: "2026-10-08" }, end: { date: "2026-10-10" } });
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
-  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
   return { fake, store };
 }
 
@@ -38,7 +38,7 @@ const week = { from: "2026-10-05T00:00:00-07:00", to: "2026-10-12T00:00:00-07:00
 const listed = async (store: ReturnType<typeof memoryStore>) => ((await op(store, "list_events", week)) as Occurrence[]).map((o) => `${o.start.slice(0, 16)} ${o.title}`);
 
 test("a first sync brings in calendars and events as records by the sync, series, changes and cancellations included", async () => {
-  const { store } = google();
+  const { store } = await google();
   const state = (await op(store, "sync_calendar", {})) as { state: string; calendars: number; events: number };
   assert.deepEqual([state.state, state.calendars, state.events], ["ok", 2, 5]);
   assert.deepEqual(await op(store, "list_calendars", {}), [
@@ -59,7 +59,7 @@ test("a first sync brings in calendars and events as records by the sync, series
 });
 
 test("later syncs bring in only what changed, by sync token, and a 410 starts again from nothing", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, summary: "Dentist (cleaning)" });
   fake.remove("ada@example.com", "standup");
@@ -75,7 +75,7 @@ test("later syncs bring in only what changed, by sync token, and a 410 starts ag
 });
 
 test("edits go to Google with our ids and etags, one occurrence, this and following, and all", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   const made = (await op(store, "create_event", { title: "Lunch", start: "2026-10-07T12:00", timeZone: LA })) as { address: string; status: string };
   assert.equal(made.status, "saved");
@@ -101,7 +101,7 @@ test("edits go to Google with our ids and etags, one occurrence, this and follow
 });
 
 test("when Google changed an event too, the edits merge field by field, and Google's wins where both changed one thing", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
@@ -116,7 +116,7 @@ test("when Google changed an event too, the edits merge field by field, and Goog
 });
 
 test("when Google ends our access, edits wait with a reconnect state, and go once you reconnect", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.revoked = true;
   const waiting = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (waiting)" })) as { status: string; error: string };
@@ -126,28 +126,28 @@ test("when Google ends our access, edits wait with a reconnect state, and go onc
   assert.deepEqual([state.state, state.pending], ["needs-reconnect", 1]);
   assert.equal((await op(store, "sync_calendar", { force: true }) as { state: string }).state, "needs-reconnect");
   fake.revoked = false;
-  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
   const after = (await op(store, "sync_calendar", { force: true })) as { state: string; pending: number };
   assert.deepEqual([after.state, after.pending], ["ok", 0]);
   assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (waiting)");
 });
 
 test("a sync leaves an event with an edit waiting to go out as it is here", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.revoked = true;
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (mine)" });
   fake.revoked = false;
   fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "Moved" });
   // Reconnected, but not yet flushed: a sync that only pulls must not undo the waiting edit.
-  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
   await store.sources.sync();
   assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (mine)");
   assert.equal(fake.event("ada@example.com", "dentist")?.location, "Moved", "Google's change merged in");
 });
 
 test("saving a series from the editor with its times as they were keeps its changed occurrences in Google", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   // What the editor sends on Save: every field, times and repeat as they were.
   await op(store, "update_event", {
@@ -175,14 +175,14 @@ test("saving a series from the editor with its times as they were keeps its chan
 });
 
 test("edits that waited for Google all keep what Google changed meanwhile", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.revoked = true;
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
   await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 4" });
   fake.revoked = false;
   fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, description: "Bring forms" });
-  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
   await store.sources.sync();
   const g = fake.event("ada@example.com", "dentist")!;
   assert.deepEqual([g.summary, g.location, g.description], ["Dentist (Dr Lee)", "Room 4", "Bring forms"]);
@@ -191,7 +191,7 @@ test("edits that waited for Google all keep what Google changed meanwhile", asyn
 });
 
 test("an edit Google refuses goes back to how Google has it, says why, and doesn't hold up the edits after it", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.refusing.set("dentist", "Invalid value for: summary");
   const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
@@ -205,7 +205,7 @@ test("an edit Google refuses goes back to how Google has it, says why, and doesn
 });
 
 test("edits made at once go to Google once each, in order", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   const before = fake.calls.length;
   await Promise.all([
@@ -221,7 +221,7 @@ test("edits made at once go to Google once each, in order", async () => {
 test("the sample fake Google's week is around the day it's given, in New York, whatever the clock says", async () => {
   const fake = sampleGoogle("2026-10-05");
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
-  store.sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+  await store.sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
   await store.sources.sync();
   const week = (await runOperation("list_events", { from: "2026-10-05T00:00:00-04:00", to: "2026-10-10T00:00:00-04:00", zone: "America/New_York" }, store, ada)) as { ok: true; value: Occurrence[] };
   assert.deepEqual(week.value.map((o) => `${o.start.slice(0, 16)} ${o.title}`), [
