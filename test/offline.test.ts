@@ -170,6 +170,76 @@ test("IndexedDB that won't open (storage blocked) leaves a store in memory, so t
   else delete (globalThis as { indexedDB?: unknown }).indexedDB;
 });
 
+test("IndexedDB that never answers (an older tab holding it) gives way to memory after a moment, and says so", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  let late: (() => void) | undefined;
+  let closed = false;
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: {
+      open() {
+        const req = { result: { close: () => (closed = true) } } as { result: unknown; onsuccess?: () => void; onblocked?: () => void };
+        // Blocked, then answers only long after.
+        setTimeout(() => req.onblocked?.());
+        late = () => req.onsuccess?.();
+        return req;
+      },
+    },
+  });
+  const kv = idbKV("hanging", 30);
+  await kv.set("files", "Plan.md", { text: "a" });
+  assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" });
+  assert.equal(await kv.durable?.(), false, "kept in memory only");
+  late!();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(closed, true, "a database that opens after the page gave up on it is let go");
+  assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" }, "and memory is still what's kept");
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+});
+
+test("a newer page upgrading the database is let have it: this one keeps to memory from then", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const stored = new Map<string, unknown>();
+  let closed = false;
+  const db = {
+    objectStoreNames: { contains: () => true },
+    close: () => (closed = true),
+    onversionchange: null as null | (() => void),
+    transaction() {
+      const tx = { oncomplete: null as null | (() => void), onerror: null };
+      const request = (result: unknown) => {
+        const req = { result };
+        setTimeout(() => tx.oncomplete?.());
+        return req;
+      };
+      return Object.assign(tx, { objectStore: () => ({ put: (v: unknown, k: string) => request(stored.set(k, v) && k), get: (k: string) => request(stored.get(k)) }) });
+    },
+  };
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: {
+      open() {
+        const req = { result: db } as { result: unknown; onsuccess?: () => void };
+        setTimeout(() => req.onsuccess?.());
+        return req;
+      },
+    },
+  });
+  const kv = idbKV("upgraded", 1000);
+  await kv.set("files", "A.md", 1);
+  assert.equal(await kv.durable?.(), true);
+  assert.equal(stored.get("A.md"), 1);
+  db.onversionchange?.();
+  assert.equal(closed, true);
+  await kv.set("files", "B.md", 2);
+  assert.equal(stored.has("B.md"), false, "not written to a database it let go of");
+  assert.equal(await kv.get("files", "B.md"), 2);
+  assert.equal(await kv.durable?.(), false);
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+});
+
 test("back online, one request says whether the server can be reached, with nothing waiting to send", async () => {
   const { offline, setUp } = setup();
   setUp(false);
