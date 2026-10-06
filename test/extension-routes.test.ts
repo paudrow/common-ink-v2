@@ -106,6 +106,29 @@ test("installing copies an extension's files in, as changes by you; a built-in's
   );
 });
 
+test("installing from a URL never inherits trust left for the same id: it starts sandboxed for everyone", async () => {
+  const s = store();
+  write(s, ".common-ink/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather", "boards"], "editor.fontSize": 15 }, null, 2)}\n`);
+  write(s, ".common-ink/users/you@example.com/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather"] }, null, 2)}\n`);
+  write(s, ".common-ink/users/sam@example.com/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather", "timers"] }, null, 2)}\n`);
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Someone else's Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+      assert.equal(res!.status, 200);
+    },
+  );
+  const trusted = (path: string) => JSON.parse(s.files.read(path as FilePath)!.text)["extensions.trusted"];
+  assert.deepEqual(trusted(".common-ink/settings.json"), ["boards"]);
+  assert.deepEqual(trusted(".common-ink/users/you@example.com/settings.json"), []);
+  assert.deepEqual(trusted(".common-ink/users/sam@example.com/settings.json"), ["timers"]);
+  assert.equal(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text)["editor.fontSize"], 15, "the rest of the settings stay");
+});
+
 test("the app's policy frames only the sandbox route and connects only to itself", () => {
   const csp = appCsp("https://app.example");
   assert.match(csp, /frame-src https:\/\/app\.example\/sandbox\//);
