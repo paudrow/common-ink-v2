@@ -205,6 +205,19 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
 });
 
+browserTest(h, "a closed calendar tab stops loading events when they change", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.command("Close tab");
+  await app.idle();
+  let loads = 0;
+  app.page.on("request", (r) => r.url().includes("/api/events") && loads++);
+  const res = await app.page.context().request.fetch(`${app.base}/api/event`, { method: "PATCH", data: { address: "event:sample/personal/dentist", title: "Dentist (moved)" } });
+  assert.ok(res.ok());
+  await app.page.waitForTimeout(1500);
+  await app.idle();
+  assert.equal(loads, 0, "no calendar is on screen to load for");
+});
+
 browserTest(h, "switching views quickly keeps the last one, with no clash saving it", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
   await app.page.locator(".cal-page").focus();
