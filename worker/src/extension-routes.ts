@@ -106,13 +106,16 @@ export async function extensionApi(req: Request, url: URL, email: string, author
     }
     // The app asked you already; this checks again against what's kept, so a page that skips asking gets nothing.
     const once = body.once ? new Set([`${found.manifest.id} network:${host}`, ...(found.manifest.permissions.network?.hosts ?? []).map((h) => `${found.manifest.id} network:${h}`)]) : undefined;
-    const decision = decide(found.manifest, { kind: "network", target: host }, await grantsOf(store, email), { builtIn: found.builtIn, once });
+    const grants = await grantsOf(store, email);
+    const decision = decide(found.manifest, { kind: "network", target: host }, grants, { builtIn: found.builtIn, once });
     if (decision.outcome === "undeclared") return json({ error: `${found.manifest.name} doesn't declare ${host} in its extension.json, so it can't reach it` }, 403);
     if (decision.outcome !== "allow") return json({ error: `${found.manifest.name} isn't allowed to reach ${host}` }, 403);
+    // A redirect is held to the same declaration and answers as the address it started at.
+    const allowHost = (h: string) => decide(found.manifest, { kind: "network", target: h }, grants, { builtIn: found.builtIn, once }).outcome === "allow";
     try {
       // A link's card (title, description, picture) rather than its page.
-      if (body.card) return json(await linkCard(body.url, net));
-      const res = await safeFetch(body.url, { ...net, method: body.method, headers: body.headers, body: body.body });
+      if (body.card) return json(await linkCard(body.url, { ...net, allowHost }));
+      const res = await safeFetch(body.url, { ...net, allowHost, method: body.method, headers: body.headers, body: body.body });
       return json(res);
     } catch (err) {
       if (err instanceof FetchRefused) return json({ error: err.message }, 400);
