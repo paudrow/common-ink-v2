@@ -1,0 +1,8 @@
+{
+  "pr": 64,
+  "title": "Sandbox follow-ups",
+  "steps": [
+    "Boards, Word count and the html-app samples work as before.",
+    "The Worker's gate on undo and extension names, and the 2 MB limit per call, are in test/browser/sandbox-escape.browser.ts."
+  ]
+}

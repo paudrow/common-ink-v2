@@ -34,3 +34,12 @@ test("a malformed labels file reads as no labels instead of failing", () => {
   assert.deepEqual(parseLabels("{oops"), []);
   assert.deepEqual(parseLabels('{"labels": [{"name": "", "path": "A.md", "revision": 1}, {"name": "ok", "path": "A.md", "revision": 2}]}'), [{ name: "ok", path: "A.md", revision: 2 }]);
 });
+
+test("write_file takes an edit id, and edit_applied answers whether that edit landed", async () => {
+  const store = memoryStore();
+  assert.equal((await runOperation("write_file", { path: PLAN, text: "a\n", base: 0, edit: "tab-1_x" }, store, you)).ok, true);
+  assert.deepEqual(await runOperation("edit_applied", { path: PLAN, edit: "tab-1_x" }, store, you), { ok: true, value: { path: PLAN, edit: "tab-1_x", applied: true } });
+  assert.deepEqual(await runOperation("edit_applied", { path: PLAN, edit: "other" }, store, you), { ok: true, value: { path: PLAN, edit: "other", applied: false } });
+  assert.equal((await runOperation("write_file", { path: PLAN, text: "b\n", base: 1, edit: "no spaces" }, store, you)).ok, false);
+  assert.equal((await runOperation("edit_applied", { path: PLAN, edit: "x".repeat(65) }, store, you)).ok, false);
+});

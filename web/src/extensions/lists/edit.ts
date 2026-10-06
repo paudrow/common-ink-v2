@@ -58,6 +58,9 @@ function selectedLines(state: EditorState) {
   return { first, last: Math.max(first, end.number - 1 - (to === end.from && to > from ? 1 : 0)) };
 }
 
+/** Whether every line with text in the range is in a list item: a range that isn't (>ip over a paragraph and a list) shifts as text. */
+const allInItems = (lines: readonly string[], first: number, last: number) => lines.slice(first, last + 1).every((l, i) => M.isBlank(l) || M.itemAt(lines, first + i) !== null);
+
 /** Says, quietly, why an edit didn't happen. */
 export type Say = (why: string) => void;
 
@@ -71,7 +74,7 @@ export function indentItems(view: EditorView, say: Say = () => {}): boolean {
   let lines = linesOf(view.state);
   const { first, last } = selectedLines(view.state);
   const items = M.itemsIn(lines, first, last);
-  if (!items.length) return false;
+  if (!items.length || !allInItems(lines, first, last)) return false;
   if (!M.indent(lines, items[0])) {
     say("Can't indent: nothing above to nest under");
     return true;
@@ -87,7 +90,7 @@ export function dedentItems(view: EditorView, say: Say = () => {}): boolean {
   let lines = linesOf(view.state);
   const { first, last } = selectedLines(view.state);
   const items = M.itemsIn(lines, first, last);
-  if (!items.length) return false;
+  if (!items.length || !allInItems(lines, first, last)) return false;
   if (items.every((i) => !M.dedent(lines, i))) {
     say("Can't dedent: it's already at the top");
     return true;

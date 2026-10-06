@@ -12,6 +12,7 @@ export interface KV {
   set(store: Store, key: string, value: unknown): Promise<void>;
   del(store: Store, key: string): Promise<void>;
   all<T>(store: Store): Promise<T[]>;
+  keys(store: Store): Promise<string[]>;
 }
 
 type Store = "files" | "unsent" | "meta" | "ops";
@@ -35,12 +36,18 @@ export interface Unsent {
   base: Revision;
   /** The server refused to merge it: the same lines changed there. Opening the file shows what to do. */
   conflict?: boolean;
+  /** The id this text was sent with, to ask the server whether it landed. */
+  edit?: string;
+  /** When this browser kept it. */
+  time?: number;
 }
 
 export interface Network {
   list(): Promise<FileSummary[]>;
   read(path: FilePath): Promise<WorkspaceFile>;
-  write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
+  write(path: FilePath, text: string, base: Revision, edit?: string): Promise<WriteResult>;
+  /** Whether the server applied the edit sent with this id. */
+  editApplied(path: FilePath, edit: string): Promise<boolean>;
 }
 
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
@@ -48,6 +55,15 @@ export const unreachable = (err: unknown) => err instanceof TypeError || (err as
 
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
+
+/** How long the server is sure to know an edit's id: a day short of the 30 it keeps them, for clocks. */
+const KNOWN_DAYS = 29;
+
+/** What a kept edit is, against the server's latest: there already, to send, or a clash to show. */
+type Verdict = "landed" | "send" | "clash";
+
+/** Where a note's unsaved edit is kept, by path, as the page goes. */
+const DRAFT = "common-ink.draft:";
 
 export class Offline {
   /** Whether the last request reached the server. */
@@ -125,9 +141,9 @@ export class Offline {
   }
 
   /** Send a write. Reaching the server keeps its answer in the cache; not reaching it throws, as fetch does. */
-  async write(path: FilePath, text: string, base: Revision): Promise<WriteResult> {
+  async write(path: FilePath, text: string, base: Revision, edit?: string): Promise<WriteResult> {
     try {
-      const result = await this.net.write(path, text, base);
+      const result = await this.net.write(path, text, base, edit);
       this.reached(true);
       if (result.file) await this.kv.set("files", path, result.file);
       return result;
@@ -139,7 +155,10 @@ export class Offline {
 
   /** Keep an edit that couldn't be sent, so it survives a reload. */
   async hold(unsent: Unsent): Promise<void> {
-    await this.kv.set("unsent", unsent.path, unsent);
+    // When it was first held: held again as its sends keep failing, it's still the edit from then.
+    const before = unsent.time === undefined ? await this.unsentFor(unsent.path) : undefined;
+    const time = unsent.time ?? (before && before.edit === unsent.edit ? before.time : undefined) ?? Date.now();
+    await this.kv.set("unsent", unsent.path, { ...unsent, time });
     this.changed();
   }
 
@@ -202,9 +221,141 @@ export class Offline {
     return this.kv.get<Unsent>("unsent", path);
   }
 
+  /** Who's signed in: drafts are kept for them alone, and none without one. */
+  account: string | null = null;
+
+  private draftKey(path: FilePath) {
+    return `${DRAFT}${this.account}:${path}`;
+  }
+
   /**
-   * Send held edits, except those an open editor is sending itself. Each is merged on the server
-   * against its base revision; one that can't be merged stays, marked as a conflict.
+   * Keep what an open note's editor has that isn't saved yet, as it's typed: a page that goes before
+   * its save does (a reload, a closed tab, its last request lost) finds it here when the note opens
+   * again. Quietly: it isn't waiting to be sent, it's only kept.
+   */
+  async keepDraft(unsent: Unsent): Promise<void> {
+    if (this.account) await this.kv.set("meta", this.draftKey(unsent.path), { ...unsent, time: Date.now() });
+  }
+
+  /**
+   * Keep unsaved edits at once, as the page goes. IndexedDB's writes may not finish before it's gone;
+   * localStorage's do.
+   */
+  keepDraftsNow(drafts: Unsent[]): void {
+    if (!this.account) return;
+    for (const d of drafts) {
+      try {
+        localStorage.setItem(this.draftKey(d.path), JSON.stringify({ ...d, time: Date.now() }));
+      } catch {
+        // Full, or not allowed: the draft kept as it was typed is the one there is.
+      }
+    }
+  }
+
+  /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
+  private async draftFor(path: FilePath): Promise<Unsent | undefined> {
+    if (!this.account) return undefined;
+    try {
+      const kept = localStorage.getItem(this.draftKey(path));
+      if (kept) return JSON.parse(kept) as Unsent;
+    } catch {
+      // Not there, or not readable: the one kept as it was typed.
+    }
+    return this.kv.get<Unsent>("meta", this.draftKey(path));
+  }
+
+  /**
+   * The edit this browser kept of a note that the server may not have, as the note opens with the
+   * server's `latest`: one it couldn't send (held), or one typed as the page went (a draft). Sending
+   * one the server already has would bring back what was changed or deleted since, and merging one it
+   * doesn't have into a note that's moved on would do it unseen. So:
+   * - the server's text, or an edit the server says it applied, got there: it goes;
+   * - one based on the server's latest picks up where it left off, to be sent;
+   * - otherwise it's a clash, kept and shown for you to restore or discard.
+   * Offline, a held edit is used as it was; a draft waits, unused, until the server can say.
+   */
+  async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean; checked: boolean } | undefined> {
+    const held = await this.unsentFor(latest.path);
+    const edit = held ?? (await this.draftFor(latest.path));
+    if (!edit) return undefined;
+    if (held?.conflict) return { edit, clash: true, checked: true };
+    const unknown = held ? { edit, clash: false, checked: false } : undefined;
+    if (!this.online) return unknown;
+    let verdict: Verdict;
+    try {
+      verdict = await this.verdict(edit, latest, !!held);
+    } catch {
+      return unknown;
+    }
+    if (verdict === "landed") return void (await this.landed(latest.path));
+    if (verdict === "send") return { edit, clash: false, checked: true };
+    const clash = { ...edit, conflict: true };
+    await this.hold(clash);
+    await this.dropDraft(latest.path);
+    return { edit: clash, clash: true, checked: true };
+  }
+
+  /**
+   * A kept edit against the server's latest: "landed" if the server has it (its text, or its id
+   * applied), "send" if nothing has changed since its base, and otherwise "clash". Throws offline.
+   *
+   * A held edit (made offline, ADR 0001) whose id the server doesn't know, from within the time the
+   * server keeps ids, never landed: it's sent, to be merged there. One older than that might have
+   * landed and been forgotten, so it's a clash. A draft that never landed is a clash too: the page
+   * went before it was saved, so it's shown before it's merged.
+   */
+  async verdict(edit: Unsent, latest: WorkspaceFile, held: boolean): Promise<Verdict> {
+    if (edit.text === latest.text) return "landed";
+    if (edit.base === latest.revision) return "send";
+    if (edit.edit && (await this.net.editApplied(latest.path, edit.edit))) return "landed";
+    const known = edit.edit !== undefined && edit.time !== undefined && Date.now() - edit.time < KNOWN_DAYS * 86_400_000;
+    return held && known ? "send" : "clash";
+  }
+
+  /** A file as the server has it now. Not reaching the server throws, as fetch does. */
+  async latest(path: FilePath): Promise<WorkspaceFile> {
+    try {
+      const file = await this.net.read(path);
+      this.reached(true);
+      await this.kv.set("files", path, file);
+      return file;
+    } catch (err) {
+      if (unreachable(err)) this.reached(false);
+      throw err;
+    }
+  }
+
+  /** A kept edit the server has: held or drafted, it goes. */
+  async landed(path: FilePath): Promise<void> {
+    await this.release(path);
+    await this.dropDraft(path);
+  }
+
+  /** The note is saved: its kept edit can go. */
+  async dropDraft(path: FilePath): Promise<void> {
+    try {
+      localStorage.removeItem(this.draftKey(path));
+    } catch {
+      // Nothing kept there.
+    }
+    await this.kv.del("meta", this.draftKey(path));
+  }
+
+  /** Signed out: every account's drafts go, and none is kept again as the page goes. */
+  async forgetDrafts(): Promise<void> {
+    this.account = null;
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) localStorage.removeItem(key);
+    } catch {
+      // Nothing to forget.
+    }
+    for (const key of await this.kv.keys("meta")) if (key.startsWith(DRAFT)) await this.kv.del("meta", key);
+  }
+
+  /**
+   * Send held edits, except those an open editor is sending itself, by keptEdit's rule: one the server
+   * has goes, one on the server's latest revision is sent, and one the note has moved on from without
+   * it is held as a clash, never merged unseen. One the server can't merge stays, as a clash too.
    */
   async flush(skip: (path: FilePath) => boolean = () => false): Promise<{ sent: FilePath[]; conflicts: FilePath[] }> {
     const sent: FilePath[] = [];
@@ -213,7 +364,9 @@ export class Offline {
       if (skip(u.path) || u.conflict) continue;
       let result: WriteResult;
       try {
-        result = await this.write(u.path, u.text, u.base);
+        const latest = await this.latest(u.path);
+        const verdict = await this.verdict(u, latest, true);
+        result = verdict === "send" ? await this.write(u.path, u.text, u.base, u.edit) : verdict === "landed" ? { status: "saved", file: latest } : { status: "conflict", file: latest };
       } catch (err) {
         if (unreachable(err)) break;
         throw err;
@@ -239,6 +392,7 @@ export function memoryKV(): KV {
     set: async (store, key, value) => void s(store).set(key, structuredClone(value)),
     del: async (store, key) => void s(store).delete(key),
     all: async <T>(store: Store) => [...s(store).values()] as T[],
+    keys: async (store: Store) => [...s(store).keys()],
   };
 }
 
@@ -267,5 +421,6 @@ export function idbKV(name = "common-ink"): KV {
     set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key)),
     del: (store, key) => run(store, "readwrite", (s) => s.delete(key)),
     all: (store) => run(store, "readonly", (s) => s.getAll()),
+    keys: async (store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys())).map(String),
   };
 }

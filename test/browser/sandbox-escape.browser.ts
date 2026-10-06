@@ -95,3 +95,46 @@ test("the Worker refuses an untrusted extension's change to the files that decid
   assert.equal((await write(".common-ink/extensions/grabby/state.json", "grabby")).status, 200);
   assert.equal((await write("Grabby was here.md", "grabby")).status, 200);
 });
+
+test("the Worker's gate covers undo, and an extension name it couldn't have", async () => {
+  const put = async (path: string, text: string, headers: Record<string, string> = {}) => {
+    const current = await fetch(`${h.base}/api/file?path=${encodeURIComponent(path)}`);
+    const base = current.ok ? ((await current.json()) as { revision: number }).revision : 0;
+    return fetch(`${h.base}/api/file`, { method: "PUT", headers, body: JSON.stringify({ path, text, base }) });
+  };
+  const change = (await (await put(".common-ink/settings.json", '{ "extensions.trusted": [] }\n')).json()) as { file: { revision: number } };
+  const undo = await fetch(`${h.base}/api/undo`, { method: "POST", headers: { "X-Common-Ink-Extension": "grabby" }, body: JSON.stringify({ revisions: [change.file.revision] }) });
+  assert.equal(undo.status, 403);
+  assert.equal((await put(".common-ink/extensions/grabby/sub/state.json", "{}\n", { "X-Common-Ink-Extension": "grabby/sub" })).status, 400);
+  assert.equal((await put(".common-ink/settings.json", "{}\n", { "X-Common-Ink-Extension": "" })).status, 400);
+});
+
+const BIG = {
+  name: "Biggy",
+  activationEvents: ["onCommand:biggy.run"],
+  permissions: { "files:write": { paths: ["**"], why: "Write a lot" } },
+  contributes: { commands: [{ command: "biggy.run", title: "Run Biggy" }] },
+};
+
+const BIGGY = `export default { activate(ctx) {
+  ctx.commands.register("biggy.run", async () => {
+    const r = [];
+    for (const [path, text] of [["Big.md", "x".repeat(3000000)], [".common-ink/extensions/biggy/state.json", "{}"]]) {
+      try { await ctx.files.write(path, text, 0); r.push("written"); } catch (e) { r.push(e.message); }
+    }
+    await ctx.workbench.notice("BIGGY " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension's call is refused past a size, and writing its own state as a file points at ctx.state", { scenario: "empty", levers: { permissions: "allow" }, allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/biggy/extension.json", JSON.stringify(BIG));
+  await app.writeFile(".common-ink/extensions/biggy/index.js", BIGGY);
+  await app.reload();
+  await app.command("Run Biggy");
+  const said = (await app.page.locator(".notice p", { hasText: "BIGGY" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("["))), [
+    "Biggy sent more than 2 MB in one call",
+    "Biggy can't change its own state.json as a file: use ctx.state",
+  ]);
+  assert.equal(await app.readFile("Big.md"), "");
+});
