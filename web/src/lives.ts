@@ -297,8 +297,11 @@ export class Lives {
     this.resized.observe(view.dom);
   }
 
-  /** Until this time, the layer's scroll events are its following the editor's, not a wheel over a frame. */
-  private following = 0;
+  /**
+   * Where the layer was scrolled to as it followed the editor (as far as it could go). A scroll event
+   * of the layer's that finds it there is that following, however late it comes, not a wheel over a frame.
+   */
+  private followed = { top: NaN, left: NaN, noteTop: NaN, noteLeft: NaN };
 
   /** The note scrolled: the layer follows now, and the boxes are placed again once layout settles. */
   private fromEditor = () => {
@@ -313,11 +316,31 @@ export class Lives {
     // As tall as the editor's content (which grows as CodeMirror draws more), so it can follow all the way.
     if (this.layer.offsetHeight < scrollHeight) this.layer.style.height = `${scrollHeight}px`;
     if (this.layer.offsetWidth < scrollWidth) this.layer.style.width = `${scrollWidth}px`;
-    if (this.scroller.scrollTop !== scrollTop || this.scroller.scrollLeft !== scrollLeft) {
-      this.following = performance.now() + 100;
-      this.scroller.scrollTop = scrollTop;
-      this.scroller.scrollLeft = scrollLeft;
+    const layer = this.scroller;
+    if (layer.scrollTop !== scrollTop || layer.scrollLeft !== scrollLeft) {
+      const was = this.followed;
+      const noteStill = scrollTop === was.noteTop && scrollLeft === was.noteLeft;
+      const layerMoved = layer.scrollTop !== was.top || layer.scrollLeft !== was.left;
+      // Cut short by a layer that got shorter: that's not a scroll of its own.
+      const cutShort = layer.scrollTop < scrollTop && layer.scrollTop >= layer.scrollHeight - layer.clientHeight - 1;
+      if (noteStill && layerMoved && !cutShort) {
+        // The boxes were scrolled (a wheel over a frame) and the note hasn't moved since: it goes with them,
+        // whether their scroll event has come yet or not.
+        return this.toNote();
+      }
+      layer.scrollTop = scrollTop;
+      layer.scrollLeft = scrollLeft;
     }
+    this.followed = { top: layer.scrollTop, left: layer.scrollLeft, noteTop: scrollTop, noteLeft: scrollLeft };
+  }
+
+  /** Scroll the note to where the layer was scrolled, and remember them in step. */
+  private toNote() {
+    const note = this.view!.scrollDOM;
+    const { scrollTop, scrollLeft } = this.scroller;
+    if (note.scrollTop !== scrollTop) note.scrollTop = scrollTop;
+    if (note.scrollLeft !== scrollLeft) note.scrollLeft = scrollLeft;
+    this.followed = { top: scrollTop, left: scrollLeft, noteTop: note.scrollTop, noteLeft: note.scrollLeft };
   }
 
   /**
@@ -334,11 +357,11 @@ export class Lives {
   private settling = 0;
 
   private fromLayer = () => {
-    // Its own following of the editor (maybe cut short, if it was shorter): nothing to send back.
-    if (!this.view || performance.now() < this.following) return;
     const { scrollTop, scrollLeft } = this.scroller;
-    if (this.view.scrollDOM.scrollTop !== scrollTop) this.view.scrollDOM.scrollTop = scrollTop;
-    if (this.view.scrollDOM.scrollLeft !== scrollLeft) this.view.scrollDOM.scrollLeft = scrollLeft;
+    // Its own following of the editor (maybe cut short, if it was shorter): nothing to send back. Told
+    // by where it is, not by when: on a busy page the event comes late, and would pull the note back.
+    if (!this.view || (scrollTop === this.followed.top && scrollLeft === this.followed.left)) return;
+    this.toNote();
   };
 
   /**
