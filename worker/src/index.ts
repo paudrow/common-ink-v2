@@ -67,9 +67,16 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const elsewhere = redirectFor(url);
-    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
+    if (elsewhere) return new Response(null, { status: elsewhere.status, headers: { Location: elsewhere.location, "Strict-Transport-Security": HEADERS["Strict-Transport-Security"] } });
     const res = await handle(req, env, url);
-    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    // A WebSocket's answer can't be rewrapped; everything else asks for HTTPS, the sandbox route's included.
+    if (res.status === 101) return res;
+    if (res.headers.get("Content-Security-Policy") !== "{app}") {
+      if (res.headers.has("Strict-Transport-Security")) return res;
+      const out = new Response(res.body, res);
+      out.headers.set("Strict-Transport-Security", HEADERS["Strict-Transport-Security"]);
+      return out;
+    }
     const out = new Response(res.body, res);
     out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
