@@ -175,3 +175,41 @@ browserTest(h, "a sandboxed extension can't get past the size of a call with num
   const items = await app.page.locator("#command-bar li").allTextContents();
   assert.ok(!items.some((t) => t.length > 1000), "the oversized answer wasn't shown");
 });
+
+const SPAMMER = {
+  name: "Spammer",
+  activationEvents: ["onCommand:spammer.run"],
+  contributes: { commands: [{ command: "spammer.run", title: "Run Spammer" }] },
+};
+
+const SPAM = `export default { activate(ctx) {
+  ctx.commands.register("spammer.run", async () => {
+    const rs = await Promise.allSettled(Array.from({ length: 100000 }, () => ctx.commands.shortcut("nope")));
+    const refused = rs.filter((r) => r.status === "rejected");
+    const said = "SPAM " + JSON.stringify({ taken: rs.length - refused.length, why: refused[0] && refused[0].reason.message });
+    // Its share is spent for this moment: it says so once there's room again.
+    for (let i = 0; i < 30; i++) {
+      try { return await ctx.workbench.notice(said); } catch { await new Promise((r) => setTimeout(r, 1000)); }
+    }
+  });
+} };`;
+
+browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, and the page keeps running", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
+  await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
+  await app.reload();
+  await app.page.evaluate(() => {
+    const w = window as unknown as { gap: number };
+    w.gap = 0;
+    let last = performance.now();
+    setInterval(() => ((w.gap = Math.max(w.gap, performance.now() - last)), (last = performance.now())), 20);
+  });
+  await app.command("Run Spammer");
+  const said = (await app.page.locator(".notice p", { hasText: "SPAM" }).textContent({ timeout: 120_000 }))!;
+  const r = JSON.parse(said.slice(said.indexOf("{"))) as { taken: number; why: string };
+  assert.equal(r.why, "Spammer is calling too often: it can make 2,000 calls every 10 seconds");
+  // Its own start (registering its command) counts toward the 2,000 too.
+  assert.ok(r.taken > 1990 && r.taken <= 2000, `took ${r.taken}`);
+  const gap = await app.page.evaluate(() => (window as unknown as { gap: number }).gap);
+  assert.ok(gap < 2000, `the page went ${Math.round(gap)} ms without running`);
+});
