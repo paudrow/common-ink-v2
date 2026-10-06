@@ -1,0 +1,7 @@
+{
+  "pr": 0,
+  "title": "The records index is made all at once",
+  "steps": [
+    "Nothing should look different: the calendar shows every event, as before."
+  ]
+}
