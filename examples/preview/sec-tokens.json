@@ -1,0 +1,8 @@
+{
+  "pr": 53,
+  "title": "Google refresh tokens sealed at rest, and revoked on disconnect",
+  "steps": [
+    "This Preview uses the Sample calendar, not Google, so nothing changes on screen: the calendar and Data sources view work as before.",
+    "What changed is tested in test/tokens.test.ts: a connected token is stored sealed, one kept before is sealed by the sync, and disconnecting revokes it at Google."
+  ]
+}
