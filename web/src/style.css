@@ -742,6 +742,31 @@ button.status-item:hover {
 
 #unsent[data-state="conflict"] {
   color: #c2410c;
+  cursor: pointer;
+}
+
+#resolve {
+  color: var(--bad);
+  text-decoration: underline;
+}
+
+/* Your edit and someone else's, in the same place (conflict.ts). */
+.clash .diff {
+  font: 0.8125rem/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0 0 0.75rem;
+}
+
+.clash .add {
+  color: var(--add, #15803d);
+}
+
+.clash .del {
+  color: var(--del, #b91c1c);
+  text-decoration: line-through;
 }
 
 .notice {
