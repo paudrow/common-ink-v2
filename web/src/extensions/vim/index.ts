@@ -7,6 +7,7 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
+import { insertUndo, modeChanged } from "./undo.ts";
 
 type ExParams = { argString?: string; input?: string };
 type CM = NonNullable<ReturnType<typeof getCM>>;
@@ -35,6 +36,7 @@ export default {
     const modeWatch = ViewPlugin.define((view) => {
       const watch = (cm: CM) =>
         cm.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
+          modeChanged(view, e.mode);
           if (view === ctx.editor.focused()) showMode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
         });
       const cm = getCM(view);
@@ -43,7 +45,7 @@ export default {
       return {};
     });
     // Before every other keymap, so Vim sees keys first.
-    ctx.editor.extend(Prec.highest([vim(), modeWatch, theme]), { everywhere: true });
+    ctx.editor.extend(Prec.highest([insertUndo, vim(), modeWatch, theme]), { everywhere: true });
 
     // A different editor took focus: it starts in normal mode, with its own jumps.
     let shown: EditorView | null = null;
