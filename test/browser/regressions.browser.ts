@@ -146,3 +146,16 @@ browserTest(h, "the settings editor's User and Workspace each show their own val
   await app.settings.switchTo("User");
   assert.equal(await chips.locator(".badge", { hasText: "Modified" }).count(), 1);
 });
+
+browserTest(h, "with reduced motion asked for, nothing on screen pulses or flashes in a loop", { scenario: "empty" }, async (app) => {
+  await app.page.emulateMedia({ reducedMotion: "reduce" });
+  const looping = await app.page.evaluate(() =>
+    [...document.querySelectorAll("*")].flatMap((e) => {
+      const s = getComputedStyle(e);
+      // The text cursor blinks, as the system's own does.
+      if (e.closest(".cm-cursorLayer")) return [];
+      return s.animationName !== "none" && s.animationIterationCount === "infinite" ? [e.id || e.className.toString()] : [];
+    }),
+  );
+  assert.deepEqual(looping, []);
+});
