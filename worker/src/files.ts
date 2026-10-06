@@ -83,6 +83,17 @@ export interface Change {
   deleted?: true;
 }
 
+/** A file in Trash: its delete change, and its text just before. */
+export interface Deleted {
+  path: FilePath;
+  /** The delete's revision: undoing it restores the file. */
+  revision: Revision;
+  author: Author;
+  time: number;
+  /** The file's last revision before the delete: its text then is the note in Trash. 0 if it had none. */
+  before: Revision;
+}
+
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
 export interface UndoResult {
   revision: Revision;
@@ -138,8 +149,8 @@ export interface Write {
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
-  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
-  edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
+  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. With `delete`, the agent deletes the note instead, so Trash has something in it. */
+  edits?: Array<{ path: string; text: string; agent: string; label?: string; delete?: true }>;
   /** The scenario it was made from (docs/TESTING.md), and the clock that scenario starts at. */
   scenario?: { name: string; now?: string };
 }
@@ -226,6 +237,10 @@ export interface ChangeNotice {
   path: FilePath;
   revision: Revision;
   author: Author;
+  /** The change deleted the file. */
+  deleted?: true;
+  /** The change undid this one (a restore from Trash is one). */
+  undoes?: Revision;
 }
 
 export class Files {
@@ -412,6 +427,30 @@ export class Files {
     });
   }
 
+  /**
+   * Deletes since a time that are in effect, newest first: each is a file in Trash, whatever is at its
+   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one, nor is
+   * one whose restore a later delete undid: that delete is the note's row now. Only revisions and times
+   * are read here; a deleted file's text is `versionAt(path, before)`, when asked.
+   */
+  deleted(since: number): Deleted[] {
+    const undoneBy = this.undoneBy();
+    const deletedAgain = (revision: Revision) => this.db.all("SELECT 1 FROM changes r JOIN changes x ON x.undoes = r.revision AND x.deletes = 1 WHERE r.undoes = ? LIMIT 1", revision).length > 0;
+    return this.db
+      .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
+      .filter((d) => undoneBy(d.revision) === null && !deletedAgain(d.revision))
+      .map(({ revision, path, author, time }) => {
+        const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+        return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
+      });
+  }
+
+  /** A file's text just before a revision (of any file): "" if it had none yet. */
+  textBefore(path: FilePath, revision: Revision): string {
+    const [row] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+    return row?.r ? (this.textAt(path, row.r) ?? "") : "";
+  }
+
   /** A file's text at one of its revisions, or null if it never had that revision. */
   versionAt(path: FilePath, revision: Revision): string | null {
     return this.textAt(path, revision);
@@ -492,10 +531,10 @@ export class Files {
         this.db.run("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, textHash(text));
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
-      for (const { path, text, agent, label } of seed.edits ?? []) {
+      for (const { path, text, agent, label, delete: deleting } of seed.edits ?? []) {
         const current = added.has(path) ? this.read(path as FilePath) : null;
         if (!current) continue;
-        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent }, ...(deleting ? { delete: true as const } : {}) });
         if (label && result.file) labels.push({ name: label, path: current.path, revision: result.file.revision });
       }
       if (labels.length) {
@@ -563,7 +602,7 @@ export class Files {
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
       this.observe(path, null, revision);
-      this.heard.push({ path, revision, author });
+      this.heard.push({ path, revision, author, deleted: true, ...(undoes ? { undoes } : {}) });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
@@ -571,7 +610,7 @@ export class Files {
       path, next, revision,
     );
     this.observe(path, next, revision);
-    this.heard.push({ path, revision, author });
+    this.heard.push({ path, revision, author, ...(undoes ? { undoes } : {}) });
     return { status, file: { path, text: next, revision } };
   }
 

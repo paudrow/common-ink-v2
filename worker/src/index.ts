@@ -193,6 +193,7 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/search": "search",
   "POST /api/archive": "archive",
+  "GET /api/trash": "trash",
   "POST /api/unarchive": "unarchive",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
