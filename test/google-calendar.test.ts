@@ -526,3 +526,31 @@ for (const [what, series, move] of moves) {
     });
   }
 }
+
+for (const [how, answer] of [
+  ["answering a read with the event, cancelled", null],
+  ["answering a read with 404", 404],
+] as const) {
+  test(`an event Google deleted during a sync in which we edited it goes on the next sync, Google ${how}`, async () => {
+    const { fake } = google();
+    let gate: Promise<void> | null = null;
+    const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+      if (gate && String(input).includes("/calendars/primary/events?")) await gate;
+      if (answer && (init?.method ?? "GET") === "GET" && String(input).endsWith("/events/dentist")) return new Response("{}", { status: answer });
+      return fake.fetch(input, init);
+    });
+    store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+    await op(store, "sync_calendar", {});
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    const syncing = op(store, "sync_calendar", { force: true });
+    await new Promise((r) => setTimeout(r, 10));
+    await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 1" });
+    fake.remove("ada@example.com", "dentist");
+    gate = null;
+    open();
+    await syncing;
+    await op(store, "sync_calendar", { force: true });
+    assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null);
+  });
+}
