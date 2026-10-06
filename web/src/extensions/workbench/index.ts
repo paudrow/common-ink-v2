@@ -3,15 +3,19 @@
 // into windows (dnd.ts), the borders that resize windows, and what an empty window says; and the
 // commands that split, focus, resize and close windows and move and close tabs. Vim's Ctrl-W keys
 // are the Vim extension's, bound to these commands.
+import { EditorView } from "@codemirror/view";
 import * as L from "common-ink/layout";
 import type { ExtensionContext } from "../../extension-api.ts";
-import { dragged, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
+import { dragged, droppable, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import { syncTabs, type TabActions } from "./tabbar.ts";
 
 export default {
   activate(ctx: ExtensionContext) {
     const layout = ctx.layout;
+    // A tab or a note dropped on an editor opens in its window (below): the editor doesn't also type
+    // the name it carries for other apps into the note.
+    ctx.editor.extend(EditorView.domEventHandlers({ drop: (e) => droppable(e) }));
     const focused = () => L.focused(layout.get());
 
     const commands: Record<string, () => unknown> = {
@@ -173,10 +177,9 @@ export default {
           return { zone: dropZone(editors.getBoundingClientRect(), e.clientX, e.clientY), index: -1 };
         };
         el.addEventListener("dragover", (e) => {
-          const what = dragged(e);
-          if (!what) return;
+          if (!droppable(e)) return;
           e.preventDefault();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = what.from ? "move" : "copy";
+          if (e.dataTransfer) e.dataTransfer.dropEffect = dragged(e)?.from ? "move" : "copy";
           const { zone, index } = target(e);
           if (zone) {
             drop.hidden = false;
@@ -195,10 +198,12 @@ export default {
           if (!el.contains(e.relatedTarget as Node)) hide();
         });
         el.addEventListener("drop", (e) => {
+          if (!droppable(e)) return;
+          // Ours, even if it isn't one to take: the browser doesn't drop it anywhere either.
+          e.preventDefault();
           const what = dragged(e);
           hide();
-          if (!what) return;
-          e.preventDefault();
+          if (!what) return endDrag();
           const { zone, index } = target(e);
           dropped(what, id, zone, index);
         });
