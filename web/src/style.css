@@ -2615,3 +2615,12 @@ html[data-shell] #shell-toolbar:not([hidden]) {
 .shell-context {
   padding: 0.5rem 1rem;
 }
+.shell-place-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.shell-place-from {
+  font-size: 0.75rem;
+  color: var(--muted);
+}

@@ -40,7 +40,8 @@ browserTest(h, "on a phone, the bottom bar goes to places, a note opens over the
 browserTest(h, "the Places sheet lists what there is, and the bottom bar's places can be changed", { scenario: "lists", device: "phone" }, async (app) => {
   await tap(app, '#shell-bar [aria-label="Places"]');
   const places = await app.page.locator(".shell-sheet .shell-place").allInnerTexts();
-  assert.deepEqual(places, ["Feed", "Today", "Tasks", "Calendar", "Contacts", "Sources", "Uploads", "Extensions", "Settings", "Customize the bottom bar…"]);
+  // Each extension's place says whose it is, under its name.
+  assert.deepEqual(places, ["Feed", "Today\nDaily notes", "Tasks\nTasks", "Calendar\nCalendar", "Contacts\nContacts", "Sources\nData sources", "Uploads\nUploads", "Extensions", "Settings", "Customize the bottom bar…"]);
   await app.page.locator(".shell-sheet .shell-place", { hasText: "Customize" }).tap();
   await app.page.locator(".shell-sheet label", { hasText: "Calendar" }).locator("input").uncheck();
   await app.page.locator(".shell-sheet label", { hasText: "Tasks" }).locator("input").check();
@@ -120,7 +121,7 @@ browserTest(h, "F2 a sandboxed extension's place can't take over the core's Sett
   await app.page.waitForTimeout(1000);
   assert.equal(await app.page.locator(".settings-editor").count(), 1, "the core's Settings row opens the settings editor");
   await tap(app, '#shell-bar [aria-label="Places"]');
-  assert.deepEqual(await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings/ }).allInnerTexts(), ["Settings (Spoof)", "Settings"], "the extension's says whose it is");
+  assert.deepEqual(await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings/ }).allInnerTexts(), ["Settings\nSpoof", "Settings"], "the extension's says whose it is");
 });
 
 // The browser says so for each request it can't send offline; anything else the page logs fails the test.
@@ -192,7 +193,7 @@ browserTest(h, "F5 after a view place, opening the note you had open gets its ow
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
 });
 
-browserTest(h, "an extension turned off frees its slot on the bar, and its place comes back with it", { scenario: "lists", device: "phone" }, async (app) => {
+browserTest(h, "an extension turned off frees its slot on the bar, and its id stays in places.json after the three", { scenario: "lists", device: "phone" }, async (app) => {
   await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "extensions.disabled": ["calendar"] }));
   await app.reload();
   await app.idle();
@@ -204,4 +205,63 @@ browserTest(h, "an extension turned off frees its slot on the bar, and its place
   await app.idle();
   assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")).bar, ["feed", "daily.today", "tasks.tasks", "calendar.calendar"], "Calendar's id kept, after the three");
   assert.deepEqual(await bar(app), ["Feed", "Today", "Tasks", "Search", "Places"]);
+});
+
+for (const place of ["Feed", "Calendar"]) {
+  browserTest(h, `G1 a reload on ${place} stays on ${place}, and adds no entry`, { scenario: "lists", device: "phone" }, async (app) => {
+    await tap(app, `#shell-bar [aria-label="${place}"]`);
+    await app.page.locator("#shell-top h1", { hasText: place }).waitFor();
+    const before = await len(app);
+    await app.reload();
+    await app.page.waitForTimeout(800);
+    assert.equal(await title(app), place);
+    assert.equal(await len(app), before);
+  });
+}
+
+browserTest(h, "G2 Today, Feed, Today again: Today's note is a step over the Feed, so back comes to the Feed", { scenario: "lists", device: "phone" }, async (app) => {
+  for (const p of ["Today", "Feed", "Today"]) {
+    await tap(app, `#shell-bar [aria-label="${p}"]`);
+    await app.page.waitForTimeout(700);
+  }
+  assert.match(await title(app), /^Journal\//);
+  await app.page.goBack();
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
+});
+
+browserTest(h, "G3 an extension's place can't pass for Settings with a look-alike title", { scenario: "lists", device: "phone", allowErrors: [/./] }, async (app) => {
+  const titles = ["Ѕettings", "Set​tings", "Ｓettings", "Settings."];
+  await app.writeFile(
+    ".common-ink/extensions/spoof/extension.json",
+    JSON.stringify({ name: "Spoof", version: "1.0.0", activationEvents: ["onStartup"], contributes: { views: { sidebar: [{ id: "spoof.view", name: "Spoof view" }] }, places: titles.map((t, i) => ({ id: `p${i}`, title: t, icon: "settings", view: "spoof.view" })) } }),
+  );
+  await app.writeFile(".common-ink/extensions/spoof/index.js", `export default { activate() {} };`);
+  await app.reload();
+  await app.idle();
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  const rows = await app.page.locator(".shell-sheet .shell-place").allInnerTexts();
+  for (const t of titles) assert.ok(rows.some((r) => r.startsWith(t) && r.includes("Spoof")), `"${JSON.stringify(t)}" says whose it is: ${JSON.stringify(rows)}`);
+});
+
+browserTest(h, "an extension's place on the bar says whose it is when held", { scenario: "lists", device: "phone" }, async (app) => {
+  const today = app.page.locator('#shell-bar [aria-label="Today"]');
+  assert.equal(await today.getAttribute("title"), "Today · Daily notes");
+  const box = (await today.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  await app.page.waitForTimeout(700);
+  await app.page.mouse.up();
+  assert.ok((await app.state()).notices.includes("Today comes from Daily notes."));
+  assert.notEqual(await title(app), "Journal/2026-10-05", "a long press isn't a tap");
+});
+
+browserTest(h, "a reload on Settings, a place from the Places sheet, stays on Settings, and adds no entry", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings$/ }).tap();
+  await app.page.locator(".settings-editor").waitFor();
+  const before = await len(app);
+  await app.reload();
+  await app.page.locator(".settings-editor").waitFor();
+  assert.equal(await title(app), "Settings");
+  assert.equal(await len(app), before);
 });

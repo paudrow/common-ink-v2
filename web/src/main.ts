@@ -195,10 +195,7 @@ const browserHistory = (() => {
     pushVisit(visit: Visit) {
       clearTimeout(timer);
       write();
-      const replace = shell?.replacing;
-      const state = { nav: visit.id, ...shell?.entryFor() };
-      if (replace) history.replaceState(state, "", addressFor(visit.file));
-      else history.pushState(state, "", addressFor(visit.file));
+      history.pushState({ nav: visit.id, ...shell?.entryFor() }, "", addressFor(visit.file));
     },
     /** An entry of a place the phone shell shows: a new one, or the one you're on in its place. */
     place(state: ShellEntry, replace: boolean) {
@@ -225,9 +222,6 @@ const workbench = new Workbench(
       queueMicrotask(() => void renderUnsent());
     },
     navigated: (how, visit) => {
-      // On a phone, a note coming on show over a place's own entry (the Feed, Calendar) is a step of its own,
-      // even when it's where you were before (Navigation saw no jump): back comes back to the place.
-      if (how === "replace" && shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && workbench.focusedPath === visit.file) how = "push";
       browserHistory.follow(how, visit);
       // On a phone, a note opened shows over the place it was opened from.
       if (how === "push") shell?.showWindow();
@@ -461,10 +455,7 @@ function renderList() {
       a.addEventListener("click", async (e) => {
         e.preventDefault();
         await workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
-        // On a phone, the note on show opened again from the list moves nothing, so nothing made it an entry:
-        // it's a step of its own, for back to come back to the list.
-        const here = workbench.navigation.here;
-        if (shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && here) browserHistory.pushVisit(here);
+        stepOver();
         shell?.showWindow();
       });
       const li = document.createElement("li");
@@ -1031,8 +1022,15 @@ async function setBar(ids: string[]) {
     }
   }
 }
-/** What the core's places are called, which no extension's place may pass for. */
-const CORE_PLACES = ["feed", "extensions", "settings"];
+/**
+ * On a phone, the note on show as a step of its own over the place's entry you're on. Opening the note
+ * that was on show already (from the list, or Today when today's note was open) moves nothing in the
+ * app's own history, so nothing made it an entry; back should still come back to the place.
+ */
+function stepOver() {
+  const here = workbench.navigation.here;
+  if (shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && here) browserHistory.pushVisit(here);
+}
 /** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
   const on = extensions.host.on();
@@ -1040,9 +1038,9 @@ function places(): Place[] {
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
     // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's;
-    // and one that calls itself what a core place is called says whose it is.
-    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: CORE_PLACES.includes(p.title.trim().toLowerCase()) ? `${p.title} (${m.name})` : p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
-    ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
+    // and each says whose it is, so none passes for the app's own by its title.
+    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: p.title, from: m.name, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id }, from: m.name }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
   ];
@@ -1058,7 +1056,10 @@ shell = new Shell({
   bar: () => barIds,
   setBar,
   openView: (id) => workbench.openView(id),
-  run: (command) => void commands.run(command),
+  // Done when what the command does is (a note opened), or at once when it's off here.
+  run: (command) => (commands.get(command)?.off?.() ? void commands.run(command) : commands.get(command)?.run()),
+  stepOver,
+  notice: (message) => workbench.notice(message),
   showing: () => {
     const tab = L.activeTab(workbench.focusedGroup);
     return tab && { key: L.openableKey(tab), title: workbench.title(tab), note: "file" in tab && isNote(tab.file) };
@@ -1218,7 +1219,8 @@ try {
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
-  } else if (!workbench.focusedPath) await workbench.open(fallback);
+    // Nothing on show opens a note; on a phone a place's view (Calendar, after a reload there) is something.
+  } else if (!workbench.focusedPath && !(shell?.active && L.activeTab(workbench.focusedGroup))) await workbench.open(fallback);
   renderList();
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;

@@ -18,6 +18,8 @@ export interface Place {
   open: { list: true } | { view: string } | { command: string };
   /** Listed at the bottom of Places, with Extensions and Settings. */
   end?: boolean;
+  /** The extension that adds it: said beside it, so no extension's place passes for the app's own. */
+  from?: string;
 }
 
 /** A command as a button or a menu item, with why it's off on this device if it is. */
@@ -36,9 +38,12 @@ export interface ShellDeps {
   /** The bottom bar's place ids, as places.json says. */
   bar(): string[];
   setBar(ids: string[]): Promise<void>;
-  /** Show a view in the focused window; run a command. */
+  /** Show a view in the focused window; run a command, done when what it does is. */
   openView(id: string): void;
-  run(command: string): void;
+  run(command: string): unknown;
+  /** The note on show as a step of its own over the place's entry, when coming on show made none (it was on show already). */
+  stepOver(): void;
+  notice(message: string): void;
   /** What's on show in the window: which tab (its key, as layout.ts writes it), its title, and whether it's a note. */
   showing(): { key: string; title: string; note: boolean } | null;
   /** Views about the note in focus (contributes.views.context), and how to draw one into a sheet. */
@@ -83,6 +88,32 @@ function iconButton(name: IconName, label: string, run: () => void, shown = fals
   const b = el("button", { type: "button", className: "shell-icon", ariaLabel: label, title: label }, icon(name), shown ? el("span", { textContent: label }) : null);
   b.addEventListener("click", run);
   return b;
+}
+
+/** A place's name, and under it the extension that adds it, if one does. */
+function placeName(p: Place): HTMLElement {
+  return el("span", { className: "shell-place-name" }, el("span", { textContent: p.title }), p.from ? el("small", { className: "shell-place-from", textContent: p.from }) : null);
+}
+
+/** Half a second's press, without moving away, runs `held`; the click a press ends with is then not a tap. */
+function longPress(b: HTMLElement, held: () => void): void {
+  let timer = 0;
+  let fired = false;
+  b.addEventListener("pointerdown", () => {
+    fired = false;
+    timer = window.setTimeout(() => ((fired = true), held()), 500);
+  });
+  for (const end of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(end, () => clearTimeout(timer));
+  b.addEventListener("contextmenu", (e) => e.preventDefault());
+  b.addEventListener(
+    "click",
+    (e) => {
+      if (!fired) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    },
+    { capture: true },
+  );
 }
 
 export class Shell {
@@ -168,12 +199,18 @@ export class Shell {
     } else {
       this.screen = "window";
       this.awaitingRoot = true;
-      this.deps.run(place.open.command);
+      // Done, and nothing came on show (its note was on show already): that's the place now, as a step of its own.
+      void Promise.resolve(this.deps.run(place.open.command)).then(() => {
+        if (this.place !== id || !this.awaitingRoot) return;
+        if (!fromHistory) this.deps.stepOver();
+        this.showWindow();
+      });
     }
     if (!fromHistory) {
       const entry: ShellEntry = { place: id, above: 0, shell: true };
-      // A command's place (Today) goes to a note, whose opening makes the place's entry (showWindow).
-      if ("command" in place.open) this.depth = this.depth === 0 ? -2 : -1;
+      // A command's place (Today) goes to a note, whose opening makes its entry: over the place's entry you're
+      // on, so back comes back to it; from a note, as the place's own.
+      if ("command" in place.open) this.depth = this.depth === 0 ? 0 : -1;
       else {
         if (this.depth === 0) this.deps.replace(entry);
         else this.deps.push(entry);
@@ -189,15 +226,8 @@ export class Shell {
    */
   entryFor(): ShellEntry | undefined {
     if (!this.on) return undefined;
-    // A command's place: the note it went to is the place's own entry. Over a place's entry (-2), in its place.
-    if (this.depth < -1) return { place: this.place, above: (this.depth = 0) };
     this.depth = this.depth < 0 ? 0 : this.depth + 1;
     return { place: this.place, above: this.depth };
-  }
-
-  /** A command's place replaced the entry it was on (-2: it was on a place's): say so, for the app's history to replace rather than push. */
-  get replacing(): boolean {
-    return this.on && this.depth === -2;
   }
 
   /** The app started on a note: under the shell it shows over the Feed, so back goes to the Feed and then leaves. */
@@ -288,8 +318,16 @@ export class Shell {
       if (current) b.setAttribute("aria-current", "page");
       return b;
     };
+    /** An extension's place on the bar: too narrow to say whose it is, so a long press says. */
+    const placeButton = (p: Place) => {
+      const b = button(p.icon, p.title, p.id === this.place, () => this.go(p.id));
+      if (!p.from) return b;
+      b.title = `${p.title} · ${p.from}`;
+      longPress(b, () => this.deps.notice(`${p.title} comes from ${p.from}.`));
+      return b;
+    };
     this.bottom.replaceChildren(
-      ...onBar.map((p) => button(p.icon, p.title, p.id === this.place, () => this.go(p.id))),
+      ...onBar.map(placeButton),
       button("search", "Search", false, () => this.deps.search()),
       button("menu", "Places", false, () => this.openPlaces()),
     );
@@ -349,7 +387,7 @@ export class Shell {
     this.openSheet("Places", (body) => {
       const places = this.deps.places();
       const row = (p: Place) => {
-        const b = el("button", { type: "button", className: "shell-place" }, icon(p.icon), el("span", { textContent: p.title }));
+        const b = el("button", { type: "button", className: "shell-place" }, icon(p.icon), placeName(p));
         if (p.id === this.place) b.setAttribute("aria-current", "page");
         b.addEventListener("click", () => this.go(p.id));
         return b;
@@ -397,7 +435,7 @@ export class Shell {
         sheet.close();
         this.update();
       });
-      body.append(el("h2", { textContent: "The bottom bar" }), note, ...places.map((p, i) => el("label", { className: "shell-place" }, boxes[i], icon(p.icon), el("span", { textContent: p.title }))), save);
+      body.append(el("h2", { textContent: "The bottom bar" }), note, ...places.map((p, i) => el("label", { className: "shell-place" }, boxes[i], icon(p.icon), placeName(p))), save);
     });
   }
 
