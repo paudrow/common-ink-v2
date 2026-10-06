@@ -1,0 +1,7 @@
+{
+  "pr": 104,
+  "title": "Every page hears of every kept change",
+  "steps": [
+    "Nothing should look different. Edit a note in two windows side by side: each sees the other's edits as before."
+  ]
+}

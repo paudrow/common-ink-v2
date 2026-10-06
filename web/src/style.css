@@ -23,6 +23,9 @@
   --warn: #b7791f;
   --warn-ink: #8a5a12;
   --ok: #2f8f5b;
+  /* A diff's added and removed lines. */
+  --add: #15803d;
+  --del: #b91c1c;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
   font-family: var(--prose);
@@ -50,6 +53,8 @@
     --warn: #e0a84a;
     --warn-ink: #ecc078;
     --ok: #5cc28c;
+    --add: #6cc58f;
+    --del: #f28b82;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
   }
@@ -396,7 +401,7 @@ button.status-item:hover {
 
 #save[data-status="conflict"],
 #save[data-status="offline"] {
-  color: #c2410c;
+  color: var(--bad);
 }
 
 @media (max-width: 40rem) {
@@ -577,17 +582,17 @@ button.status-item:hover {
 }
 
 :is(#panel, .tab-view) .diff .add {
-  color: #15803d;
+  color: var(--add);
 }
 
 :is(#panel, .tab-view) .diff .del {
-  color: #b91c1c;
+  color: var(--del);
   text-decoration: line-through;
   text-decoration-color: rgb(185 28 28 / 0.4);
 }
 
 :is(#panel, .tab-view) .message {
-  color: #c2410c;
+  color: var(--bad);
 }
 
 .drop {
@@ -642,7 +647,7 @@ button.status-item:hover {
 
 #problems {
   margin-left: auto;
-  color: #c2410c;
+  color: var(--bad);
 }
 
 :is(#panel, .tab-view) h3 {
@@ -737,11 +742,11 @@ button.status-item:hover {
 }
 
 #unsent[data-state="waiting"] {
-  color: #b45309;
+  color: var(--warn-ink);
 }
 
 #unsent[data-state="conflict"] {
-  color: #c2410c;
+  color: var(--bad);
   cursor: pointer;
 }
 
@@ -928,11 +933,11 @@ button.status-item:hover {
 }
 
 .tab-view .diff .add {
-  color: #15803d;
+  color: var(--add);
 }
 
 .tab-view .diff .del {
-  color: #b91c1c;
+  color: var(--del);
   text-decoration: line-through;
 }
 
@@ -1098,7 +1103,7 @@ button.status-item:hover {
 .setting-problem {
   margin: 0.25rem 0 0;
   font-size: 0.8125rem;
-  color: #c2410c;
+  color: var(--bad);
 }
 
 /* The status bar's reload notice. */
@@ -1228,7 +1233,7 @@ button.status-item:hover {
 .extension-row.state-failed .extension-state,
 .extension-row.has-error .extension-state,
 .extension-error {
-  color: #c2410c;
+  color: var(--bad);
 }
 
 .extension-name {
@@ -1647,7 +1652,7 @@ iframe.webview {
 
 .activity-view .activity-denied,
 .activity-view .activity-failed {
-  color: #c2410c;
+  color: var(--bad);
 }
 
 /* The Media extension's mini player (extensions/media), in the corner while something is loaded. */
