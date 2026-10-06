@@ -13,6 +13,8 @@ export interface Clash {
   theirs: string;
   keepMine(): void;
   useTheirs(): void;
+  /** Where the keyboard goes back to when it closes: the note's editor, so u works at once. */
+  returnTo(): HTMLElement | null;
 }
 
 const KEEP = "Save your version over theirs. Theirs stays in History.";
@@ -25,7 +27,7 @@ function el<T extends HTMLElement = HTMLElement>(tag: string, props: Record<stri
 }
 
 export function showClash(c: Clash): void {
-  const modal = openModal({ label: "Your version and theirs", className: "dialog clash", role: "alertdialog" });
+  const modal = openModal({ label: "Your version and theirs", className: "dialog clash", role: "alertdialog", returnTo: c.returnTo });
   const choose = (fn: () => void) => () => {
     modal.close();
     fn();

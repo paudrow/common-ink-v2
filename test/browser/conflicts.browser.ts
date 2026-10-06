@@ -46,18 +46,20 @@ browserTest(h, "an agent's edit to the line you're typing on: the status bar say
   assert.equal(await app.page.locator("#unsent").textContent(), "");
 });
 
-browserTest(h, "Use theirs puts their version in the editor, and u brings yours back to be saved", { scenario: "empty" }, async (app) => {
+for (const how of ["the command", "a click on Compare…"]) browserTest(h, `Use theirs, from ${how}, puts their version in the editor, and u straight away brings yours back to be saved`, { scenario: "empty" }, async (app) => {
   const revision = await open(app);
   await app.call("cursor", 4, 1);
   await app.keys("A mine<Esc>");
   await agentWrites(app, revision);
   await clashShown(app);
-  await app.command("note.resolveConflict");
+  if (how === "the command") await app.command("note.resolveConflict");
+  else await app.page.locator("#resolve").click();
   await app.page.locator(".clash button", { hasText: "Use theirs" }).click();
   await app.idle();
   assert.equal(await app.readFile("Plan.md"), NOTE.replace("beta", "beta theirs"));
   await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
-  await app.keys("u");
+  assert.equal(await app.page.evaluate(() => !!document.activeElement?.closest(".cm-content")), true, "the keyboard is back in the note");
+  await app.page.keyboard.press("u");
   await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta mine" }).waitFor();
   await app.call("command", "note.save");
   await app.idle();
@@ -74,7 +76,7 @@ browserTest(h, "an edit made offline that clashes says so once back online, inst
   await agentWrites(app, revision);
   await context.setOffline(false);
   await clashShown(app);
-  assert.equal(await app.page.locator("#unsent").textContent(), "1 unsent change · 1 can't be merged: open Plan");
+  assert.equal(await app.page.locator("#unsent").textContent(), "1 can't be merged: open Plan", "said once, as a clash");
   await app.page.locator("#unsent").click();
   await app.page.locator(".clash button", { hasText: "Keep mine" }).click();
   await app.idle();

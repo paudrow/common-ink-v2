@@ -265,11 +265,11 @@ async function refreshList() {
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
-  const waiting = unsent.length + ops.length;
-  // Held edits the server refused, and open notes whose edit clashes with someone else's.
+  // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
   const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : ""].filter(Boolean);
-  unsentLine.textContent = [parts.join(" · "), clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""].filter(Boolean).join(" · ");
+  const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  unsentLine.textContent = parts.filter(Boolean).join(" · ");
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
@@ -309,6 +309,7 @@ async function resolveConflict(): Promise<boolean> {
     theirs: theirs.text,
     keepMine: () => void session.adopt(theirs).then(() => session.save(true)),
     useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
+    returnTo: () => view.contentDOM,
   });
   return true;
 }
