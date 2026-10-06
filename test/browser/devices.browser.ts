@@ -142,7 +142,7 @@ browserTest(h, "on a touch screen, Not a keyboard? takes a found keyboard back, 
   await installKeysDemo(app);
   await app.page.keyboard.press("ArrowDown");
   await app.page.keyboard.press("Escape");
-  const notice = app.page.locator(".notice", { hasText: "Keyboard found: Keys demo is on." });
+  const notice = app.page.locator(".notice", { hasText: "Keyboard found: Vim, Keys demo are on." });
   await notice.waitFor();
   const reloaded = app.page.waitForEvent("load");
   await notice.getByRole("button", { name: "Not a keyboard?" }).click();
