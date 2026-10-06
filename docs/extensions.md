@@ -19,30 +19,30 @@ Built-ins and extensions you mark **trusted** (Trust… in the Extensions view) 
 
 ## Permissions
 
-The manifest's `permissions` are the most an extension may ever ask for, each with why. The first time it asks, you see "Word count wants to read your notes · Count the words in the note on show", and choose Allow once, Always allow, or Don't allow. Your answers are kept in your settings, under `extensions.permissions`, and the Extensions view lets you change them. Built-ins have what they declare until you deny it. Every check and every network request shows in Extension activity, and a dot in the status bar shows while a request is in flight.
+The manifest's `permissions` are the most an extension may ever ask for, each with why. The first time it asks, you see "Reading time wants to read your notes · Say how long the note on show takes to read", and choose Allow once, Always allow, or Don't allow. Your answers are kept in your settings, under `extensions.permissions`, and the Extensions view lets you change them. Built-ins have what they declare until you deny it. Every check and every network request shows in Extension activity, and a dot in the status bar shows while a request is in flight.
 
 ## The manifest
 
 ```json
 {
-  "id": "word-count",
-  "name": "Word count",
+  "id": "reading-time",
+  "name": "Reading time",
   "version": "1.0.0",
-  "description": "A Word count view for the note on show.",
+  "description": "A Reading time view for the note on show.",
   "main": "index.js",
-  "activationEvents": ["onView:wordCount", "onCommand:wordCount.show"],
+  "activationEvents": ["onView:readingTime", "onCommand:readingTime.show"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "Count the words in the note on show" }
+    "files:read": { "paths": ["**"], "why": "Say how long the note on show takes to read" }
   },
   "contributes": {
-    "commands": [{ "command": "wordCount.show", "title": "Show word count" }],
-    "keybindings": [{ "key": "Mod-Shift-c", "command": "wordCount.show" }, { "vim": "gC", "command": "wordCount.show" }],
-    "menus": { "tabMenu": [{ "command": "wordCount.show" }] },
-    "views": { "sidebar": [{ "id": "wordCount", "name": "Word count" }] },
+    "commands": [{ "command": "readingTime.show", "title": "Show reading time" }],
+    "keybindings": [{ "key": "Mod-Shift-c", "command": "readingTime.show" }, { "vim": "gC", "command": "readingTime.show" }],
+    "menus": { "tabMenu": [{ "command": "readingTime.show" }] },
+    "views": { "sidebar": [{ "id": "readingTime", "name": "Reading time" }] },
     "configuration": {
-      "title": "Word count",
+      "title": "Reading time",
       "properties": {
-        "word-count.includeCode": { "type": "boolean", "default": false, "description": "Count words in code blocks too." }
+        "reading-time.wordsPerMinute": { "type": "number", "default": 230, "description": "How fast you read." }
       }
     }
   }
@@ -110,7 +110,6 @@ An extension whose requirements aren't met doesn't start, and the Extensions vie
 - `ctx.events.onSaved` and `ctx.events.onFocus` say when a file saved and when focus moved.
 - `ctx.settings.get(key)` reads any setting in effect.
 - `ctx.extensions.api(id)` is the API another extension offers: whatever its `activate` returned (as in VS Code). Asking starts it if it hasn't started. It's `undefined` if that extension is off, failed, sandboxed or not there, so the caller does without. Tasks asks Daily notes where daily notes are this way, so there's one definition.
-- `ctx.extensions.on(id)` is whether an extension is installed and on, started or not, sandboxed or not. Words hides its count while the catalog's Word count is on, so one count shows.
 - `ctx.util.fuzzyFilter`, `notePathFor` and `label` are the helpers the built-ins use.
 - `ctx.editor.extend(extension)` adds a CodeMirror extension to every note's editor, and with `{ everywhere: true }` to every editor, settings and code too (as Vim does). `ctx.editor.focused()` is the focused editor. `ctx.editor.markdown(extension)` adds a `@lezer/markdown` extension to the language notes are parsed with: new syntax (GFM, math) or how code blocks parse. The core's markdown is CommonMark. They need the `editor` permission, and only trusted extensions get it.
 
@@ -122,7 +121,9 @@ In the Extensions view, Customize copies a built-in's folder into the workspace 
 
 The core is the file store and sync, history, the layout, commands and the command bar, settings, the Extensions view, permissions, safe mode, and a plain editor with markdown highlighting and standard keys. On by default, as extensions: Workbench (tab bars, splits, dragging, borders and the tab menu), Vim, Live preview, GFM, Code blocks, LaTeX, Lists (outliner editing, bullets, numbers and folding), Daily notes, Tasks, Timers (timer, stopwatch and alarm embeds), Media (background noise and the mini player), Link embeds (videos, posts, music and link cards), History, Calendar, Contacts, Uploads, and the command bar's Open by name and Command list. Each loads only when one of its activation events happens, so it isn't in the app's first download.
 
-The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default (Word count, Boards, Pomodoro, HTML app), from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed, at once: a sandboxed extension needs no reload to start, and a note's blocks for its embeds draw. A block for an embed only an uninstalled Catalog extension draws offers to install it. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
+The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default (Boards, Pomodoro, HTML app), from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed, at once: a sandboxed extension needs no reload to start, and a note's blocks for its embeds draw. A block for an embed only an uninstalled Catalog extension draws offers to install it. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
+
+Word count left the Catalog when Words, built in, began counting as you type. A copy installed from the Catalog no longer runs or shows; one of that id you wrote yourself does.
 
 ## Turning extensions off, and safe mode
 

@@ -917,7 +917,6 @@ export class ExtensionRuntime {
       util: { fuzzyFilter, notePathFor: (name) => notePathFor(name), label: docLabel },
       extensions: {
         api: async <T,>(id: string) => (await this.host.api(id)) as T | undefined,
-        on: (id) => this.host.on().some((x) => x.id === id),
       },
       events: {
         onSaved: (fn) => void app.onSaved.push(guard(fn)),

@@ -172,12 +172,6 @@ browserTest(h, "on a laptop the status line counts the focused note's words as y
   assert.equal(await shown(app, "#not-saved"), false);
 });
 
-browserTest(h, "with the catalog's Word count on, the built-in count gives way, so one count shows", { scenario: "extensions", levers: { permissions: "allow" } }, async (app) => {
-  await app.idle();
-  await app.page.locator('[data-item="wordCount.status"]', { hasText: /words?$/ }).waitFor();
-  assert.equal(await words(app).isVisible(), false);
-});
-
 browserTest(h, "on a phone there's no status line and no counting; offline, a pill says an edit isn't saved until the server has it, without moving the note; wider, the count shows", { scenario: "empty", viewport: PHONE, ...OFFLINE }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");

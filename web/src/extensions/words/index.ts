@@ -1,6 +1,6 @@
 // Words, a built-in extension: the focused note's word count in the status bar, as you type. It counts
-// only while the count can be seen: the status bar showing (a phone has none), a note in focus, and no
-// other word count (the catalog's Word count) on. An edit reads again only the lines it touched.
+// only while the count can be seen: the status bar showing (a phone has none) and a note in focus. An
+// edit reads again only the lines it touched.
 import { ViewPlugin, type EditorView } from "@codemirror/view";
 import type { ExtensionContext } from "../../extension-api.ts";
 import { WordTally } from "./count.ts";
@@ -18,7 +18,7 @@ export default {
     /** The editor whose words show, if they show. */
     const counted = () => {
       const view = ctx.editor.focused();
-      return shown && view && ctx.workbench.focusedPath()?.endsWith(".md") && !ctx.extensions.on("word-count") ? view : null;
+      return shown && view && ctx.workbench.focusedPath()?.endsWith(".md") ? view : null;
     };
     const show = () => {
       const view = counted();

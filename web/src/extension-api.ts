@@ -344,8 +344,6 @@ export interface ExtensionContext {
      * started. Undefined if it's off, sandboxed, failed or not there: the caller does without.
      */
     api<T>(id: string): Promise<T | undefined>;
-    /** Whether an extension is installed and on, whether or not it has started. */
-    on(id: string): boolean;
   };
   events: {
     /** After a file's text on the server changes, from here or anywhere else. */
