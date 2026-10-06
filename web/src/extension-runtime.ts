@@ -460,8 +460,17 @@ export class ExtensionRuntime {
     }
   }
 
+  /** Each extension's state writes, one after another, in the order asked: two at once would clash. */
+  private stateWrites = new Map<string, Promise<void>>();
+
   /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
-  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+  private writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const write = (this.stateWrites.get(m.id) ?? Promise.resolve()).catch(() => {}).then(() => this.sendState(m, value));
+    this.stateWrites.set(m.id, write);
+    return write;
+  }
+
+  private async sendState(m: ExtensionManifest, value: unknown): Promise<void> {
     const path = statePath(m.id);
     const text = `${JSON.stringify(value, null, 2)}\n`;
     for (let tries = 0; tries < 3; tries++) {
