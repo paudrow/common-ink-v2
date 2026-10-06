@@ -7,11 +7,11 @@ import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
 import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
-import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
+import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { statePath } from "./extensions.ts";
+import { extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
@@ -41,6 +41,8 @@ const HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
+  // Browsers ignore it over plain HTTP (npm run dev), so it's the same everywhere.
+  "Strict-Transport-Security": "max-age=31536000",
 };
 
 /** Hosts a page may frame, handed from `handle` to `fetch`, and never sent. */
@@ -106,10 +108,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
-    // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
+    // A trusted workspace extension's code, from its files, so the page can import it under
+    // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
     const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
     if (code && isExtensionScript(code)) {
-      const file = await (workspace as unknown as Store).read(code);
+      const trusted = await idsIn(workspace as unknown as Store, "extensions.trusted", who.kind === "user" ? who.email : null);
+      const file = trusted.has(extensionFileOf(code)?.id ?? "") ? await (workspace as unknown as Store).read(code) : null;
       if (!file) return secure(new Response("No such file\n", { status: 404 }));
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
@@ -213,7 +217,8 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
 }
 
 /**
- * An upload's bytes, under the type its name gives. Every one is served sandboxed, so an SVG or a PDF
+ * An upload's bytes, under the type its name gives (not the type in the uploads file, which anyone who
+ * can write files can change). Every one is served sandboxed, so an SVG or a PDF
  * opened by itself can't run script as this site; anything that isn't an image, audio, video, PDF or
  * plain text downloads instead of opening.
  */
@@ -229,12 +234,13 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return secure(new Response(null, { status: 304 }));
   const blob = await env.UPLOADS.get(blobKey(upload.hash));
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  const type = typeFor(upload.name);
   const out = secure(
     new Response(blob.body, {
       headers: {
-        "Content-Type": upload.type,
+        "Content-Type": type,
         "Content-Length": String(upload.size),
-        "Content-Disposition": `${showsInline(upload.type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
+        "Content-Disposition": `${showsInline(type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
         ETag: `"${upload.hash}"`,
         // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
         "Cache-Control": "private, no-cache",
