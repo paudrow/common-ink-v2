@@ -286,3 +286,17 @@ test("an edit that failed for a while, then meets one 412 once Google is back, m
   const g = fake.event("ada@example.com", "dentist")!;
   assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
 });
+
+test("an edit of an event Google deleted meanwhile is refused and goes away with the next sync; deleting one is done already", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.remove("ada@example.com", "dentist");
+  const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+  assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+  assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
+  fake.remove("ada@example.com", "standup");
+  await op(store, "delete_event", { address: "event:google/primary/standup_20261005T160000Z", scope: "all" });
+  assert.deepEqual(store.sources.outbox("google"), []);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await listed(store), ["2026-10-08 Offsite"]);
+});

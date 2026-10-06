@@ -346,6 +346,7 @@ export class DataSources {
 
   private async flushQueued(source: SourceId): Promise<string | null> {
     const adapter = this.adapters[source];
+    const conflicts = new Map<number, number>();
     for (;;) {
       const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
       if (!row) return null;
@@ -362,9 +363,12 @@ export class DataSources {
         this.setState(source, { error: undefined });
       } catch (err) {
         if (err instanceof Conflict) {
-          // Merged onto Google's version either way, so the next try has its etag. Three in a row and it waits for the next flush.
+          // Merged onto Google's version either way, so the next try has its etag. Three in one flush and it waits for the next.
+          const tries = (conflicts.get(row.seq) ?? 0) + 1;
+          conflicts.set(row.seq, tries);
           this.resolve(source, row, op, err);
-          if (row.attempts < 3) continue;
+          if (tries < 3) continue;
+          this.db.run("UPDATE outbox SET error = ? WHERE seq = ?", err.message, row.seq);
           this.setState(source, { error: err.message });
           return err.message;
         }
