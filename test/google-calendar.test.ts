@@ -960,3 +960,17 @@ test("edits Google refuses after their edit has answered leave nothing kept for 
   assert.deepEqual(store.sources.outbox("google"), [], "all refused");
   assert.equal(store.sources["refusals"].size, 0, "no reason kept for an edit nobody waits on");
 });
+
+test("an edit waiting on top of one Google refuses is refused with it, and says which it built on", async () => {
+  let answer = 503;
+  const { fake, store } = await googleWith((url, method) => (method === "PATCH" && url.endsWith("/events/dentist") ? Response.json({ error: { code: answer, message: answer === 400 ? "Invalid value" : "Unavailable" } }, { status: answer }) : undefined));
+  await op(store, "sync_calendar", {});
+  assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "First" })) as { status: string }).status, "queued");
+  answer = 400;
+  const second = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Second" }, store, ada);
+  assert.deepEqual(second, { ok: false, error: "Google Calendar refused the change to First, which Second built on: Invalid value. It's back as it was, and the changes are in its history." });
+  assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist");
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist");
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to First and the 1 after it: Invalid value. It's back as it was, and the changes are in its history.");
+  assert.equal(store.sources["refusals"].size, 0);
+});

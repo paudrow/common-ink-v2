@@ -1,0 +1,8 @@
+{
+  "pr": 0,
+  "title": "An edit dropped with a refused one says so",
+  "steps": [
+    "Nothing should look different: an event edit Google takes is saved as before.",
+    "If Google refuses an edit while another edit of the same event waits behind it, both say they were refused, and Data sources counts them."
+  ]
+}

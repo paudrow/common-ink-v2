@@ -440,8 +440,9 @@ export class DataSources {
         // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
         const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
         if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
-          const reason = this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone);
-          if (this.awaited.has(row.seq)) this.refusals.set(row.seq, reason);
+          for (const [seq, reason] of this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone)) {
+            if (this.awaited.has(seq)) this.refusals.set(seq, reason);
+          }
           continue;
         }
         const message = (err as Error).message;
@@ -497,19 +498,34 @@ export class DataSources {
   /**
    * The source won't take an edit. Drop it and the record's edits queued after it (they build on it,
    * and are sent whole), and put the record back as it was before them, as the sync's change: what the
-   * source has. History keeps the edits. Returns why, in words.
+   * source has. History keeps the edits. Returns why, in words, for each edit dropped, by outbox seq.
    */
-  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): string {
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): Map<number, string> {
     const path = row.path as FilePath;
     const current = this.files.read(path);
     const author = SYNC_AUTHOR[source];
     // Deleted in the source, it goes here too: put back, it would stay, as the sync already passed the deletion by while the edit waited.
     const restore: Write[] =
       row.base === null || gone ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    const dropped = this.db.all<{ seq: number; op: string }>("SELECT seq, op FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", path, row.seq);
     this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
-    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
-    this.setState(source, { conflict: message, error: undefined });
-    return message;
+    const named = (o: RecordOp) => o.event.title || "an event";
+    const why = reason.replace(/\.$/, "");
+    const after = gone ? "It's gone here too" : "It's back as it was";
+    const later = dropped.length - 1;
+    this.setState(source, {
+      conflict: later
+        ? `${title} refused the change to ${named(op)} and the ${later} after it: ${why}. ${after}, and the changes are in its history.`
+        : `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`,
+      error: undefined,
+    });
+    return new Map(
+      dropped.map(({ seq, op: queued }) =>
+        seq === row.seq
+          ? [seq, `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`]
+          : [seq, `${title} refused the change to ${named(op)}, which ${named(JSON.parse(queued) as RecordOp)} built on: ${why}. ${after}, and the changes are in its history.`],
+      ),
+    );
   }
 
   /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
