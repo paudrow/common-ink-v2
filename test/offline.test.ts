@@ -412,8 +412,8 @@ test("with IndexedDB that never answers, an edit undone is let go of from the me
   }
 });
 
-/** Two pages of the app in one browser, keeping edits in the same place, as two tabs do. */
-async function twoPages() {
+/** Two pages of the app in one browser, keeping edits in the same place, as two tabs do; A's through `kvA`. */
+async function twoPages(kvA: (shared: KV) => KV = (shared) => shared) {
   const items = new Map<string, string>();
   Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k), key: (i: number) => [...items.keys()][i] ?? null, get length() { return items.size; } }, configurable: true });
   const store = memoryStore();
@@ -424,7 +424,7 @@ async function twoPages() {
     write: async (path, text, base, edit) => store.files.write({ path, text, base, author: you, ...(edit ? { edit } : {}) }),
     editApplied: async (path, edit) => store.files.editApplied(path, edit),
   };
-  const a = new Offline(kv, net);
+  const a = new Offline(kvA(kv), net);
   const b = new Offline(kv, net);
   a.account = b.account = "you@example.com";
   store.files.write({ path: TRIP, text: "# Trip\n- a\n", base: 0, author: you });
@@ -460,6 +460,55 @@ test("what's kept is ordered by a count, not the clock: a clock set back doesn't
     assert.equal((await a.keptEdit(await a.read(TRIP)))?.edit.text, "# Trip\n- a\n- later\n");
   } finally {
     Date.now = now;
+    done();
+  }
+});
+
+test("an edit held offline, undone as its page went: another page's background flush lets it go, and doesn't send it", async () => {
+  const { a, b, store, done } = await twoPages();
+  try {
+    await a.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw" });
+    // Undone, and the page went before letting go of what it held finished: only its mark was kept.
+    a.keepCleanNow([TRIP]);
+    assert.deepEqual(await b.flush(), { sent: [], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n");
+    assert.deepEqual(await b.unsent(), []);
+  } finally {
+    done();
+  }
+});
+
+test("a page kept to memory after another upgraded the database: its edit held before, then undone, isn't sent by the other", async () => {
+  let ownMemory = false;
+  const mine = memoryKV();
+  const { a, b, store, done } = await twoPages((shared) => {
+    const kv = () => (ownMemory ? mine : shared);
+    return { get: (s, k) => kv().get(s, k), set: (s, k, v) => kv().set(s, k, v), del: (s, k) => kv().del(s, k), all: (s) => kv().all(s), keys: (s) => kv().keys(s) };
+  });
+  try {
+    await a.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw" });
+    ownMemory = true;
+    await a.letGoOwn(TRIP);
+    assert.deepEqual(await b.flush(), { sent: [], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n");
+  } finally {
+    done();
+  }
+});
+
+test("a page's mark lets go only of what it kept before it: its later edit, and another page's, are sent", async () => {
+  const { a, b, store, done } = await twoPages();
+  try {
+    await a.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw" });
+    a.keepCleanNow([TRIP]);
+    await a.hold({ path: TRIP, text: "# Trip\n- a\n- later\n", base: 1, edit: "l" });
+    assert.deepEqual(await b.flush(), { sent: [TRIP], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n- later\n");
+    await b.hold({ path: TRIP, text: "# Trip\n- a\n- later\n- B's\n", base: 2, edit: "b" });
+    a.keepCleanNow([TRIP]);
+    assert.deepEqual(await a.flush(), { sent: [TRIP], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n- later\n- B's\n");
+  } finally {
     done();
   }
 });

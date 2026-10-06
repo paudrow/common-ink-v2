@@ -840,8 +840,6 @@ window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
-  // And notes whose edits were undone, so a draft or held edit not yet let go of isn't sent next time.
-  offline.keepCleanNow(workbench.cleaned());
   // Then sent as a beacon, which outlives the page more surely than a keepalive request. One the
   // browser won't take (too big) waits as a draft: a keepalive request would draw on the same budget.
   for (const u of unsaved) {

@@ -36,8 +36,6 @@ interface OpenFile {
   startText: string;
   /** When the edit it opened with was kept, if that edit clashed: one that never reached the server. */
   keptAt?: number;
-  /** Its edits in this page were undone back to the text it's based on (so nothing of them is kept). */
-  cleaned?: boolean;
   /** An edit held offline that it opened with, before the server could say whether it has it. */
   unchecked?: Unsent;
 }
@@ -221,11 +219,6 @@ export class Workbench {
   /** When a note's clashing edit was kept, if it's one it opened with that never reached the server. */
   keptAt(path: FilePath): number | undefined {
     return this.files.get(path)?.keptAt;
-  }
-
-  /** Notes whose edits in this page were all undone, or typed back to the saved text: nothing of theirs is kept. */
-  cleaned(): FilePath[] {
-    return [...this.files.values()].flatMap((f) => (f.cleaned && !f.session.dirty && f.session.status !== "conflict" ? [f.path] : []));
   }
 
   /** Every file that isn't saved, for the page closing to send. Not one that clashes: it's held, to settle. */
@@ -586,7 +579,6 @@ export class Workbench {
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
-    file.cleaned = !draft;
     // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
     // offline, is no edit now.
     if (draft) void this.net.keepDraft(draft);

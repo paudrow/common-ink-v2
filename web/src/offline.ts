@@ -215,8 +215,11 @@ export class Offline {
     return (await this.kv.durable?.()) ?? true;
   }
 
-  unsent(): Promise<Unsent[]> {
-    return this.kv.all<Unsent>("unsent");
+  /** The edits held to send. One its page has since let go of (undone) goes here, so nothing sends it. */
+  async unsent(): Promise<Unsent[]> {
+    const held: Unsent[] = [];
+    for (const u of await this.kv.all<Unsent>("unsent")) if (!(await this.droppedIfLetGo(u))) held.push(u);
+    return held;
   }
 
   /** Keep an edit of records that couldn't be sent, to send once the server can be reached. */
@@ -263,8 +266,9 @@ export class Offline {
     return { sent, refused };
   }
 
-  unsentFor(path: FilePath): Promise<Unsent | undefined> {
-    return this.kv.get<Unsent>("unsent", path);
+  async unsentFor(path: FilePath): Promise<Unsent | undefined> {
+    const held = await this.kv.get<Unsent>("unsent", path);
+    return held && !(await this.droppedIfLetGo(held)) ? held : undefined;
   }
 
   /** Who's signed in: drafts are kept for them alone, and none without one. */
@@ -299,8 +303,9 @@ export class Offline {
   }
 
   /**
-   * Notes whose edits were all undone (or typed back to the saved text) in this page, said at once as
-   * the page goes: letting go of their kept edits in IndexedDB may not finish before it's gone.
+   * This page lets go of its edits of these notes (undone, saved, or reloaded): said at once, before
+   * anything kept of them is let go of, which may not finish before the page goes (or reach IndexedDB
+   * at all, once it keeps to memory). Whatever this page kept of them before now is no edit to anyone.
    */
   keepCleanNow(paths: FilePath[]): void {
     if (!this.account) return;
@@ -337,6 +342,24 @@ export class Offline {
     }
   }
 
+  /**
+   * Whether the page that kept this edit has let go of its edits of the note since (its mark is later):
+   * then it's no edit, and it goes from where it was kept. Every read of what's kept comes through here.
+   */
+  private async droppedIfLetGo(kept: Unsent, where: "held" | "went" | "typed" = "held"): Promise<boolean> {
+    const mark = this.account ? this.cleanMark(kept.owner, kept.path) : undefined;
+    if (mark === undefined || (kept.seq ?? 0) > mark) return false;
+    if (where === "held") await this.kv.del("unsent", kept.path);
+    else if (where === "typed") await this.kv.del("meta", this.draftKey(kept.path));
+    else
+      try {
+        localStorage.removeItem(this.draftKey(kept.path));
+      } catch {
+        // Not there.
+      }
+    return true;
+  }
+
   /** What was kept in localStorage for a note as the page went. */
   private keptAsWent(path: FilePath): Unsent | undefined {
     try {
@@ -350,8 +373,10 @@ export class Offline {
   /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
   private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
-    const went = this.keptAsWent(path);
-    const typed = await this.kv.get<Unsent>("meta", this.draftKey(path));
+    let went = this.keptAsWent(path);
+    let typed = await this.kv.get<Unsent>("meta", this.draftKey(path));
+    if (went && (await this.droppedIfLetGo(went, "went"))) went = undefined;
+    if (typed && (await this.droppedIfLetGo(typed, "typed"))) typed = undefined;
     // The later kept of the two: a page that went and came back (the browser's back-forward cache) kept
     // on typing after the one kept as it went. By their order numbers, or their times if kept before those.
     const later = (a: Unsent, b: Unsent) => ((a.seq ?? 0) - (b.seq ?? 0) || (a.time ?? 0) - (b.time ?? 0)) > 0;
@@ -389,14 +414,8 @@ export class Offline {
   async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean; checked: boolean } | undefined> {
     const held = await this.unsentFor(latest.path);
     const kept = held ?? (await this.draftFor(latest.path));
-    // Nothing kept: any page's mark that it went with the note as saved has done its work.
+    // Nothing kept (or only what its pages let go of): their marks have done their work.
     if (!kept) return void (this.account && this.dropCleanMarks(latest.path));
-    // The page that kept it went with its edits undone, after it kept this: it's no edit now.
-    const mark = this.account ? this.cleanMark(kept.owner, latest.path) : undefined;
-    if (mark !== undefined && (kept.seq ?? 0) <= mark) {
-      this.dropCleanMarks(latest.path);
-      return void (await this.landed(latest.path));
-    }
     // Used to open the note, it's this page's to carry on from here; one only kept (offline) stays as it was.
     const take = (edit: Unsent) => this.takeOver(edit, !!held);
     // A clash typed back to the server's own text is no clash.
@@ -455,11 +474,13 @@ export class Offline {
   }
 
   /**
-   * This page's edit of a note is no more (saved, or undone): what it kept of it goes, wherever it was
-   * kept. Another page's edit of the same note, kept in the same place, stays: it's still that page's.
+   * This page's edit of a note is no more (saved, undone, or reloaded): marked so at once, then what it
+   * kept of it goes, wherever it was kept. Another page's edit of the same note, kept in the same place,
+   * stays: it's still that page's.
    */
   async letGoOwn(path: FilePath): Promise<void> {
-    const held = await this.unsentFor(path);
+    this.keepCleanNow([path]);
+    const held = await this.kv.get<Unsent>("unsent", path);
     if (held && held.owner === this.page) await this.release(path);
     if (!this.account) return;
     if (this.keptAsWent(path)?.owner === this.page)

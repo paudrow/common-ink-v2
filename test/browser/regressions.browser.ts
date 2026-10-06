@@ -489,6 +489,34 @@ for (const order of ["B leaves, then A", "A leaves, then B"] as const) {
   });
 }
 
+browserTest(h, "an edit held offline and undone in a tab that closes at once isn't sent by another tab's background send", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+  await app.writeFile("Other.md", "# Other\n");
+  // A page of its own, whose clock runs: its background send is what's tested.
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Other");
+  await other.idle();
+  const a = new App(await app.page.context().newPage(), app.base);
+  await a.goto({}, "Trip");
+  await a.idle();
+  await a.call("cursor", 2, 1);
+  await app.page.context().setOffline(true);
+  await a.keys("dw");
+  await a.page.waitForFunction(() => document.querySelector("#unsent")?.textContent?.includes("1 unsent change"));
+  // The page goes before letting go of what it held in IndexedDB gets there: here, it never does.
+  await a.page.evaluate(() => {
+    IDBObjectStore.prototype.delete = () => ({}) as IDBRequest;
+  });
+  await a.keys("u");
+  await a.page.close();
+  await app.page.context().setOffline(false);
+  // The other tab sends what's held every five seconds, and as it comes back online.
+  await other.page.waitForTimeout(6500);
+  await other.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n");
+  await other.page.close();
+});
+
 browserTest(h, "a clash undone, then redone, writes nothing: its redo would land where theirs has moved", { scenario: "empty" }, async (app) => {
   await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
   await app.goto({}, "Plan");
