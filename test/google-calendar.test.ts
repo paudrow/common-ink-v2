@@ -721,7 +721,7 @@ test("an edit that waited out failures, then meets one unreadable answer after a
 
 test("an event Google deleted while an edit of it waited goes here too, with the edit in its history", async () => {
   let down = false;
-  const { fake, store } = googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  const { fake, store } = await googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
   await op(store, "sync_calendar", {});
   down = true;
   assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string }).status, "queued");
@@ -740,7 +740,7 @@ test("an event Google deleted while an edit of it waited goes here too, with the
 test("when Google cancelled an occurrence an edit of it waited for, the source says Google's cancellation won", async () => {
   let down = false;
   const late = "standup_20261006T160000Z";
-  const { fake, store } = googleWith((url, method) => {
+  const { fake, store } = await googleWith((url, method) => {
     if (down && method === "PATCH") return new Response("{}", { status: 503 });
     // Google answers a get of a cancelled occurrence with the occurrence, cancelled.
     if (method === "GET" && url.endsWith(`/events/${late}`)) return Response.json(fake.event("ada@example.com", late));
