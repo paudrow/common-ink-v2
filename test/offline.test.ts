@@ -512,3 +512,35 @@ test("a page's mark lets go only of what it kept before it: its later edit, and 
     done();
   }
 });
+
+test("an edit undone while its page was still holding it (reading what it held before) isn't sent by another page", async () => {
+  // IndexedDB taking a moment to answer, as it does.
+  const slow = (shared: KV): KV => {
+    const wait = () => new Promise((r) => setTimeout(r, 5));
+    return { ...shared, get: async (s, k) => (await wait(), shared.get(s, k)), set: async (s, k, v) => (await wait(), shared.set(s, k, v)), del: async (s, k) => (await wait(), shared.del(s, k)) };
+  };
+  const { a, b, store, done } = await twoPages(slow);
+  try {
+    // The save failed offline, so the page holds the edit; `u` lands before that's done, and the page goes.
+    const holding = a.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw" });
+    void a.letGoOwn(TRIP);
+    await holding;
+    assert.deepEqual(await b.flush(), { sent: [], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n");
+  } finally {
+    done();
+  }
+});
+
+test("with no account remembered, an edit held and undone as its page went isn't sent by another page", async () => {
+  const { a, b, store, done } = await twoPages();
+  a.account = b.account = null;
+  try {
+    await a.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw" });
+    a.keepCleanNow([TRIP]);
+    assert.deepEqual(await b.flush(), { sent: [], conflicts: [] });
+    assert.equal(store.files.read(TRIP)?.text, "# Trip\n- a\n");
+  } finally {
+    done();
+  }
+});

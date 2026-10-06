@@ -70,7 +70,7 @@ type Verdict = "landed" | "send" | "clash";
 
 /** Where a note's unsaved edit is kept, by path, as the page goes. */
 const DRAFT = "common-ink.draft:";
-/** Where a page marks, as it goes, the notes whose edits it undid: by account, page and path. */
+/** Where a page marks the notes it let go of its edits of: by page and path. */
 const CLEAN = "common-ink.clean:";
 /** Every key in localStorage, read before any is removed. */
 const storedKeys = () => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!);
@@ -196,10 +196,12 @@ export class Offline {
 
   /** Keep an edit that couldn't be sent, so it survives a reload. */
   async hold(unsent: Unsent): Promise<void> {
+    // Its place in the order is now: the page letting go of it while it's being kept comes after.
+    const seq = this.nextSeq();
     // When it was first held: held again as its sends keep failing, it's still the edit from then.
     const before = unsent.time === undefined ? await this.unsentFor(unsent.path) : undefined;
     const time = unsent.time ?? (before && before.edit === unsent.edit ? before.time : undefined) ?? Date.now();
-    await this.kv.set("unsent", unsent.path, { ...unsent, time, owner: unsent.owner ?? this.page, seq: this.nextSeq() });
+    await this.kv.set("unsent", unsent.path, { ...unsent, time, owner: unsent.owner ?? this.page, seq });
     this.changed();
   }
 
@@ -303,12 +305,12 @@ export class Offline {
   }
 
   /**
-   * This page lets go of its edits of these notes (undone, saved, or reloaded): said at once, before
-   * anything kept of them is let go of, which may not finish before the page goes (or reach IndexedDB
-   * at all, once it keeps to memory). Whatever this page kept of them before now is no edit to anyone.
+   * This page lets go of its edits of these notes (whenever one is no more: undone, saved, reloaded, or
+   * the note opened as saved): said at once, before anything kept of them is let go of, which may not
+   * finish before the page goes (or reach IndexedDB at all, once it keeps to memory). Whatever this page
+   * kept of them before now is no edit to anyone. Signed in or not: held edits are kept either way.
    */
   keepCleanNow(paths: FilePath[]): void {
-    if (!this.account) return;
     for (const path of paths) {
       try {
         localStorage.setItem(this.cleanKey(this.page, path), String(this.nextSeq()));
@@ -319,7 +321,7 @@ export class Offline {
   }
 
   private cleanKey(page: string, path: FilePath) {
-    return `${CLEAN}${this.account}:${page}:${path}`;
+    return `${CLEAN}${page}:${path}`;
   }
 
   /** The order number of a page's mark that it went with its edits of a note undone, if it left one. */
@@ -336,7 +338,8 @@ export class Offline {
   /** Every page's mark for a note goes: what they were about is gone. */
   private dropCleanMarks(path: FilePath) {
     try {
-      for (const key of storedKeys()) if (key.startsWith(`${CLEAN}${this.account}:`) && key.endsWith(`:${path}`)) localStorage.removeItem(key);
+      // A page's id has no colon in it: what follows the first one is the path.
+      for (const key of storedKeys()) if (key.startsWith(CLEAN) && key.slice(key.indexOf(":", CLEAN.length) + 1) === path) localStorage.removeItem(key);
     } catch {
       // Nothing to drop.
     }
@@ -347,7 +350,7 @@ export class Offline {
    * then it's no edit, and it goes from where it was kept. Every read of what's kept comes through here.
    */
   private async droppedIfLetGo(kept: Unsent, where: "held" | "went" | "typed" = "held"): Promise<boolean> {
-    const mark = this.account ? this.cleanMark(kept.owner, kept.path) : undefined;
+    const mark = this.cleanMark(kept.owner, kept.path);
     if (mark === undefined || (kept.seq ?? 0) > mark) return false;
     if (where === "held") await this.kv.del("unsent", kept.path);
     else if (where === "typed") await this.kv.del("meta", this.draftKey(kept.path));
@@ -415,7 +418,7 @@ export class Offline {
     const held = await this.unsentFor(latest.path);
     const kept = held ?? (await this.draftFor(latest.path));
     // Nothing kept (or only what its pages let go of): their marks have done their work.
-    if (!kept) return void (this.account && this.dropCleanMarks(latest.path));
+    if (!kept) return void this.dropCleanMarks(latest.path);
     // Used to open the note, it's this page's to carry on from here; one only kept (offline) stays as it was.
     const take = (edit: Unsent) => this.takeOver(edit, !!held);
     // A clash typed back to the server's own text is no clash.
@@ -474,9 +477,9 @@ export class Offline {
   }
 
   /**
-   * This page's edit of a note is no more (saved, undone, or reloaded): marked so at once, then what it
-   * kept of it goes, wherever it was kept. Another page's edit of the same note, kept in the same place,
-   * stays: it's still that page's.
+   * This page's edit of a note is no more (saved, undone, reloaded, or the note opened as saved): marked
+   * so at once, then what it kept of it goes, wherever it was kept. Another page's edit of the same
+   * note, kept in the same place, stays: it's still that page's.
    */
   async letGoOwn(path: FilePath): Promise<void> {
     this.keepCleanNow([path]);

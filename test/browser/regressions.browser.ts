@@ -517,6 +517,67 @@ browserTest(h, "an edit held offline and undone in a tab that closes at once isn
   await other.page.close();
 });
 
+browserTest(h, "an edit undone while its failed save is still being held isn't sent by another tab, or when the note opens again", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile("Other.md", "# Other\n");
+  // A page of its own, whose clock runs: its background send is what's tested.
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Other");
+  await other.idle();
+  const held = () =>
+    other.page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          const open = indexedDB.open("common-ink");
+          open.onsuccess = () => {
+            const count = open.result.transaction("unsent").objectStore("unsent").count();
+            count.onsuccess = () => (resolve(count.result), open.result.close());
+          };
+        }),
+    );
+  // How soon the page goes after the edit is held decides whether a later save of it lets go again: a few tries.
+  for (const note of ["Trip1", "Trip2", "Trip3"]) {
+    await app.writeFile(`${note}.md`, "# Trip\nalpha beta gamma\n");
+    const a = new App(await app.page.context().newPage(), app.base);
+    // Reads of held edits wait while the gate is shut, as a slow device's IndexedDB keeps them waiting.
+    await a.page.addInitScript(() => {
+      const w = window as unknown as { gate?: Promise<void> };
+      const transaction = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<typeof transaction>) {
+        const tx = transaction.apply(this, args);
+        const gate = w.gate;
+        if (gate && (args[1] ?? "readonly") === "readonly" && [args[0]].flat().includes("unsent"))
+          Object.defineProperty(tx, "oncomplete", { configurable: true, set: (fn: (e: Event) => void) => tx.addEventListener("complete", (e) => void gate.then(() => fn.call(tx, e))) });
+        return tx;
+      } as typeof transaction;
+    });
+    await a.goto({}, note);
+    await a.idle();
+    await a.call("cursor", 2, 1);
+    await a.page.evaluate(() => {
+      const w = window as unknown as { gate?: Promise<void>; open?: () => void };
+      w.gate = new Promise((r) => (w.open = r));
+    });
+    await app.page.context().setOffline(true);
+    await a.keys("dw");
+    await a.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "offline");
+    // `u` while the failed save is still being held; the page goes the moment it's held.
+    await a.keys("u");
+    await a.page.evaluate(() => (window as unknown as { open: () => void }).open());
+    for (let i = 0; i < 100 && !(await held()); i++) await other.page.waitForTimeout(5);
+    await a.page.close();
+    await app.page.context().setOffline(false);
+    await other.page.waitForTimeout(6500);
+    assert.equal(await app.readFile(`${note}.md`), "# Trip\nalpha beta gamma\n", `${note}: not sent by the other tab`);
+    const again = new App(await app.page.context().newPage(), app.base);
+    await again.goto({}, note);
+    await again.idle();
+    await again.page.waitForTimeout(1500);
+    assert.equal(await app.readFile(`${note}.md`), "# Trip\nalpha beta gamma\n", `${note}: not sent as it opens again`);
+    await again.page.close();
+  }
+  await other.page.close();
+});
+
 browserTest(h, "a clash undone, then redone, writes nothing: its redo would land where theirs has moved", { scenario: "empty" }, async (app) => {
   await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
   await app.goto({}, "Plan");
