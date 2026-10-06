@@ -1,0 +1,8 @@
+{
+  "pr": 43,
+  "title": "Safe fetch: no IPv6 way around the private-address check",
+  "steps": [
+    "Nothing changes on screen: link cards and extensions' fetches work as before. Open Link embeds tour and check its cards still draw.",
+    "In the console: fetch(\"/api/extensions/catalog?url=\" + encodeURIComponent(\"http://[::ffff:127.0.0.1]/catalog/index.json\")).then(r => r.json()) answers \"Private and local addresses can't be fetched\"."
+  ]
+}
