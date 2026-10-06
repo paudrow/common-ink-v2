@@ -426,6 +426,7 @@ for (const order of ["B leaves, then A", "A leaves, then B"] as const) {
     await c.idle();
     for (let i = 0; i < 20 && (await c.readFile("Trip.md")) !== "# Trip\nalpha beta gamma fromB\n"; i++) await c.page.waitForTimeout(250);
     assert.equal(await c.readFile("Trip.md"), "# Trip\nalpha beta gamma fromB\n");
+    await c.page.close();
   });
 }
 

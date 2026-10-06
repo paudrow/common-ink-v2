@@ -595,7 +595,13 @@ export class Workbench {
     if (clashed && file.session.status !== "conflict") {
       // Its undo and redo steps are of text theirs has replaced: they'd land in the wrong places.
       queueMicrotask(() => file.views.forEach(forgetHistory));
-      void this.net.latest(file.path).then((latest) => file.session.absorb(latest), () => {});
+      const takeTheirs = (): void =>
+        void this.net.latest(file.path).then(
+          (latest) => file.session.absorb(latest),
+          // Offline: theirs is taken in once the page is back online.
+          () => addEventListener("online", takeTheirs, { once: true }),
+        );
+      takeTheirs();
     }
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
