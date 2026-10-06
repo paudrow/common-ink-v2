@@ -102,7 +102,10 @@ export function createState(
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
       slots.livePreview.of(s.livePreview),
-      history(),
+      lastEdit,
+      // Two quick edits side by side are one undo step, as CodeMirror's history has it by default. Its
+      // own time limit is lifted so an extension can join edits further apart (Vim's insert, typed slowly).
+      history({ newGroupDelay: Number.MAX_SAFE_INTEGER, joinToEvent: (tr, adjacent) => adjacent && timeOf(tr) - tr.startState.field(lastEdit) < JOIN_MS }),
       drawSelection(),
       // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
       // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
@@ -146,6 +149,15 @@ export function editText(view: EditorView, text: string) {
 
 /** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
 const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
+
+/** How close in time two edits side by side are to be one undo step: CodeMirror's history's default. */
+const JOIN_MS = 500;
+const timeOf = (tr: Transaction) => tr.annotation(Transaction.time) ?? Date.now();
+/** When the last edit the history keeps was made. */
+const lastEdit = StateField.define<number>({
+  create: () => 0,
+  update: (time, tr) => (tr.docChanged && tr.annotation(Transaction.addToHistory) !== false ? timeOf(tr) : time),
+});
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
 export function replaceText(view: EditorView, text: string, flash = false) {

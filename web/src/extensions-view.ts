@@ -124,6 +124,50 @@ function keepingPlace(root: HTMLElement, draw: () => void) {
   if (back) back.focus({ preventScroll: true });
 }
 
+/**
+ * A press in the panel, while the pointer is down. Drawn again under it, a button's down and up would
+ * land on different elements and its click would be lost: the drawing waits until the press is over.
+ */
+let pressed: Element | null = null;
+let afterPress: (() => void) | null = null;
+/** How long a press holds the drawing back at most, in case its release never reaches the page. */
+const PRESS_MS = 2000;
+let longest = 0;
+/** Counts presses, so a release's late work doesn't end the press after it (input can come before a timer). */
+let presses = 0;
+if (typeof document !== "undefined") {
+  const released = () => {
+    clearTimeout(longest);
+    const press = presses;
+    // After the click the press makes, which comes after pointerup.
+    setTimeout(() => {
+      if (press !== presses) return;
+      pressed = null;
+      const draw = afterPress;
+      afterPress = null;
+      draw?.();
+    });
+  };
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      pressed = e.target instanceof Element ? e.target : null;
+      presses++;
+      clearTimeout(longest);
+      longest = window.setTimeout(released, PRESS_MS);
+    },
+    true,
+  );
+  document.addEventListener("pointerup", released, true);
+  document.addEventListener("pointercancel", released, true);
+  // The release can happen where the page doesn't hear it: another tab, another window.
+  window.addEventListener("blur", released);
+  document.addEventListener("visibilitychange", () => document.hidden && released());
+}
+
+/** Whether a press under way is in one of these, so drawing them now would lose its click. */
+const pressIn = (...boxes: Array<Element | undefined>) => !!pressed && boxes.some((b) => b?.contains(pressed!));
+
 export function extensionsView(deps: ExtensionsViewDeps) {
   let query = "";
   /** The extension whose details are showing, and their modal. */
@@ -134,6 +178,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     title: "Extensions",
     render(root: HTMLElement) {
       root.classList.add("extensions-view");
+      if (pressIn(root, details?.modal.box)) return void (afterPress = () => view.render(root));
       keepingPlace(root, () => draw(root));
       drawDetails();
     },
@@ -266,6 +311,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
   /** The details showing, drawn again with what's true now. */
   function drawDetails() {
     if (!details) return;
+    if (pressIn(details.modal.box)) return void (afterPress = drawDetails);
     const { id, modal } = details;
     const r = deps.records().find((x) => x.id === id);
     keepingPlace(modal.box, () =>

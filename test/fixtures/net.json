@@ -48,5 +48,19 @@
       "content-type": "image/png"
     },
     "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN4+PDhfwAJDQOz3VYKHgAAAABJRU5ErkJggg=="
+  },
+  "https://ext.example/gadget/extension.json": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\": \"gadget\", \"name\": \"Gadget\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+  },
+  "https://ext.example/gadget/index.js": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/javascript"
+    },
+    "body": "export default { activate() {} };\n"
   }
 }
