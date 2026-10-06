@@ -1,0 +1,7 @@
+{
+  "pr": 96,
+  "title": "Uploads say so when they can't be stored",
+  "steps": [
+    "Nothing should look different: drop an image into a note and it uploads and shows. If storage is down, the upload is refused with a message instead of failing."
+  ]
+}
