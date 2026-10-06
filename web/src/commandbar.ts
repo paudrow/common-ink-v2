@@ -21,8 +21,11 @@ export interface Provider {
   /** What the query starts with to use this provider. The longest matching prefix wins. */
   prefix: string;
   placeholder: string;
-  /** What matches, now or once it's known: a sandboxed extension answers over a message. */
-  items(query: string): Item[] | Promise<Item[]>;
+  /**
+   * What matches, now or once it's known: a sandboxed extension answers over a message. A provider whose
+   * answer comes in parts (search's notes, then each extension's) may hand the parts so far to `update`.
+   */
+  items(query: string, update?: (items: Item[]) => void): Item[] | Promise<Item[]>;
   /** The query is in the query language (docs/queries.md): show chips, and complete filters with Tab. */
   query?: boolean;
 }
@@ -34,6 +37,9 @@ export function providerFor(text: string, providers: readonly Provider[]): { pro
 }
 
 const MAX_ITEMS = 50;
+
+/** How long typing must pause before a query-language provider (search, which asks the server) is asked. */
+const TYPING_MS = 120;
 
 /** Under this width the bar fills the screen (the compact width class). */
 const FULL_SCREEN = "(max-width: 599.98px)";
@@ -84,10 +90,11 @@ export class CommandBar {
     document.body.append(this.root);
     // A tap on a chip or a row mustn't take focus from the field, which would close the bar or hide the keyboard.
     for (const el of [this.chips, this.list]) el.addEventListener("mousedown", (e) => e.preventDefault());
-    this.input.addEventListener("input", () => this.render());
+    this.input.addEventListener("input", () => this.render(true));
     this.input.addEventListener("keydown", (e) => this.key(e));
-    this.input.addEventListener("blur", () => {
-      if (!matchMedia(FULL_SCREEN).matches) this.close(false);
+    // Focus leaving the bar closes it, on a wide screen; moving to its chips or Cancel doesn't.
+    this.root.addEventListener("focusout", (e) => {
+      if (!this.root.contains(e.relatedTarget as Node | null) && !matchMedia(FULL_SCREEN).matches) this.close(false);
     });
   }
 
@@ -97,6 +104,11 @@ export class CommandBar {
 
   get isOpen(): boolean {
     return !this.root.hidden;
+  }
+
+  /** Whether focus is in the bar: its own keys (Ctrl-j, Ctrl-k, Ctrl-p…) come before the app's shortcuts. */
+  get hasFocus(): boolean {
+    return this.isOpen && this.root.contains(document.activeElement);
   }
 
   /** Pick one of `items`, filtered by what's typed, as the command bar does for notes. */
@@ -122,17 +134,29 @@ export class CommandBar {
 
   /** Each render's turn, so a provider's late answer to an old query doesn't replace a newer one. */
   private turn = 0;
+  private typing: ReturnType<typeof setTimeout> | undefined;
 
   private found() {
     return this.choices ? { provider: this.choices, query: this.input.value.trim() } : providerFor(this.input.value, this.providers);
   }
 
-  private render() {
+  /** Ask the provider for what matches. While typing, a query-language provider waits for a pause. */
+  private render(typed = false) {
     const found = this.found();
     this.input.placeholder = found?.provider.placeholder ?? "Nothing here: the command bar's extensions are turned off";
     this.drawChips(found?.provider.query ? found : null);
     const turn = ++this.turn;
-    const items = found ? found.provider.items(found.query) : [];
+    clearTimeout(this.typing);
+    if (typed && found?.provider.query) {
+      this.list.setAttribute("aria-busy", "true");
+      this.typing = setTimeout(() => turn === this.turn && this.ask(found, turn), TYPING_MS);
+      return;
+    }
+    this.ask(found, turn);
+  }
+
+  private ask(found: { provider: Provider; query: string } | null, turn: number) {
+    const items = found ? found.provider.items(found.query, (some) => turn === this.turn && this.show(some, true)) : [];
     if (items instanceof Promise) {
       this.list.setAttribute("aria-busy", "true");
       void items.then((later) => turn === this.turn && this.show(later), () => turn === this.turn && this.show([]));
@@ -163,10 +187,13 @@ export class CommandBar {
     );
   }
 
-  private show(items: Item[]) {
-    this.list.removeAttribute("aria-busy");
+  /** Draw the items. `partial`: more are on their way, so the list stays busy and the selection stays where it is. */
+  private show(items: Item[], partial = false) {
+    if (partial) this.list.setAttribute("aria-busy", "true");
+    else this.list.removeAttribute("aria-busy");
+    const kept = this.items[this.selected];
     this.items = items.slice(0, MAX_ITEMS);
-    this.selected = 0;
+    this.selected = partial && kept ? Math.max(0, this.items.findIndex((i) => i.label === kept.label && i.section === kept.section)) : 0;
     const rows: HTMLElement[] = [];
     this.items.forEach((item, i) => {
       if (item.section && item.section !== this.items[i - 1]?.section) {
@@ -179,6 +206,8 @@ export class CommandBar {
       const li = document.createElement("li");
       li.id = `command-bar-item-${i}`;
       li.setAttribute("role", "option");
+      // Search's rows stack a line under the title; the command list's keep a shortcut at the right.
+      if (!item.section) li.classList.add("plain");
       if (item.dim) li.classList.add("dim");
       const text = document.createElement("span");
       text.className = "text";
@@ -186,13 +215,13 @@ export class CommandBar {
       label.className = "label";
       label.textContent = item.label;
       text.append(label);
+      li.append(text);
       if (item.detail) {
         const detail = document.createElement("span");
         detail.className = "detail";
         detail.textContent = item.detail;
-        text.append(detail);
+        (item.section ? text : li).append(detail);
       }
-      li.append(text);
       if (item.aside) {
         const aside = document.createElement("span");
         aside.className = "aside";
@@ -230,14 +259,15 @@ export class CommandBar {
     void item.run();
   }
 
-  /** Tab: complete the filter before the caret, for a query-language provider. */
-  private completeFilter(): void {
-    if (!this.found()?.provider.query) return;
+  /** Tab: complete the filter before the caret, for a query-language provider. False when there's nothing to complete. */
+  private completeFilter(): boolean {
+    if (!this.found()?.provider.query) return false;
     const done = complete(this.input.value, this.input.selectionStart ?? this.input.value.length, this.filters.all());
-    if (!done) return;
+    if (!done) return false;
     this.input.value = done.text;
     this.input.setSelectionRange(done.caret, done.caret);
     this.render();
+    return true;
   }
 
   private key(e: KeyboardEvent) {
@@ -246,7 +276,8 @@ export class CommandBar {
       else if (matchKeys(e, "ArrowUp") || matchKeys(e, "Ctrl-p") || matchKeys(e, "Ctrl-k")) this.move(-1);
       else if (matchKeys(e, "Enter")) this.choose(this.selected);
       else if (matchKeys(e, "Escape")) this.close();
-      else if (matchKeys(e, "Tab")) this.completeFilter();
+      // With nothing to complete, Tab moves on to the chips and Cancel, as it would.
+      else if (matchKeys(e, "Tab")) return this.completeFilter();
       else return false;
       return true;
     })();

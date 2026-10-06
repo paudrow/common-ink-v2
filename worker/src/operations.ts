@@ -515,7 +515,7 @@ export const OPERATIONS = {
   }),
   search: op<{ query: string; limit: number; zone: string }>({
     description:
-      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. Events are list_events\'.',
+      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. A search reads at most 1000 notes with its words: `more` says there were more, so add words or filters. Events are list_events\'.',
     input: {
       type: "object",
       properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE },

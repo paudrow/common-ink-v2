@@ -246,8 +246,8 @@ export class Files {
     private now: () => number = Date.now,
     /** Told of every change once it's recorded. */
     private announce: (notice: ChangeNotice) => void = () => {},
-    /** Told of every file's new text (null: deleted) inside the change's transaction, to keep indexes of files. */
-    private observe: (path: FilePath, text: string | null) => void = () => {},
+    /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
+    private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
     /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
     private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
@@ -584,7 +584,7 @@ export class Files {
     const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
-      this.observe(path, null);
+      this.observe(path, null, revision);
       this.heard.push({ path, revision, author });
       return { status, file: { path, text: "", revision } };
     }
@@ -592,7 +592,7 @@ export class Files {
       "INSERT INTO files(path, text, revision) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET text = excluded.text, revision = excluded.revision",
       path, next, revision,
     );
-    this.observe(path, next);
+    this.observe(path, next, revision);
     this.heard.push({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }

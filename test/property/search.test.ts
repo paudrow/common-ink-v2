@@ -6,7 +6,7 @@ import { SearchIndex } from "../../worker/src/search.ts";
 import { memoryDb } from "../sqlite.ts";
 import { forAll, type Rng } from "./gen.ts";
 
-const WORDS = ["launch", "Launched", "beta", "date", "résumé", "resume", "e-mail", "mail", "plan", "la", "b", "東京", "タワー", "c++", "Straße", "x9", "ship"];
+const WORDS = ["launch", "Launched", "beta", "date", "résumé", "resume", "cafe\u0301", "e-mail", "mail", "plan", "la", "b", "東京", "タワー", "c++", "Straße", "x9", "ship", "한국", "여행", "мой", "мои", "がっこう", "かっこう", "पाठ", "पठ", "שָׁלוֹם", "שלום", "كَتَبَ", "Άλφα", "re🙂port", "ＡＢＣ", "İstanbul", "x²", "ภาษาไทย", "ﬁle"];
 const AUTHORS: Author[] = [
   { kind: "user", email: "ada@example.com" },
   { kind: "agent", name: "Claude", by: "ada@example.com" },
@@ -31,7 +31,7 @@ test("searching through the index finds exactly what the matcher finds over ever
       let clock = 1_000;
       const db = memoryDb();
       const index = new SearchIndex(db);
-      const files = new Files(db, () => (clock += 1_000), undefined, (path, text) => index.observe(path, text));
+      const files = new Files(db, () => (clock += 1_000), undefined, (path, text, revision) => index.observe(path, text, revision));
       for (const n of notes) {
         const current = files.read(n.path as FilePath);
         files.write({ path: n.path as FilePath, text: n.text, base: current?.revision ?? 0, author: n.author });

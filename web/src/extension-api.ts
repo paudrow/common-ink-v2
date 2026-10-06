@@ -145,8 +145,12 @@ export interface ExtensionContext {
   search: {
     /** Answer a kind of result the manifest declares in contributes.search.types, given the query read with `common-ink/query`. */
     provide(type: string, provider: SearchProvider): void;
-    /** What a query finds, a section per kind of result, as the search screen shows it. */
-    find(text: string, limit?: number): Promise<SearchSection[]>;
+    /**
+     * What a query finds, a section per kind of result, as the search screen shows it; `progress` hears
+     * the sections found so far as each comes. A sandboxed extension gets only what it could read
+     * itself: notes and tasks it may read (files:read), events with data:calendar:read, and its own kinds.
+     */
+    find(text: string, limit?: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]>;
     /** The filter keys extensions add (`due`), for `parse(text, keys)`. */
     filterKeys(): string[];
   };

@@ -21,6 +21,8 @@ export interface SearchResults {
   results: NoteResult[];
   /** How many matched, of which `results` are the first `limit`. */
   total: number;
+  /** More notes had the words than one search reads: `total` counts those it read. */
+  more?: true;
 }
 
 export interface SearchOptions {
@@ -32,8 +34,18 @@ export interface SearchOptions {
 
 const isNotePath = (path: string) => path.endsWith(".md");
 
-/** The words a note is found by: its title and its text, as the matcher reads them. */
-const indexed = (path: string, text: string) => `${titleOf(path, text)}\n${text}`;
+/**
+ * The words a note is found by: its title's and its text's, as the matcher reads them (query.ts's
+ * `tokens`), already folded. FTS5 is given these, not the raw text, so the index and the matcher agree
+ * in every script; its tokenizer only splits them where the matcher did.
+ */
+const indexed = (path: string, text: string) => tokens(`${titleOf(path, text)}\n${text}`).join(" ");
+
+/** The index's table: contentless, so it keeps no second copy of the notes, and its rows can still be deleted. */
+const FTS = `CREATE VIRTUAL TABLE search USING fts5(words, content = '', contentless_delete = 1, tokenize = "unicode61 remove_diacritics 0 categories 'L* N* Co M*'")`;
+
+/** At most this many notes' text is read for one search. A search that matches more says so (`more`). */
+export const MAX_CANDIDATES = 1000;
 
 /**
  * FTS5's query for the notes that may match: every word and phrase the query wants, the last word of
@@ -44,14 +56,27 @@ function ftsQuery(query: Query): string | null {
   return wanted.length ? wanted.join(" AND ") : null;
 }
 
+/** Whether matching needs the notes' text: words to find or leave out, or has:. Filters on state, folder, author and age don't. */
+const needsText = (query: Query) => query.terms.some((t) => (t.kind === "words" && tokens(t.text).length > 0) || (t.kind === "filter" && t.key === "has" && t.value !== ""));
+
 export class SearchIndex {
   constructor(private db: Db) {
-    db.run("CREATE TABLE IF NOT EXISTS search_docs(id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE)");
-    db.run("CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(words, tokenize = 'unicode61 remove_diacritics 2')");
+    // An index of an older shape (a copy of the text, the raw text's words) is made again from the files.
+    const [table] = db.all<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'search'");
+    const current = !!table?.sql.includes("contentless_delete");
+    if (table && !current) {
+      db.run("DROP TABLE search");
+      db.run("DROP TABLE IF EXISTS search_docs");
+      db.run("DROP TABLE IF EXISTS search_mark");
+    }
+    if (!current) db.run(FTS);
+    db.run("CREATE TABLE IF NOT EXISTS search_docs(id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, title TEXT NOT NULL)");
+    db.run("CREATE TABLE IF NOT EXISTS search_mark(revision INTEGER NOT NULL)");
   }
 
-  /** A file was written (text) or deleted (null): keep its words, if it's a note. */
-  observe(path: string, text: string | null): void {
+  /** A file was written (text) or deleted (null) at a revision: keep its words, if it's a note, and how far the index has got. */
+  observe(path: string, text: string | null, revision: number): void {
+    this.mark(revision);
     if (!isNotePath(path)) return;
     const [doc] = this.db.all<{ id: number }>("SELECT id FROM search_docs WHERE path = ?", path);
     if (doc) this.db.run("DELETE FROM search WHERE rowid = ?", doc.id);
@@ -59,42 +84,56 @@ export class SearchIndex {
       this.db.run("DELETE FROM search_docs WHERE path = ?", path);
       return;
     }
-    const id = doc?.id ?? this.db.all<{ id: number }>("INSERT INTO search_docs(path) VALUES (?) RETURNING id", path)[0].id;
+    const title = titleOf(path, text);
+    const id = doc?.id ?? this.db.all<{ id: number }>("INSERT INTO search_docs(path, title) VALUES (?, ?) RETURNING id", path, title)[0].id;
+    if (doc) this.db.run("UPDATE search_docs SET title = ? WHERE id = ?", title, id);
     this.db.run("INSERT INTO search(rowid, words) VALUES (?, ?)", id, indexed(path, text));
   }
 
-  /** Whether the index has every note: a workspace from before search, or one that stopped partway, doesn't. */
-  complete(): boolean {
-    const [row] = this.db.all<{ ok: number }>("SELECT (SELECT count(*) FROM search_docs) = (SELECT count(*) FROM files WHERE path LIKE '%.md') AS ok");
-    return row?.ok === 1;
+  private mark(revision: number) {
+    this.db.run("DELETE FROM search_mark");
+    this.db.run("INSERT INTO search_mark(revision) VALUES (?)", revision);
   }
 
-  /** Make the index again from the files, all of it or none. */
-  rebuild(files: Iterable<{ path: string; text: string }>): void {
+  /** Whether the index has seen every change up to `revision`: one from before search, or of an older shape, hasn't. */
+  complete(revision: number): boolean {
+    const [row] = this.db.all<{ revision: number }>("SELECT revision FROM search_mark");
+    return row ? row.revision === revision : revision === 0;
+  }
+
+  /** Make the index again from the files, as of `revision`, all of it or none. */
+  rebuild(files: Iterable<{ path: string; text: string }>, revision: number): void {
     this.db.tx(() => {
       this.db.run("DELETE FROM search");
       this.db.run("DELETE FROM search_docs");
-      for (const f of files) this.observe(f.path, f.text);
+      for (const f of files) this.observe(f.path, f.text, revision);
+      this.mark(revision);
     });
   }
 
-  /** The notes a query finds, in its order: archived ones last. */
+  /**
+   * The notes a query finds, in its order: archived ones last. A query of filters alone is answered from
+   * what's known of each note (path, title, last change, archive) without reading any text; one with
+   * words reads only the notes the index finds, at most MAX_CANDIDATES of them.
+   */
   search(query: Query, { ctx, limit, archived = new Set() }: SearchOptions): SearchResults {
     const fts = ftsQuery(query);
-    const rows = this.db.all<{ path: string; text: string; author: string; time: number }>(
-      `SELECT f.path, f.text, c.author, c.time FROM files f JOIN changes c ON c.revision = f.revision
-        WHERE f.path LIKE '%.md' ${fts ? "AND f.path IN (SELECT d.path FROM search_docs d WHERE d.id IN (SELECT rowid FROM search WHERE search MATCH ?))" : ""}`,
-      ...(fts ? [fts] : []),
+    const text = needsText(query);
+    const rows = this.db.all<{ path: string; title: string; text: string | null; author: string; time: number }>(
+      `SELECT d.path, d.title, ${text ? "f.text" : "NULL AS text"}, c.author, c.time FROM search_docs d JOIN files f ON f.path = d.path JOIN changes c ON c.revision = f.revision
+        ${fts ? "WHERE d.id IN (SELECT rowid FROM search WHERE search MATCH ? ORDER BY rank LIMIT ?)" : text ? "ORDER BY f.revision DESC LIMIT ?" : ""}`,
+      ...(fts ? [fts, MAX_CANDIDATES + 1] : text ? [MAX_CANDIDATES + 1] : []),
     );
-    const notes: NoteFacts[] = rows.map((r) => ({
+    const more = text && rows.length > MAX_CANDIDATES;
+    const notes: NoteFacts[] = (more ? rows.slice(0, MAX_CANDIDATES) : rows).map((r) => ({
       path: r.path,
-      title: titleOf(r.path, r.text),
-      text: r.text,
+      title: r.title,
+      text: r.text ?? "",
       edited: r.time,
       author: JSON.parse(r.author) as Author,
       ...(archived.has(r.path) ? { archived: true } : {}),
     }));
-    return present(query, notes, { ctx, limit });
+    return { ...present(query, notes, { ctx, limit }), ...(more ? { more: true as const } : {}) };
   }
 }
 
