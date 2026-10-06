@@ -112,7 +112,7 @@ function reference(q: Query, n: NoteFacts, ctx: MatchContext): boolean {
     const lower = v.toLowerCase();
     if (lower === "me") return a.kind === "user";
     if (lower === "agent" || lower === "sync" || lower === "extension") return a.kind === lower;
-    const name = a.kind === "user" ? a.email : a.kind === "agent" ? a.name : a.kind === "extension" ? a.id : a.source;
+    const name = a.kind === "user" ? a.email : a.kind === "agent" ? a.name : a.kind === "extension" ? a.id : a.kind === "sync" ? a.source : "retention";
     return name.toLowerCase() === lower;
   };
   const passes = (key: string, v: string): boolean | "never" => {
