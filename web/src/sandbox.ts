@@ -37,6 +37,9 @@ function escapes(s: string): number {
     const c = s.charCodeAt(i);
     if (c === 0x22 || c === 0x5c || c === 0x08 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d) extra += 1;
     else if (c < 0x20) extra += 5;
+    // A surrogate without its other half is written \udXXX.
+    else if (c >= 0xd800 && c <= 0xdbff && !(s.charCodeAt(i + 1) >= 0xdc00 && s.charCodeAt(i + 1) <= 0xdfff)) extra += 5;
+    else if (c >= 0xdc00 && c <= 0xdfff && !(s.charCodeAt(i - 1) >= 0xd800 && s.charCodeAt(i - 1) <= 0xdbff)) extra += 5;
   }
   return extra;
 }
@@ -87,24 +90,28 @@ export class CallShare {
   private calls: Array<{ at: number; size: number }> = [];
   private first = 0;
   private total = 0;
+  /** Its refusals, in words, made once: a flood is refused at the cost of the calls, not of the words. */
+  private tooOften: string;
+  private tooMuch: string;
 
-  constructor(private limits: { size: number; calls: number; ms: number }) {}
-
-  /** Whether a call of `size` fits in what's left of the moment at `now`; if it does, it's counted. */
-  take(size: number, now: number): boolean {
-    while (this.first < this.calls.length && now - this.calls[this.first].at >= this.limits.ms) this.total -= this.calls[this.first++].size;
-    if (this.first > 1024 && this.first * 2 > this.calls.length) [this.calls, this.first] = [this.calls.slice(this.first), 0];
-    if (this.calls.length - this.first >= this.limits.calls || this.total + size > this.limits.size) return false;
-    this.calls.push({ at: now, size });
-    this.total += size;
-    return true;
+  constructor(
+    name: string,
+    private limits: { size: number; calls: number; ms: number },
+  ) {
+    const every = `every ${limits.ms / 1000} seconds`;
+    this.tooOften = `${name} is calling too often: it can make ${counted(limits.calls)} calls ${every}`;
+    this.tooMuch = `${name} is sending too much at once: it can send ${counted(limits.size)} characters' worth ${every}`;
   }
 
-  /** Why a call didn't fit, in words: too many, or too much. */
-  why(name: string): string {
-    return this.calls.length - this.first >= this.limits.calls
-      ? `${name} is calling too often: it can make ${counted(this.limits.calls)} calls every ${this.limits.ms / 1000} seconds`
-      : `${name} is sending too much at once: it can send ${counted(this.limits.size)} characters' worth every ${this.limits.ms / 1000} seconds`;
+  /** Null if a call of `size` fits in what's left of the moment at `now`, and counts it; otherwise why it doesn't. */
+  take(size: number, now: number): string | null {
+    while (this.first < this.calls.length && now - this.calls[this.first].at >= this.limits.ms) this.total -= this.calls[this.first++].size;
+    if (this.first > 1024 && this.first * 2 > this.calls.length) [this.calls, this.first] = [this.calls.slice(this.first), 0];
+    if (this.calls.length - this.first >= this.limits.calls) return this.tooOften;
+    if (this.total + size > this.limits.size) return this.tooMuch;
+    this.calls.push({ at: now, size });
+    this.total += size;
+    return null;
   }
 }
 
@@ -131,14 +138,21 @@ export class SandboxHost {
   private pending = new Map<string, Pending>();
   private next = 0;
   /** Its share of a moment. */
-  private share = new CallShare(SHARE);
+  private share: CallShare;
+  /** Its refusals for a call or an answer too big, or not plain data, made once. */
+  private tooBig: { call: string; answer: string };
+  private notPlain: string;
 
   constructor(
     private extension: ExtensionManifest,
     private dispatch: Dispatch,
     /** It reported an error after starting: an uncaught exception, say. */
     private failed: (message: string) => void,
-  ) {}
+  ) {
+    this.share = new CallShare(extension.name, SHARE);
+    this.notPlain = `${extension.name} can pass only plain values (text, numbers, lists and objects)`;
+    this.tooBig = { call: `${extension.name} sent more than ${counted(MAX_CALL)} characters' worth in one call`, answer: `${extension.name} answered with more than ${counted(MAX_CALL)} characters' worth` };
+  }
 
   /** Load the frame and start the extension's code from `code`. Resolves once it's activated; rejects with its error. */
   async start(code: string, settings: Record<string, unknown>, me: string | undefined): Promise<void> {
@@ -167,7 +181,7 @@ export class SandboxHost {
           this.pending.delete(m.id!);
           const size = m.t === "result" ? measure(m.value, MAX_CALL) : 0;
           if (size === null) p?.reject(new Error(`${this.extension.name} can answer only with plain values (text, numbers, lists and objects)`));
-          else if (size > MAX_CALL) p?.reject(new Error(`${this.extension.name} answered with more than ${counted(MAX_CALL)} characters' worth`));
+          else if (size > MAX_CALL) p?.reject(new Error(this.tooBig.answer));
           else if (m.t === "result") p?.resolve(m.value);
           else p?.reject(new Error(m.message));
         }
@@ -177,12 +191,20 @@ export class SandboxHost {
     await started;
   }
 
+  /** Why a call can't be made, or null: not plain data, too big, or past its share of the moment. */
+  private refusal(method: unknown, args: unknown): string | null {
+    const size = typeof method === "string" && Array.isArray(args) ? measure(args, MAX_CALL) : null;
+    if (size === null) return this.notPlain;
+    if (size > MAX_CALL) return this.tooBig.call;
+    // performance.now() only goes forward: a clock set back can't hold a frame's moment open.
+    return this.share.take(size, performance.now());
+  }
+
   private async answer(id: string, method: string, args: unknown[]) {
+    // Refused at the cost of a message: no Error, no words made, nothing awaited.
+    const refused = this.refusal(method, args);
+    if (refused) return this.port!.postMessage({ t: "reject", id, message: refused });
     try {
-      const size = typeof method === "string" && Array.isArray(args) ? measure(args, MAX_CALL) : null;
-      if (size === null) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
-      if (size > MAX_CALL) throw new Error(`${this.extension.name} sent more than ${counted(MAX_CALL)} characters' worth in one call`);
-      if (!this.share.take(size, Date.now())) throw new Error(this.share.why(this.extension.name));
       this.port!.postMessage({ t: "result", id, value: (await this.dispatch(method, args)) ?? null });
     } catch (err) {
       this.port!.postMessage({ t: "reject", id, message: (err as Error).message });
@@ -283,7 +305,12 @@ export class Webview {
       port.onmessage = (e) => {
         const m = e.data as { type: string; data?: unknown; id?: number; height?: number; drawn?: WebviewStatus["drawn"] };
         // A webview's page is the extension's too: what it sends its extension is held to the size of a call.
-        if (m.type === "message" && (measure(m.data, MAX_CALL) ?? Infinity) <= MAX_CALL) onMessage(m.data);
+        if (m.type === "message") {
+          const size = measure(m.data, MAX_CALL);
+          if (size !== null && size <= MAX_CALL) onMessage(m.data);
+          // Dropped, the page that sent it hears why, in its console.
+          else port.postMessage({ type: "dropped", why: size === null ? "Only plain values (text, numbers, lists and objects) reach the extension" : `A message over ${counted(MAX_CALL)} characters' worth doesn't reach the extension` });
+        }
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
         if (m.type === "loaded") {
           this.status.loaded = true;
