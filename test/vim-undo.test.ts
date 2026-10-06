@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { history, historyField, undoDepth } from "@codemirror/commands";
+import { history, historyField, redo, undo, undoDepth } from "@codemirror/commands";
 import { Compartment, EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
 import { insertUndo, sessionEffects } from "../web/src/extensions/vim/undo.ts";
 
@@ -20,6 +20,8 @@ function editor(doc = "abc\n") {
     start: () => go({ effects: sessionEffects.start.of(undoDepth(state)) }),
     end: () => go({ effects: sessionEffects.end.of(null) }),
     type: (insert: string, userEvent = "input.type") => go({ changes: { from: state.doc.length - 1, insert }, userEvent }),
+    undo: () => undo({ state, dispatch: (tr) => (state = tr.state) }),
+    redo: () => redo({ state, dispatch: (tr) => (state = tr.state) }),
     forget: () => go({ effects: slot.reconfigure([own, historyField.init(() => EditorState.create({ extensions: history() }).field(historyField))]) }),
   };
 }
@@ -66,4 +68,30 @@ test("the history started afresh in the middle of an insert session: the rest of
   e.type("z");
   e.end();
   assert.equal(undoDepth(e.state), 1);
+});
+
+test("in an insert session, an earlier change undone and redone isn't joined to the typing after it", () => {
+  const e = editor();
+  e.type("P");
+  e.start();
+  e.undo();
+  e.redo();
+  e.type("x");
+  e.type("y");
+  e.end();
+  e.undo();
+  assert.equal(e.state.doc.toString(), "abcP\n");
+});
+
+test("in an insert session, the typing after an undo past where it began is one step", () => {
+  const e = editor();
+  e.type("P");
+  e.start();
+  e.undo();
+  e.type("x");
+  e.type("y");
+  e.end();
+  assert.equal(e.state.doc.toString(), "abcxy\n");
+  e.undo();
+  assert.equal(e.state.doc.toString(), "abc\n");
 });

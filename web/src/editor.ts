@@ -151,10 +151,13 @@ const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
 /** How close in time two edits side by side are to be one undo step: CodeMirror's history's default. */
 const JOIN_MS = 500;
 const timeOf = (tr: Transaction) => tr.annotation(Transaction.time) ?? Date.now();
-/** When the last edit the history keeps was made. */
+/**
+ * When the last edit the history keeps was made. An undo or redo isn't one to join onto (none, as
+ * CodeMirror's history has it): what's typed next is a step of its own.
+ */
 const lastEdit = StateField.define<number>({
   create: () => 0,
-  update: (time, tr) => (tr.docChanged && tr.annotation(Transaction.addToHistory) !== false ? timeOf(tr) : time),
+  update: (time, tr) => (tr.isUserEvent("undo") || tr.isUserEvent("redo") ? 0 : tr.docChanged && tr.annotation(Transaction.addToHistory) !== false ? timeOf(tr) : time),
 });
 
 /** The editor's undo history, in a slot of its own so it can be started afresh (see forgetHistory). */

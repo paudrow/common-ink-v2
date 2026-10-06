@@ -839,6 +839,33 @@ browserTest(h, "someone else's change arriving while you type isn't part of your
   assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "and u has nothing of theirs to take back");
 });
 
+browserTest(h, "an earlier change undone and redone in insert mode isn't taken back by the u for the typing after it", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const saved = async (has: (text: string) => boolean) => {
+    await app.idle();
+    for (let i = 0; i < 30 && !has(await app.readFile("Plan.md")); i++) await app.page.waitForTimeout(200);
+    return app.readFile("Plan.md");
+  };
+  await app.call("cursor", 3, 1);
+  await app.keys("A P<Esc>");
+  assert.equal(await saved((t) => t.includes("alpha P")), "# Plan\n\nalpha P\nbeta\ngamma\n");
+  await app.call("cursor", 4, 1);
+  await app.keys("A");
+  await app.keys("<Mod-z>");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: /^alpha$/ }).waitFor();
+  await app.keys("<Mod-S-z>");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "alpha P" }).waitFor();
+  await app.keys(" x");
+  await app.page.waitForTimeout(700);
+  await app.keys(" y<Esc>");
+  // The redo put the cursor back by the P, so that's where the typing goes.
+  assert.equal(await saved((t) => t.includes(" y")), "# Plan\n\nalpha  x yP\nbeta\ngamma\n");
+  await app.keys("u");
+  assert.equal(await saved((t) => !t.includes(" y")), "# Plan\n\nalpha P\nbeta\ngamma\n", "one u takes back the typing only");
+});
+
 /** The files every window's tabs show, in order. */
 async function tabFiles(app: App): Promise<string[]> {
   const state = (await app.state()) as { layout: { root: unknown } };
