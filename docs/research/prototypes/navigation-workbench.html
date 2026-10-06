@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Bar Workbench</title>
+<style>
+/* The app's tokens (web/src/style.css), so the prototype reads like Common Ink. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --ink: #1f1e1c;
+  --muted: #6f6b66;
+  --line: #e7e4df;
+  --accent: #2f5fd0;
+  --selection: #d6e0f7;
+  --accent-soft: rgb(47 95 208 / 0.14);
+  --code-bg: rgb(31 30 28 / 0.05);
+  --hover: rgb(31 30 28 / 0.06);
+  --bg-elev: #ffffff;
+  --line-strong: #d6d2cb;
+  --faint: #a9a49d;
+  --ink-2: #3d3a36;
+  --accent-ink: #2450b8;
+  --on-accent: #ffffff;
+  --bad: #c2410c;
+  --warn: #b7791f;
+  --ok: #2f8f5b;
+  --agent: #7a4fc4;
+  --agent-soft: rgb(122 79 196 / 0.12);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--prose);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+    --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+    --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+    --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+    --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+  --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+  --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+  --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+  --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-size: 14px; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+kbd { font-family: var(--mono); font-size: 0.75rem; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 0.3rem; color: var(--ink-2); background: var(--bg-elev); white-space: nowrap; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.mono { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tabs and status bar, as the app draws them. */
+.tabs { display: flex; border-bottom: 1px solid var(--line); min-height: 33px; overflow-x: auto; flex: none; }
+.tab { padding: 0.45rem 0.75rem; font-size: 0.8125rem; color: var(--muted); border-right: 1px solid var(--line); display: flex; gap: 0.5rem; align-items: center; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab .x { color: var(--faint); font-size: 0.8rem; }
+.status { grid-area: status; display: flex; gap: 1rem; padding: 0.3rem 1rem; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); border-top: 1px solid transparent; }
+.status .grow { flex: 1; }
+
+/* Rendered markdown (cards and notes). */
+.md h1 { font-size: 1.05rem; margin: 0 0 0.35rem; }
+.md h2 { font-size: 0.95rem; margin: 0.6rem 0 0.25rem; }
+.md h3 { font-size: 0.9rem; margin: 0.5rem 0 0.2rem; }
+.md p { margin: 0.25rem 0; line-height: 1.5; }
+.md ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+.md li { line-height: 1.5; }
+.md li.task { list-style: none; margin-left: -1.25rem; display: flex; gap: 0.45rem; align-items: baseline; }
+.md li.task input { margin: 0; accent-color: var(--accent); transform: translateY(1px); }
+.md li.task.done span { color: var(--muted); text-decoration: line-through; }
+.md code { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); padding: 0 0.25rem; border-radius: 3px; }
+.md a, .md .wikilink { color: var(--accent-ink); text-decoration: none; }
+.chip { display: inline-flex; gap: 0.35rem; align-items: center; border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 0.4rem; font-size: 0.85em; background: var(--bg-elev); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chip .when { color: var(--muted); }
+.due { font-size: 0.75rem; border-radius: 4px; padding: 0 0.3rem; background: var(--code-bg); color: var(--muted); font-family: var(--mono); }
+.due.over { color: var(--bad); }
+.embed-ph { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; padding: 0.35rem 0.6rem; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--muted); font-size: 0.8125rem; }
+.embed-ph b { color: var(--ink-2); font-weight: 600; }
+.embed-live { margin: 0.35rem 0; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elev); font-size: 0.8125rem; }
+.embed-live .big { font-family: var(--mono); font-size: 1.2rem; }
+.embed-live .cal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .cal div { border-left: 2px solid var(--accent); padding-left: 0.4rem; }
+.embed-live .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .board div { background: var(--code-bg); border-radius: 4px; padding: 0.3rem; }
+
+/* Authors */
+.who { font-weight: 600; color: var(--ink-2); }
+.who.agent { color: var(--agent); }
+.badge { font-size: 0.7rem; border-radius: 999px; padding: 0 0.4rem; background: var(--code-bg); color: var(--muted); }
+.badge.agent { background: var(--agent-soft); color: var(--agent); }
+.badge.archived { background: var(--code-bg); color: var(--muted); }
+.stat { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.stat .add { color: var(--ok); }
+.stat .del { color: var(--bad); }
+
+/* Overlays: toast, dialogs, the keys sheet and the prototype's controls. */
+.toast { position: fixed; left: 50%; bottom: 2.5rem; transform: translateX(-50%); background: var(--ink); color: var(--bg); border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.8125rem; box-shadow: var(--shadow-lg); display: flex; gap: 0.75rem; align-items: center; z-index: 50; }
+.toast button { color: var(--bg); text-decoration: underline; }
+.toast kbd { background: transparent; color: var(--bg); border-color: color-mix(in srgb, var(--bg) 40%, transparent); }
+.scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.25); display: grid; place-items: start center; padding-top: 12vh; z-index: 40; }
+.dialog { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); width: min(680px, 92vw); max-height: 72vh; display: flex; flex-direction: column; overflow: hidden; }
+.dialog.small { width: min(420px, 92vw); padding: 1rem 1.1rem; gap: 0.6rem; }
+.dialog .row { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.btn { border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.25rem 0.7rem; background: var(--bg); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+.keys-sheet { padding: 1rem 1.25rem; overflow: auto; columns: 2; column-gap: 2rem; font-size: 0.8125rem; }
+.keys-sheet h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.75rem 0 0.35rem; break-after: avoid; }
+.keys-sheet div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.12rem 0; break-inside: avoid; }
+.proto { position: fixed; right: 0.75rem; bottom: 2rem; z-index: 30; font-size: 0.75rem; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 0.55rem 0.7rem; display: grid; gap: 0.35rem; min-width: 220px; }
+.proto[hidden] { display: none; }
+.proto b { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.proto label { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
+.proto select, .proto button { font: inherit; font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--bg); color: var(--ink); padding: 0.1rem 0.3rem; }
+
+
+body { display: grid; grid-template: "bar side main sec" 1fr "bar side bottom sec" auto "status status status status" auto / 44px var(--side-w, 17.5rem) 1fr var(--sec-w, 0px); }
+body.no-side { --side-w: 0px; }
+body.no-side #side { display: none; }
+body.sec-open { --sec-w: 17rem; }
+#bar { grid-area: bar; border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 0.4rem 0; gap: 0.15rem; }
+#bar .grow { flex: 1; }
+.act { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; color: var(--faint); position: relative; }
+.act svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.act:hover { color: var(--ink); }
+.act[aria-pressed="true"] { color: var(--ink); }
+.act[aria-pressed="true"]::before { content: ""; position: absolute; left: -4px; top: 8px; bottom: 8px; width: 2px; background: var(--accent); }
+.act.cursor { outline: 1px solid var(--accent); }
+.act .badge { position: absolute; right: 1px; top: 2px; font-size: 0.6rem; background: var(--agent); color: #fff; padding: 0 0.25rem; }
+.act.dragging { opacity: 0.4; }
+#side { grid-area: side; border-right: 1px solid var(--line); overflow: auto; font-size: 0.8125rem; display: flex; flex-direction: column; min-height: 0; }
+#side > h2, #sec > h2 { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; padding: 0.7rem 0.8rem 0.4rem; font-weight: 600; display: flex; justify-content: space-between; }
+.section > .sh { display: flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.5rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--ink-2); border-top: 1px solid var(--line); cursor: pointer; }
+.section > .sh .chev { width: 0.8rem; color: var(--muted); }
+.section > .sh .n { margin-left: auto; font-weight: 400; color: var(--faint); }
+.section > .sh .more { color: var(--muted); padding: 0 0.3rem; }
+.section > .sh.cursor { outline: 1px solid var(--accent); outline-offset: -1px; }
+.item { display: flex; gap: 0.45rem; align-items: baseline; padding: 0.2rem 0.6rem 0.2rem 1.3rem; cursor: pointer; white-space: nowrap; }
+.item .t { overflow: hidden; text-overflow: ellipsis; flex: 1; color: var(--ink-2); }
+.item .r { font-size: 0.7rem; color: var(--faint); }
+.item .a { width: 6px; height: 6px; border-radius: 50%; flex: none; transform: translateY(-1px); background: transparent; }
+.item .a.agent { background: var(--agent); }
+.item:hover { background: var(--hover); }
+.item.cursor { background: var(--selection); }
+.item.leaving { opacity: 0.2; }
+.item .sub { display: block; font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.item.two { flex-direction: column; gap: 0; align-items: stretch; }
+.item.two .l { display: flex; gap: 0.45rem; align-items: baseline; }
+.field { margin: 0 0.7rem 0.4rem; display: flex; gap: 0.3rem; align-items: center; }
+.field input, .field select { font: inherit; font-size: 0.8rem; flex: 1; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0.2rem 0.4rem; background: var(--bg-elev); color: var(--ink); min-width: 0; }
+.field label { font-size: 0.72rem; color: var(--muted); width: 2.6rem; }
+.field .tog { font-family: var(--mono); font-size: 0.7rem; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0.1rem 0.3rem; color: var(--muted); }
+.field .tog[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
+.hit { padding: 0.12rem 0.6rem 0.12rem 2rem; color: var(--muted); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.hit mark { background: var(--accent-soft); color: var(--ink); }
+.hit.cursor { background: var(--selection); }
+#main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#editor { flex: 1; overflow: auto; }
+.note { max-width: 42rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; font-size: 0.95rem; }
+.note .md h1 { font-size: 1.5rem; margin-bottom: 0.75rem; }
+.note .crumbs { font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; display: flex; gap: 0.5rem; }
+.banner { border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.4rem 0.7rem; font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; display: flex; gap: 0.75rem; align-items: center; }
+.welcome { color: var(--muted); text-align: center; padding-top: 18vh; font-size: 0.85rem; line-height: 2; }
+#bottom { grid-area: bottom; border-top: 1px solid var(--line); height: 13rem; display: flex; flex-direction: column; font-size: 0.78rem; min-width: 0; }
+#bottom[hidden] { display: none; }
+#bottom .btabs { display: flex; gap: 0.75rem; padding: 0.3rem 0.8rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+#bottom .btabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -1px 0 var(--ink); }
+#bottom .btabs .grow { flex: 1; }
+#bottom .bbody { overflow: auto; padding: 0 0.8rem 0.5rem; font-family: var(--mono); }
+.logrow { display: grid; grid-template-columns: 5.5rem 9rem 1fr 5rem; gap: 0.75rem; padding: 0.1rem 0; }
+.logrow.cursor { background: var(--selection); }
+#sec { grid-area: sec; border-left: 1px solid var(--line); overflow: auto; font-size: 0.8125rem; display: none; }
+body.sec-open #sec { display: block; }
+.change { padding: 0.35rem 0.8rem; border-bottom: 1px solid var(--line); }
+.menu { position: fixed; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 0.25rem; z-index: 45; min-width: 13rem; font-size: 0.8125rem; }
+.menu div { padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; }
+.menu div.focus, .menu div:hover { background: var(--hover); }
+.qo input { font: inherit; font-size: 1rem; border: 0; border-bottom: 1px solid var(--line); padding: 0.8rem 1rem; background: transparent; color: var(--ink); outline: none; width: 100%; }
+.qo .res { padding: 0.3rem 0.9rem; display: flex; gap: 0.6rem; }
+.qo .res.focus { background: var(--selection); }
+.qo .res .d { color: var(--muted); font-size: 0.8rem; }
+.ev { border-left: 3px solid var(--accent); padding: 0.15rem 0.5rem; margin: 0.2rem 0.6rem 0.2rem 1.3rem; cursor: pointer; }
+.ev.cursor { background: var(--selection); }
+.ev .tm { color: var(--muted); font-size: 0.72rem; }
+.callout { font-size: 0.78rem; color: var(--muted); padding: 0.4rem 0.9rem; }
+@media (max-width: 760px) { body { --side-w: 0px; } #side, #sec { display: none !important; } }
+</style>
+</head>
+<body>
+<nav id="bar" aria-label="Activity bar"></nav>
+<aside id="side" aria-label="Side bar"></aside>
+<main id="main"><div class="tabs" id="tabs"></div><div id="editor"></div></main>
+<section id="bottom" hidden aria-label="Panel"></section>
+<aside id="sec" aria-label="Secondary side bar"></aside>
+<footer class="status" id="status"></footer>
+<div class="proto" id="proto" hidden>
+  <b>Prototype controls</b>
+  <label>Theme <select id="pTheme"><option value="">System</option><option>light</option><option>dark</option></select></label>
+  <button id="pAgent">Simulate an agent's edit</button>
+  <span class="muted">Drag icons in the activity bar to reorder. <kbd>?</kbd> keys.</span>
+</div>
+<script>
+// ---- Sample workspace: notes, events, contacts, commands and settings, on a fixed clock. ----
+const NOW = new Date("2026-10-05T09:00:00").getTime();
+const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "⌘" : "Ctrl-";
+
+const AGENTS = { claude: "Claude", research: "Research agent", sync: "Google Calendar sync" };
+
+/** A note: its path, text, and its last change (who, when, how big). */
+const SEED_NOTES = [
+  { path: "Projects/Launch plan.md", ago: 4 * MIN, by: "claude", add: 12, del: 3, summary: "Added a risks section and two tasks", pinned: true,
+    text: `# Launch plan\n\nShip the public beta on **Oct 20**. Agents keep the checklist current.\n\n## This week\n- [x] Freeze the onboarding copy\n- [ ] Record the demo video due:2026-10-07\n- [ ] Draft the changelog post due:2026-10-04\n- [ ] Ask [[Sam Rivera]] to review pricing\n\n## Risks\n- Google's test app ends grants after 7 days\n- Import from v1 isn't done` },
+  { path: "Journal/2026-10-05.md", ago: 22 * MIN, by: "you", add: 6, del: 0,
+    text: `# 2026-10-05\n\n## Today\n- [ ] Plan the navigation study\n- [x] Inbox to zero\n- [ ] Call the dentist about Tuesday\n\n::timer{duration=25m label="Focus"}\n\n## Log\n- 08:40 — reviewed the agent's launch checklist` },
+  { path: "Research/Reading list.md", ago: 70 * MIN, by: "research", add: 9, del: 0, summary: "Added 3 links on feed design",
+    text: `# Reading list\n\nCollected by the research agent; tick what you've read.\n\n- [ ] Readwise Reader: the triage workflow\n- [ ] Superhuman: getting to inbox zero\n- [x] VS Code: custom layout\n- [ ] Obsidian: search operators` },
+  { path: "Meetings/Quarterly planning.md", ago: 2 * HOUR, by: "you", add: 14, del: 2,
+    text: `# Quarterly planning\n\n[Quarterly planning](event:google/primary/planning) · Room 4\n\n## Agenda\n- Review Q3 numbers\n- Pick the three bets for Q4\n- [ ] Send the pre-read to [[Priya Natarajan]]\n\n\`\`\`calendar\nview: 3 days\n\`\`\`` },
+  { path: "Ideas/A feed for notes.md", ago: 5 * HOUR, by: "you", add: 22, del: 5, pinned: true,
+    text: `# A feed for notes\n\nLike X, but for my own notes: scroll what changed, archive what I'm done with.\n\n- Cards show the start of each note\n- **e** archives, **#** trashes, **p** pins\n- Agents' edits show who made them\n\nOpen question: should an agent's edit bring an archived note back?` },
+  { path: "Boards/Website.md", ago: 9 * HOUR, by: "claude", add: 3, del: 3, summary: "Moved 'Pricing page' to Doing",
+    text: `# Website\n\n:::kanban\n## To do\n- Blog index\n## Doing\n- Pricing page\n## Done\n- New logo\n:::` },
+  { path: "Meetings/Meeting prep.md", ago: 20 * HOUR, by: "you", add: 4, del: 1,
+    text: `# Meeting prep\n\n- Tomorrow: [Team standup (late start)](event:google/primary/standup_20261006)\n- [Dentist](event:google/primary/dentist) — bring the insurance card\n- [ ] Read the planning pre-read` },
+  { path: "Journal/2026-10-04.md", ago: 1 * DAY + 3 * HOUR, by: "you", add: 11, del: 0,
+    text: `# 2026-10-04\n\n- [x] Groceries\n- [x] Weekly review\n- Long walk; thought about the feed idea, see [[A feed for notes]]` },
+  { path: "Areas/Weekly review.md", ago: 1 * DAY + 5 * HOUR, by: "you", add: 7, del: 7,
+    text: `# Weekly review\n\n1. Empty the inboxes\n2. Look at next week's calendar\n3. Archive what's done\n\n- [ ] Review agent changes from the week due:2026-10-05` },
+  { path: "Research/Trash retention.md", ago: 1 * DAY + 8 * HOUR, by: "research", add: 31, del: 0, summary: "New note: how 6 apps keep deleted items",
+    text: `# Trash retention\n\nGmail, Notion, Apple Notes and Google Drive keep deleted items **30 days**. macOS empties its Trash after 30 days only if you turn that on.\n\n- Restore puts an item back where it was\n- "Delete forever" skips the wait` },
+  { path: "Recipes/Dal.md", ago: 2 * DAY, by: "you", add: 18, del: 0,
+    text: `# Dal\n\n- 1 cup red lentils\n- 1 onion, 3 cloves garlic, ginger\n- Turmeric, cumin, chili\n\nSimmer 20 minutes. Temper the spices in ghee last.` },
+  { path: "Ideas/Agent blackboard.md", ago: 2 * DAY + 4 * HOUR, by: "claude", add: 8, del: 2, summary: "Summarized the open threads",
+    text: `# Agent blackboard\n\nWhere agents leave work for each other and for me.\n\n- Research agent: reading list is current\n- Claude: launch checklist updated daily\n- [ ] Decide who owns the changelog` },
+  { path: "People/Sam Rivera.md", ago: 3 * DAY, by: "you", add: 5, del: 0,
+    text: `# Sam Rivera\n\nPricing, partnerships. Prefers async.\n\n- [ ] Send Sam the beta invite` },
+  { path: "Projects/Import from v1.md", ago: 4 * DAY, by: "claude", add: 16, del: 4, summary: "Mapped v1's folders to v2 paths",
+    text: `# Import from v1\n\n- Folders map one to one\n- Stars become pins\n- \`Archive/\` notes become archived notes, in place\n- [ ] Handle \`.trash/\` (drop, or bring as trashed)` },
+  { path: "Areas/Health.md", ago: 6 * DAY, by: "you", add: 3, del: 1,
+    text: `# Health\n\n- [ ] Book the physio due:2026-10-09 rec:monthly\n- Gym Mon and Thu, 7am` },
+];
+
+/** Older notes, made up, so the feed scrolls a long way. */
+const FILLER_TOPICS = ["Book notes", "Trip ideas", "Garden", "Reading", "Taxes", "Bike repair", "Podcast notes", "Birthday gifts", "Home network", "Language practice", "Coffee", "Running log", "Photography", "Recipes to try", "Side project", "Conference talk", "Kitchen reno", "Car", "Budget", "Writing prompts"];
+function fillerNote(i) {
+  const topic = FILLER_TOPICS[i % FILLER_TOPICS.length];
+  const n = Math.floor(i / FILLER_TOPICS.length) + 1;
+  const by = i % 7 === 3 ? "claude" : i % 11 === 5 ? "research" : "you";
+  const title = n > 1 ? `${topic} ${n}` : topic;
+  return {
+    path: `Notes/${title}.md`, ago: 7 * DAY + i * 0.9 * DAY, by, add: 2 + (i * 7) % 20, del: (i * 3) % 6,
+    summary: by === "you" ? undefined : "Tidied the list",
+    text: `# ${title}\n\n${["Some thoughts, kept for later.", "A few links and a plan.", "Notes from the weekend.", "What to try next time."][i % 4]}\n\n- ${["First idea", "A link to follow up", "Ask around"][i % 3]}\n- [${i % 3 ? " " : "x"}] ${["Follow up", "Look this up", "Write it down properly"][i % 3]}`,
+  };
+}
+
+const SEED_ARCHIVED = [
+  { path: "Projects/Onboarding v1.md", ago: 40 * DAY, by: "you", add: 2, del: 0, text: `# Onboarding v1\n\nThe old welcome flow. Replaced by the tour.\n\n- [x] Ship it` },
+  { path: "Meetings/Q2 retro.md", ago: 95 * DAY, by: "you", add: 9, del: 0, text: `# Q2 retro\n\n- Went well: the calendar\n- To fix: too many top-bar buttons` },
+  { path: "Travel/Lisbon.md", ago: 120 * DAY, by: "you", add: 4, del: 0, text: `# Lisbon\n\n- Time Out market\n- Belém, early` },
+  { path: "Research/Old competitor scan.md", ago: 3 * HOUR, by: "research", add: 2, del: 0, summary: "Added a line to an archived note", text: `# Old competitor scan\n\nArchived in August. The research agent added a line today.\n\n- Mem: timeline of notes` },
+];
+
+const SEED_TRASH = [
+  { path: "Scratch.md", deleted: 2 * DAY, by: "you", text: `# Scratch\n\npaste buffer` },
+  { path: "Untitled 3.md", deleted: 12 * DAY, by: "you", text: `# Untitled 3\n\n` },
+  { path: "Drafts/Thread about feeds.md", deleted: 26 * DAY, by: "claude", text: `# Thread about feeds\n\n1/ Notes apps should have a feed…` },
+  { path: "Ideas/Smart folders everywhere.md", deleted: 29 * DAY + 20 * HOUR, by: "you", text: `# Smart folders everywhere\n\nEvery list is a saved search.` },
+];
+
+const EVENTS = [
+  { id: "standup", title: "Team standup", cal: "Work", day: 0, start: "09:00", end: "09:15", rec: true },
+  { id: "gym", title: "Gym", cal: "Personal", day: 0, start: "07:00", end: "08:00", rec: true },
+  { id: "planning", title: "Quarterly planning", cal: "Work", day: 0, start: "13:00", end: "14:30", where: "Room 4", notes: ["Meetings/Quarterly planning.md"] },
+  { id: "review", title: "Weekly review", cal: "Work", day: 0, start: "15:00", end: "15:30", rec: true, notes: ["Areas/Weekly review.md"] },
+  { id: "standup_20261006", title: "Team standup (late start)", cal: "Work", day: 1, start: "09:30", end: "09:45", rec: true, notes: ["Meetings/Meeting prep.md"] },
+  { id: "dentist", title: "Dentist", cal: "Personal", day: 1, start: "14:30", end: "15:15", where: "12 High Street", notes: ["Meetings/Meeting prep.md"] },
+  { id: "offsite", title: "Team offsite", cal: "Work", day: 3, allDay: true, where: "Lake house" },
+  { id: "dinner", title: "Dinner with Sam", cal: "Personal", day: 4, start: "19:00", end: "21:00", where: "Luigi's" },
+  { id: "payday", title: "Payday", cal: "Personal", day: 4, allDay: true, rec: true },
+];
+const CAL_COLORS = { Work: "var(--accent)", Personal: "var(--bad)" };
+
+const CONTACTS = [
+  { name: "Sam Rivera", email: "sam@example.com", note: "People/Sam Rivera.md" },
+  { name: "Priya Natarajan", email: "priya@example.com" },
+  { name: "Jordan Lee", email: "jordan@example.com" },
+  { name: "Mei Chen", email: "mei@example.com" },
+];
+
+const SETTINGS = [
+  { key: "trash.retentionDays", value: "30", desc: "Days a deleted note waits in Trash before it's purged" },
+  { key: "feed.liveEmbeds", value: '"focused"', desc: "Draw embeds in feed cards: never, focused, always" },
+  { key: "feed.agentEditsResurface", value: "false", desc: "An agent's edit brings an archived note back to the feed" },
+  { key: "feed.groupAgentChanges", value: "true", desc: "One card per note for a run of an agent's changes" },
+  { key: "editor.livePreview", value: "true", desc: "Draw markdown as it reads" },
+  { key: "search.includeArchived", value: '"last"', desc: "Archived notes in ⌘P: hidden, last" },
+];
+
+// ---- Dates and words ----
+function ago(ms) {
+  if (ms < MIN) return "just now";
+  if (ms < HOUR) return `${Math.round(ms / MIN)} min ago`;
+  if (ms < DAY) return `${Math.round(ms / HOUR)} h ago`;
+  if (ms < 2 * DAY) return "yesterday";
+  if (ms < 30 * DAY) return `${Math.round(ms / DAY)} days ago`;
+  return new Date(NOW - ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function bucket(ms) {
+  const d = new Date(NOW - ms), today = new Date(NOW);
+  const days = Math.floor((new Date(today.toDateString()) - new Date(d.toDateString())) / DAY);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  if (days < 30) return "This month";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+const dayName = (n) => n === 0 ? "Today" : n === 1 ? "Tomorrow" : new Date(NOW + n * DAY).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+const fmtTime = (t) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
+const titleOf = (n) => (n.text.match(/^# (.+)$/m) || [, n.path.replace(/\.md$/, "").split("/").pop()])[1];
+const folderOf = (path) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+const whoName = (by) => by === "you" ? "You" : AGENTS[by] || by;
+const isAgent = (by) => by !== "you";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ---- A small markdown renderer: headings, lists, tasks, links, event links, embeds. ----
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\(event:([^)]+)\)/g, (_, t, addr) => {
+      const ev = EVENTS.find((e) => addr.endsWith("/" + e.id));
+      const when = ev ? `${ev.day === 0 ? "Today" : ev.day === 1 ? "Tomorrow" : dayName(ev.day).split(",")[0]}${ev.start ? " · " + fmtTime(ev.start) : ""}` : "";
+      return `<span class="chip" data-event="${ev ? ev.id : ""}"><span class="dot" style="background:${ev ? CAL_COLORS[ev.cal] : "var(--accent)"}"></span><span class="when">${when}</span> <b>${t}</b></span>`;
+    })
+    .replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink">$1</span>')
+    .replace(/ due:(\d{4}-\d\d-\d\d)/g, (_, d) => ` <span class="due${new Date(d + "T23:59").getTime() < NOW ? " over" : ""}">${new Date(d + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>`)
+    .replace(/ rec:(\w+)/g, ' <span class="due">↻ $1</span>');
+}
+const EMBED_WORDS = {
+  timer: (a) => ["◷", "Timer", a.duration || ""],
+  calendar: (a) => ["▦", "Calendar", a.view || "agenda"],
+  kanban: () => ["▤", "Board", "3 columns"],
+};
+function embedArgs(s) { const a = {}; s.replace(/(\w+)=("([^"]*)"|\S+)/g, (_, k, v, q) => (a[k] = q ?? v)); return a; }
+/** Markdown to HTML. `live`: draw embeds live (true) or as a quiet line saying what they are. `limit`: lines to keep. */
+function renderMarkdown(text, { live = false, limit = Infinity, noteIndex = -1 } = {}) {
+  const out = [];
+  let list = false, taskNo = 0, lines = text.split("\n"), shown = 0;
+  const close = () => { if (list) out.push("</ul>"), (list = false); };
+  for (let i = 0; i < lines.length && shown < limit; i++) {
+    const line = lines[i];
+    let m;
+    if ((m = line.match(/^::(\w+)\{(.*)\}$/))) { close(); out.push(embedHtml(m[1], embedArgs(m[2]), live)); shown += 2; continue; }
+    if ((m = line.match(/^```(\w+)/))) {
+      close(); const body = []; i++;
+      while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
+      out.push(embedHtml(m[1], Object.fromEntries(body.map((l) => l.split(/:\s*/))), live)); shown += 2; continue;
+    }
+    if ((m = line.match(/^:::(\w+)/))) {
+      close(); const cols = []; i++;
+      while (i < lines.length && !lines[i].startsWith(":::")) { if (lines[i].startsWith("## ")) cols.push([lines[i].slice(3), []]); else if (cols.length && lines[i].startsWith("- ")) cols.at(-1)[1].push(lines[i].slice(2)); i++; }
+      out.push(embedHtml(m[1], { cols }, live)); shown += 2; continue;
+    }
+    if (!line.trim()) { close(); continue; }
+    shown++;
+    if ((m = line.match(/^(#{1,3}) (.*)/))) { close(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
+    if ((m = line.match(/^(?:- |\d+\. )\[( |x)\] (.*)/))) {
+      if (!list) out.push("<ul>"), (list = true);
+      const done = m[1] === "x";
+      out.push(`<li class="task${done ? " done" : ""}"><input type="checkbox" tabindex="-1" data-note="${noteIndex}" data-task="${taskNo++}"${done ? " checked" : ""}><span>${inline(m[2])}</span></li>`);
+      continue;
+    }
+    if ((m = line.match(/^(?:- |\d+\. )(.*)/))) { if (!list) out.push("<ul>"), (list = true); out.push(`<li>${inline(m[1])}</li>`); continue; }
+    close(); out.push(`<p>${inline(line)}</p>`);
+  }
+  close();
+  return out.join("");
+}
+function embedHtml(kind, a, live) {
+  const words = (EMBED_WORDS[kind] || (() => ["◇", kind, ""]))(a);
+  if (!live) return `<div class="embed-ph" title="An embed. It draws when the card is focused, or in the note."><span>${words[0]}</span><b>${words[1]}</b><span>${esc(words[2])}</span></div>`;
+  if (kind === "timer") return `<div class="embed-live" data-timer="${parseInt(a.duration) || 25}"><div class="muted">${esc(a.label || "Timer")}</div><div class="big">${(parseInt(a.duration) || 25)}:00</div></div>`;
+  if (kind === "calendar") return `<div class="embed-live"><div class="cal">${[0, 1, 2].map((d) => `<div><b>${dayName(d).split(",")[0]}</b>${EVENTS.filter((e) => e.day === d).slice(0, 3).map((e) => `<div class="muted">${e.start ? fmtTime(e.start) : "All day"} ${esc(e.title)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  if (kind === "kanban") return `<div class="embed-live"><div class="board">${(a.cols || []).map(([c, items]) => `<div><b>${esc(c)}</b>${items.map((t) => `<div class="muted">${esc(t)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  return `<div class="embed-live">${esc(kind)}</div>`;
+}
+function toggleTask(note, n) {
+  let k = -1;
+  note.text = note.text.split("\n").map((l) => { const m = l.match(/^(- |\d+\. )\[( |x)\] /); if (m && ++k === n) return l.replace(/\[( |x)\]/, m[2] === "x" ? "[ ]" : "[x]"); return l; }).join("\n");
+}
+
+// ---- Queries: one parser for the search bar, the feed's filter and saved searches. ----
+const OPERATORS = [
+  { op: "is:", values: ["archived", "pinned", "trashed", "open", "done"], desc: "State of a note or task" },
+  { op: "in:", values: ["Projects/", "Journal/", "Research/", "Meetings/", "Ideas/"], desc: "A folder" },
+  { op: "from:", values: ["me", "agent", "claude", "research", "sync"], desc: "Who made the last change" },
+  { op: "type:", values: ["note", "task", "event", "contact", "command", "setting"], desc: "Only one kind of result" },
+  { op: "edited:", values: ["today", "<7d", "<30d", ">90d"], desc: "When it last changed" },
+  { op: "due:", values: ["today", "<=today", "<7d"], desc: "Tasks by due date" },
+  { op: "has:", values: ["task", "embed", "event"], desc: "What a note holds" },
+];
+function parseQuery(q) {
+  const out = { words: [], is: [], in: [], from: [], type: [], edited: null, due: null, has: [], not: [] };
+  for (const tok of q.match(/"[^"]*"|\S+/g) || []) {
+    const m = tok.match(/^(-?)(is|in|from|type|edited|due|has):(.+)$/);
+    if (m) { const [, neg, k, v] = m; if (neg) out.not.push([k, v.toLowerCase()]); else if (Array.isArray(out[k])) out[k].push(v.toLowerCase()); else out[k] = v.toLowerCase(); }
+    else if (tok.startsWith("-") && tok.length > 1) out.not.push(["word", tok.slice(1).toLowerCase()]);
+    else out.words.push(tok.replace(/"/g, "").toLowerCase());
+  }
+  return out;
+}
+function editedOk(spec, msAgo) {
+  if (!spec) return true;
+  if (spec === "today") return msAgo < 9 * HOUR + MIN;
+  const m = spec.match(/^([<>])(\d+)d$/); if (!m) return true;
+  return m[1] === "<" ? msAgo < +m[2] * DAY : msAgo > +m[2] * DAY;
+}
+function fromOk(list, by) {
+  if (!list.length) return true;
+  return list.some((f) => f === "me" ? by === "you" : f === "agent" ? isAgent(by) && by !== "sync" : by === f);
+}
+
+// ---- Keys: by the character typed (Dvorak-safe), Mod is ⌘ on a Mac and Ctrl elsewhere. ----
+const isMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+const inText = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+
+
+const ICONS = {
+  notes: '<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>',
+  tasks: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/></svg>',
+  sources: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>',
+  extensions: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><path d="M13 16.5h7M16.5 13v7"/></svg>',
+  settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>',
+};
+const CONTAINERS = [
+  { id: "notes", title: "Notes", key: "⇧E" },
+  { id: "search", title: "Search", key: "⇧F" },
+  { id: "calendar", title: "Calendar", key: "⇧C" },
+  { id: "tasks", title: "Tasks", key: "⇧T" },
+  { id: "sources", title: "Sources", key: "⇧S" },
+];
+const S = {
+  notes: [], trash: [], order: CONTAINERS.map((c) => c.id), active: "notes", side: true, sec: false, bottom: false, bottomTab: "activity",
+  sections: { pinned: { open: true }, recent: { open: true, where: "side" }, archive: { open: false }, trash: { open: false } },
+  cursor: 0, focus: "side", tabs: [], activeTab: -1, undo: [], pending: "", searchQ: "", searchIn: "", searchFrom: "", incArchived: false, incTrash: false, barCursor: 0,
+};
+function reset() {
+  let uid = 0;
+  S.notes = [...SEED_NOTES.map((n) => ({ ...n })), ...Array.from({ length: 60 }, (_, i) => fillerNote(i)), ...SEED_ARCHIVED.map((n) => ({ ...n, archived: true }))].map((n) => ({ ...n, id: ++uid }));
+  S.trash = SEED_TRASH.map((t) => ({ note: { path: t.path, text: t.text, by: t.by, ago: t.deleted, id: ++uid }, deletedAgo: t.deleted, by: t.by }));
+}
+const $ = (s, el = document) => el.querySelector(s);
+const noteByPath = (p) => S.notes.find((n) => n.path === p);
+const live = () => S.notes.filter((n) => !n.archived).sort((a, b) => a.ago - b.ago);
+
+/** The rows the side bar shows now, flat, for j/k: section headers and items. */
+function rows() {
+  const out = [];
+  if (S.active === "notes") {
+    const sec = (id, title, items, n) => { out.push({ head: id, title, n }); if (S.sections[id].open && S.sections[id].where !== "bottom") items.forEach((x) => out.push(x)); };
+    const pins = live().filter((n) => n.pinned);
+    sec("pinned", "Pinned", pins.map((n) => ({ note: n })), pins.length);
+    const rec = live().filter((n) => !n.pinned);
+    if (S.sections.recent.where !== "bottom") sec("recent", "Recent", rec.slice(0, S.recentLoaded || 40).map((n) => ({ note: n, two: true })), rec.length);
+    const arch = S.notes.filter((n) => n.archived);
+    sec("archive", "Archive", arch.map((n) => ({ note: n })), arch.length);
+    sec("trash", "Trash · 30 days", S.trash.map((x) => ({ trash: x })), S.trash.length);
+  } else if (S.active === "search") {
+    for (const g of searchGroups()) { out.push({ file: g.n }); g.lines.forEach((l) => out.push({ hit: l, note: g.n })); }
+  } else if (S.active === "calendar") {
+    [0, 1, 2, 3, 4].forEach((d) => { out.push({ day: d }); EVENTS.filter((e) => e.day === d).forEach((e) => out.push({ ev: e })); });
+  } else if (S.active === "tasks") {
+    for (const n of live()) n.text.split("\n").forEach((l, i) => { const m = l.match(/^(?:- |\d+\. )\[ \] (.*)/); if (m) out.push({ task: m[1], note: n }); });
+  }
+  return out;
+}
+function searchGroups() {
+  const words = S.searchQ.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  let pool = S.notes.filter((n) => (S.incArchived || !n.archived));
+  if (S.incTrash) pool = pool.concat(S.trash.map((x) => ({ ...x.note, trashed: true })));
+  if (S.searchIn) pool = pool.filter((n) => n.path.toLowerCase().startsWith(S.searchIn.toLowerCase()));
+  if (S.searchFrom) pool = pool.filter((n) => fromOk([S.searchFrom], n.by));
+  return pool.map((n) => ({ n, lines: n.text.split("\n").filter((l) => words.every((w) => l.toLowerCase().includes(w))) })).filter((g) => g.lines.length || words.every((w) => g.n.path.toLowerCase().includes(w))).slice(0, 30);
+}
+function mark(s) { let h = esc(s); for (const w of S.searchQ.split(/\s+/).filter(Boolean)) h = h.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>"); return h; }
+
+function render() { renderBar(); renderSide(); renderTabs(); renderEditor(); renderBottom(); renderSec(); renderStatus(); }
+function renderBar() {
+  const unseen = S.notes.filter((n) => isAgent(n.by) && n.ago < DAY && !n.archived).length;
+  const btn = (id, title, key, i) => `<button class="act${S.focus === "bar" && S.barCursor === i ? " cursor" : ""}" draggable="true" data-c="${id}" aria-pressed="${S.active === id && S.side}" title="${title} (${MOD}${key})">${ICONS[id]}${id === "notes" && unseen ? `<span class="badge">${unseen}</span>` : ""}</button>`;
+  $("#bar").innerHTML = S.order.map((id, i) => { const c = CONTAINERS.find((x) => x.id === id); return btn(id, c.title, c.key, i); }).join("") + `<span class="grow"></span>` + `<button class="act" data-c="extensions" title="Extensions">${ICONS.extensions}</button><button class="act" data-c="settings" title="Settings">${ICONS.settings}</button>`;
+  $("#bar").querySelectorAll("[data-c]").forEach((b) => {
+    b.onclick = () => showContainer(b.dataset.c);
+    b.ondragstart = (e) => { e.dataTransfer.setData("text/plain", b.dataset.c); b.classList.add("dragging"); };
+    b.ondragend = () => b.classList.remove("dragging");
+    b.ondragover = (e) => e.preventDefault();
+    b.ondrop = (e) => { e.preventDefault(); const from = e.dataTransfer.getData("text/plain"); const to = b.dataset.c; const i = S.order.indexOf(from), j = S.order.indexOf(to); if (i < 0 || j < 0) return; S.order.splice(i, 1); S.order.splice(j, 0, from); render(); };
+  });
+}
+function showContainer(id) {
+  if (id === "extensions" || id === "settings") { openTab({ kind: id, title: id === "extensions" ? "Extensions" : "Settings" }); return; }
+  if (S.active === id && S.side && S.focus === "side") { S.side = false; S.focus = "main"; }
+  else { S.active = id; S.side = true; S.focus = "side"; S.cursor = 0; }
+  render();
+  if (id === "search" && S.side) setTimeout(() => $("#sq")?.focus(), 0);
+}
+function renderSide() {
+  document.body.classList.toggle("no-side", !S.side);
+  const el = $("#side");
+  if (!S.side) return;
+  const c = CONTAINERS.find((x) => x.id === S.active);
+  const rs = rows();
+  S.cursor = Math.max(0, Math.min(S.cursor, rs.length - 1));
+  let html = `<h2><span>${c.title}</span><span class="faint">${S.active === "notes" ? "j/k · e · # · p" : ""}</span></h2>`;
+  if (S.active === "search") {
+    html += `<div class="field"><input id="sq" placeholder="Search" value="${esc(S.searchQ)}"></div>
+      <div class="field"><label>in</label><input id="sin" placeholder="e.g. Projects/" value="${esc(S.searchIn)}"></div>
+      <div class="field"><label>from</label><select id="sfrom"><option value="">anyone</option>${["me", "agent", "claude", "research"].map((v) => `<option${S.searchFrom === v ? " selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div class="field"><label></label><button class="tog" id="tArch" aria-pressed="${S.incArchived}">archived</button><button class="tog" id="tTrash" aria-pressed="${S.incTrash}">trash</button></div>`;
+    if (!S.searchQ) html += `<div class="callout">Search note text, as VS Code's Search does: words, then where (a folder) and who. Events and contacts aren't here; they're in Calendar and Sources.</div>`;
+  }
+  rs.forEach((r, i) => {
+    const cur = S.focus === "side" && i === S.cursor ? " cursor" : "";
+    if (r.head) { const sct = S.sections[r.head]; html += `<div class="section"><div class="sh${cur}" data-i="${i}"><span class="chev">${sct.open ? "▾" : "▸"}</span>${r.title}<span class="n">${r.n}</span><span class="more" data-more="${r.head}" title="Move this view">⋯</span></div></div>`; return; }
+    if (r.note && !r.hit) {
+      const n = r.note;
+      if (r.two) html += `<div class="item two${cur}" data-i="${i}"><div class="l"><span class="a${isAgent(n.by) ? " agent" : ""}"></span><span class="t">${esc(titleOf(n))}</span><span class="r">${ago(n.ago)}</span></div><span class="sub">&nbsp;&nbsp;&nbsp;${esc(whoName(n.by))}${n.summary ? " · " + esc(n.summary) : ""}</span></div>`;
+      else html += `<div class="item${cur}" data-i="${i}"><span class="a${isAgent(n.by) ? " agent" : ""}"></span><span class="t">${esc(titleOf(n))}</span><span class="r">${ago(n.ago)}</span></div>`;
+      return;
+    }
+    if (r.trash) { const left = Math.ceil(30 - r.trash.deletedAgo / DAY); html += `<div class="item${cur}" data-i="${i}"><span class="a"></span><span class="t">${esc(titleOf(r.trash.note))}</span><span class="r" style="color:${left < 4 ? "var(--bad)" : ""}">${left}d left</span></div>`; return; }
+    if (r.file) { html += `<div class="item${cur}" data-i="${i}" style="padding-left:0.8rem"><span class="t"><b>${esc(titleOf(r.file))}</b> <span class="faint">${esc(folderOf(r.file.path))}</span></span>${r.file.archived ? '<span class="badge">archived</span>' : r.file.trashed ? '<span class="badge">trash</span>' : ""}</div>`; return; }
+    if (r.hit) { html += `<div class="hit${cur}" data-i="${i}">${mark(r.hit.replace(/^(\s*[-*]|\s*\d+\.|#+)\s+(\[.\]\s+)?/, ""))}</div>`; return; }
+    if (r.day != null) { html += `<div class="section"><div class="sh${cur}" data-i="${i}"><span class="chev"></span>${dayName(r.day)}</div></div>`; return; }
+    if (r.ev) { html += `<div class="ev${cur}" data-i="${i}" style="border-left-color:${CAL_COLORS[r.ev.cal]}"><div class="tm">${r.ev.allDay ? "All day" : fmtTime(r.ev.start)}</div>${esc(r.ev.title)}</div>`; return; }
+    if (r.task) { html += `<div class="item${cur}" data-i="${i}" style="padding-left:0.8rem"><span>☐</span><span class="t">${esc(r.task.replace(/ (due|rec):\S+/g, ""))}</span><span class="r">${esc(titleOf(r.note))}</span></div>`; return; }
+  });
+  if (S.active === "sources") html += `<div class="item"><span class="a" style="background:var(--ok)"></span><span class="t">Google Calendar</span><span class="r">synced 3 min ago</span></div><div class="item"><span class="a" style="background:var(--ok)"></span><span class="t">Google Contacts</span><span class="r">read-only</span></div><div class="callout">412 event records, 4 contacts. Nothing waiting to send.</div>`;
+  el.innerHTML = html;
+  el.querySelectorAll("[data-i]").forEach((d) => d.addEventListener("click", (e) => { if (e.target.dataset.more) return viewMenu(e.target.dataset.more, e.target); S.cursor = +d.dataset.i; S.focus = "side"; activate(); }));
+  el.querySelectorAll("[data-more]").forEach((d) => d.addEventListener("click", (e) => { e.stopPropagation(); viewMenu(d.dataset.more, d); }));
+  const sq = $("#sq");
+  if (sq) {
+    sq.oninput = () => { S.searchQ = sq.value; S.cursor = 0; const p = sq.selectionStart; renderSide(); const n = $("#sq"); n.focus(); n.setSelectionRange(p, p); };
+    sq.onkeydown = (e) => { if (e.key === "Enter" || e.key === "ArrowDown") { e.preventDefault(); sq.blur(); S.focus = "side"; S.cursor = 0; render(); } if (e.key === "Escape") { sq.blur(); S.focus = "main"; render(); } };
+    $("#sin").oninput = (e) => { S.searchIn = e.target.value; const p = e.target.selectionStart; renderSide(); $("#sin").focus(); $("#sin").setSelectionRange(p, p); };
+    $("#sfrom").onchange = (e) => { S.searchFrom = e.target.value; renderSide(); };
+    $("#tArch").onclick = () => { S.incArchived = !S.incArchived; renderSide(); };
+    $("#tTrash").onclick = () => { S.incTrash = !S.incTrash; renderSide(); };
+  }
+  const c2 = el.querySelector(".cursor"); if (c2) c2.scrollIntoView({ block: "nearest" });
+  el.onscroll = () => { if (S.active === "notes" && el.scrollTop + el.clientHeight > el.scrollHeight - 60) { S.recentLoaded = (S.recentLoaded || 40) + 30; renderSide(); } };
+}
+function activate(how) {
+  const r = rows()[S.cursor]; if (!r) return;
+  if (r.head) { S.sections[r.head].open = !S.sections[r.head].open; render(); return; }
+  if (r.note) return openTab({ kind: "note", path: r.note.path, title: titleOf(r.note) }, how);
+  if (r.file) return openTab({ kind: "note", path: r.file.path, title: titleOf(r.file) }, how);
+  if (r.trash) return openTab({ kind: "trashed", path: r.trash.note.path, title: titleOf(r.trash.note) });
+  if (r.ev) return openTab({ kind: "event", ev: r.ev.id, title: r.ev.title });
+}
+function openTab(t, how) {
+  const i = S.tabs.findIndex((x) => x.kind === t.kind && (x.path || x.ev || x.title) === (t.path || t.ev || t.title));
+  if (i >= 0) S.activeTab = i;
+  else { const p = S.tabs.findIndex((x) => x.preview); if (p >= 0 && how !== "keep") { S.tabs[p] = { ...t, preview: true }; S.activeTab = p; } else { S.tabs.push({ ...t, preview: how !== "keep" }); S.activeTab = S.tabs.length - 1; } }
+  if (how === "focus") S.focus = "main";
+  render();
+}
+function renderTabs() {
+  $("#tabs").innerHTML = S.tabs.map((t, i) => `<div class="tab" data-t="${i}" aria-selected="${i === S.activeTab}"${t.preview ? ' style="font-style:italic"' : ""}>${esc(t.title)}<span class="x" data-x="${i}">×</span></div>`).join("");
+  $("#tabs").querySelectorAll("[data-t]").forEach((d) => d.addEventListener("click", (e) => { if (e.target.dataset.x) { S.tabs.splice(+e.target.dataset.x, 1); S.activeTab = Math.min(S.activeTab, S.tabs.length - 1); } else S.activeTab = +d.dataset.t; render(); }));
+}
+function renderEditor() {
+  const el = $("#editor");
+  const t = S.tabs[S.activeTab];
+  if (!t) { el.innerHTML = `<div class="welcome">Open a note from the side bar<br><kbd>${MOD}⇧E</kbd> Notes · <kbd>${MOD}⇧F</kbd> Search · <kbd>${MOD}P</kbd> Open by name · <kbd>${MOD}J</kbd> Panel · <kbd>?</kbd> Keys</div>`; return; }
+  if (t.kind === "note") {
+    const n = noteByPath(t.path);
+    if (!n) { el.innerHTML = `<div class="note"><div class="banner">This note is in Trash.</div></div>`; return; }
+    el.innerHTML = `<div class="note">${n.archived ? `<div class="banner">Archived. <button class="btn" id="un">Unarchive</button></div>` : ""}<div class="crumbs"><span class="mono">${esc(n.path)}</span><span class="who${isAgent(n.by) ? " agent" : ""}">${esc(whoName(n.by))}</span><span>${ago(n.ago)}</span></div><div class="md">${renderMarkdown(n.text, { live: true, noteIndex: n.id })}</div></div>`;
+    const un = $("#un"); if (un) un.onclick = () => archive(n, false);
+  } else if (t.kind === "trashed") {
+    const x = S.trash.find((y) => y.note.path === t.path);
+    el.innerHTML = x ? `<div class="note"><div class="banner">In Trash · purged in ${Math.ceil(30 - x.deletedAgo / DAY)} days. <button class="btn" id="rs">Restore <kbd>r</kbd></button><button class="btn" id="df">Delete forever</button></div><div class="md">${renderMarkdown(x.note.text)}</div></div>` : `<div class="welcome">Restored.</div>`;
+    if (x) { $("#rs").onclick = () => restore(x); $("#df").onclick = () => { S.trash.splice(S.trash.indexOf(x), 1); toast("Deleted forever"); render(); }; }
+  } else if (t.kind === "event") {
+    const e = EVENTS.find((x) => x.id === t.ev);
+    el.innerHTML = `<div class="note"><div class="crumbs mono">event:google/primary/${e.id}</div><h1 style="font-size:1.4rem">${esc(e.title)}</h1><p class="muted">${dayName(e.day)} · ${e.allDay ? "All day" : fmtTime(e.start) + "–" + fmtTime(e.end)}${e.where ? " · " + esc(e.where) : ""} · ${e.cal}</p><h3 style="font-size:0.8rem;text-transform:uppercase;color:var(--muted)">Notes that link here</h3>${(e.notes || []).map((p) => `<div><a href="#" data-p="${esc(p)}" style="color:var(--accent-ink)">${esc(titleOf(noteByPath(p)))}</a></div>`).join("") || '<p class="muted">None.</p>'}</div>`;
+    el.querySelectorAll("[data-p]").forEach((a) => a.onclick = (ev) => { ev.preventDefault(); openTab({ kind: "note", path: a.dataset.p, title: titleOf(noteByPath(a.dataset.p)) }); });
+  } else if (t.kind === "extensions") {
+    el.innerHTML = `<div class="note"><h1 style="font-size:1.3rem">Extensions</h1><p class="muted">Each extension declares view containers (an icon in the activity bar) and views (sections inside one). Word count would add a view; you'd drag it to a container, the secondary side bar or the panel.</p>${["Feed views (Pinned, Recent, Archive, Trash)", "Calendar (container)", "Tasks (container)", "History (secondary side bar)", "Activity (panel)"].map((x) => `<div class="change">${x}</div>`).join("")}</div>`;
+  } else if (t.kind === "settings") {
+    el.innerHTML = `<div class="note"><h1 style="font-size:1.3rem">Settings</h1><div class="json mono" style="white-space:pre;background:var(--code-bg);padding:0.7rem;border-radius:6px;font-size:0.8rem">${esc(JSON.stringify({ "workbench.activityBar.order": S.order, "workbench.views": { recent: S.sections.recent.where }, "trash.retentionDays": 30 }, null, 2))}</div></div>`;
+  }
+}
+function renderBottom() {
+  const el = $("#bottom");
+  el.hidden = !S.bottom;
+  if (!S.bottom) return;
+  const recentHere = S.sections.recent.where === "bottom";
+  const tabs = [["activity", "Activity"], ...(recentHere ? [["recent", "Recent notes"]] : []), ["ext", "Extension activity"]];
+  let body = "";
+  if (S.bottomTab === "activity") body = S.notes.filter((n) => n.ago < 3 * DAY).sort((a, b) => a.ago - b.ago).map((n) => `<div class="logrow"><span class="faint">${ago(n.ago)}</span><span class="${isAgent(n.by) ? "who agent" : "who"}">${esc(whoName(n.by))}</span><span>${esc(n.path)}${n.summary ? " · " + esc(n.summary) : ""}${n.archived ? " (archived)" : ""}</span><span class="stat"><span class="add">+${n.add}</span> <span class="del">−${n.del}</span></span></div>`).join("");
+  else if (S.bottomTab === "recent") body = live().slice(0, 40).map((n) => `<div class="logrow"><span class="faint">${ago(n.ago)}</span><span>${esc(whoName(n.by))}</span><span>${esc(titleOf(n))}</span><span></span></div>`).join("");
+  else body = `<div class="logrow"><span class="faint">2 min ago</span><span>link-embeds</span><span>card https://example.com/article</span><span>200</span></div><div class="logrow"><span class="faint">9 min ago</span><span>word-count</span><span>files:read Projects/Launch plan.md</span><span>allowed</span></div>`;
+  el.innerHTML = `<div class="btabs">${tabs.map(([id, t]) => `<button data-b="${id}" aria-selected="${S.bottomTab === id}">${t}</button>`).join("")}<span class="grow"></span><button data-bclose title="Close (${MOD}J)">×</button></div><div class="bbody">${body}</div>`;
+  el.querySelectorAll("[data-b]").forEach((b) => b.onclick = () => { S.bottomTab = b.dataset.b; render(); });
+  $("[data-bclose]", el).onclick = () => { S.bottom = false; render(); };
+}
+function renderSec() {
+  document.body.classList.toggle("sec-open", S.sec);
+  if (!S.sec) return;
+  const t = S.tabs[S.activeTab];
+  const n = t && t.path ? noteByPath(t.path) : null;
+  $("#sec").innerHTML = `<h2><span>History</span><span class="faint">${MOD}⌥B</span></h2>` + (n ? `<div class="change"><b class="${isAgent(n.by) ? "who agent" : "who"}">${esc(whoName(n.by))}</b> · ${ago(n.ago)}<div class="muted">${esc(n.summary || "edit")}</div></div><div class="change"><b>You</b> · ${ago(n.ago + 2 * DAY)}<div class="muted">edit</div></div>` : `<div class="callout">History of the note in the editor.</div>`);
+}
+function renderStatus() {
+  $("#status").innerHTML = `<span>NORMAL</span><span>Saved</span><span class="grow"></span><span>${S.pending ? `<kbd>${S.pending}</kbd>` : S.focus === "side" ? "j/k · ↵ open · e archive · # trash · p pin · u undo · Space fold" : "Ctrl-W h side bar"}</span><span>? keys</span><button id="protoBtn" class="mono" style="font-size:0.72rem;color:var(--muted)">⚙ prototype</button><span>2026-10-05 09:00</span>`;
+  $("#protoBtn").onclick = () => { $("#proto").hidden = !$("#proto").hidden; };
+}
+function toast(text, undo) {
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const el = document.createElement("div"); el.className = "toast"; el.innerHTML = `<span>${text}</span>${undo ? '<button>Undo</button> <kbd>u</kbd>' : ""}`;
+  if (undo) el.querySelector("button").onclick = doUndo;
+  document.body.append(el); setTimeout(() => el.remove(), 4500);
+}
+function doUndo() { const u = S.undo.pop(); if (u) { u(); toast("Undone"); render(); } }
+function archive(n, on = true) { const was = n.archived; n.archived = on; S.undo.push(() => (n.archived = was)); toast(`${on ? "Archived" : "Unarchived"} “${esc(titleOf(n))}”`, true); render(); }
+function trash(n) { const i = S.notes.indexOf(n); S.notes.splice(i, 1); const x = { note: n, deletedAgo: 0, by: "you" }; S.trash.unshift(x); S.undo.push(() => { S.trash.splice(S.trash.indexOf(x), 1); S.notes.splice(i, 0, n); }); toast(`Moved “${esc(titleOf(n))}” to Trash`, true); render(); }
+function restore(x) { S.trash.splice(S.trash.indexOf(x), 1); x.note.ago = 0; x.note.by = "you"; S.notes.unshift(x.note); toast(`Restored “${esc(titleOf(x.note))}”`); render(); }
+function pin(n) { n.pinned = !n.pinned; S.undo.push(() => (n.pinned = !n.pinned)); toast(n.pinned ? "Pinned" : "Unpinned", true); render(); }
+let menu = null;
+function viewMenu(section, anchor) {
+  closeMenu();
+  const where = S.sections[section].where || "side";
+  const items = section === "recent" ? [[where === "bottom" ? "Move to the side bar" : "Move to the panel", () => { S.sections.recent.where = where === "bottom" ? "side" : "bottom"; if (S.sections.recent.where === "bottom") { S.bottom = true; S.bottomTab = "recent"; } toast(`Recent is in the ${S.sections.recent.where === "bottom" ? "panel" : "side bar"} now`); }], ["Collapse all", () => Object.values(S.sections).forEach((s) => (s.open = false))]] : [["Collapse all", () => Object.values(S.sections).forEach((s) => (s.open = false))], ["Hide this view", () => toast("Hidden: Views menu brings it back")]];
+  menu = document.createElement("div"); menu.className = "menu";
+  const r = anchor.getBoundingClientRect(); menu.style.left = r.left + "px"; menu.style.top = r.bottom + 4 + "px";
+  menu.innerHTML = items.map(([t], i) => `<div data-m="${i}" class="${i ? "" : "focus"}">${t}</div>`).join("");
+  menu.items = items; menu.cur = 0;
+  document.body.append(menu);
+  menu.querySelectorAll("[data-m]").forEach((d) => d.onclick = () => { const f = items[+d.dataset.m][1]; closeMenu(); f(); render(); });
+}
+function closeMenu() { if (menu) menu.remove(); menu = null; }
+function quickOpen() {
+  const s = document.createElement("div"); s.className = "scrim";
+  s.innerHTML = `<div class="dialog qo"><input placeholder="Open a note by name"><div class="list"></div></div>`;
+  document.body.append(s);
+  const input = $("input", s); let sel = 0; let items = [];
+  const draw = () => { const q = input.value.toLowerCase(); items = S.notes.filter((n) => !n.archived && (titleOf(n).toLowerCase().includes(q) || n.path.toLowerCase().includes(q))).sort((a, b) => a.ago - b.ago).slice(0, 12); sel = Math.min(sel, items.length - 1); $(".list", s).innerHTML = items.map((n, i) => `<div class="res${i === sel ? " focus" : ""}">${esc(titleOf(n))}<span class="d">${esc(folderOf(n.path))}</span></div>`).join(""); };
+  input.oninput = () => { sel = 0; draw(); };
+  input.onkeydown = (e) => { if (e.key === "Escape") s.remove(); if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "j")) { e.preventDefault(); sel = Math.min(items.length - 1, sel + 1); draw(); } if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "k")) { e.preventDefault(); sel = Math.max(0, sel - 1); draw(); } if (e.key === "Enter" && items[sel]) { s.remove(); openTab({ kind: "note", path: items[sel].path, title: titleOf(items[sel]) }, "focus"); } };
+  s.onmousedown = (e) => { if (e.target === s) s.remove(); };
+  draw(); input.focus();
+}
+function keysSheet() {
+  const s = document.createElement("div"); s.className = "scrim";
+  const g = (t, rows) => `<h3>${t}</h3>` + rows.map(([k, d]) => `<div><span>${d}</span><kbd>${k}</kbd></div>`).join("");
+  s.innerHTML = `<div class="dialog"><div class="keys-sheet">${g("Containers", [[MOD + "⇧E", "Notes"], [MOD + "⇧F", "Search"], [MOD + "⇧C", "Calendar"], [MOD + "⇧T", "Tasks"], [MOD + "⇧S", "Sources"], [MOD + "B", "Toggle side bar"], [MOD + "J", "Toggle panel"], [MOD + "⌥B", "Secondary side bar"], [MOD + "P", "Open by name"]])}${g("Side bar lists", [["j k", "Move"], ["↵", "Open (preview tab)"], ["l", "Open and keep"], ["Space", "Fold a section"], ["e", "Archive"], ["#", "Trash"], ["p", "Pin"], ["r", "Restore (in Trash)"], ["u", "Undo"], ["m", "Move this view"]])}${g("Focus", [["Ctrl-W h", "Left"], ["Ctrl-W l", "Right"], ["Ctrl-W j", "Panel"]])}</div></div>`;
+  document.body.append(s);
+  const k = (e) => { e.preventDefault(); e.stopPropagation(); s.remove(); document.removeEventListener("keydown", k, true); };
+  document.addEventListener("keydown", k, true); s.onclick = () => s.remove();
+}
+document.addEventListener("keydown", (e) => {
+  if (document.querySelector(".scrim")) return;
+  if (menu) { if (e.key === "Escape") return closeMenu(); if (e.key === "j" || e.key === "k" || e.key.startsWith("Arrow")) { e.preventDefault(); menu.cur = (menu.cur + 1) % menu.items.length; menu.querySelectorAll("[data-m]").forEach((d, i) => d.classList.toggle("focus", i === menu.cur)); return; } if (e.key === "Enter") { const f = menu.items[menu.cur][1]; closeMenu(); f(); render(); return; } }
+  if (inText(e)) return;
+  if (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "w") { e.preventDefault(); S.pending = "Ctrl-W"; renderStatus(); return; }
+  if (isMod(e)) {
+    const k = e.key.toLowerCase();
+    const map = { e: "notes", f: "search", c: "calendar", t: "tasks", s: "sources" };
+    if (e.shiftKey && map[k]) { e.preventDefault(); showContainer(map[k]); return; }
+    if (e.altKey && (k === "b" || k === "∫")) { e.preventDefault(); S.sec = !S.sec; render(); return; }
+    if (k === "b") { e.preventDefault(); S.side = !S.side; render(); return; }
+    if (k === "j") { e.preventDefault(); S.bottom = !S.bottom; render(); return; }
+    if (k === "p" || k === "k") { e.preventDefault(); quickOpen(); return; }
+    return;
+  }
+  if (S.pending === "Ctrl-W") { S.pending = ""; if (e.key === "h") S.focus = S.focus === "main" ? "side" : "bar"; else if (e.key === "l") S.focus = S.focus === "bar" ? "side" : "main"; render(); return; }
+  if (e.key === "?") { keysSheet(); return; }
+  if (e.key === "u") { doUndo(); return; }
+  if (S.focus === "bar") {
+    if (e.key === "j" || e.key === "k") { S.barCursor = Math.max(0, Math.min(S.order.length - 1, S.barCursor + (e.key === "j" ? 1 : -1))); render(); }
+    if (e.key === "J" || e.key === "K") { const i = S.barCursor, j = i + (e.key === "J" ? 1 : -1); if (j >= 0 && j < S.order.length) { [S.order[i], S.order[j]] = [S.order[j], S.order[i]]; S.barCursor = j; render(); } }
+    if (e.key === "Enter") showContainer(S.order[S.barCursor]);
+    return;
+  }
+  if (S.focus !== "side" || !S.side) return;
+  const rs = rows(); const r = rs[S.cursor];
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); S.cursor = Math.min(rs.length - 1, S.cursor + 1); render(); return; }
+  if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); S.cursor = Math.max(0, S.cursor - 1); render(); return; }
+  if (e.key === "Enter") { activate(); return; }
+  if (e.key === "l") { activate("keep"); return; }
+  if (e.key === " " && r && r.head) { e.preventDefault(); activate(); return; }
+  if (e.key === "m" && r && r.head) { viewMenu(r.head, document.querySelector(".sh.cursor .more")); return; }
+  if (e.key === "/" && S.active === "search") { e.preventDefault(); $("#sq").focus(); return; }
+  const n = r && (r.note || r.file);
+  if (e.key === "e" && n) archive(n, !n.archived);
+  if (e.key === "#" && n) trash(n);
+  if (e.key === "p" && n) pin(n);
+  if (e.key === "r" && r && r.trash) restore(r.trash);
+  if (e.key === "G") { S.cursor = rs.length - 1; render(); }
+});
+$("#pTheme").onchange = (e) => { if (e.target.value) document.documentElement.dataset.theme = e.target.value; else delete document.documentElement.dataset.theme; };
+$("#pAgent").onclick = () => { const n = live()[5]; n.ago = 0; n.by = "claude"; n.summary = "Added a follow-up"; toast(`Claude changed “${esc(titleOf(n))}”`); render(); };
+reset();
+render();
+</script>
+</body>
+</html>

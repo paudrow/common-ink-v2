@@ -1,0 +1,1402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Places and Feed</title>
+<style>
+/* The app's tokens (web/src/style.css), so the prototype reads like Common Ink. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --ink: #1f1e1c;
+  --muted: #6f6b66;
+  --line: #e7e4df;
+  --accent: #2f5fd0;
+  --selection: #d6e0f7;
+  --accent-soft: rgb(47 95 208 / 0.14);
+  --code-bg: rgb(31 30 28 / 0.05);
+  --hover: rgb(31 30 28 / 0.06);
+  --bg-elev: #ffffff;
+  --line-strong: #d6d2cb;
+  --faint: #a9a49d;
+  --ink-2: #3d3a36;
+  --accent-ink: #2450b8;
+  --on-accent: #ffffff;
+  --bad: #c2410c;
+  --warn: #b7791f;
+  --ok: #2f8f5b;
+  --agent: #7a4fc4;
+  --agent-soft: rgb(122 79 196 / 0.12);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--prose);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+    --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+    --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+    --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+    --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+  --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+  --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+  --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+  --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-size: 14px; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+kbd { font-family: var(--mono); font-size: 0.75rem; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 0.3rem; color: var(--ink-2); background: var(--bg-elev); white-space: nowrap; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.mono { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tabs and status bar, as the app draws them. */
+.tabs { display: flex; border-bottom: 1px solid var(--line); min-height: 33px; overflow-x: auto; flex: none; }
+.tab { padding: 0.45rem 0.75rem; font-size: 0.8125rem; color: var(--muted); border-right: 1px solid var(--line); display: flex; gap: 0.5rem; align-items: center; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab .x { color: var(--faint); font-size: 0.8rem; }
+.status { grid-area: status; display: flex; gap: 1rem; padding: 0.3rem 1rem; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); border-top: 1px solid transparent; }
+.status .grow { flex: 1; }
+
+/* Rendered markdown (cards and notes). */
+.md h1 { font-size: 1.05rem; margin: 0 0 0.35rem; }
+.md h2 { font-size: 0.95rem; margin: 0.6rem 0 0.25rem; }
+.md h3 { font-size: 0.9rem; margin: 0.5rem 0 0.2rem; }
+.md p { margin: 0.25rem 0; line-height: 1.5; }
+.md ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+.md li { line-height: 1.5; }
+.md li.task { list-style: none; margin-left: -1.25rem; display: flex; gap: 0.45rem; align-items: baseline; }
+.md li.task input { margin: 0; accent-color: var(--accent); transform: translateY(1px); }
+.md li.task.done span { color: var(--muted); text-decoration: line-through; }
+.md code { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); padding: 0 0.25rem; border-radius: 3px; }
+.md a, .md .wikilink { color: var(--accent-ink); text-decoration: none; }
+.chip { display: inline-flex; gap: 0.35rem; align-items: center; border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 0.4rem; font-size: 0.85em; background: var(--bg-elev); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chip .when { color: var(--muted); }
+.due { font-size: 0.75rem; border-radius: 4px; padding: 0 0.3rem; background: var(--code-bg); color: var(--muted); font-family: var(--mono); }
+.due.over { color: var(--bad); }
+.embed-ph { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; padding: 0.35rem 0.6rem; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--muted); font-size: 0.8125rem; }
+.embed-ph b { color: var(--ink-2); font-weight: 600; }
+.embed-live { margin: 0.35rem 0; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elev); font-size: 0.8125rem; }
+.embed-live .big { font-family: var(--mono); font-size: 1.2rem; }
+.embed-live .cal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .cal div { border-left: 2px solid var(--accent); padding-left: 0.4rem; }
+.embed-live .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .board div { background: var(--code-bg); border-radius: 4px; padding: 0.3rem; }
+
+/* Authors */
+.who { font-weight: 600; color: var(--ink-2); }
+.who.agent { color: var(--agent); }
+.badge { font-size: 0.7rem; border-radius: 999px; padding: 0 0.4rem; background: var(--code-bg); color: var(--muted); }
+.badge.agent { background: var(--agent-soft); color: var(--agent); }
+.badge.archived { background: var(--code-bg); color: var(--muted); }
+.stat { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.stat .add { color: var(--ok); }
+.stat .del { color: var(--bad); }
+
+/* Overlays: toast, dialogs, the keys sheet and the prototype's controls. */
+.toast { position: fixed; left: 50%; bottom: 2.5rem; transform: translateX(-50%); background: var(--ink); color: var(--bg); border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.8125rem; box-shadow: var(--shadow-lg); display: flex; gap: 0.75rem; align-items: center; z-index: 50; }
+.toast button { color: var(--bg); text-decoration: underline; }
+.toast kbd { background: transparent; color: var(--bg); border-color: color-mix(in srgb, var(--bg) 40%, transparent); }
+.scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.25); display: grid; place-items: start center; padding-top: 12vh; z-index: 40; }
+.dialog { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); width: min(680px, 92vw); max-height: 72vh; display: flex; flex-direction: column; overflow: hidden; }
+.dialog.small { width: min(420px, 92vw); padding: 1rem 1.1rem; gap: 0.6rem; }
+.dialog .row { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.btn { border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.25rem 0.7rem; background: var(--bg); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+.keys-sheet { padding: 1rem 1.25rem; overflow: auto; columns: 2; column-gap: 2rem; font-size: 0.8125rem; }
+.keys-sheet h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.75rem 0 0.35rem; break-after: avoid; }
+.keys-sheet div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.12rem 0; break-inside: avoid; }
+.proto { position: fixed; right: 0.75rem; bottom: 2rem; z-index: 30; font-size: 0.75rem; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 0.55rem 0.7rem; display: grid; gap: 0.35rem; min-width: 220px; }
+.proto[hidden] { display: none; }
+.proto b { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.proto label { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
+.proto select, .proto button { font: inherit; font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--bg); color: var(--ink); padding: 0.1rem 0.3rem; }
+
+
+body { display: grid; grid-template: "places main panel" 1fr "status status status" auto / var(--places-w, 15rem) 1fr var(--panel-w, 19rem); }
+body.no-places { --places-w: 0px; }
+body.no-panel { --panel-w: 0px; }
+body.no-places #places, body.no-panel #panel { display: none; }
+
+/* Places: one text list, no icon bar. */
+#places { grid-area: places; border-right: 1px solid var(--line); overflow: auto; padding: 0.6rem 0.4rem; font-size: 0.8125rem; display: flex; flex-direction: column; }
+#places h4 { margin: 0.9rem 0.5rem 0.25rem; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+.place { display: flex; align-items: center; gap: 0.5rem; padding: 0.22rem 0.5rem; border-radius: 4px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.place .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.place .count { font-size: 0.72rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+.place .key { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); opacity: 0; }
+#places:focus-within .place .key, body.show-keys .place .key { opacity: 1; }
+.place:hover { color: var(--ink); background: var(--hover); }
+.place[aria-current="true"] { color: var(--ink); background: var(--line); }
+.place.cursor { outline: 1px solid var(--accent); outline-offset: -1px; }
+.place .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.place .dot.unseen { background: var(--agent); }
+.place .moved { animation: flash 0.6s; }
+#places .spacer { flex: 1; min-height: 1rem; }
+#places .sep { border-top: 1px solid var(--line); margin: 0.5rem 0.5rem; }
+
+/* The main area: tabs, then one or two panes. */
+#main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#panes { flex: 1; display: flex; min-height: 0; }
+.pane { flex: 1; min-width: 0; overflow: auto; position: relative; }
+.pane + .pane { border-left: 1px solid var(--line); }
+.zone-focus { box-shadow: inset 0 2px 0 var(--accent-soft); }
+
+/* Feed */
+.feed { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
+.feed-head { position: sticky; top: 0; background: var(--bg); z-index: 2; padding: 0.9rem 0 0.5rem; border-bottom: 1px solid var(--line); }
+.feed-head .row1 { display: flex; align-items: baseline; gap: 0.75rem; }
+.feed-head h2 { font-size: 1.05rem; margin: 0; }
+.feed-head .q { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filters { display: flex; gap: 0.25rem; margin-top: 0.5rem; align-items: center; }
+.filters button { font-size: 0.8rem; padding: 0.15rem 0.6rem; border-radius: 999px; color: var(--muted); }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.filters .n { font-size: 0.7rem; color: var(--agent); margin-left: 0.2rem; }
+.filters button[aria-pressed="true"] .n { color: inherit; }
+.filters .grow { flex: 1; }
+.filters input { font: inherit; font-size: 0.8rem; border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.15rem 0.5rem; background: var(--bg-elev); color: var(--ink); width: 14rem; }
+.group { font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin: 1.1rem 0 0.4rem; font-weight: 600; }
+.card { scroll-margin: 7.5rem 0 1rem; border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem 0.9rem 0.6rem; margin: 0.5rem 0; background: var(--bg-elev); position: relative; transition: opacity 0.18s, transform 0.18s; }
+.card.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card.picked { background: color-mix(in srgb, var(--selection) 55%, var(--bg-elev)); }
+.card.leaving { opacity: 0; transform: translateX(24px); }
+.card.arrived { animation: flash 1.2s; }
+@keyframes flash { from { background: var(--accent-soft); } }
+.card .top { display: flex; gap: 0.5rem; align-items: baseline; }
+.card .title { font-weight: 600; font-size: 0.95rem; }
+.card .folder { font-size: 0.75rem; color: var(--faint); }
+.card .when { margin-left: auto; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.card .meta { display: flex; gap: 0.45rem; align-items: center; font-size: 0.78rem; color: var(--muted); margin: 0.15rem 0 0.35rem; flex-wrap: wrap; }
+.card .unseen { width: 7px; height: 7px; border-radius: 50%; background: var(--agent); position: absolute; left: -4px; top: 1rem; }
+.card .pin { color: var(--accent); font-size: 0.8rem; }
+.card .preview { font-size: 0.86rem; color: var(--ink-2); max-height: 13.5rem; overflow: hidden; -webkit-mask-image: linear-gradient(#000 80%, transparent); mask-image: linear-gradient(#000 80%, transparent); }
+.card .preview h1 { display: none; }
+.card .hint { display: none; font-size: 0.72rem; color: var(--faint); margin-top: 0.35rem; gap: 0.6rem; flex-wrap: wrap; }
+.card.focus .hint { display: flex; }
+.card .diff { font-family: var(--mono); font-size: 0.75rem; background: var(--code-bg); border-radius: 6px; padding: 0.4rem 0.6rem; margin: 0.35rem 0; white-space: pre-wrap; }
+.card .diff .a { color: var(--ok); }
+.card .diff .d { color: var(--bad); }
+.rows .card { padding: 0.35rem 0.7rem; margin: 0.15rem 0; border-radius: 5px; }
+.rows .card .preview, .rows .card .meta { display: none; }
+.pill { position: sticky; top: 6.2rem; z-index: 3; display: flex; justify-content: center; height: 0; }
+.pill button { background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 0.25rem 0.8rem; font-size: 0.8rem; box-shadow: var(--shadow-lg); transform: translateY(0.4rem); }
+.more { text-align: center; color: var(--faint); font-size: 0.8rem; padding: 1rem; }
+.empty { text-align: center; color: var(--muted); padding: 3rem 1rem; }
+.empty b { color: var(--ink); display: block; font-size: 1rem; margin-bottom: 0.25rem; }
+
+/* A note, read-only in the prototype */
+.note { max-width: 42rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; font-size: 0.95rem; }
+.note .md h1 { font-size: 1.5rem; margin-bottom: 0.75rem; }
+.note .crumbs { font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.banner { border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.4rem 0.7rem; font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; display: flex; gap: 0.75rem; align-items: center; }
+
+/* Trash and other lists */
+.list { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem 3rem; }
+.row { display: flex; gap: 0.75rem; align-items: center; padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid transparent; }
+.row.focus { border-color: var(--accent); background: var(--bg-elev); }
+.row .t { font-weight: 600; font-size: 0.875rem; }
+.row .sub { font-size: 0.75rem; color: var(--muted); }
+.row .grow { flex: 1; min-width: 0; }
+.left { width: 5.5rem; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.left i { display: block; height: 100%; background: var(--warn); }
+.left.soon i { background: var(--bad); }
+.callout { font-size: 0.8rem; color: var(--muted); border-left: 2px solid var(--line-strong); padding: 0.2rem 0.7rem; margin: 0.75rem 0; }
+
+/* Calendar (simplified) */
+.cal { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.6rem; padding: 1rem 1.25rem; }
+.cal h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 0.4rem; }
+.ev { border-left: 3px solid var(--accent); background: var(--bg-elev); border-radius: 4px; padding: 0.3rem 0.5rem; margin-bottom: 0.35rem; font-size: 0.8rem; border-top: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.ev.focus { box-shadow: 0 0 0 2px var(--accent); }
+.ev .tm { color: var(--muted); font-size: 0.72rem; }
+.evdetail { margin: 0 1.25rem; border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem 1rem; background: var(--bg-elev); font-size: 0.85rem; }
+.evdetail h3 { margin: 0 0 0.25rem; }
+
+/* Context panel */
+#panel { grid-area: panel; border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; font-size: 0.8125rem; }
+#panel .ptabs { display: flex; gap: 0.1rem; padding: 0.35rem 0.5rem 0; border-bottom: 1px solid var(--line); align-items: flex-end; }
+#panel .ptabs button { padding: 0.3rem 0.5rem; color: var(--muted); font-size: 0.78rem; border-radius: 4px 4px 0 0; }
+#panel .ptabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+#panel .ptabs .grow { flex: 1; }
+#panel .pbody { overflow: auto; padding: 0.6rem 0.75rem; flex: 1; }
+.change { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+.change .l1 { display: flex; gap: 0.4rem; align-items: baseline; }
+.change .l1 .grow { flex: 1; }
+.change.focus { background: var(--hover); }
+.menu { position: absolute; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 0.25rem; z-index: 45; min-width: 12rem; font-size: 0.8125rem; }
+.menu div { padding: 0.3rem 0.6rem; border-radius: 4px; display: flex; justify-content: space-between; gap: 1rem; cursor: pointer; }
+.menu div.focus, .menu div:hover { background: var(--hover); }
+
+/* Search */
+.search input.q { font: inherit; font-size: 1rem; border: 0; border-bottom: 1px solid var(--line); padding: 0.8rem 1rem; background: transparent; color: var(--ink); outline: none; width: 100%; }
+.search .results { overflow: auto; padding: 0.25rem 0.4rem 0.5rem; }
+.search .sec { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); padding: 0.55rem 0.6rem 0.2rem; font-weight: 600; display: flex; justify-content: space-between; }
+.res { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.32rem 0.6rem; border-radius: 5px; cursor: pointer; }
+.res.focus { background: var(--selection); }
+.res .k { width: 1.1rem; color: var(--faint); text-align: center; flex: none; }
+.res .t { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res .d { color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.res .r { color: var(--faint); font-size: 0.75rem; white-space: nowrap; }
+.res.dim .t { color: var(--muted); }
+.res mark { background: var(--accent-soft); color: inherit; border-radius: 2px; }
+.search .foot { border-top: 1px solid var(--line); padding: 0.4rem 0.8rem; font-size: 0.72rem; color: var(--muted); display: flex; gap: 1rem; flex-wrap: wrap; }
+.ops { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.5rem 0.8rem 0.2rem; }
+.ops button { font-family: var(--mono); font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 0.35rem; color: var(--ink-2); }
+.ops button.focus { background: var(--selection); }
+.json { font-family: var(--mono); font-size: 0.78rem; background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; white-space: pre; overflow: auto; margin: 0.4rem 0 1rem; }
+.settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; font-size: 0.82rem; margin: 0.4rem 0 1rem; }
+.settings-grid .mono { color: var(--accent-ink); }
+@media (max-width: 760px) {
+  body { --places-w: 0px; --panel-w: 0px; }
+  #places, #panel { display: none; }
+}
+</style>
+</head>
+<body>
+<nav id="places" aria-label="Places"></nav>
+<main id="main">
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <div id="panes"></div>
+</main>
+<aside id="panel" aria-label="Context panel"></aside>
+<footer class="status" id="status"></footer>
+<div class="proto" id="proto" hidden>
+  <b>Prototype controls</b>
+  <label>Theme <select id="pTheme"><option value="">System</option><option>light</option><option>dark</option></select></label>
+  <label>feed.liveEmbeds <select id="pLive"><option>never</option><option selected>focused</option><option>always</option></select></label>
+  <label>Agent edits resurface archived <input type="checkbox" id="pResurface"></label>
+  <button id="pAgent">Simulate an agent's edit</button>
+  <button id="pReset">Start over</button>
+  <span class="muted">Press <kbd>?</kbd> for every key.</span>
+</div>
+<script>
+// ---- Sample workspace: notes, events, contacts, commands and settings, on a fixed clock. ----
+const NOW = new Date("2026-10-05T09:00:00").getTime();
+const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "⌘" : "Ctrl-";
+
+const AGENTS = { claude: "Claude", research: "Research agent", sync: "Google Calendar sync" };
+
+/** A note: its path, text, and its last change (who, when, how big). */
+const SEED_NOTES = [
+  { path: "Projects/Launch plan.md", ago: 4 * MIN, by: "claude", add: 12, del: 3, summary: "Added a risks section and two tasks", pinned: true,
+    text: `# Launch plan\n\nShip the public beta on **Oct 20**. Agents keep the checklist current.\n\n## This week\n- [x] Freeze the onboarding copy\n- [ ] Record the demo video due:2026-10-07\n- [ ] Draft the changelog post due:2026-10-04\n- [ ] Ask [[Sam Rivera]] to review pricing\n\n## Risks\n- Google's test app ends grants after 7 days\n- Import from v1 isn't done` },
+  { path: "Journal/2026-10-05.md", ago: 22 * MIN, by: "you", add: 6, del: 0,
+    text: `# 2026-10-05\n\n## Today\n- [ ] Plan the navigation study\n- [x] Inbox to zero\n- [ ] Call the dentist about Tuesday\n\n::timer{duration=25m label="Focus"}\n\n## Log\n- 08:40 — reviewed the agent's launch checklist` },
+  { path: "Research/Reading list.md", ago: 70 * MIN, by: "research", add: 9, del: 0, summary: "Added 3 links on feed design",
+    text: `# Reading list\n\nCollected by the research agent; tick what you've read.\n\n- [ ] Readwise Reader: the triage workflow\n- [ ] Superhuman: getting to inbox zero\n- [x] VS Code: custom layout\n- [ ] Obsidian: search operators` },
+  { path: "Meetings/Quarterly planning.md", ago: 2 * HOUR, by: "you", add: 14, del: 2,
+    text: `# Quarterly planning\n\n[Quarterly planning](event:google/primary/planning) · Room 4\n\n## Agenda\n- Review Q3 numbers\n- Pick the three bets for Q4\n- [ ] Send the pre-read to [[Priya Natarajan]]\n\n\`\`\`calendar\nview: 3 days\n\`\`\`` },
+  { path: "Ideas/A feed for notes.md", ago: 5 * HOUR, by: "you", add: 22, del: 5, pinned: true,
+    text: `# A feed for notes\n\nLike X, but for my own notes: scroll what changed, archive what I'm done with.\n\n- Cards show the start of each note\n- **e** archives, **#** trashes, **p** pins\n- Agents' edits show who made them\n\nOpen question: should an agent's edit bring an archived note back?` },
+  { path: "Boards/Website.md", ago: 9 * HOUR, by: "claude", add: 3, del: 3, summary: "Moved 'Pricing page' to Doing",
+    text: `# Website\n\n:::kanban\n## To do\n- Blog index\n## Doing\n- Pricing page\n## Done\n- New logo\n:::` },
+  { path: "Meetings/Meeting prep.md", ago: 20 * HOUR, by: "you", add: 4, del: 1,
+    text: `# Meeting prep\n\n- Tomorrow: [Team standup (late start)](event:google/primary/standup_20261006)\n- [Dentist](event:google/primary/dentist) — bring the insurance card\n- [ ] Read the planning pre-read` },
+  { path: "Journal/2026-10-04.md", ago: 1 * DAY + 3 * HOUR, by: "you", add: 11, del: 0,
+    text: `# 2026-10-04\n\n- [x] Groceries\n- [x] Weekly review\n- Long walk; thought about the feed idea, see [[A feed for notes]]` },
+  { path: "Areas/Weekly review.md", ago: 1 * DAY + 5 * HOUR, by: "you", add: 7, del: 7,
+    text: `# Weekly review\n\n1. Empty the inboxes\n2. Look at next week's calendar\n3. Archive what's done\n\n- [ ] Review agent changes from the week due:2026-10-05` },
+  { path: "Research/Trash retention.md", ago: 1 * DAY + 8 * HOUR, by: "research", add: 31, del: 0, summary: "New note: how 6 apps keep deleted items",
+    text: `# Trash retention\n\nGmail, Notion, Apple Notes and Google Drive keep deleted items **30 days**. macOS empties its Trash after 30 days only if you turn that on.\n\n- Restore puts an item back where it was\n- "Delete forever" skips the wait` },
+  { path: "Recipes/Dal.md", ago: 2 * DAY, by: "you", add: 18, del: 0,
+    text: `# Dal\n\n- 1 cup red lentils\n- 1 onion, 3 cloves garlic, ginger\n- Turmeric, cumin, chili\n\nSimmer 20 minutes. Temper the spices in ghee last.` },
+  { path: "Ideas/Agent blackboard.md", ago: 2 * DAY + 4 * HOUR, by: "claude", add: 8, del: 2, summary: "Summarized the open threads",
+    text: `# Agent blackboard\n\nWhere agents leave work for each other and for me.\n\n- Research agent: reading list is current\n- Claude: launch checklist updated daily\n- [ ] Decide who owns the changelog` },
+  { path: "People/Sam Rivera.md", ago: 3 * DAY, by: "you", add: 5, del: 0,
+    text: `# Sam Rivera\n\nPricing, partnerships. Prefers async.\n\n- [ ] Send Sam the beta invite` },
+  { path: "Projects/Import from v1.md", ago: 4 * DAY, by: "claude", add: 16, del: 4, summary: "Mapped v1's folders to v2 paths",
+    text: `# Import from v1\n\n- Folders map one to one\n- Stars become pins\n- \`Archive/\` notes become archived notes, in place\n- [ ] Handle \`.trash/\` (drop, or bring as trashed)` },
+  { path: "Areas/Health.md", ago: 6 * DAY, by: "you", add: 3, del: 1,
+    text: `# Health\n\n- [ ] Book the physio due:2026-10-09 rec:monthly\n- Gym Mon and Thu, 7am` },
+];
+
+/** Older notes, made up, so the feed scrolls a long way. */
+const FILLER_TOPICS = ["Book notes", "Trip ideas", "Garden", "Reading", "Taxes", "Bike repair", "Podcast notes", "Birthday gifts", "Home network", "Language practice", "Coffee", "Running log", "Photography", "Recipes to try", "Side project", "Conference talk", "Kitchen reno", "Car", "Budget", "Writing prompts"];
+function fillerNote(i) {
+  const topic = FILLER_TOPICS[i % FILLER_TOPICS.length];
+  const n = Math.floor(i / FILLER_TOPICS.length) + 1;
+  const by = i % 7 === 3 ? "claude" : i % 11 === 5 ? "research" : "you";
+  const title = n > 1 ? `${topic} ${n}` : topic;
+  return {
+    path: `Notes/${title}.md`, ago: 7 * DAY + i * 0.9 * DAY, by, add: 2 + (i * 7) % 20, del: (i * 3) % 6,
+    summary: by === "you" ? undefined : "Tidied the list",
+    text: `# ${title}\n\n${["Some thoughts, kept for later.", "A few links and a plan.", "Notes from the weekend.", "What to try next time."][i % 4]}\n\n- ${["First idea", "A link to follow up", "Ask around"][i % 3]}\n- [${i % 3 ? " " : "x"}] ${["Follow up", "Look this up", "Write it down properly"][i % 3]}`,
+  };
+}
+
+const SEED_ARCHIVED = [
+  { path: "Projects/Onboarding v1.md", ago: 40 * DAY, by: "you", add: 2, del: 0, text: `# Onboarding v1\n\nThe old welcome flow. Replaced by the tour.\n\n- [x] Ship it` },
+  { path: "Meetings/Q2 retro.md", ago: 95 * DAY, by: "you", add: 9, del: 0, text: `# Q2 retro\n\n- Went well: the calendar\n- To fix: too many top-bar buttons` },
+  { path: "Travel/Lisbon.md", ago: 120 * DAY, by: "you", add: 4, del: 0, text: `# Lisbon\n\n- Time Out market\n- Belém, early` },
+  { path: "Research/Old competitor scan.md", ago: 3 * HOUR, by: "research", add: 2, del: 0, summary: "Added a line to an archived note", text: `# Old competitor scan\n\nArchived in August. The research agent added a line today.\n\n- Mem: timeline of notes` },
+];
+
+const SEED_TRASH = [
+  { path: "Scratch.md", deleted: 2 * DAY, by: "you", text: `# Scratch\n\npaste buffer` },
+  { path: "Untitled 3.md", deleted: 12 * DAY, by: "you", text: `# Untitled 3\n\n` },
+  { path: "Drafts/Thread about feeds.md", deleted: 26 * DAY, by: "claude", text: `# Thread about feeds\n\n1/ Notes apps should have a feed…` },
+  { path: "Ideas/Smart folders everywhere.md", deleted: 29 * DAY + 20 * HOUR, by: "you", text: `# Smart folders everywhere\n\nEvery list is a saved search.` },
+];
+
+const EVENTS = [
+  { id: "standup", title: "Team standup", cal: "Work", day: 0, start: "09:00", end: "09:15", rec: true },
+  { id: "gym", title: "Gym", cal: "Personal", day: 0, start: "07:00", end: "08:00", rec: true },
+  { id: "planning", title: "Quarterly planning", cal: "Work", day: 0, start: "13:00", end: "14:30", where: "Room 4", notes: ["Meetings/Quarterly planning.md"] },
+  { id: "review", title: "Weekly review", cal: "Work", day: 0, start: "15:00", end: "15:30", rec: true, notes: ["Areas/Weekly review.md"] },
+  { id: "standup_20261006", title: "Team standup (late start)", cal: "Work", day: 1, start: "09:30", end: "09:45", rec: true, notes: ["Meetings/Meeting prep.md"] },
+  { id: "dentist", title: "Dentist", cal: "Personal", day: 1, start: "14:30", end: "15:15", where: "12 High Street", notes: ["Meetings/Meeting prep.md"] },
+  { id: "offsite", title: "Team offsite", cal: "Work", day: 3, allDay: true, where: "Lake house" },
+  { id: "dinner", title: "Dinner with Sam", cal: "Personal", day: 4, start: "19:00", end: "21:00", where: "Luigi's" },
+  { id: "payday", title: "Payday", cal: "Personal", day: 4, allDay: true, rec: true },
+];
+const CAL_COLORS = { Work: "var(--accent)", Personal: "var(--bad)" };
+
+const CONTACTS = [
+  { name: "Sam Rivera", email: "sam@example.com", note: "People/Sam Rivera.md" },
+  { name: "Priya Natarajan", email: "priya@example.com" },
+  { name: "Jordan Lee", email: "jordan@example.com" },
+  { name: "Mei Chen", email: "mei@example.com" },
+];
+
+const SETTINGS = [
+  { key: "trash.retentionDays", value: "30", desc: "Days a deleted note waits in Trash before it's purged" },
+  { key: "feed.liveEmbeds", value: '"focused"', desc: "Draw embeds in feed cards: never, focused, always" },
+  { key: "feed.agentEditsResurface", value: "false", desc: "An agent's edit brings an archived note back to the feed" },
+  { key: "feed.groupAgentChanges", value: "true", desc: "One card per note for a run of an agent's changes" },
+  { key: "editor.livePreview", value: "true", desc: "Draw markdown as it reads" },
+  { key: "search.includeArchived", value: '"last"', desc: "Archived notes in ⌘P: hidden, last" },
+];
+
+// ---- Dates and words ----
+function ago(ms) {
+  if (ms < MIN) return "just now";
+  if (ms < HOUR) return `${Math.round(ms / MIN)} min ago`;
+  if (ms < DAY) return `${Math.round(ms / HOUR)} h ago`;
+  if (ms < 2 * DAY) return "yesterday";
+  if (ms < 30 * DAY) return `${Math.round(ms / DAY)} days ago`;
+  return new Date(NOW - ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function bucket(ms) {
+  const d = new Date(NOW - ms), today = new Date(NOW);
+  const days = Math.floor((new Date(today.toDateString()) - new Date(d.toDateString())) / DAY);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  if (days < 30) return "This month";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+const dayName = (n) => n === 0 ? "Today" : n === 1 ? "Tomorrow" : new Date(NOW + n * DAY).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+const fmtTime = (t) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
+const titleOf = (n) => (n.text.match(/^# (.+)$/m) || [, n.path.replace(/\.md$/, "").split("/").pop()])[1];
+const folderOf = (path) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+const whoName = (by) => by === "you" ? "You" : AGENTS[by] || by;
+const isAgent = (by) => by !== "you";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ---- A small markdown renderer: headings, lists, tasks, links, event links, embeds. ----
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\(event:([^)]+)\)/g, (_, t, addr) => {
+      const ev = EVENTS.find((e) => addr.endsWith("/" + e.id));
+      const when = ev ? `${ev.day === 0 ? "Today" : ev.day === 1 ? "Tomorrow" : dayName(ev.day).split(",")[0]}${ev.start ? " · " + fmtTime(ev.start) : ""}` : "";
+      return `<span class="chip" data-event="${ev ? ev.id : ""}"><span class="dot" style="background:${ev ? CAL_COLORS[ev.cal] : "var(--accent)"}"></span><span class="when">${when}</span> <b>${t}</b></span>`;
+    })
+    .replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink">$1</span>')
+    .replace(/ due:(\d{4}-\d\d-\d\d)/g, (_, d) => ` <span class="due${new Date(d + "T23:59").getTime() < NOW ? " over" : ""}">${new Date(d + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>`)
+    .replace(/ rec:(\w+)/g, ' <span class="due">↻ $1</span>');
+}
+const EMBED_WORDS = {
+  timer: (a) => ["◷", "Timer", a.duration || ""],
+  calendar: (a) => ["▦", "Calendar", a.view || "agenda"],
+  kanban: () => ["▤", "Board", "3 columns"],
+};
+function embedArgs(s) { const a = {}; s.replace(/(\w+)=("([^"]*)"|\S+)/g, (_, k, v, q) => (a[k] = q ?? v)); return a; }
+/** Markdown to HTML. `live`: draw embeds live (true) or as a quiet line saying what they are. `limit`: lines to keep. */
+function renderMarkdown(text, { live = false, limit = Infinity, noteIndex = -1 } = {}) {
+  const out = [];
+  let list = false, taskNo = 0, lines = text.split("\n"), shown = 0;
+  const close = () => { if (list) out.push("</ul>"), (list = false); };
+  for (let i = 0; i < lines.length && shown < limit; i++) {
+    const line = lines[i];
+    let m;
+    if ((m = line.match(/^::(\w+)\{(.*)\}$/))) { close(); out.push(embedHtml(m[1], embedArgs(m[2]), live)); shown += 2; continue; }
+    if ((m = line.match(/^```(\w+)/))) {
+      close(); const body = []; i++;
+      while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
+      out.push(embedHtml(m[1], Object.fromEntries(body.map((l) => l.split(/:\s*/))), live)); shown += 2; continue;
+    }
+    if ((m = line.match(/^:::(\w+)/))) {
+      close(); const cols = []; i++;
+      while (i < lines.length && !lines[i].startsWith(":::")) { if (lines[i].startsWith("## ")) cols.push([lines[i].slice(3), []]); else if (cols.length && lines[i].startsWith("- ")) cols.at(-1)[1].push(lines[i].slice(2)); i++; }
+      out.push(embedHtml(m[1], { cols }, live)); shown += 2; continue;
+    }
+    if (!line.trim()) { close(); continue; }
+    shown++;
+    if ((m = line.match(/^(#{1,3}) (.*)/))) { close(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
+    if ((m = line.match(/^(?:- |\d+\. )\[( |x)\] (.*)/))) {
+      if (!list) out.push("<ul>"), (list = true);
+      const done = m[1] === "x";
+      out.push(`<li class="task${done ? " done" : ""}"><input type="checkbox" tabindex="-1" data-note="${noteIndex}" data-task="${taskNo++}"${done ? " checked" : ""}><span>${inline(m[2])}</span></li>`);
+      continue;
+    }
+    if ((m = line.match(/^(?:- |\d+\. )(.*)/))) { if (!list) out.push("<ul>"), (list = true); out.push(`<li>${inline(m[1])}</li>`); continue; }
+    close(); out.push(`<p>${inline(line)}</p>`);
+  }
+  close();
+  return out.join("");
+}
+function embedHtml(kind, a, live) {
+  const words = (EMBED_WORDS[kind] || (() => ["◇", kind, ""]))(a);
+  if (!live) return `<div class="embed-ph" title="An embed. It draws when the card is focused, or in the note."><span>${words[0]}</span><b>${words[1]}</b><span>${esc(words[2])}</span></div>`;
+  if (kind === "timer") return `<div class="embed-live" data-timer="${parseInt(a.duration) || 25}"><div class="muted">${esc(a.label || "Timer")}</div><div class="big">${(parseInt(a.duration) || 25)}:00</div></div>`;
+  if (kind === "calendar") return `<div class="embed-live"><div class="cal">${[0, 1, 2].map((d) => `<div><b>${dayName(d).split(",")[0]}</b>${EVENTS.filter((e) => e.day === d).slice(0, 3).map((e) => `<div class="muted">${e.start ? fmtTime(e.start) : "All day"} ${esc(e.title)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  if (kind === "kanban") return `<div class="embed-live"><div class="board">${(a.cols || []).map(([c, items]) => `<div><b>${esc(c)}</b>${items.map((t) => `<div class="muted">${esc(t)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  return `<div class="embed-live">${esc(kind)}</div>`;
+}
+function toggleTask(note, n) {
+  let k = -1;
+  note.text = note.text.split("\n").map((l) => { const m = l.match(/^(- |\d+\. )\[( |x)\] /); if (m && ++k === n) return l.replace(/\[( |x)\]/, m[2] === "x" ? "[ ]" : "[x]"); return l; }).join("\n");
+}
+
+// ---- Queries: one parser for the search bar, the feed's filter and saved searches. ----
+const OPERATORS = [
+  { op: "is:", values: ["archived", "pinned", "trashed", "open", "done"], desc: "State of a note or task" },
+  { op: "in:", values: ["Projects/", "Journal/", "Research/", "Meetings/", "Ideas/"], desc: "A folder" },
+  { op: "from:", values: ["me", "agent", "claude", "research", "sync"], desc: "Who made the last change" },
+  { op: "type:", values: ["note", "task", "event", "contact", "command", "setting"], desc: "Only one kind of result" },
+  { op: "edited:", values: ["today", "<7d", "<30d", ">90d"], desc: "When it last changed" },
+  { op: "due:", values: ["today", "<=today", "<7d"], desc: "Tasks by due date" },
+  { op: "has:", values: ["task", "embed", "event"], desc: "What a note holds" },
+];
+function parseQuery(q) {
+  const out = { words: [], is: [], in: [], from: [], type: [], edited: null, due: null, has: [], not: [] };
+  for (const tok of q.match(/"[^"]*"|\S+/g) || []) {
+    const m = tok.match(/^(-?)(is|in|from|type|edited|due|has):(.+)$/);
+    if (m) { const [, neg, k, v] = m; if (neg) out.not.push([k, v.toLowerCase()]); else if (Array.isArray(out[k])) out[k].push(v.toLowerCase()); else out[k] = v.toLowerCase(); }
+    else if (tok.startsWith("-") && tok.length > 1) out.not.push(["word", tok.slice(1).toLowerCase()]);
+    else out.words.push(tok.replace(/"/g, "").toLowerCase());
+  }
+  return out;
+}
+function editedOk(spec, msAgo) {
+  if (!spec) return true;
+  if (spec === "today") return msAgo < 9 * HOUR + MIN;
+  const m = spec.match(/^([<>])(\d+)d$/); if (!m) return true;
+  return m[1] === "<" ? msAgo < +m[2] * DAY : msAgo > +m[2] * DAY;
+}
+function fromOk(list, by) {
+  if (!list.length) return true;
+  return list.some((f) => f === "me" ? by === "you" : f === "agent" ? isAgent(by) && by !== "sync" : by === f);
+}
+
+// ---- Keys: by the character typed (Dvorak-safe), Mod is ⌘ on a Mac and Ctrl elsewhere. ----
+const isMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+const inText = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+
+
+// ---------------- State ----------------
+let uid = 0;
+const S = {
+  notes: [],
+  trash: [],
+  places: [],
+  tabs: [{ kind: "feed", id: "feed", fixed: true }],
+  active: 0,
+  side: null, // a note open beside (split), following the feed's cursor
+  focus: "main", // places | main | side | panel
+  placeCursor: 0,
+  panelOpen: true,
+  panelView: "history",
+  panelViews: ["history", "links", "agenda"],
+  panelCursor: 0,
+  liveEmbeds: "focused",
+  resurface: false,
+  installed: new Set(),
+  undo: [],
+  pending: "",
+  lastNote: null,
+};
+const views = {}; // per tab id: { sel, loaded, filter, picked:Set, query, density, diff:Set }
+
+function reset() {
+  S.notes = [...SEED_NOTES.map((n) => ({ ...n })), ...Array.from({ length: 120 }, (_, i) => fillerNote(i)), ...SEED_ARCHIVED.map((n) => ({ ...n, archived: true }))]
+    .map((n) => ({ ...n, id: ++uid, seen: !(isAgent(n.by) && n.ago < 2 * DAY), history: makeHistory(n) }));
+  S.trash = SEED_TRASH.map((t) => ({ note: { path: t.path, text: t.text, by: t.by, ago: t.deleted, id: ++uid, history: [] }, deletedAgo: t.deleted, by: t.by }));
+  S.places = [
+    { id: "feed", title: "Feed", key: "g f", kind: "builtin" },
+    { id: "search", title: "Search", key: "g /", kind: "builtin" },
+    { id: "today", title: "Today", key: "g d", kind: "ext", ext: "Daily notes" },
+    { id: "tasks", title: "Tasks", key: "g t", kind: "ext", ext: "Tasks" },
+    { id: "calendar", title: "Calendar", key: "g c", kind: "ext", ext: "Calendar" },
+    { id: "s:agents", title: "Agent edits this week", query: "from:agent edited:<7d", kind: "saved" },
+    { id: "s:projects", title: "Projects", query: "in:Projects/", kind: "saved" },
+  ];
+  S.tabs = [{ kind: "feed", id: "feed", fixed: true }];
+  S.active = 0; S.side = null; S.focus = "main"; S.undo = []; S.installed = new Set(); S.panelViews = ["history", "links", "agenda"]; S.panelView = "history";
+  for (const k in views) delete views[k];
+}
+function makeHistory(n) {
+  const h = [{ by: n.by, ago: n.ago, add: n.add, del: n.del, summary: n.summary }];
+  if (n.ago < 30 * DAY) h.push({ by: "you", ago: n.ago + 2 * DAY + (n.add % 5) * HOUR, add: 3 + (n.add % 9), del: n.del % 3 });
+  h.push({ by: "you", ago: n.ago + 9 * DAY, add: 8, del: 0, summary: "Made the note" });
+  return h;
+}
+const view = (id) => (views[id] ||= { sel: 0, loaded: 30, filter: "all", picked: new Set(), query: "", density: "cards", diff: new Set(), newCount: 0 });
+const tab = () => S.tabs[S.active];
+const noteByPath = (p) => S.notes.find((n) => n.path === p);
+const pinned = () => S.notes.filter((n) => n.pinned && !n.archived);
+
+// ---------------- Lists from queries ----------------
+/** The notes a feed-like tab shows, in order. Everything that lists notes is a query. */
+function feedItems(t) {
+  const v = view(t.id);
+  let q = t.query || "";
+  if (t.id === "feed") q = "";
+  if (t.id === "archive") q = "is:archived";
+  const p = parseQuery([q, v.query].join(" "));
+  let items = S.notes.filter((n) => {
+    if (p.is.includes("archived")) { if (!n.archived) return false; }
+    else if (n.archived) {
+      // Archived notes stay out of the Feed. An agent's change to one shows under Agents, marked archived,
+      // unless the setting brings it back.
+      if (!(t.id === "feed" && v.filter === "agents" && isAgent(n.by) && n.ago < 7 * DAY)) return false;
+    }
+    if (p.is.includes("pinned") && !n.pinned) return false;
+    if (t.id === "feed" && v.filter === "mine" && n.by !== "you") return false;
+    if (t.id === "feed" && v.filter === "agents" && !isAgent(n.by)) return false;
+    if (!fromOk(p.from, n.by)) return false;
+    if (p.in.length && !p.in.some((f) => n.path.toLowerCase().startsWith(f.replace(/\/?$/, "/")))) return false;
+    if (!editedOk(p.edited, n.ago)) return false;
+    if (p.has.includes("task") && !/\[( |x)\]/.test(n.text)) return false;
+    if (p.has.includes("embed") && !/(^::|^```|^:::)/m.test(n.text)) return false;
+    const hay = (n.path + " " + n.text).toLowerCase();
+    if (!p.words.every((w) => hay.includes(w))) return false;
+    if (p.not.some(([k, val]) => (k === "word" ? hay.includes(val) : k === "is" && val === "archived" ? n.archived : false))) return false;
+    return true;
+  });
+  items.sort((a, b) => a.ago - b.ago);
+  if (t.id === "feed" && v.filter === "all" && !v.query) items = [...items.filter((n) => n.pinned), ...items.filter((n) => !n.pinned)];
+  return items;
+}
+const feedLike = (t) => ["feed", "archive", "saved", "results"].includes(t.kind);
+
+// ---------------- Rendering ----------------
+const $ = (s, el = document) => el.querySelector(s);
+function render() {
+  renderPlaces(); renderTabs(); renderPanes(); renderPanel(); renderStatus();
+}
+function placeCount(p) {
+  if (p.id === "archive") return S.notes.filter((n) => n.archived).length;
+  if (p.id === "trash") return S.trash.length;
+  if (p.kind === "saved") return feedItems({ id: p.id, kind: "saved", query: p.query }).length;
+  if (p.id === "feed") { const u = S.notes.filter((n) => !n.seen && !n.archived).length; return u ? `<span style="color:var(--agent)">${u} new</span>` : ""; }
+  return "";
+}
+function placeRows() {
+  const rows = [];
+  const add = (p) => rows.push(p);
+  S.places.filter((p) => p.kind !== "saved" && p.kind !== "panel").forEach(add);
+  S.places.filter((p) => p.kind === "panel").forEach(add);
+  rows.push({ head: "Pinned" });
+  pinned().forEach((n) => add({ id: "note:" + n.path, title: titleOf(n), kind: "pin", path: n.path }));
+  if (!pinned().length) rows.push({ hint: "p on a card pins it" });
+  rows.push({ head: "Saved searches" });
+  S.places.filter((p) => p.kind === "saved").forEach(add);
+  rows.push({ spacer: true });
+  [{ id: "sources", title: "Sources", key: "g s" }, { id: "archive", title: "Archive", key: "g a" }, { id: "trash", title: "Trash", key: "g x" }, { id: "extensions", title: "Extensions", key: "g e" }, { id: "settings", title: "Settings", key: "g ," }].forEach(add);
+  return rows;
+}
+function renderPlaces() {
+  const el = $("#places");
+  const rows = placeRows();
+  const nav = rows.filter((r) => r.id);
+  S.placeCursor = Math.min(S.placeCursor, nav.length - 1);
+  const cur = tab();
+  el.innerHTML = rows.map((r) => {
+    if (r.head) return `<h4>${r.head}</h4>`;
+    if (r.hint) return `<div class="place faint" style="cursor:default;font-size:0.75rem">${r.hint}</div>`;
+    if (r.spacer) return `<div class="spacer"></div><div class="sep"></div>`;
+    const i = nav.indexOf(r);
+    const current = cur.id === r.id || (r.kind === "pin" && cur.kind === "note" && cur.path === r.path);
+    const dot = r.id === "sources" ? '<span class="dot" title="Google Calendar: synced 3 min ago"></span>' : "";
+    return `<div class="place${S.focus === "places" && i === S.placeCursor ? " cursor" : ""}" data-place="${i}" aria-current="${current}" title="${r.query ? esc(r.query) : ""}">${r.kind === "pin" ? '<span class="pin" style="color:var(--accent)">•</span>' : ""}<span class="name">${esc(r.title)}</span>${dot}<span class="count">${placeCount(r)}</span><span class="key">${r.key || ""}</span></div>`;
+  }).join("");
+  el.querySelectorAll("[data-place]").forEach((d) => d.addEventListener("click", () => { S.placeCursor = +d.dataset.place; openPlace(nav[+d.dataset.place]); }));
+}
+function tabTitle(t) {
+  return { feed: "Feed", archive: "Archive", trash: "Trash", calendar: "Calendar", tasks: "Tasks", extensions: "Extensions", settings: "Settings", sources: "Sources", results: "Search: " + (t.query || ""), saved: t.title, note: t.path ? titleOf(noteByPath(t.path) || { text: "", path: t.path }) : "", panel: t.title }[t.kind] || t.kind;
+}
+function renderTabs() {
+  $("#tabs").innerHTML = S.tabs.map((t, i) => `<div class="tab" role="tab" data-tab="${i}" aria-selected="${i === S.active}"${t.preview ? ' style="font-style:italic"' : ""}>${esc(tabTitle(t))}${t.fixed ? "" : '<span class="x" data-close="' + i + '">×</span>'}</div>`).join("");
+  $("#tabs").querySelectorAll("[data-tab]").forEach((d) => d.addEventListener("click", (e) => { if (e.target.dataset.close) closeTab(+e.target.dataset.close); else { S.active = +d.dataset.tab; S.focus = "main"; render(); } }));
+}
+let lastPaneKey = null;
+function renderPanes() {
+  const panes = $("#panes");
+  const t = tab();
+  const key = t.id + "|" + (S.side || "");
+  const keep = key === lastPaneKey ? [$("#pane1")?.scrollTop || 0, $("#pane2")?.scrollTop || 0] : [0, 0];
+  lastPaneKey = key;
+  panes.innerHTML = `<div class="pane${S.focus === "main" ? " zone-focus" : ""}" id="pane1"></div>${S.side && feedLike(t) ? `<div class="pane${S.focus === "side" ? " zone-focus" : ""}" id="pane2"></div>` : ""}`;
+  const p1 = $("#pane1");
+  if (feedLike(t)) renderFeed(p1, t);
+  else if (t.kind === "note") renderNote(p1, t.path);
+  else if (t.kind === "trash") renderTrash(p1);
+  else if (t.kind === "calendar") renderCalendar(p1, t);
+  else if (t.kind === "tasks") renderTasks(p1, t);
+  else if (t.kind === "extensions") renderExtensions(p1, t);
+  else if (t.kind === "settings") renderSettings(p1);
+  else if (t.kind === "sources") renderSources(p1);
+  else if (t.kind === "panel") { p1.innerHTML = `<div class="list" style="padding-top:1rem">${panelBody(t.view)}</div>`; }
+  if ($("#pane2")) { renderNote($("#pane2"), S.side); $("#pane2").scrollTop = keep[1]; }
+  p1.scrollTop = keep[0];
+  const f = p1.querySelector(".focus");
+  if (f) f.scrollIntoView({ block: "nearest" });
+}
+
+function cardHtml(n, i, v, t) {
+  const focus = i === v.sel;
+  const live = S.liveEmbeds === "always" || (S.liveEmbeds === "focused" && focus && liveReady === n.id);
+  const who = whoName(n.by);
+  const diff = v.diff.has(n.id) ? `<div class="diff">${diffLines(n)}</div>` : "";
+  return `<article class="card${focus ? " focus" : ""}${v.picked.has(n.id) ? " picked" : ""}${n.arrived ? " arrived" : ""}" data-i="${i}" data-id="${n.id}">
+    ${!n.seen && !n.archived ? '<span class="unseen" title="Changed by an agent since you last looked"></span>' : ""}
+    <div class="top"><span class="title">${esc(titleOf(n))}</span><span class="folder">${esc(folderOf(n.path))}</span>${n.archived ? '<span class="badge archived">archived</span>' : ""}<span class="when">${ago(n.ago)}</span></div>
+    <div class="meta"><span class="who${isAgent(n.by) ? " agent" : ""}">${esc(who)}</span>${n.summary ? `<span>· ${esc(n.summary)}</span>` : ""}<span class="stat"><span class="add">+${n.add}</span> <span class="del">−${n.del}</span></span>${isAgent(n.by) ? '<span class="badge agent">agent</span>' : ""}${n.pinned ? '<span class="badge">pinned</span>' : ""}</div>
+    ${diff}
+    <div class="preview md">${renderMarkdown(n.text, { live, limit: 9, noteIndex: n.id })}</div>
+    <div class="hint"><span><kbd>↵</kbd> open</span><span><kbd>o</kbd> beside</span><span><kbd>e</kbd> ${n.archived ? "unarchive" : "archive"}</span><span><kbd>#</kbd> trash</span><span><kbd>p</kbd> ${n.pinned ? "unpin" : "pin"}</span><span><kbd>c</kbd> changes</span><span><kbd>x</kbd> select</span></div>
+  </article>`;
+}
+function diffLines(n) {
+  const lines = n.text.split("\n").filter((l) => l.trim() && !l.startsWith("# "));
+  const added = lines.slice(-Math.min(n.add, 4));
+  const head = `<span class="muted">${esc(whoName(n.by))} · ${ago(n.ago)} · ${n.summary ? esc(n.summary) : "edit"}</span>\n`;
+  return head + (n.del ? `<span class="d">− ${esc(lines[0] || "")}</span>\n` : "") + added.map((l) => `<span class="a">+ ${esc(l)}</span>`).join("\n");
+}
+function renderFeed(el, t) {
+  const v = view(t.id);
+  const items = feedItems(t);
+  v.sel = Math.max(0, Math.min(v.sel, items.length - 1));
+  if (v.sel > v.loaded - 5) v.loaded = v.sel + 30;
+  const shown = items.slice(0, v.loaded);
+  const isFeed = t.id === "feed";
+  const titles = { feed: "Feed", archive: "Archive", saved: t.title, results: "Search" };
+  const q = isFeed ? "-is:archived sort:edited" + (v.filter === "mine" ? " from:me" : v.filter === "agents" ? " from:agent" : "") : t.id === "archive" ? "is:archived sort:edited" : t.query;
+  const unseen = S.notes.filter((n) => !n.seen && !n.archived).length;
+  let html = `<div class="feed${v.density === "rows" ? " rows" : ""}"><div class="feed-head"><div class="row1"><h2>${esc(titles[t.kind] || "")}</h2><span class="q" title="What this list is: a query, like every list">${esc(q)}${v.query ? " " + esc(v.query) : ""}</span>${t.kind === "results" ? '<button class="btn" data-act="save">Save as place <kbd>' + MOD + 's</kbd></button>' : ""}</div>
+    <div class="filters">${isFeed ? ["all", "mine", "agents"].map((f) => `<button data-filter="${f}" aria-pressed="${v.filter === f}">${{ all: "All", mine: "Mine", agents: "Agents" }[f]}${f === "agents" && unseen ? `<span class="n">${unseen}</span>` : ""}</button>`).join("") : ""}<span class="grow"></span>
+    ${v.filtering ? `<input id="filterInput" placeholder="Filter: words, from:, in:, has:…" value="${esc(v.query)}">` : `<span class="faint" style="font-size:0.75rem">${items.length} note${items.length === 1 ? "" : "s"} · <kbd>/</kbd> filter · <kbd>v</kbd> ${v.density === "cards" ? "rows" : "cards"}${isFeed ? " · <kbd>Tab</kbd> All, Mine, Agents" : ""}</span>`}</div></div>`;
+  if (v.newCount && el.scrollTop > 0) html += `<div class="pill"><button data-act="new">↑ ${v.newCount} new change${v.newCount > 1 ? "s" : ""}</button></div>`;
+  if (!items.length) html += t.id === "archive" ? `<div class="empty"><b>Nothing archived</b>Press <kbd>e</kbd> on a card in the Feed to archive it. It stays a note, out of the way.</div>` : `<div class="empty"><b>${isFeed && v.filter !== "agents" ? "Inbox zero for notes" : "No notes match"}</b>${isFeed ? "Everything here is archived or pinned away. Nice." : "Try fewer filters."}</div>`;
+  let lastGroup = "";
+  shown.forEach((n, i) => {
+    const g = isFeed && v.filter === "all" && !v.query && n.pinned ? "Pinned" : bucket(n.ago);
+    if (g !== lastGroup) { html += `<div class="group">${g}</div>`; lastGroup = g; }
+    html += cardHtml(n, i, v, t);
+  });
+  if (shown.length < items.length) html += `<div class="more" id="more">Loading older notes…</div>`;
+  else if (items.length) html += `<div class="more">That's everything${isFeed ? " not archived" : ""}. ${isFeed ? "<kbd>g a</kbd> Archive" : ""}</div>`;
+  html += "</div>";
+  el.innerHTML = html;
+  el.onscroll = () => { const m = $("#more", el); if (m && m.getBoundingClientRect().top < el.getBoundingClientRect().bottom + 200) { v.loaded += 30; renderPanes(); } };
+  el.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { v.filter = b.dataset.filter; v.sel = 0; render(); }));
+  el.querySelectorAll(".card").forEach((c) => c.addEventListener("click", (e) => {
+    if (e.target.matches("input[type=checkbox]")) { const n = S.notes.find((x) => x.id === +e.target.dataset.note); tickTask(n, +e.target.dataset.task); return; }
+    v.sel = +c.dataset.i; S.focus = "main"; render(); armLive();
+  }));
+  el.querySelectorAll(".card").forEach((c) => c.addEventListener("dblclick", () => openNote(items[+c.dataset.i].path)));
+  const save = $("[data-act=save]", el); if (save) save.onclick = saveSearch;
+  const pill = $("[data-act=new]", el); if (pill) pill.onclick = () => { v.newCount = 0; v.sel = 0; el.scrollTop = 0; render(); };
+  const fi = $("#filterInput", el);
+  if (fi) { fi.focus(); fi.setSelectionRange(fi.value.length, fi.value.length); fi.oninput = () => { v.query = fi.value; v.sel = 0; const pos = fi.selectionStart; renderPanes(); const f2 = $("#filterInput"); f2.focus(); f2.setSelectionRange(pos, pos); }; fi.onkeydown = (e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.stopPropagation(); v.filtering = false; if (e.key === "Escape") v.query = ""; render(); } }; }
+  startTimers(el);
+}
+let liveReady = null, liveTimer = 0;
+function armLive() {
+  clearTimeout(liveTimer); liveReady = null;
+  if (S.liveEmbeds !== "focused") return;
+  const t = tab(); if (!feedLike(t)) return;
+  const n = feedItems(t)[view(t.id).sel];
+  if (n && /(^::|^```|^:::)/m.test(n.text)) liveTimer = setTimeout(() => { liveReady = n.id; renderPanes(); }, 450);
+}
+let timerTick = 0;
+function startTimers(el) {
+  clearInterval(timerTick);
+  const ts = el.querySelectorAll("[data-timer]");
+  if (!ts.length) return;
+  let s = 0;
+  timerTick = setInterval(() => { s++; ts.forEach((t) => { const left = +t.dataset.timer * 60 - s; t.querySelector(".big").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`; }); }, 1000);
+}
+function renderNote(el, path) {
+  const n = noteByPath(path);
+  if (!n) { el.innerHTML = `<div class="note"><div class="banner">This note is in Trash. <button class="btn" id="restoreHere">Restore</button></div></div>`; const b = $("#restoreHere", el); if (b) b.onclick = () => { const i = S.trash.findIndex((x) => x.note.path === path); if (i >= 0) restore(i); }; return; }
+  el.innerHTML = `<div class="note">
+    ${n.archived ? `<div class="banner">Archived. It's out of the Feed and listed last in search; links to it still work. <button class="btn" id="unarch">Unarchive <kbd>${MOD}⇧E</kbd></button></div>` : ""}
+    <div class="crumbs"><span class="mono">${esc(n.path)}</span><span>·</span><span class="who${isAgent(n.by) ? " agent" : ""}">${esc(whoName(n.by))}</span><span>${ago(n.ago)}</span>${n.pinned ? '<span class="badge">pinned</span>' : ""}</div>
+    <div class="md">${renderMarkdown(n.text, { live: true, noteIndex: n.id })}</div></div>`;
+  const u = $("#unarch", el); if (u) u.onclick = () => archive([n], false);
+  el.querySelectorAll("input[type=checkbox]").forEach((c) => c.addEventListener("click", () => tickTask(n, +c.dataset.task)));
+  startTimers(el);
+}
+function renderTrash(el) {
+  const v = view("trash");
+  v.sel = Math.max(0, Math.min(v.sel, S.trash.length - 1));
+  const days = 30;
+  el.innerHTML = `<div class="list"><div class="feed-head"><div class="row1"><h2>Trash</h2><span class="q">changes that deleted a note, from history · trash.retentionDays: ${days}</span></div>
+    <div class="filters"><span class="faint" style="font-size:0.75rem"><kbd>r</kbd> restore · <kbd>↵</kbd> look inside · <kbd>D</kbd> delete forever · <kbd>${MOD}⇧⌫</kbd> empty trash</span></div></div>
+    <p class="callout">A deleted note waits here ${days} days, then it's purged: its text leaves history too. Until then, restoring it is undoing the change that deleted it, so it comes back with all its history.</p>
+    ${S.trash.length ? "" : '<div class="empty"><b>Trash is empty</b>Notes you delete wait here for 30 days.</div>'}
+    ${S.trash.map((x, i) => { const left = Math.max(0, days - x.deletedAgo / DAY); return `<div class="row${i === v.sel ? " focus" : ""}" data-i="${i}"><div class="grow"><div class="t">${esc(titleOf(x.note))}</div><div class="sub">${esc(x.note.path)} · deleted ${ago(x.deletedAgo)} by <span class="who${isAgent(x.by) ? " agent" : ""}">${esc(whoName(x.by))}</span></div></div><div class="left${left < 3 ? " soon" : ""}" title="${Math.ceil(left)} days left"><i style="width:${(left / days) * 100}%"></i></div><span class="sub" style="width:6.5rem;text-align:right">${left < 1 ? "purges today" : `purges in ${Math.ceil(left)} days`}</span><button class="btn" data-restore="${i}">Restore</button></div>`; }).join("")}
+    ${v.peek != null && S.trash[v.peek] ? `<div class="card" style="margin-top:1rem"><div class="meta">Last version, from history · read-only</div><div class="md">${renderMarkdown(S.trash[v.peek].note.text)}</div></div>` : ""}
+  </div>`;
+  el.querySelectorAll("[data-restore]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); restore(+b.dataset.restore); }));
+  el.querySelectorAll(".row").forEach((r) => r.addEventListener("click", () => { v.sel = +r.dataset.i; v.peek = v.sel; render(); }));
+}
+function calendarEvents() { return [0, 1, 2, 3, 4].flatMap((d) => EVENTS.filter((e) => e.day === d).sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.start.localeCompare(b.start)))); }
+function renderCalendar(el, t) {
+  const v = view("calendar");
+  const evs = calendarEvents();
+  if (t.event) { v.sel = evs.findIndex((e) => e.id === t.event); t.event = null; }
+  v.sel = Math.max(0, Math.min(v.sel, evs.length - 1));
+  const cur = evs[v.sel];
+  el.innerHTML = `<div class="feed-head" style="padding:0.9rem 1.25rem 0.5rem"><div class="row1"><h2>Calendar</h2><span class="q">Google Calendar · Work, Personal · records, not notes</span></div><div class="filters"><span class="faint" style="font-size:0.75rem"><kbd>j</kbd>/<kbd>k</kbd> events · <kbd>↵</kbd> open its note · <kbd>n</kbd> new meeting note</span></div></div>
+  <div class="cal">${[0, 1, 2, 3, 4].map((d) => `<div><h3>${dayName(d).split(",")[0]}</h3>${EVENTS.filter((e) => e.day === d).sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.start.localeCompare(b.start))).map((e) => `<div class="ev${cur === e ? " focus" : ""}" style="border-left-color:${CAL_COLORS[e.cal]}" data-ev="${e.id}"><div class="tm">${e.allDay ? "All day" : fmtTime(e.start) + "–" + fmtTime(e.end)}${e.rec ? " ↻" : ""}</div>${esc(e.title)}</div>`).join("")}</div>`).join("")}</div>
+  ${cur ? `<div class="evdetail"><h3>${esc(cur.title)}</h3><div class="muted">${dayName(cur.day)} · ${cur.allDay ? "All day" : fmtTime(cur.start) + "–" + fmtTime(cur.end)}${cur.where ? " · " + esc(cur.where) : ""} · ${cur.cal}${cur.rec ? " · repeats" : ""}</div><div class="mono faint" style="font-size:0.72rem;margin:0.3rem 0">event:google/primary/${cur.id}</div><div><b style="font-size:0.75rem;text-transform:uppercase;color:var(--muted)">Notes that link here</b>${(cur.notes || []).map((p) => `<div><a href="#" data-open="${esc(p)}" class="wikilink" style="color:var(--accent-ink)">${esc(titleOf(noteByPath(p) || { text: "", path: p }))}</a></div>`).join("") || '<div class="muted">None yet. <kbd>n</kbd> makes a meeting note.</div>'}</div></div>` : ""}`;
+  el.querySelectorAll("[data-ev]").forEach((d) => d.addEventListener("click", () => { v.sel = evs.findIndex((e) => e.id === d.dataset.ev); render(); }));
+  el.querySelectorAll("[data-open]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openNote(a.dataset.open); }));
+}
+function allTasks() {
+  const out = [];
+  for (const n of S.notes) { if (n.archived) continue; let k = -1; for (const l of n.text.split("\n")) { const m = l.match(/^(?:- |\d+\. )\[( |x)\] (.*)/); if (m) { k++; if (m[1] === " ") { const due = (m[2].match(/due:(\S+)/) || [])[1]; out.push({ n, k, text: m[2], due }); } } } }
+  return out;
+}
+function renderTasks(el) {
+  const v = view("tasks");
+  const ts = allTasks();
+  const groups = [["Overdue", (t) => t.due && new Date(t.due + "T23:59") < NOW], ["Today", (t) => t.due === "2026-10-05"], ["Later", (t) => t.due && new Date(t.due + "T23:59") > NOW && t.due !== "2026-10-05"], ["No date", (t) => !t.due]];
+  const ordered = groups.flatMap(([g, f]) => ts.filter(f).map((t) => ({ ...t, g })));
+  v.sel = Math.max(0, Math.min(v.sel, ordered.length - 1));
+  let last = "";
+  el.innerHTML = `<div class="list"><div class="feed-head"><div class="row1"><h2>Tasks</h2><span class="q">is:open type:task -is:archived</span></div><div class="filters"><span class="faint" style="font-size:0.75rem"><kbd>x</kbd> tick · <kbd>↵</kbd> open its note</span></div></div>
+  ${ordered.map((t, i) => { const h = t.g !== last ? `<div class="group">${t.g}</div>` : ""; last = t.g; return h + `<div class="row${i === v.sel ? " focus" : ""}" data-i="${i}"><input type="checkbox" tabindex="-1"><div class="grow md">${inline(t.text)}</div><span class="sub">${esc(titleOf(t.n))}</span></div>`; }).join("")}</div>`;
+  el.querySelectorAll(".row").forEach((r) => { r.addEventListener("click", (e) => { v.sel = +r.dataset.i; if (e.target.type === "checkbox") { const t = ordered[v.sel]; tickTask(t.n, t.k); } else render(); }); });
+  v.items = ordered;
+}
+const EXTS = [
+  { id: "feed", name: "Feed", desc: "The Feed place: recent notes as cards, with triage keys", on: true, adds: "Place: Feed" },
+  { id: "daily", name: "Daily notes", desc: "Today's note, and a Today place", on: true, adds: "Place: Today" },
+  { id: "tasks", name: "Tasks", desc: "Due dates and repeats on task lines; the Tasks place", on: true, adds: "Place: Tasks · search: type:task, due:" },
+  { id: "calendar", name: "Calendar", desc: "Calendar place, agenda panel, ::calendar embeds", on: true, adds: "Place: Calendar · panel: Agenda · search: type:event" },
+  { id: "history", name: "History", desc: "History panel for the focused note, and History of everything", on: true, adds: "Panel: History" },
+  { id: "links", name: "Links", desc: "Notes that link here", on: true, adds: "Panel: Links" },
+  { id: "vim", name: "Vim", desc: "Vim keys in every editor", on: true, adds: "Keys" },
+  { id: "wordcount", name: "Word count", desc: "A Word count view for the note on show", on: false, catalog: true, adds: "Panel: Word count" },
+  { id: "pomodoro", name: "Pomodoro", desc: "A focus timer with breaks", on: false, catalog: true, adds: "Embed: pomodoro" },
+];
+function renderExtensions(el) {
+  const v = view("extensions");
+  v.sel = Math.max(0, Math.min(v.sel, EXTS.length - 1));
+  el.innerHTML = `<div class="list"><div class="feed-head"><div class="row1"><h2>Extensions</h2><span class="q">Built-in and Catalog</span></div><div class="filters"><span class="faint" style="font-size:0.75rem"><kbd>↵</kbd> install from the Catalog · what each adds is shown before it runs</span></div></div>
+  ${EXTS.map((x, i) => { const on = x.on || S.installed.has(x.id); return `${i === 0 ? '<div class="group">Installed</div>' : x.catalog && !EXTS[i - 1].catalog ? '<div class="group">Catalog</div>' : ""}<div class="row${i === v.sel ? " focus" : ""}" data-i="${i}"><div class="grow"><div class="t">${esc(x.name)}</div><div class="sub">${esc(x.desc)} · <span class="mono">${esc(x.adds)}</span></div></div><span class="badge">${on ? (x.catalog ? "installed · sandboxed" : "built-in · on") : "not installed"}</span>${x.catalog && !on ? `<button class="btn" data-install="${x.id}">Install</button>` : ""}</div>`; }).join("")}</div>`;
+  el.querySelectorAll("[data-install]").forEach((b) => b.addEventListener("click", () => install(b.dataset.install)));
+  el.querySelectorAll(".row").forEach((r) => r.addEventListener("click", () => { v.sel = +r.dataset.i; render(); }));
+}
+function placesJson() {
+  return JSON.stringify({ order: S.places.map((p) => p.id), saved: Object.fromEntries(S.places.filter((p) => p.kind === "saved").map((p) => [p.title, p.query])), hidden: [] }, null, 2);
+}
+function renderSettings(el) {
+  el.innerHTML = `<div class="list"><div class="feed-head"><div class="row1"><h2>Settings</h2><span class="q">Everything the app keeps is a file you can read</span></div></div>
+  <div class="group">Settings in effect</div><div class="settings-grid">${SETTINGS.map((s) => `<span class="mono">${s.key}</span><span>${esc(s.value)} <span class="muted">· ${esc(s.desc)}</span></span>`).join("")}</div>
+  <div class="group">.common-ink/archive.json <span class="faint" style="text-transform:none">· its history is the archive log</span></div><div class="json">${esc(JSON.stringify({ archived: S.notes.filter((n) => n.archived).map((n) => n.path).sort() }, null, 2))}</div>
+  <div class="group">.common-ink/pins.json</div><div class="json">${esc(JSON.stringify({ pinned: pinned().map((n) => n.path) }, null, 2))}</div>
+  <div class="group">.common-ink/places.json</div><div class="json">${esc(placesJson())}</div>
+  <div class="group">Trash <span class="faint" style="text-transform:none">· no file: it's the delete changes in history, newer than trash.retentionDays</span></div><div class="json">${esc(JSON.stringify(S.trash.map((x) => ({ path: x.note.path, deletedBy: whoName(x.by), deleted: ago(x.deletedAgo) })), null, 2))}</div></div>`;
+}
+function renderSources(el) {
+  el.innerHTML = `<div class="list"><div class="feed-head"><div class="row1"><h2>Sources</h2><span class="q">Data from outside, kept as records in .common-ink/records/</span></div></div>
+  <div class="row focus"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok)"></span><div class="grow"><div class="t">Google Calendar</div><div class="sub">Connected · synced 3 min ago · Work, Personal, Holidays (read-only) · 412 records · nothing waiting to send</div></div><button class="btn">Sync now</button></div>
+  <div class="row"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:var(--ok)"></span><div class="grow"><div class="t">Google Contacts</div><div class="sub">Read-only · 4 contacts · searched as type:contact</div></div></div>
+  <p class="callout">A source has no folder of notes. Its records show where they're used: the Calendar place and Agenda panel, chips in notes, and search results (<span class="mono">type:event</span>, <span class="mono">type:contact</span>). This view is its status and its outbox, nothing more.</p></div>`;
+}
+function panelBody(id) {
+  const t = tab();
+  const n = t.kind === "note" ? noteByPath(t.path) : S.side ? noteByPath(S.side) : feedLike(t) ? feedItems(t)[view(t.id).sel] : null;
+  if (id === "history") {
+    if (!n) return '<div class="muted">History of the note in focus. Focus a note or a card.</div>';
+    return `<div class="muted" style="margin-bottom:0.4rem">${esc(titleOf(n))}</div>` + n.history.map((h, i) => `<div class="change${S.focus === "panel" && i === S.panelCursor ? " focus" : ""}"><div class="l1"><span class="who${isAgent(h.by) ? " agent" : ""}">${esc(whoName(h.by))}</span><span class="grow"></span><span class="stat"><span class="add">+${h.add}</span> <span class="del">−${h.del}</span></span></div><div class="muted">${ago(h.ago)}${h.summary ? " · " + esc(h.summary) : ""}</div></div>`).join("");
+  }
+  if (id === "links") {
+    if (!n) return '<div class="muted">Notes that link to the note in focus.</div>';
+    const title = titleOf(n);
+    const back = S.notes.filter((x) => x !== n && x.text.includes(`[[${title}]]`));
+    return `<div class="muted" style="margin-bottom:0.4rem">Linking to ${esc(title)}</div>` + (back.map((x) => `<div class="change"><b>${esc(titleOf(x))}</b><div class="muted">${esc(x.path)}</div></div>`).join("") || '<div class="muted">No notes link here.</div>');
+  }
+  if (id === "agenda") return `<div class="muted" style="margin-bottom:0.4rem">Today · from Google Calendar</div>` + EVENTS.filter((e) => e.day === 0).sort((a, b) => a.start.localeCompare(b.start)).map((e) => `<div class="ev" style="border-left-color:${CAL_COLORS[e.cal]}"><div class="tm">${fmtTime(e.start)}</div>${esc(e.title)}</div>`).join("");
+  if (id === "wordcount") { const w = n ? n.text.split(/\s+/).filter(Boolean).length : 0; return `<div class="muted">Word count · sandboxed extension</div><div style="font-size:2rem;font-family:var(--mono)">${w}</div><div class="muted">${n ? esc(titleOf(n)) : "No note in focus"}</div>`; }
+  return "";
+}
+const PANEL_TITLES = { history: "History", links: "Links", agenda: "Agenda", wordcount: "Word count" };
+function renderPanel() {
+  document.body.classList.toggle("no-panel", !S.panelOpen);
+  const el = $("#panel");
+  if (!S.panelOpen) return;
+  el.innerHTML = `<div class="ptabs" role="tablist">${S.panelViews.map((v) => `<button role="tab" data-pv="${v}" aria-selected="${v === S.panelView}">${PANEL_TITLES[v]}</button>`).join("")}<span class="grow"></span><button title="Move this view (m)" data-pmenu>⋯</button><button title="Close the panel (${MOD}⌥B)" data-pclose>×</button></div><div class="pbody${S.focus === "panel" ? " zone-focus" : ""}">${panelBody(S.panelView)}</div>`;
+  el.querySelectorAll("[data-pv]").forEach((b) => b.addEventListener("click", () => { S.panelView = b.dataset.pv; render(); }));
+  $("[data-pclose]", el).onclick = () => { S.panelOpen = false; render(); };
+  $("[data-pmenu]", el).onclick = (e) => panelMenu(e.target);
+}
+function renderStatus() {
+  document.body.classList.toggle("no-places", !!S.noPlaces);
+  const t = tab();
+  const hints = {
+    places: "j/k move · ↵ open · J/K reorder · dd remove · Ctrl-W l back",
+    main: feedLike(t) ? "j/k · ↵ open · o beside · e archive · # trash · p pin · u undo" : t.kind === "trash" ? "j/k · r restore · D delete forever" : t.kind === "note" ? `Ctrl-O back · ${MOD}⇧E archive · ${MOD}⌫ trash` : "j/k · ↵ open",
+    side: "Ctrl-W h back to the list",
+    panel: "Tab next view · m move this view · Ctrl-W h back",
+  }[S.focus];
+  $("#status").innerHTML = `<span>NORMAL</span><span>Saved</span><span class="grow"></span><span>${S.pending ? `<kbd>${esc(S.pending)}</kbd> …` : esc(hints || "")}</span><span>? keys</span><button id="protoBtn" class="mono" style="font-size:0.72rem;color:var(--muted)" title="Prototype controls">⚙ prototype</button><span>2026-10-05 09:00</span>`;
+  $("#protoBtn").onclick = () => { $("#proto").hidden = !$("#proto").hidden; };
+}
+
+// ---------------- Actions ----------------
+function toast(text, undo) {
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `<span>${text}</span>${undo ? '<button>Undo</button> <kbd>u</kbd>' : ""}`;
+  if (undo) el.querySelector("button").onclick = () => doUndo();
+  document.body.append(el);
+  setTimeout(() => el.remove(), 5000);
+}
+function pushUndo(label, fn) { S.undo.push({ label, fn }); }
+function doUndo() { const u = S.undo.pop(); if (!u) return toast("Nothing to undo"); u.fn(); toast("Undid: " + u.label); render(); }
+function targets() {
+  const t = tab();
+  if (feedLike(t)) { const v = view(t.id); const items = feedItems(t); return v.picked.size ? items.filter((n) => v.picked.has(n.id)) : items[v.sel] ? [items[v.sel]] : []; }
+  if (t.kind === "note") { const n = noteByPath(t.path); return n ? [n] : []; }
+  return [];
+}
+function leave(ns, then) {
+  const ids = new Set(ns.map((n) => n.id));
+  document.querySelectorAll(".card").forEach((c) => { if (ids.has(+c.dataset.id)) c.classList.add("leaving"); });
+  setTimeout(then, 160);
+}
+function archive(ns, on = true) {
+  if (!ns.length) return;
+  const was = ns.map((n) => [n, n.archived]);
+  const go = () => {
+    ns.forEach((n) => (n.archived = on, n.seen = true));
+    const t = tab(); if (feedLike(t)) view(t.id).picked.clear();
+    pushUndo(`${on ? "archive" : "unarchive"} ${ns.length > 1 ? ns.length + " notes" : "“" + titleOf(ns[0]) + "”"}`, () => was.forEach(([n, a]) => (n.archived = a)));
+    toast(`${on ? "Archived" : "Unarchived"} ${ns.length > 1 ? ns.length + " notes" : "“" + esc(titleOf(ns[0])) + "”"} · a change to <span class="mono">archive.json</span>`, true);
+    render(); armLive();
+  };
+  if (feedLike(tab())) leave(ns, go); else go();
+}
+function trashNotes(ns) {
+  if (!ns.length) return;
+  const go = () => {
+    const entries = ns.map((n) => ({ note: n, deletedAgo: 0, by: "you", index: S.notes.indexOf(n) }));
+    S.notes = S.notes.filter((n) => !ns.includes(n));
+    S.trash.unshift(...entries);
+    const t = tab(); if (feedLike(t)) view(t.id).picked.clear();
+    if (t.kind === "note") goBack();
+    pushUndo(`delete ${ns.length > 1 ? ns.length + " notes" : "“" + titleOf(ns[0]) + "”"}`, () => { entries.forEach((e) => { S.trash.splice(S.trash.indexOf(e), 1); S.notes.splice(e.index, 0, e.note); }); });
+    toast(`Moved ${ns.length > 1 ? ns.length + " notes" : "“" + esc(titleOf(ns[0])) + "”"} to Trash · back in 30 days at most`, true);
+    render(); armLive();
+  };
+  if (feedLike(tab())) leave(ns, go); else go();
+}
+function pin(ns) {
+  if (!ns.length) return;
+  const on = !ns.every((n) => n.pinned);
+  const was = ns.map((n) => [n, n.pinned]);
+  ns.forEach((n) => (n.pinned = on));
+  pushUndo(on ? "pin" : "unpin", () => was.forEach(([n, p]) => (n.pinned = p)));
+  toast(`${on ? "Pinned" : "Unpinned"} ${ns.length > 1 ? ns.length + " notes" : "“" + esc(titleOf(ns[0])) + "”"}${on ? " · top of the Feed and in Places" : ""}`, true);
+  const t = tab(); if (feedLike(t)) { view(t.id).picked.clear(); const items = feedItems(t); view(t.id).sel = Math.max(0, items.indexOf(ns[0])); }
+  render();
+}
+function restore(i) {
+  const x = S.trash[i]; if (!x) return;
+  S.trash.splice(i, 1);
+  let path = x.note.path;
+  if (noteByPath(path)) path = path.replace(/\.md$/, " (restored).md");
+  x.note.path = path; x.note.ago = 0; x.note.by = "you"; x.note.seen = true; x.note.archived = false;
+  x.note.history = x.note.history && x.note.history.length ? x.note.history : [{ by: "you", ago: x.deletedAgo + DAY, add: 3, del: 0, summary: "Made the note" }];
+  x.note.history.unshift({ by: "you", ago: 0, add: x.note.text.split("\n").length, del: 0, summary: "Restored from Trash (undid the delete)" });
+  x.note.add = x.note.text.split("\n").length; x.note.del = 0; x.note.summary = "Restored from Trash"; x.note.arrived = true;
+  S.notes.unshift(x.note);
+  pushUndo("restore", () => { S.notes.splice(S.notes.indexOf(x.note), 1); S.trash.splice(i, 0, x); });
+  toast(`Restored “${esc(titleOf(x.note))}” to <span class="mono">${esc(path)}</span>, with its history`, true);
+  render();
+  setTimeout(() => (x.note.arrived = false), 1500);
+}
+function confirmDialog(title, body, okText, danger, ok) {
+  const s = document.createElement("div");
+  s.className = "scrim";
+  s.innerHTML = `<div class="dialog small" role="dialog" aria-modal="true"><b>${title}</b><div class="muted">${body}</div><div class="row"><button class="btn" data-no>Cancel <kbd>Esc</kbd></button><button class="btn ${danger ? "danger" : "primary"}" data-yes>${okText} <kbd>↵</kbd></button></div></div>`;
+  document.body.append(s);
+  const close = () => { s.remove(); document.removeEventListener("keydown", k, true); };
+  const k = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); close(); ok(); } else e.stopPropagation(); };
+  document.addEventListener("keydown", k, true);
+  s.querySelector("[data-no]").onclick = close;
+  s.querySelector("[data-yes]").onclick = () => { close(); ok(); };
+  s.querySelector("[data-yes]").focus();
+}
+function purge(i) {
+  const x = S.trash[i]; if (!x) return;
+  confirmDialog(`Delete “${esc(titleOf(x.note))}” forever?`, "Its text leaves history too, so nothing can bring it back. Agents can't do this.", "Delete forever", true, () => { S.trash.splice(i, 1); toast(`Deleted forever. History keeps a line saying it was purged, without its text.`); render(); });
+}
+function emptyTrash() {
+  if (!S.trash.length) return;
+  confirmDialog(`Empty Trash?`, `${S.trash.length} notes leave history for good.`, "Empty Trash", true, () => { S.trash = []; toast("Trash is empty."); render(); });
+}
+function tickTask(n, k) {
+  if (!n) return;
+  toggleTask(n, k); n.ago = 0; n.by = "you"; n.add = 1; n.del = 1; n.summary = "Ticked a task";
+  n.history.unshift({ by: "you", ago: 0, add: 1, del: 1, summary: "Ticked a task" });
+  render();
+}
+function install(id) {
+  if (S.installed.has(id)) return;
+  S.installed.add(id);
+  if (id === "wordcount") {
+    S.panelViews.push("wordcount"); S.panelOpen = true; S.panelView = "wordcount";
+    toast(`Installed Word count. It added a view, in the context panel. <kbd>m</kbd> there moves it.`);
+  } else toast(`Installed ${esc(EXTS.find((x) => x.id === id).name)}.`);
+  render();
+}
+let menuEl = null;
+function panelMenu(anchor) {
+  closeMenu();
+  const v = S.panelView;
+  const inPlaces = S.places.some((p) => p.id === "panel:" + v);
+  const items = [
+    [inPlaces ? "Remove from Places" : "Add to Places", () => { if (inPlaces) S.places = S.places.filter((p) => p.id !== "panel:" + v); else S.places.push({ id: "panel:" + v, title: PANEL_TITLES[v], kind: "panel", view: v }); toast(inPlaces ? "Removed from Places" : `${PANEL_TITLES[v]} is in Places now; it opens as a tab. Saved in places.json.`); }],
+    ["Open as a tab", () => openTab({ kind: "panel", id: "panel:" + v, title: PANEL_TITLES[v], view: v })],
+    ["Close the panel", () => { S.panelOpen = false; }],
+  ];
+  menuEl = document.createElement("div");
+  menuEl.className = "menu";
+  const r = anchor.getBoundingClientRect();
+  menuEl.style.top = r.bottom + 4 + "px"; menuEl.style.right = innerWidth - r.right + "px";
+  menuEl.innerHTML = items.map(([t], i) => `<div data-mi="${i}" class="${i === 0 ? "focus" : ""}">${t}</div>`).join("");
+  menuEl.items = items; menuEl.cur = 0;
+  document.body.append(menuEl);
+  menuEl.querySelectorAll("[data-mi]").forEach((d) => d.addEventListener("click", () => { const f = items[+d.dataset.mi][1]; closeMenu(); f(); render(); }));
+}
+function closeMenu() { if (menuEl) menuEl.remove(); menuEl = null; }
+/** A name for a saved search, in words, from its query. */
+function nameFor(q) {
+  const p = parseQuery(q);
+  const parts = [];
+  if (p.words.length) parts.push(p.words.join(" ").replace(/^./, (c) => c.toUpperCase()));
+  if (p.is.includes("archived")) parts.push("Archived");
+  if (p.is.includes("pinned")) parts.push("Pinned");
+  for (const f of p.from) parts.push({ me: "Mine", agent: "Agent edits", claude: "Claude's edits", research: "Research agent's edits", sync: "From sync" }[f] || f);
+  for (const f of p.in) parts.push(f.replace(/\/$/, "").replace(/^./, (c) => c.toUpperCase()));
+  for (const t of p.type) parts.push({ task: "Tasks", event: "Events", note: "Notes" }[t] || t);
+  if (p.has.includes("task")) parts.push("with tasks");
+  if (p.edited) parts.push({ today: "today", "<7d": "this week", "<30d": "this month", ">90d": "older than 90 days" }[p.edited] || "edited " + p.edited);
+  return parts.join(" · ") || q;
+}
+function saveSearch() {
+  const t = tab(); if (t.kind !== "results") return;
+  const title = nameFor(t.query);
+  const p = { id: "s:" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), title: title.length > 28 ? title.slice(0, 27) + "…" : title, query: t.query, kind: "saved" };
+  S.places.push(p);
+  S.tabs[S.active] = { kind: "saved", id: p.id, title: p.title, query: p.query };
+  toast(`Saved “${esc(p.title)}” in Places · <span class="mono">${esc(p.query)}</span>`);
+  render();
+}
+
+// ---------------- Navigation ----------------
+const back = [], fwd = [];
+function snapshot() { return { tabs: S.tabs.map((t) => ({ ...t })), active: S.active, side: S.side }; }
+function jump(fn) { back.push(snapshot()); fwd.length = 0; fn(); S.focus = "main"; render(); armLive(); }
+function goBack() { if (!back.length) return; fwd.push(snapshot()); const s = back.pop(); S.tabs = s.tabs; S.active = Math.min(s.active, S.tabs.length - 1); S.side = s.side; S.focus = "main"; render(); armLive(); }
+function goForward() { if (!fwd.length) return; back.push(snapshot()); const s = fwd.pop(); S.tabs = s.tabs; S.active = s.active; S.side = s.side; render(); }
+function openTab(t) {
+  jump(() => {
+    const i = S.tabs.findIndex((x) => x.id === t.id);
+    if (i >= 0) { S.active = i; Object.assign(S.tabs[i], t); return; }
+    const p = S.tabs.findIndex((x) => x.preview);
+    if (p >= 0) { S.tabs[p] = { ...t, preview: true }; S.active = p; } else { S.tabs.push({ ...t, preview: true }); S.active = S.tabs.length - 1; }
+  });
+}
+function openNote(path) {
+  const n = noteByPath(path);
+  if (n) n.seen = true;
+  S.lastNote = path;
+  openTab({ kind: "note", id: "note:" + path, path });
+}
+function closeTab(i) { if (S.tabs[i].fixed) return; S.tabs.splice(i, 1); S.active = Math.min(S.active, S.tabs.length - 1); render(); }
+function openPlace(p) {
+  if (!p) return;
+  if (p.kind === "pin") return openNote(p.path);
+  if (p.kind === "saved") return openTab({ kind: "saved", id: p.id, title: p.title, query: p.query });
+  if (p.kind === "panel") return openTab({ kind: "panel", id: p.id, title: p.title, view: p.view });
+  switch (p.id) {
+    case "feed": return jump(() => { S.active = 0; });
+    case "search": return openSearch("");
+    case "today": return openNote("Journal/2026-10-05.md");
+    default: return openTab({ kind: p.id, id: p.id });
+  }
+}
+
+// ---------------- Search ----------------
+let search = null;
+function searchResults(q) {
+  const raw = q.trim();
+  if (raw.startsWith(">")) {
+    const w = raw.slice(1).trim().toLowerCase();
+    return [{ sec: "Commands", items: COMMANDS.filter((c) => c.t.toLowerCase().includes(w)).map((c) => ({ kind: "command", k: "›", t: c.t, r: c.key || "", run: c.run })) }];
+  }
+  const p = parseQuery(raw);
+  const only = p.type;
+  const want = (k) => !only.length || only.includes(k);
+  const words = p.words;
+  const match = (s) => words.every((w) => s.toLowerCase().includes(w));
+  const mark = (s) => { let h = esc(s); for (const w of words) if (w) h = h.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>"); return h; };
+  const secs = [];
+  if (want("note")) {
+    const pool = p.is.includes("trashed") ? S.trash.map((x) => ({ ...x.note, trashed: true })) : S.notes;
+    let notes = pool.filter((n) => {
+      if (p.is.includes("archived") && !n.archived) return false;
+      if (p.is.includes("pinned") && !n.pinned) return false;
+      if (!fromOk(p.from, n.by)) return false;
+      if (p.in.length && !p.in.some((f) => n.path.toLowerCase().startsWith(f.replace(/\/?$/, "/")))) return false;
+      if (!editedOk(p.edited, n.ago)) return false;
+      if (p.has.includes("task") && !/\[( |x)\]/.test(n.text)) return false;
+      if (p.has.includes("event") && !/event:/.test(n.text)) return false;
+      if (p.not.some(([k, v]) => k === "is" && v === "archived" && n.archived)) return false;
+      return match(n.path + " " + n.text);
+    });
+    // Title matches first, then by how recently they changed; archived notes always last, and marked.
+    notes.sort((a, b) => (a.archived - b.archived) || ((match(titleOf(b)) ? 1 : 0) - (match(titleOf(a)) ? 1 : 0)) || a.ago - b.ago);
+    if (!raw) notes = notes.filter((n) => !n.archived).slice(0, 6);
+    secs.push({ sec: raw ? "Notes" : "Recent notes", count: notes.length, items: notes.slice(0, raw ? 8 : 6).map((n) => {
+      const plain = (l) => l.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/ (due|rec):\S+/g, "").replace(/\*\*/g, "");
+      const line = plain(n.text.split("\n").find((l) => words.length && match(plain(l)) && !l.startsWith("# ")) || "").replace(/^(\s*[-*]|\s*\d+\.|#+)\s+(\[.\]\s+)?/, "");
+      return { kind: "note", k: n.trashed ? "⌫" : n.pinned ? "●" : "¶", t: mark(titleOf(n)), d: line ? mark(line) : esc(folderOf(n.path)), r: (n.archived ? '<span class="badge archived">archived</span> ' : "") + (n.trashed ? '<span class="badge">in Trash</span> ' : "") + ago(n.ago), dim: n.archived || n.trashed, n };
+    }) });
+  }
+  if (raw && want("task")) {
+    const ts = allTasks().filter((t) => match(t.text + " " + titleOf(t.n)) && fromOk(p.from, t.n.by) && (!p.due || (p.due.includes("today") ? t.due && t.due <= "2026-10-05" : !!t.due)));
+    secs.push({ sec: "Tasks", count: ts.length, items: ts.slice(0, 4).map((t) => ({ kind: "task", k: "☐", t: inline(t.text), d: esc(titleOf(t.n)), r: "", n: t.n })) });
+  }
+  if (raw && want("event") && !p.from.length) {
+    const evs = EVENTS.filter((e) => match(e.title + " " + (e.where || "") + " " + e.cal));
+    secs.push({ sec: "Events", count: evs.length, items: evs.slice(0, 4).map((e) => ({ kind: "event", k: "▦", t: mark(e.title), d: `${dayName(e.day)}${e.start ? " · " + fmtTime(e.start) : " · all day"}${e.where ? " · " + esc(e.where) : ""}`, r: e.cal, e })) });
+  }
+  if (raw && want("contact") && !p.from.length) {
+    const cs = CONTACTS.filter((c) => match(c.name + " " + c.email));
+    secs.push({ sec: "Contacts", count: cs.length, items: cs.slice(0, 3).map((c) => ({ kind: "contact", k: "@", t: mark(c.name), d: esc(c.email), r: c.note ? "has a note" : "", c })) });
+  }
+  if (raw && want("command") && !p.from.length && !p.is.length) {
+    const cs = COMMANDS.filter((c) => match(c.t));
+    secs.push({ sec: "Commands", count: cs.length, items: cs.slice(0, 3).map((c) => ({ kind: "command", k: "›", t: mark(c.t), r: c.key || "", run: c.run })) });
+  }
+  if (raw && want("setting") && !p.from.length && !p.is.length) {
+    const ss = SETTINGS.filter((s) => match(s.key + " " + s.desc));
+    secs.push({ sec: "Settings", count: ss.length, items: ss.slice(0, 3).map((s) => ({ kind: "setting", k: "⚙", t: mark(s.key), d: mark(s.desc), r: esc(s.value) })) });
+  }
+  return secs.filter((s) => s.items.length);
+}
+const COMMANDS = [
+  { t: "Go to Feed", key: "g f", run: () => openPlace({ id: "feed" }) },
+  { t: "Go to Archive", key: "g a", run: () => openPlace({ id: "archive" }) },
+  { t: "Go to Trash", key: "g x", run: () => openPlace({ id: "trash" }) },
+  { t: "Go to Calendar", key: "g c", run: () => openPlace({ id: "calendar" }) },
+  { t: "Go to Tasks", key: "g t", run: () => openPlace({ id: "tasks" }) },
+  { t: "Open today's note", key: "g d", run: () => openPlace({ id: "today" }) },
+  { t: "Archive this note", key: MOD + "⇧E", run: () => archive(targets()) },
+  { t: "Move this note to Trash", key: MOD + "⌫", run: () => trashNotes(targets()) },
+  { t: "Empty Trash", key: MOD + "⇧⌫", run: () => emptyTrash() },
+  { t: "Toggle Places", key: MOD + "B", run: () => { S.noPlaces = !S.noPlaces; render(); } },
+  { t: "Toggle the context panel", key: MOD + "⌥B", run: () => { S.panelOpen = !S.panelOpen; render(); } },
+  { t: "Show history of everything", run: () => toast("History of everything opens as a tab (not in this prototype).") },
+  { t: "Install an extension…", key: "g e", run: () => openPlace({ id: "extensions" }) },
+  { t: "Connect Google calendar and contacts", run: () => openPlace({ id: "sources" }) },
+];
+function openSearch(initial) {
+  closeSearch();
+  const s = document.createElement("div");
+  s.className = "scrim";
+  s.innerHTML = `<div class="dialog search" role="dialog" aria-label="Search"><input class="q" placeholder="Search notes, tasks, events, contacts, commands…  (> for commands)" value="${esc(initial)}" spellcheck="false"><div class="ops"></div><div class="results"></div><div class="foot"><span><kbd>↑</kbd><kbd>↓</kbd> or <kbd>Ctrl-j</kbd><kbd>Ctrl-k</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>${MOD}↵</kbd> all results as a tab</span><span><kbd>Tab</kbd> actions</span><span><kbd>Esc</kbd> close</span></div></div>`;
+  document.body.append(s);
+  search = { el: s, sel: 0, flat: [], actions: null };
+  const input = $("input", s);
+  input.oninput = () => { search.sel = 0; drawSearch(); };
+  input.onkeydown = searchKeys;
+  s.addEventListener("mousedown", (e) => { if (e.target === s) closeSearch(); });
+  drawSearch();
+  input.focus();
+}
+function closeSearch() { if (search) search.el.remove(); search = null; }
+function drawSearch() {
+  const input = $("input.q", search.el);
+  const q = input.value;
+  const last = (q.match(/(\S*)$/) || [""])[0];
+  const opMatch = OPERATORS.find((o) => last.startsWith(o.op));
+  const ops = $(".ops", search.el);
+  if (opMatch) ops.innerHTML = `<span class="faint" style="font-size:0.75rem">${esc(opMatch.desc)}:</span>` + opMatch.values.filter((v) => (opMatch.op + v).startsWith(last)).map((v) => `<button data-op="${esc(opMatch.op + v)}">${esc(opMatch.op + v)}</button>`).join("");
+  else if (!q || last === "") ops.innerHTML = `<span class="faint" style="font-size:0.75rem">Filters:</span>` + ["is:archived", "is:pinned", "is:trashed", "from:agent", "from:me", "in:Projects/", "type:event", "type:task", "edited:<7d", "has:task"].map((o) => `<button data-op="${o}">${o}</button>`).join("");
+  else ops.innerHTML = "";
+  ops.querySelectorAll("[data-op]").forEach((b) => b.addEventListener("mousedown", (e) => { e.preventDefault(); input.value = q.replace(/(\S*)$/, b.dataset.op + " "); search.sel = 0; drawSearch(); input.focus(); }));
+  const secs = searchResults(q);
+  search.flat = secs.flatMap((s) => s.items);
+  search.sel = Math.max(0, Math.min(search.sel, search.flat.length - 1));
+  let i = 0;
+  $(".results", search.el).innerHTML = secs.map((s) => `<div class="sec"><span>${s.sec}</span><span>${s.count != null && s.count > s.items.length ? `${s.count} · <kbd>${MOD}↵</kbd> all` : ""}</span></div>` + s.items.map((r) => `<div class="res${i === search.sel ? " focus" : ""}${r.dim ? " dim" : ""}" data-r="${i++}"><span class="k">${r.k}</span><span class="t">${r.t}</span><span class="d">${r.d || ""}</span><span class="r">${r.r || ""}</span></div>`).join("")).join("") || `<div class="empty"><b>Nothing matches</b>Archived notes are included; Trash only with <span class="mono">is:trashed</span>.</div>`;
+  $(".results", search.el).querySelectorAll("[data-r]").forEach((d) => d.addEventListener("click", () => { search.sel = +d.dataset.r; chooseResult(); }));
+  if (search.actions) drawActions();
+  const f = $(".res.focus", search.el); if (f) f.scrollIntoView({ block: "nearest" });
+}
+function chooseResult(how = "open") {
+  const r = search.flat[search.sel]; if (!r) return;
+  const q = $("input.q", search.el).value;
+  closeSearch();
+  if (r.kind === "note") { if (r.n.trashed) { openPlace({ id: "trash" }); return; } if (how === "side") { S.side = r.n.path; jump(() => (S.active = 0)); } else openNote(r.n.path); }
+  else if (r.kind === "task") openNote(r.n.path);
+  else if (r.kind === "event") openTab({ kind: "calendar", id: "calendar", event: r.e.id });
+  else if (r.kind === "contact") { if (r.c.note) openNote(r.c.note); else toast(`${esc(r.c.name)} · ${esc(r.c.email)} · a record from Google Contacts. <span class="mono">n</span> would make a note for them.`); }
+  else if (r.kind === "command") r.run();
+  else if (r.kind === "setting") openPlace({ id: "settings" });
+  void q;
+}
+function drawActions() {
+  const r = search.flat[search.sel];
+  if (!r) return;
+  const acts = r.kind === "note" ? [["Open", "↵", () => chooseResult()], ["Open beside the Feed", "o", () => chooseResult("side")], [r.n.archived ? "Unarchive" : "Archive", "e", () => { closeSearch(); archive([r.n], !r.n.archived); }], [r.n.pinned ? "Unpin" : "Pin", "p", () => { closeSearch(); pin([r.n]); }], ["Copy link", "y", () => { closeSearch(); toast(`Copied [[${esc(titleOf(r.n))}]]`); }]]
+    : r.kind === "event" ? [["Open in Calendar", "↵", () => chooseResult()], ["Make a meeting note", "n", () => { closeSearch(); toast("Made Meetings/" + esc(r.e.title) + ".md with a link to the event."); }], ["Copy link", "y", () => { closeSearch(); toast(`Copied [${esc(r.e.title)}](event:google/primary/${r.e.id})`); }]]
+    : [["Open", "↵", () => chooseResult()]];
+  let m = $(".actions", search.el);
+  if (!m) { m = document.createElement("div"); m.className = "menu actions"; m.style.right = "1rem"; m.style.bottom = "2.4rem"; search.el.querySelector(".dialog").style.position = "relative"; search.el.querySelector(".dialog").append(m); }
+  search.actions.list = acts;
+  m.innerHTML = `<div class="faint" style="cursor:default;font-size:0.72rem">Actions</div>` + acts.map(([t, k], i) => `<div class="${i === search.actions.cur ? "focus" : ""}" data-a="${i}"><span>${t}</span><kbd>${k}</kbd></div>`).join("");
+  m.querySelectorAll("[data-a]").forEach((d) => d.addEventListener("mousedown", (e) => { e.preventDefault(); acts[+d.dataset.a][2](); }));
+}
+function searchKeys(e) {
+  const input = e.target;
+  if (search.actions) {
+    const list = search.actions.list || [];
+    if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); search.actions = null; $(".actions", search.el)?.remove(); return; }
+    if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); search.actions.cur = (search.actions.cur + 1) % list.length; drawActions(); return; }
+    if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); search.actions.cur = (search.actions.cur - 1 + list.length) % list.length; drawActions(); return; }
+    if (e.key === "Enter") { e.preventDefault(); list[search.actions.cur][2](); return; }
+    const hit = list.find(([, k]) => k === e.key); if (hit) { e.preventDefault(); hit[2](); }
+    return;
+  }
+  if (e.key === "Escape") { e.preventDefault(); closeSearch(); return; }
+  const down = e.key === "ArrowDown" || (e.ctrlKey && (e.key === "j" || e.key === "n"));
+  const up = e.key === "ArrowUp" || (e.ctrlKey && (e.key === "k" || e.key === "p"));
+  if (down || up) { e.preventDefault(); search.sel = Math.max(0, Math.min(search.flat.length - 1, search.sel + (down ? 1 : -1))); drawSearch(); return; }
+  if (e.key === "Tab") { e.preventDefault(); const last = (input.value.match(/(\S*)$/) || [""])[0]; const op = OPERATORS.find((o) => last.startsWith(o.op)); const cand = op && op.values.map((v) => op.op + v).find((v) => v.startsWith(last) && v !== last); if (cand) { input.value = input.value.replace(/(\S*)$/, cand + " "); drawSearch(); return; } search.actions = { cur: 0 }; drawActions(); return; }
+  if (e.key === "Enter" && isMod(e)) { e.preventDefault(); const q = input.value.trim(); closeSearch(); if (q && !q.startsWith(">")) openTab({ kind: "results", id: "results", query: q }); return; }
+  if (e.key === "Enter") { e.preventDefault(); chooseResult(); }
+}
+
+// ---------------- Keys ----------------
+function keysSheet() {
+  const s = document.createElement("div");
+  s.className = "scrim";
+  const g = (title, rows) => `<h3>${title}</h3>` + rows.map(([k, d]) => `<div><span>${d}</span><span>${k.split(" ").map((x) => `<kbd>${x}</kbd>`).join(" ")}</span></div>`).join("");
+  s.innerHTML = `<div class="dialog" role="dialog" aria-label="Keys"><div class="keys-sheet">
+    ${g("Anywhere", [[MOD + "K", "Search everything"], [MOD + "P", "Search (same bar)"], [MOD + "⇧P", "Commands"], [MOD + "B", "Toggle Places"], [MOD + "⌥B", "Toggle context panel"], ["Ctrl-O", "Back"], ["Ctrl-I", "Forward"], ["Ctrl-W h", "Focus left (Places)"], ["Ctrl-W l", "Focus right"], ["?", "This sheet"]])}
+    ${g("Go (outside text)", [["g f", "Feed"], ["g /", "Search"], ["g d", "Today"], ["g t", "Tasks"], ["g c", "Calendar"], ["g a", "Archive"], ["g x", "Trash"], ["g s", "Sources"], ["g e", "Extensions"], ["g ,", "Settings"]])}
+    ${g("Feed and lists", [["j k", "Next, previous"], ["g g", "Top"], ["G", "Bottom"], ["↵", "Open"], ["o", "Open beside (follows j/k)"], ["e", "Archive / unarchive"], ["#", "Trash"], ["d d", "Trash (Vim)"], ["p", "Pin / unpin"], ["x", "Select"], ["c", "Show the last change"], ["t", "Tick the next task"], ["u", "Undo"], ["/", "Filter"], ["v", "Cards or rows"], ["Tab", "All, Mine, Agents"]])}
+    ${g("In a note", [["Ctrl-O", "Back to the list, same card"], [MOD + "⇧E", "Archive"], [MOD + "⌫", "Trash"], [":archive :trash", "Vim commands"]])}
+    ${g("Trash", [["r", "Restore"], ["↵", "Look inside"], ["D", "Delete forever"], [MOD + "⇧⌫", "Empty Trash"]])}
+    ${g("Places", [["j k", "Move"], ["↵", "Open"], ["J K", "Move down, up"], ["d d", "Remove a saved search"]])}
+    ${g("Context panel", [["Tab", "Next view"], ["m", "Move this view (to Places, a tab)"]])}
+    ${g("Search", [["is: in: from: type:", "Filters; Tab completes"], [MOD + "↵", "Results as a tab"], ["Tab", "Actions on a result"], [">", "Commands only"]])}
+  </div></div>`;
+  document.body.append(s);
+  const close = () => { s.remove(); document.removeEventListener("keydown", k, true); };
+  const k = (e) => { e.preventDefault(); e.stopPropagation(); if (e.key === "Escape" || e.key === "?" || e.key === "q") close(); };
+  document.addEventListener("keydown", k, true);
+  s.onclick = close;
+}
+function moveSel(by, absolute) {
+  const t = tab();
+  const id = feedLike(t) ? t.id : t.kind;
+  const v = view(id);
+  const len = feedLike(t) ? feedItems(t).length : t.kind === "trash" ? S.trash.length : t.kind === "calendar" ? calendarEvents().length : t.kind === "tasks" ? (v.items || []).length : t.kind === "extensions" ? EXTS.length : 0;
+  if (!len) return;
+  v.sel = absolute != null ? (absolute < 0 ? len - 1 : absolute) : Math.max(0, Math.min(len - 1, v.sel + by));
+  if (t.kind === "trash") v.peek = null;
+  if (S.side && feedLike(t)) S.side = feedItems(t)[v.sel].path;
+  if (S.side) { const n = noteByPath(S.side); if (n) n.seen = true; }
+  render(); armLive();
+}
+function feedKey(e, t) {
+  const v = view(t.id);
+  const items = feedItems(t);
+  const cur = items[v.sel];
+  const seq = S.pending + e.key;
+  if (seq === "dd") { S.pending = ""; trashNotes(targets()); return true; }
+  switch (e.key) {
+    case "Enter": if (cur) openNote(cur.path); return true;
+    case "o": if (cur) { S.side = S.side === cur.path ? null : cur.path; cur.seen = true; render(); } return true;
+    case "O": if (cur) { S.side = null; openNote(cur.path); } return true;
+    case "e": archive(targets(), !(targets()[0] && targets()[0].archived)); return true;
+    case "#": trashNotes(targets()); return true;
+    case "p": pin(targets()); return true;
+    case "x": if (cur) { v.picked.has(cur.id) ? v.picked.delete(cur.id) : v.picked.add(cur.id); moveSel(1); } return true;
+    case "c": if (cur) { v.diff.has(cur.id) ? v.diff.delete(cur.id) : v.diff.add(cur.id); render(); } return true;
+    case "t": if (cur) { const k = cur.text.split("\n").filter((l) => /^(- |\d+\. )\[( |x)\]/.test(l)).findIndex((l) => l.includes("[ ]")); if (k >= 0) tickTask(cur, k); else toast("No open task on this card"); } return true;
+    case "/": v.filtering = true; render(); return true;
+    case "v": v.density = v.density === "cards" ? "rows" : "cards"; render(); return true;
+    case "Tab": if (t.id === "feed") { const f = ["all", "mine", "agents"]; v.filter = f[(f.indexOf(v.filter) + (e.shiftKey ? 2 : 1)) % 3]; v.sel = 0; render(); armLive(); } return true;
+    case "Escape": if (v.picked.size) { v.picked.clear(); render(); } else if (S.side) { S.side = null; render(); } return true;
+    case "d": S.pending = "d"; renderStatus(); return true;
+  }
+  return false;
+}
+function listKey(e, t) {
+  const v = view(t.kind);
+  if (t.kind === "trash") {
+    if (e.key === "r") { restore(v.sel); return true; }
+    if (e.key === "Enter") { v.peek = v.peek === v.sel ? null : v.sel; render(); return true; }
+    if (e.key === "D") { purge(v.sel); return true; }
+  }
+  if (t.kind === "calendar" && e.key === "Enter") { const ev = calendarEvents()[v.sel]; if (ev && ev.notes) openNote(ev.notes[0]); else toast("No note links to this event yet. n makes one."); return true; }
+  if (t.kind === "calendar" && e.key === "n") { const ev = calendarEvents()[v.sel]; toast(`Made Meetings/${esc(ev.title)}.md, linked to the event.`); return true; }
+  if (t.kind === "tasks" && (e.key === "x" || e.key === " ")) { const it = v.items[v.sel]; if (it) tickTask(it.n, it.k); return true; }
+  if (t.kind === "tasks" && e.key === "Enter") { const it = v.items[v.sel]; if (it) openNote(it.n.path); return true; }
+  if (t.kind === "extensions" && e.key === "Enter") { const x = EXTS[v.sel]; if (x.catalog) install(x.id); else toast(`${esc(x.name)} is built in. Its page would open here: what it adds, Customize, Turn off.`); return true; }
+  return false;
+}
+function placesKey(e) {
+  const rows = placeRows().filter((r) => r.id);
+  const seq = S.pending + e.key;
+  if (seq === "dd") { S.pending = ""; const p = rows[S.placeCursor]; if (p && p.kind === "saved") { S.places = S.places.filter((x) => x !== p); toast(`Removed “${esc(p.title)}” from Places`); } else toast("Only saved searches and panels can be removed; built-in places can be hidden in places.json"); render(); return true; }
+  if (e.key === "d") { S.pending = "d"; renderStatus(); return true; }
+  if (e.key === "j" || e.key === "ArrowDown") { S.placeCursor = Math.min(rows.length - 1, S.placeCursor + 1); render(); return true; }
+  if (e.key === "k" || e.key === "ArrowUp") { S.placeCursor = Math.max(0, S.placeCursor - 1); render(); return true; }
+  if (e.key === "Enter" || e.key === "l") { openPlace(rows[S.placeCursor]); return true; }
+  if (e.key === "J" || e.key === "K") {
+    const p = rows[S.placeCursor];
+    const i = S.places.indexOf(p);
+    if (i < 0) { toast("Pins are ordered from the Feed; these places stay put"); return true; }
+    const j = i + (e.key === "J" ? 1 : -1);
+    if (j < 0 || j >= S.places.length || S.places[j].kind !== p.kind) { toast("Moves within its section"); return true; }
+    [S.places[i], S.places[j]] = [S.places[j], S.places[i]];
+    S.placeCursor += e.key === "J" ? 1 : -1;
+    render(); return true;
+  }
+  return false;
+}
+document.addEventListener("keydown", (e) => {
+  if (search || document.querySelector(".scrim")) return;
+  if (menuEl) {
+    const items = menuEl.items;
+    if (e.key === "Escape") { closeMenu(); return; }
+    if (e.key === "j" || e.key === "ArrowDown" || e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); menuEl.cur = (menuEl.cur + (e.key === "j" || e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length; menuEl.querySelectorAll("[data-mi]").forEach((d, i) => d.classList.toggle("focus", i === menuEl.cur)); return; }
+    if (e.key === "Enter") { e.preventDefault(); const f = items[menuEl.cur][1]; closeMenu(); f(); render(); return; }
+  }
+  if (inText(e)) return;
+  // Mod chords (by the character typed)
+  // Vim's window keys first: off a Mac, Ctrl is also Mod.
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+    if (e.key === "o") { e.preventDefault(); goBack(); return; }
+    if (e.key === "i") { e.preventDefault(); goForward(); return; }
+    if (e.key === "w") { e.preventDefault(); S.pending = "Ctrl-W"; renderStatus(); return; }
+  }
+  if (isMod(e)) {
+    const k = e.key.toLowerCase();
+    if (k === "k" || (k === "p" && !e.shiftKey)) { e.preventDefault(); openSearch(""); return; }
+    if (k === "p" && e.shiftKey) { e.preventDefault(); openSearch("> "); return; }
+    if (e.altKey && (k === "b" || k === "∫")) { e.preventDefault(); S.panelOpen = !S.panelOpen; if (!S.panelOpen && S.focus === "panel") S.focus = "main"; render(); return; }
+    if (k === "b") { e.preventDefault(); S.noPlaces = !S.noPlaces; if (S.noPlaces && S.focus === "places") S.focus = "main"; render(); return; }
+    if (k === "e" && e.shiftKey) { e.preventDefault(); const ts = targets(); archive(ts, !(ts[0] && ts[0].archived)); return; }
+    if (e.key === "Backspace" && e.shiftKey) { e.preventDefault(); emptyTrash(); return; }
+    if (e.key === "Backspace") { e.preventDefault(); trashNotes(targets()); return; }
+    if (k === "z") { e.preventDefault(); doUndo(); return; }
+    if (k === "s" && tab().kind === "results") { e.preventDefault(); saveSearch(); return; }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (S.pending === "Ctrl-W") {
+    S.pending = "";
+    const order = ["places", "main", ...(S.side && feedLike(tab()) ? ["side"] : []), ...(S.panelOpen ? ["panel"] : [])].filter((z) => z !== "places" || !S.noPlaces);
+    let i = order.indexOf(S.focus);
+    if (e.key === "h") i = Math.max(0, i - 1); else if (e.key === "l") i = Math.min(order.length - 1, i + 1); else if (e.key === "w") i = (i + 1) % order.length;
+    S.focus = order[i]; render(); return;
+  }
+  if (e.key === "?") { e.preventDefault(); keysSheet(); return; }
+  if (S.pending === "g") {
+    S.pending = "";
+    const go = { f: "feed", "/": "search", d: "today", t: "tasks", c: "calendar", a: "archive", x: "trash", s: "sources", e: "extensions", ",": "settings" }[e.key];
+    if (e.key === "g") { moveSel(0, 0); const p = $("#pane1"); if (p) p.scrollTop = 0; return; }
+    if (go) { e.preventDefault(); openPlace({ id: go }); return; }
+    renderStatus(); return;
+  }
+  if (e.key === "g") { S.pending = "g"; renderStatus(); return; }
+  if (e.key === "u") { doUndo(); return; }
+  const t = tab();
+  if (S.focus === "places") { if (placesKey(e)) e.preventDefault(); else S.pending = ""; return; }
+  if (S.focus === "panel") {
+    if (e.key === "Tab") { e.preventDefault(); const i = S.panelViews.indexOf(S.panelView); S.panelView = S.panelViews[(i + 1) % S.panelViews.length]; render(); return; }
+    if (e.key === "m") { panelMenu($("[data-pmenu]")); return; }
+    if (e.key === "j" || e.key === "k") { S.panelCursor = Math.max(0, S.panelCursor + (e.key === "j" ? 1 : -1)); render(); return; }
+    return;
+  }
+  if (S.focus === "side") { const p = $("#pane2"); if (p && (e.key === "j" || e.key === "k")) p.scrollBy(0, e.key === "j" ? 60 : -60); return; }
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); if (t.kind === "note") $("#pane1").scrollBy(0, 60); else moveSel(1); S.pending = ""; return; }
+  if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); if (t.kind === "note") $("#pane1").scrollBy(0, -60); else moveSel(-1); S.pending = ""; return; }
+  if (e.key === "G") { moveSel(0, -1); return; }
+  if (feedLike(t)) { const was = S.pending; if (feedKey(e, t)) e.preventDefault(); if (!(e.key === "d" && was === "")) S.pending = ""; if (was !== S.pending) renderStatus(); return; }
+  S.pending = "";
+  if (listKey(e, t)) e.preventDefault();
+});
+
+// ---------------- Prototype controls ----------------
+$("#pTheme").onchange = (e) => { if (e.target.value) document.documentElement.dataset.theme = e.target.value; else delete document.documentElement.dataset.theme; };
+$("#pLive").onchange = (e) => { S.liveEmbeds = e.target.value; liveReady = null; render(); armLive(); };
+$("#pResurface").onchange = (e) => { S.resurface = e.target.checked; toast(S.resurface ? "An agent's edit now brings an archived note back to the Feed" : "Archived notes stay archived; agents' edits to them show under Agents"); };
+$("#pReset").onclick = () => { reset(); render(); };
+function simulateAgent() {
+  const pool = S.notes.filter((n) => n.ago > HOUR && !n.pinned).slice(0, 12);
+  const n = pool[Math.floor(Math.random() * pool.length)];
+  const wasArchived = S.notes.find((x) => x.archived && x.path === "Research/Old competitor scan.md");
+  const target = Math.random() < 0.3 && wasArchived ? wasArchived : n;
+  target.text += `\n- Claude: added a follow-up (${new Date().toLocaleTimeString()})`;
+  target.ago = 0; target.by = "claude"; target.add = 1; target.del = 0; target.summary = "Added a follow-up"; target.seen = false; target.arrived = true;
+  target.history.unshift({ by: "claude", ago: 0, add: 1, del: 0, summary: "Added a follow-up" });
+  if (target.archived && S.resurface) target.archived = false;
+  const t = tab();
+  const p = $("#pane1");
+  if (feedLike(t) && p && p.scrollTop > 40) { view(t.id).newCount++; const v = view(t.id); v.sel = Math.min(v.sel + 1, feedItems(t).length - 1); }
+  toast(`Claude changed “${esc(titleOf(target))}”${target.archived ? " (archived: it shows under Agents)" : ""}`);
+  render();
+  setTimeout(() => (target.arrived = false), 1500);
+}
+$("#pAgent").onclick = simulateAgent;
+setTimeout(simulateAgent, 45000);
+
+reset();
+render();
+armLive();
+</script>
+</body>
+</html>
