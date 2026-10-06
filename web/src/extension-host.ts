@@ -64,6 +64,8 @@ export interface ExtensionRecord {
   error?: string;
   /** Its extension.json couldn't be read, so `manifest` is a stand-in. */
   broken?: true;
+  /** The workspace has a customized copy you don't trust, so the built-in runs as it shipped until you trust the copy. */
+  untrustedCopy?: true;
   /** Where it was installed from, for a workspace extension installed from a URL (its installed.json). */
   installedFrom?: string;
   /** The catalog it was installed from, if it was. */
@@ -71,6 +73,9 @@ export interface ExtensionRecord {
   /** What its activate returned: the API it offers other extensions (page extensions only). */
   exports?: unknown;
 }
+
+/** Whether the code that runs is the built-in as it shipped: not customized, or customized by a copy you don't trust. */
+export const runsShipped = (r: ExtensionRecord) => !!r.builtIn && (!r.workspace || !!r.untrustedCopy);
 
 /** The file Install from URL leaves in an extension's folder, saying where it came from. */
 export const installedPath = (id: string) => `.common-ink/extensions/${id}/installed.json` as FilePath;
@@ -147,6 +152,16 @@ const pressesOf = (key: string) => ([true, false] as const).flatMap((mac) => {
   return c === null ? [] : [`${mac ? "mac" : "other"}:${c}`];
 });
 
+/**
+ * The keys Vim takes in normal, insert and visual mode, as shortcuts are written. A sandboxed extension
+ * can't bind them, Vim on or not, since you can turn it on on any device (off a Mac, that's Mod with any
+ * of these too).
+ */
+const VIM_KEYS = [..."abcdefghijklmnopqrstuvwxyz", "[", "]", "^", "\\", "6", "@"].map((k) => `Ctrl-${k}`);
+
+/** A built-in's Vim sequence that starts with a Ctrl key ("<C-w>h"), as that key ("Ctrl-w"). */
+const vimCtrl = (sequence: string) => /^<C-(.)>/.exec(sequence)?.[1];
+
 /** Whether a sandboxed extension may bind a key: one with ⌘, Ctrl or Alt, so not typing, that's nothing claimed on either platform. */
 function freeKey(key: string, claimed: ReadonlySet<string>): boolean {
   const presses = pressesOf(key);
@@ -211,10 +226,9 @@ export function ownPrefix(id: string, prefix: string): boolean {
 }
 
 /** Why a sandboxed extension can't run under its folder's name, if it can't: the app or a built-in uses it. */
-export function reservedName(id: string, claimed: Claimed, builtIn?: BuiltIn): string | null {
+export function reservedName(id: string, claimed: Claimed): string | null {
   if (!clashes(id, claimed.names)) return null;
-  const instead = builtIn ? `, or Trust it to run in place of the built-in ${builtIn.manifest.name}` : "";
-  return `"${id}" is a name the app or a built-in extension uses for its own commands and views, so an extension in a folder named that can't run sandboxed. Rename its folder${instead}.`;
+  return `"${id}" is a name the app or a built-in extension uses for its own commands and views, so an extension in a folder named that can't run sandboxed. Rename its folder.`;
 }
 
 /** A manifest for a folder whose extension.json can't be read, so it can still be listed and fixed. */
@@ -270,7 +284,11 @@ export class ExtensionHost {
     }
     const app = this.o.app?.() ?? { ids: [], keys: () => [] };
     const keyed = [...builtIns.map((b) => b.manifest), ...[...manifests].flatMap(([id, m]) => (typeof m !== "string" && trusted.includes(id) ? [m] : []))];
-    const keys = [...DEFAULT_KEYBINDINGS.map((k) => k.key), ...keyed.flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [k.key] : [])))];
+    const keys = [
+      ...DEFAULT_KEYBINDINGS.map((k) => k.key),
+      ...keyed.flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [k.key] : vimCtrl(k.vim) ? [`Ctrl-${vimCtrl(k.vim)}`] : []))),
+      ...VIM_KEYS,
+    ];
     this.claimed = {
       names: claimedNames(app.ids, builtIns.map((b) => b.manifest)),
       keys: new Set([...keys.flatMap(pressesOf), ...([true, false] as const).flatMap((mac) => app.keys(mac).flatMap((k) => pressesOf(k).filter((p) => p.startsWith(mac ? "mac:" : "other:"))))]),
@@ -278,14 +296,15 @@ export class ExtensionHost {
     const records: ExtensionRecord[] = [];
     for (const b of builtIns) {
       const copy = workspace.get(b.manifest.id);
-      // The workspace's copy runs instead, below; in safe mode the built-in runs as it shipped.
-      if (copy && !safe) continue;
-      records.push({ id: b.manifest.id, tier: "page", manifest: b.manifest, builtIn: b, workspace: copy, state: disabled.includes(b.manifest.id) ? "off" : "inactive" });
+      // The workspace's copy runs instead, below, if you trust it. In safe mode, or until you trust it, the built-in runs as it shipped.
+      const untrusted = !!copy && !trusted.includes(b.manifest.id);
+      if (copy && !safe && !untrusted) continue;
+      records.push({ id: b.manifest.id, tier: "page", manifest: b.manifest, builtIn: b, workspace: copy, state: disabled.includes(b.manifest.id) ? "off" : "inactive", ...(untrusted && !safe ? { untrustedCopy: true as const } : {}) });
       this.modules.set(b.manifest.id, () => b.load());
     }
     for (const w of workspace.values()) {
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
-      if (safe && builtIn) continue;
+      if (builtIn && (safe || !trusted.includes(w.id))) continue;
       const manifest = manifests.get(w.id)!;
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
@@ -293,7 +312,7 @@ export class ExtensionHost {
       const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive" };
       if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
       records.push(record);
-      const reserved = tier === "sandbox" ? reservedName(w.id, this.claimed, builtIn) : null;
+      const reserved = tier === "sandbox" ? reservedName(w.id, this.claimed) : null;
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
       else if (safe) record.state = "safe";
       else if (disabled.includes(w.id)) record.state = "off";

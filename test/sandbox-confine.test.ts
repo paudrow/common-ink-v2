@@ -38,7 +38,7 @@ const BUILT_INS = [
 async function load(extensions: Record<string, Record<string, unknown>>, trusted: string[] = [], keys: (mac: boolean) => readonly string[] = () => []) {
   const files: FileSummary[] = Object.keys(extensions).map((id) => ({ path: `.common-ink/extensions/${id}/extension.json` as FilePath, revision: 1 }) as FileSummary);
   const read = async (path: FilePath) => ({ path, text: JSON.stringify({ name: path.split("/")[2], ...extensions[path.split("/")[2]] }), revision: 1 }) as WorkspaceFile;
-  const h = new ExtensionHost({ context: () => ({}) as never, load: async () => ({}), sandbox: async () => {}, changed: () => {}, app: () => ({ ids: APP_IDS, keys }) });
+  const h = new ExtensionHost({ context: () => ({}) as never, load: async () => ({}), sandbox: async () => {}, changed: () => {}, app: () => ({ ids: [...APP_IDS, "levers", "dev"], keys }) });
   await h.load(BUILT_INS, files, read, [], false, trusted);
   return h;
 }
@@ -65,7 +65,7 @@ test("a sandboxed extension can't take the app's save key off a Mac by writing i
 });
 
 test("a sandboxed extension's key is the same press as the app's however it's spelled, on a Mac or off one", async () => {
-  const keys = ["Mod-Ctrl-s", "Ctrl-Mod-s", "Ctrl-s", "Mod-S", "Shift-Mod-p", "Mod-Shift-P", "Alt-ArrowRight", "Meta-j", "Cmd-j", "j", "Shift-j", "Mod-z", "Mod-v", "Mod-Alt-j", "Mod-Shift-Alt-j", "Ctrl-Alt-j"];
+  const keys = ["Mod-Ctrl-s", "Ctrl-Mod-s", "Ctrl-s", "Mod-S", "Shift-Mod-p", "Mod-Shift-P", "Alt-ArrowRight", "Meta-j", "Cmd-j", "j", "Shift-j", "Mod-z", "Mod-v", "Mod-j", "Mod-Alt-j", "Mod-Shift-Alt-j", "Ctrl-Alt-j"];
   const h = await load({ taker: { contributes: { commands: [{ command: "taker.go", title: "Go" }], keybindings: keys.map((key) => ({ key, command: "taker.go" })) } } }, [], editorKeys);
   assert.deepEqual(
     h.records.find((r) => r.id === "taker")!.manifest.contributes.keybindings.map((k) => ("key" in k ? k.key : k.vim)),
@@ -99,7 +99,7 @@ test("a trusted extension's key is taken too, and a sandboxed extension binds no
 });
 
 test("a sandboxed extension can't be named for the app's or a built-in's commands and views, in any spelling", async () => {
-  const refused = ["settings", "Settings", "SETTINGS", "extensions", "extension-activity", "lists", "lists.indent", "Lists.Indent", "data-sources", "dataSources", "datasources", "DataSources", "google", "quick-open", "quickOpen", "quickopen", "command-bar", "tab", "account", "note", "note.helper", "task", "event", "kanban", "calendar"];
+  const refused = ["settings", "Settings", "SETTINGS", "extensions", "extension-activity", "levers", "dev", "lists.indent", "Lists.Indent", "dataSources", "datasources", "DataSources", "google", "quickOpen", "quickopen", "command-bar", "tab", "account", "note", "note.helper", "task", "event", "kanban"];
   const fine = ["word-count", "settingsy", "my.settings", "listsy", "tabby", "notes-plus"];
   const h = await load(Object.fromEntries([...refused, ...fine].map((id) => [id, {}])));
   const states = Object.fromEntries(h.records.filter((r) => r.workspace).map((r) => [r.id, r.state]));
@@ -108,14 +108,24 @@ test("a sandboxed extension can't be named for the app's or a built-in's command
     h.records.find((r) => r.id === "settings")!.error,
     `"settings" is a name the app or a built-in extension uses for its own commands and views, so an extension in a folder named that can't run sandboxed. Rename its folder.`,
   );
-  assert.match(h.records.find((r) => r.id === "lists")!.error!, /Rename its folder, or Trust it to run in place of the built-in lists\.$/);
   assert.deepEqual(h.on().map((m) => m.id).filter((id) => !BUILT_INS.some((b) => b.manifest.id === id)), fine, "none of the refused ones is on");
 });
 
-test("an extension you trust may have a built-in's name: that's a customized copy", async () => {
-  const h = await load({ lists: { contributes: { commands: [{ command: "lists.indent", title: "Indent" }] } } }, ["lists"]);
-  const r = h.records.find((x) => x.id === "lists")!;
-  assert.deepEqual([r.tier, r.state, r.manifest.contributes.commands.map((c) => c.command)], ["page", "inactive", ["lists.indent"]]);
+test("a customized copy of a built-in runs in its place once you trust it; until then the built-in runs as it shipped", async () => {
+  const copy = { name: "Lists, customized", contributes: { commands: [{ command: "lists.indent", title: "Indent" }] } };
+  const trusted = (await load({ lists: copy }, ["lists"])).records.find((x) => x.id === "lists")!;
+  assert.deepEqual([trusted.tier, trusted.state, trusted.manifest.name, !!trusted.untrustedCopy], ["page", "inactive", "Lists, customized", false]);
+  const h = await load({ lists: copy, "data-sources": {}, "quick-open": {} });
+  for (const id of ["lists", "data-sources", "quick-open"]) {
+    const r = h.records.filter((x) => x.id === id);
+    assert.deepEqual(r.map((x) => [x.tier, x.state, x.manifest.name, !!x.workspace, x.untrustedCopy]), [["page", "inactive", id, true, true]], id);
+  }
+});
+
+test("a sandboxed extension can't bind Vim's Ctrl keys on either platform", async () => {
+  const keys = ["Ctrl-r", "Ctrl-w", "Mod-o", "Ctrl-^", "Mod-g", "Mod-Shift-o", "Alt-o"];
+  const h = await load({ taker: { contributes: { commands: [{ command: "taker.go", title: "Go" }], keybindings: keys.map((key) => ({ key, command: "taker.go" })) } } });
+  assert.deepEqual(h.records.find((r) => r.id === "taker")!.manifest.contributes.keybindings.map((k) => ("key" in k ? k.key : k.vim)), ["Mod-Shift-o", "Alt-o"]);
 });
 
 test("a sandboxed extension installed while the app runs is refused a name the app uses, with the reason", async () => {
@@ -170,4 +180,46 @@ test("a sandboxed extension's command bar prefix starts with its own name, as a 
     ["word", "word.count ", false],
   ];
   assert.deepEqual(cases.map(([id, prefix]) => [id, prefix, ownPrefix(id, prefix)]), cases);
+});
+
+test("a command the app registers after a sandboxed extension's, under the same id, is the app's: its keys, menus and status clicks don't reach it", async () => {
+  const { Commands } = await import("../web/src/commands.ts");
+  const { ExtensionRuntime } = await import("../web/src/extension-runtime.ts");
+  const { DEFAULTS } = await import("../worker/src/settings.ts");
+  const commands = new Commands();
+  const ran: string[] = [];
+  const manifest = { name: "Late", contributes: { commands: [{ command: "late.go", title: "Go" }], keybindings: [{ key: "Mod-Alt-j", command: "late.go" }], menus: { commandBar: [{ command: "late.go" }] } } };
+  const views = new Map<string, unknown>();
+  const runtime = new ExtensionRuntime({
+    me: "you@example.com",
+    commands,
+    bar: { provide() {}, open() {} } as never,
+    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
+    onChange: [],
+    panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
+    workbench: { registerView: (v: { id: string }) => views.set(v.id, v), view: (id: string) => views.get(id), viewIds: () => [...views.keys()], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
+    offline: { read: async (path: string) => ({ path, text: JSON.stringify(manifest), revision: 1 }) } as never,
+    settings: () => DEFAULTS,
+    files: () => [],
+    openFromBar() {},
+    lastFile: () => null,
+    statusItems: { declare() {}, set() {} } as never,
+    onSaved: [],
+    onRecords: [],
+    onFocus: [],
+    saveGrant: async () => {},
+    prompt: async () => "deny" as const,
+    undeclared() {},
+    changed() {},
+    device: { facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true }, override: () => undefined, has: () => true, atLeast: () => true, why: () => "", onChange: () => () => {}, describe: () => ({}) } as never,
+    promoted() {},
+  });
+  await runtime.load([], [{ path: ".common-ink/extensions/late/extension.json" as FilePath, revision: 1 } as FileSummary], [], false, []);
+  runtime.declare();
+  const theirs = () => [runtime.keybindings().map((k) => k.command), runtime.menu("commandBar").map((i) => i.command)];
+  assert.deepEqual(theirs(), [["late.go"], ["late.go"]], "its own, as declared");
+  commands.register({ id: "late.go", title: "The app's", run: () => void ran.push("the app's late.go") });
+  assert.deepEqual(theirs(), [[], []]);
+  runtime.runFor("late", "late.go");
+  assert.deepEqual(ran, [], "its status item's click doesn't run the app's command");
 });

@@ -117,7 +117,7 @@ const DRIVE = `export default { activate(ctx) {
     await t("open settings", () => ctx.workbench.open(".common-ink/settings.json"));
     await t("split to settings", () => ctx.workbench.split("right", ".common-ink/users/tester@localhost/settings.json"));
     await t("open a note", () => ctx.workbench.open("Plan.md"));
-    for (const c of ["lists.toBullets", "note.save", "account.signOut"]) await t(c, () => ctx.commands.run(c));
+    for (const c of ["lists.toBullets", "note.save", "account.signOut", "window.reload", "device.keyboardYes", "levers.reset"]) await t(c, () => ctx.commands.run(c));
     await t("its own command", () => ctx.commands.run("driver.own"));
     r.ownRan = ownRan;
     await ctx.workbench.notice("DRIVER " + JSON.stringify(r));
@@ -140,6 +140,9 @@ browserTest(h, "a sandboxed extension runs only its own commands, and opens no s
     "lists.toBullets": "refused",
     "note.save": "refused",
     "account.signOut": "refused",
+    "window.reload": "refused",
+    "device.keyboardYes": "refused",
+    "levers.reset": "refused",
     "its own command": "done",
     ownRan: true,
   });

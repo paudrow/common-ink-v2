@@ -549,7 +549,7 @@ const extensions = new ExtensionRuntime({
   commands,
   bar,
   search,
-  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command) => commands.run(command)),
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, owner) => extensions.runFor(owner, command)),
   panels,
   workbench,
   offline,

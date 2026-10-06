@@ -1,6 +1,7 @@
 // A sandboxed extension's names are its own: not the app's, a built-in's or a trusted extension's,
 // whatever its folder is called, and not by spelling a key or a command bar prefix another way.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { browserTest, harness } from "./harness.ts";
 import { ExtensionsView, type App } from "./pages.ts";
 
@@ -179,3 +180,107 @@ browserTest(h, "off a Mac, a sandboxed extension's Mod-Ctrl-s is the app's Ctrl+
   await app.page.waitForTimeout(800);
   assert.equal(await app.page.locator(".notice p", { hasText: "TAKER 2" }).count(), 0, "Ctrl+S still saves");
 });
+
+const LATE = {
+  name: "Levers helper",
+  activationEvents: ["onCommand:leverage.helper"],
+  contributes: { commands: [{ command: "leverage.helper", title: "Run Levers helper" }] },
+};
+
+browserTest(h, "a sandboxed extension in a folder named for the test levers, which go in after extensions, doesn't run", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/levers/extension.json", JSON.stringify({ ...LATE, contributes: { commands: [...LATE.contributes.commands, { command: "levers.reset", title: "Reset" }] } }));
+  await app.writeFile(".common-ink/extensions/levers/index.js", "export default { activate() {} };");
+  await app.writeFile("Keep me.md", "# Keep me\n");
+  await app.reload();
+  assert.equal((await new ExtensionsView(app).state("levers"))?.state, "failed");
+  assert.equal(await app.readFile("Keep me.md"), "# Keep me\n");
+});
+
+const STATUS_TRUSTED = {
+  name: "Word count",
+  activationEvents: ["onStartup"],
+  contributes: { commands: [{ command: "wordCount.secret", title: "Count secretly" }] },
+};
+
+const STATUS_NEIGHBOUR = {
+  name: "Word count (sandboxed)",
+  activationEvents: ["onStartup"],
+  contributes: { commands: [{ command: "wordCount.secret", title: "Count secretly too" }], statusBarItems: [{ id: "bait", alignment: "left", priority: 1000, command: "wordCount.secret" }] },
+};
+
+browserTest(h, "a sandboxed extension's status item, clicked, runs nothing that isn't its own", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["wordCount"]\n}\n');
+  await app.writeFile(".common-ink/extensions/wordCount/extension.json", JSON.stringify(STATUS_TRUSTED));
+  await app.writeFile(".common-ink/extensions/wordCount/index.js", `export default { activate(ctx) { ctx.commands.register("wordCount.secret", () => ctx.workbench.notice("TRUSTED RAN")); } };`);
+  await app.writeFile(".common-ink/extensions/word-count/extension.json", JSON.stringify(STATUS_NEIGHBOUR));
+  await app.writeFile(".common-ink/extensions/word-count/index.js", `export default { activate(ctx) { ctx.statusBar.set("bait", "Words: 12"); } };`);
+  await app.reload();
+  await app.page.locator(".status-item", { hasText: "Words: 12" }).click();
+  await app.page.waitForTimeout(1000);
+  assert.equal(await app.page.locator(".notice p", { hasText: "TRUSTED RAN" }).count(), 0);
+  await app.command("wordCount.secret");
+  await app.page.locator(".notice p", { hasText: "TRUSTED RAN" }).waitFor();
+});
+
+const SECRET_BOX = { language: "secretbox", title: "Secret box", description: "", syntax: "fence", arguments: {}, body: "text" };
+
+browserTest(h, "a sandboxed extension can't draw, or read, an embed a trusted extension draws", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["secretbox"]\n}\n');
+  await app.writeFile(".common-ink/extensions/secretbox/extension.json", JSON.stringify({ name: "Secret box", activationEvents: ["onEmbed:secretbox"], contributes: { embeds: [SECRET_BOX] } }));
+  await app.writeFile(".common-ink/extensions/secretbox/index.js", `export default { activate(ctx) { ctx.embeds.register("secretbox", { render(el) { el.textContent = "TRUSTED DRAW"; } }); } };`);
+  await app.writeFile(".common-ink/extensions/thief/extension.json", JSON.stringify({ name: "Thief", activationEvents: ["onStartup"], contributes: { embeds: [SECRET_BOX] } }));
+  await app.writeFile(
+    ".common-ink/extensions/thief/index.js",
+    `export default { activate(ctx) { ctx.embeds.register("secretbox", { resolve(w, embed) { console.log("THIEF GOT " + JSON.stringify(embed.body)); w.html = "<p>THIEF</p>"; } }); } };`,
+  );
+  await app.writeFile("Private.md", "# Private\n\n```secretbox\nkeep this to myself\n```\n");
+  await app.reload();
+  const logs: string[] = [];
+  app.page.on("console", (m) => logs.push(m.text()));
+  await app.open("Private");
+  await app.page.getByText("TRUSTED DRAW").waitFor();
+  await app.page.waitForTimeout(1500);
+  assert.equal(logs.find((l) => l.includes("THIEF GOT")), undefined);
+});
+
+browserTest(h, "a sandboxed extension can't take Vim's Ctrl-r (redo) from the editor", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(
+    ".common-ink/extensions/redo-taker/extension.json",
+    JSON.stringify({ name: "Redo taker", activationEvents: ["onStartup"], contributes: { commands: [{ command: "redo-taker.go", title: "Go" }], keybindings: ["Ctrl-r", "Ctrl-w", "Mod-o", "Mod-Shift-Alt-r"].map((key) => ({ key, command: "redo-taker.go" })) } }),
+  );
+  await app.writeFile(".common-ink/extensions/redo-taker/index.js", `export default { activate(ctx) { let n = 0; ctx.commands.register("redo-taker.go", () => ctx.workbench.notice("REDO TAKEN " + ++n)); } };`);
+  await app.writeFile("Plan.md", "# Plan\n\none\ntwo\n");
+  await app.reload();
+  await app.open("Plan");
+  await app.keys("G");
+  await app.keys("dd");
+  await app.keys("u");
+  await app.page.keyboard.press("Control+r");
+  await app.page.waitForTimeout(1000);
+  assert.equal(await app.page.locator(".notice p", { hasText: "REDO TAKEN" }).count(), 0, "Ctrl-r is still Vim's redo");
+  await app.page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+Alt+r" : "Control+Shift+Alt+r");
+  await app.page.locator(".notice p", { hasText: "REDO TAKEN 1" }).waitFor();
+});
+
+for (const device of ["laptop", "phone"] as const) {
+  browserTest(h, `on a ${device}, an untrusted customized copy of Lists waits for your trust, and the built-in keeps working meanwhile`, { scenario: "empty", device, allowErrors: [/./] }, async (app) => {
+    const manifest = JSON.stringify({ ...JSON.parse(readFileSync("web/src/extensions/lists/extension.json", "utf8")), name: "Lists, customized", main: "index.js", files: ["index.js"] });
+    await app.writeFile(".common-ink/extensions/lists/extension.json", manifest);
+    await app.writeFile(".common-ink/extensions/lists/index.js", "export default { activate() {} };");
+    await app.writeFile("Plan.md", "# Plan\n\n- one\n- two\n");
+    await app.reload();
+    const view = new ExtensionsView(app);
+    assert.deepEqual(await view.state("lists").then((s) => [s?.state, s?.name]), ["active", "Lists"], "the built-in runs, under its own name");
+    if (device === "laptop") {
+      await app.open("Plan");
+      await app.editor.focus();
+      await app.editor.at(4);
+      await app.page.keyboard.press("Alt+ArrowRight");
+      assert.equal((await app.editor.cursor())?.text, "  - two", "the built-in's Alt-Right indents");
+    }
+    await view.show();
+    const row = view.row("lists");
+    await row.getByText("Not running · trust it to use your customized copy").waitFor();
+    await row.getByRole("button", { name: "Trust…" }).waitFor();
+  });
+}
