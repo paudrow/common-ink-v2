@@ -186,6 +186,8 @@ const SPAMMER = {
 const SPAM = `export default { activate(ctx) {
   ctx.commands.register("spammer.run", async () => {
     const rs = await Promise.allSettled(Array.from({ length: 100000 }, () => ctx.commands.shortcut("nope")));
+    // Every call answered: its share stays spent until the moment rolls on, and the test acts in that time.
+    console.log("SPAM SETTLED");
     const refused = rs.filter((r) => r.status === "rejected");
     const said = "SPAM " + JSON.stringify({ taken: rs.length - refused.length, why: refused[0] && refused[0].reason.message });
     // Its share is spent for this moment: it says so once there's room again.
@@ -204,7 +206,8 @@ const NEIGHBOR = {
 const NEIGHBORLY = `export default { activate(ctx) {
   ctx.commands.register("neighbor.run", async () => {
     const rs = await Promise.allSettled(Array.from({ length: 20 }, () => ctx.commands.shortcut("nope")));
-    await ctx.workbench.notice("NEIGHBOR " + JSON.stringify({ answered: rs.filter((r) => r.status === "fulfilled").length }));
+    // Said in its console, which costs no call: with a share for everyone, a notice would be refused too.
+    console.log("NEIGHBOR " + JSON.stringify({ answered: rs.filter((r) => r.status === "fulfilled").length }));
   });
 } };`;
 
@@ -247,9 +250,13 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   const cpu = await pageCpu(app);
   const alone = [await messagesAlone(app, cpu)];
   // What the page makes for each refusal, counted: a refusal is a message with words made once, so no
-  // Error and no number written out per refused call. (The version that did both stalled the page 2.5 to 4 times longer.)
+  // Error and no number written out per refused call. (The version that did both stalled the page 2.5 to
+  // 4 times longer.) These count the spellings that version used, not every way of doing the same: an
+  // Error subclass per refusal isn't counted here. What any refusal costs is bounded twice more below: no
+  // long task, and the flood's CPU time. CallShare's own words and count are unit tested
+  // (sandbox-limits.test.ts), where a number formatted per refusal fails on time.
   await app.page.evaluate(() => {
-    const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number } };
+    const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
     w.made = { errors: 0, numbers: 0 };
     // Built code calls Error() without new, which makes one all the same.
     w.Error = new Proxy(Error, {
@@ -261,28 +268,43 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
       w.made.numbers++;
       return toLocale.apply(this, args);
     };
+    // The longest the page's thread was held at once: each refusal is a task of its own, so a page that
+    // keeps running has none long, however busy the machine.
+    w.longest = 0;
+    w.longTasks = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) w.longest = Math.max(w.longest, e.duration);
+    });
+    w.longTasks.observe({ type: "longtask" });
   });
   const before = await cpu();
+  const settled = app.page.waitForEvent("console", { predicate: (m) => m.text() === "SPAM SETTLED", timeout: 120_000 });
   await app.command("Run Spammer");
-  const said = (await app.page.locator(".notice p", { hasText: "SPAM" }).textContent({ timeout: 120_000 }))!;
+  await settled;
+  // While the spammer's share is still spent, another frame's calls are answered: each frame's share is its own.
+  const answered = app.page.waitForEvent("console", { predicate: (m) => m.text().startsWith("NEIGHBOR "), timeout: 30_000 });
+  await app.command("Run Neighbor");
+  // Refused from its start (registering its command is a call), it never runs, and says nothing.
+  const neighbor = (await answered.catch(() => assert.fail("the other frame's calls weren't answered: it never ran"))).text();
+  assert.deepEqual(JSON.parse(neighbor.slice(neighbor.indexOf("{"))), { answered: 20 }, "another frame's 20 calls, while the spammer's share is spent");
+  const said = (await app.page.locator(".notice p", { hasText: /^Spammer: SPAM \{/ }).textContent({ timeout: 120_000 }))!;
   const flood = (await cpu()) - before;
-  const made = await app.page.evaluate(() => (window as unknown as { made: { errors: number; numbers: number } }).made);
+  const { made, longest } = await app.page.evaluate(() => {
+    const w = window as unknown as { made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
+    w.longTasks.disconnect();
+    return { made: w.made, longest: w.longest };
+  });
   const r = JSON.parse(said.slice(said.indexOf("{"))) as { taken: number; why: string };
   assert.equal(r.why, "Spammer is calling too often: it can make 2,000 calls every 10 seconds");
   // Its own start (registering its command) counts toward the 2,000 too.
   assert.ok(r.taken > 1990 && r.taken <= 2000, `took ${r.taken}`);
   assert.ok(made.errors < 100 && made.numbers < 100, `refusing 98,000 calls, the page made ${made.errors} Errors and wrote ${made.numbers} numbers`);
-
-  // Its share spent, another frame's calls are answered: the share is each frame's own.
-  await app.command("Run Neighbor");
-  const neighbor = (await app.page.locator(".notice p", { hasText: "NEIGHBOR" }).textContent({ timeout: 30_000 }))!;
-  assert.deepEqual(JSON.parse(neighbor.slice(neighbor.indexOf("{"))), { answered: 20 });
+  assert.ok(longest < 1000, `the page's thread was held ${Math.round(longest)} ms at once during the flood`);
 
   // And the page kept running: the flood, and the ten seconds its share was spent, took the page's thread
   // about what 100,000 messages alone do, measured either side of it. Here that's 1.3 to 2.7 times the
   // larger of the two: the messages from another process cost more than ones within the page, and vary.
   alone.push(await messagesAlone(app, cpu));
   const baseline = Math.max(...alone);
-  console.log(`flood ${Math.round(flood)} ms of the page's CPU, its messages alone ${alone.map(Math.round).join(" and ")} ms`);
+  console.log(`flood ${Math.round(flood)} ms of the page's CPU, its messages alone ${alone.map(Math.round).join(" and ")} ms, its longest task ${Math.round(longest)} ms`);
   assert.ok(flood < 4 * baseline + 500, `the flood took ${Math.round(flood)} ms of the page's CPU, against ${Math.round(baseline)} ms for its messages alone`);
 });
