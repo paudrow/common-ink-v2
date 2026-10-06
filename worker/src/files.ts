@@ -219,16 +219,36 @@ export class Files {
 
   /** Changes made in the transaction running now, announced once it's kept. */
   private heard: ChangeNotice[] = [];
+  /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
+  private depth = 0;
 
-  /** A transaction of writes. Open pages hear of its changes only once it commits, so never of a revision that was rolled back. */
+  /**
+   * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest.
+   */
   private tx<T>(fn: () => T): T {
-    this.heard = [];
+    const mark = this.heard.length;
+    this.depth++;
     try {
       const out = this.db.tx(fn);
-      for (const notice of this.heard) this.announce(notice);
+      if (this.depth === 1) {
+        const notices = this.heard;
+        this.heard = [];
+        for (const notice of notices) {
+          try {
+            this.announce(notice);
+          } catch (err) {
+            console.error("Announcing a change failed:", err);
+          }
+        }
+      }
       return out;
+    } catch (err) {
+      // This transaction's changes were rolled back; an outer one's stay.
+      this.heard.length = mark;
+      throw err;
     } finally {
-      this.heard = [];
+      this.depth--;
     }
   }
 
@@ -390,6 +410,11 @@ export class Files {
       also();
       return results;
     });
+  }
+
+  /** The highest revision ever given, even once its changes are gone (as after a reset): 0 before any. */
+  lastRevision(): Revision {
+    return this.db.all<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'changes'")[0]?.seq ?? 0;
   }
 
   /** A random secret by name, made the first time it's asked for and kept from then on. */
