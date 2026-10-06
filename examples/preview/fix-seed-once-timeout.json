@@ -1,0 +1,7 @@
+{
+  "pr": 107,
+  "title": "A Preview's seeding never holds requests for long",
+  "steps": [
+    "Open this Preview fresh: its sample notes and Try this PR are there, and the first page load works. Nothing else should look different."
+  ]
+}

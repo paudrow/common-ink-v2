@@ -5,6 +5,8 @@ import { test } from "node:test";
 import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
+import { GoogleCalendar } from "../worker/src/google-calendar.ts";
+import { Refusal } from "../worker/src/adapter.ts";
 import type { GoogleEvent } from "../worker/src/google-calendar.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { recordPath } from "../worker/src/records.ts";
@@ -217,6 +219,26 @@ test("edits made at once go to Google once each, in order", async () => {
     fake.calls.slice(before).filter((c) => !c.startsWith("POST /token")),
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
+});
+
+test("a Google call that never answers, or stops partway, fails after the timeout, so the edit waits in the outbox instead of holding up the rest", { timeout: 5000 }, async (t) => {
+  const hung: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+  // The token comes back; the edit's answer sends its headers, then nothing of the body.
+  const stalled: typeof fetch = async (input, init) =>
+    String(input).includes("oauth2")
+      ? Response.json({ access_token: "a", expires_in: 3600 })
+      : new Response(new ReadableStream({ start: (body) => init?.signal?.addEventListener("abort", () => body.error(init.signal!.reason)) }), { headers: { "Content-Type": "application/json" } });
+  // Node doesn't wait on AbortSignal.timeout's timer by itself, so something else has to, until the test ends however it ends.
+  const alive = setInterval(() => {}, 10);
+  t.after(() => clearInterval(alive));
+  const event = { id: "dentist", calendar: "primary", title: "Dentist", status: "confirmed" as const, allDay: false as const, start: "2026-10-06T14:30:00", end: "2026-10-06T15:15:00" };
+  for (const google of [hung, stalled]) {
+    const adapter = new GoogleCalendar({ clientId: "c", clientSecret: "s" }, async () => "refresh", google, Date.now, 50);
+    const started = Date.now();
+    await assert.rejects(adapter.push({ op: "put", event, created: false }, null), (err: Error) => !(err instanceof Refusal) && err.message === "Google didn't answer within 0.05 seconds");
+    assert.ok(Date.now() - started < 1000);
+  }
 });
 
 test("moving a whole series a day moves changed occurrences next to each other along, and Google keeps both", async () => {
@@ -1002,4 +1024,29 @@ test("undoing a series move puts back the occurrence the move cancelled, even wh
     assert.deepEqual(await shown(), before, `${why}: back here`);
     assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, `${why}: nothing blamed on Google`);
   }
+});
+
+test("edits Google refuses after their edit has answered leave nothing kept for them", async () => {
+  let answer = 503;
+  const { store } = await googleWith((_url, method) => (method === "PATCH" ? Response.json({ error: { code: answer, message: answer === 400 ? "Invalid value" : "Unavailable" } }, { status: answer }) : undefined));
+  await op(store, "sync_calendar", {});
+  for (const title of ["One", "Two", "Three"]) assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title })) as { status: string }).status, "queued");
+  answer = 400;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(store.sources.outbox("google"), [], "all refused");
+  assert.equal(store.sources["refusals"].size, 0, "no reason kept for an edit nobody waits on");
+});
+
+test("an edit waiting on top of one Google refuses is refused with it, and says which it built on", async () => {
+  let answer = 503;
+  const { fake, store } = await googleWith((url, method) => (method === "PATCH" && url.endsWith("/events/dentist") ? Response.json({ error: { code: answer, message: answer === 400 ? "Invalid value" : "Unavailable" } }, { status: answer }) : undefined));
+  await op(store, "sync_calendar", {});
+  assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "First" })) as { status: string }).status, "queued");
+  answer = 400;
+  const second = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Second" }, store, ada);
+  assert.deepEqual(second, { ok: false, error: "Google Calendar refused the change to First, which Second built on: Invalid value. It's back as it was, and the changes are in its history." });
+  assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist");
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist");
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to First and the 1 after it: Invalid value. It's back as it was, and the changes are in its history.");
+  assert.equal(store.sources["refusals"].size, 0);
 });

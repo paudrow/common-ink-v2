@@ -1,0 +1,7 @@
+{
+  "pr": 70,
+  "title": "A Preview seeds once, and a failed seeding doesn't fail the page",
+  "steps": [
+    "Open this Preview fresh: its sample notes and Try this PR are there, and the first page load works. Nothing else should look different."
+  ]
+}
