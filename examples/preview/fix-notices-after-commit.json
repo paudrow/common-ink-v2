@@ -1,0 +1,7 @@
+{
+  "pr": 79,
+  "title": "Pages hear of a change only once it's kept",
+  "steps": [
+    "Nothing should look different. Edit a note in two windows side by side: each sees the other's edits as before."
+  ]
+}
