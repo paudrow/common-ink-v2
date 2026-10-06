@@ -8,7 +8,7 @@ import { CallShare, measure } from "../web/src/sandbox.ts";
 const LIMIT = 2_000_000;
 
 test("a plain value measures as JSON writes it, escapes included", () => {
-  for (const v of ["plain", '"quoted" and \\back\\', "\u0000\u001f\n\t", "😀 emoji", 7, -1.5e300, true, null, [], {}, [1, "two", [3]], [1, undefined], { a: 1, "b c": ["x"], d: { e: null }, gone: undefined }]) {
+  for (const v of ["\ud800 lone \udfff surrogates", "plain", '"quoted" and \\back\\', "\u0000\u001f\n\t", "😀 emoji", 7, -1.5e300, true, null, [], {}, [1, "two", [3]], [1, undefined], { a: 1, "b c": ["x"], d: { e: null }, gone: undefined }]) {
     assert.equal(measure(v, LIMIT), JSON.stringify(v).length, JSON.stringify(v));
   }
 });
@@ -36,13 +36,19 @@ test("a value past the limit is found out without walking all of it, a sparse ar
 });
 
 test("a frame's share takes tiny calls in constant time each, and stops them by count as well as size", () => {
-  const share = new CallShare({ size: 10_000_000, calls: 2_000, ms: 10_000 });
+  const share = new CallShare("Flood", { size: 10_000_000, calls: 2_000, ms: 10_000 });
   const started = performance.now();
+  const refusals = new Set<string>();
   let taken = 0;
-  for (let i = 0; i < 400_000; i++) if (share.take(8, 1_000)) taken++;
-  assert.ok(performance.now() - started < 300, `${Math.round(performance.now() - started)} ms`);
+  for (let i = 0; i < 400_000; i++) {
+    const refused = share.take(8, 1_000);
+    if (refused === null) taken++;
+    else refusals.add(refused);
+  }
+  assert.ok(performance.now() - started < 150, `${Math.round(performance.now() - started)} ms, refusals' words included`);
   assert.equal(taken, 2_000);
-  assert.equal(share.take(8, 11_001), true, "the moment passed, so there's room again");
-  const big = new CallShare({ size: 10_000_000, calls: 2_000, ms: 10_000 });
-  assert.deepEqual([big.take(6_000_000, 0), big.take(6_000_000, 5_000), big.take(6_000_000, 10_001)], [true, false, true]);
+  assert.deepEqual([...refusals], ["Flood is calling too often: it can make 2,000 calls every 10 seconds"]);
+  assert.equal(share.take(8, 11_001), null, "the moment passed, so there's room again");
+  const big = new CallShare("Big", { size: 10_000_000, calls: 2_000, ms: 10_000 });
+  assert.deepEqual([big.take(6_000_000, 0), big.take(6_000_000, 5_000), big.take(6_000_000, 10_001)], [null, "Big is sending too much at once: it can send 10,000,000 characters' worth every 10 seconds", null]);
 });

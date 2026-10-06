@@ -211,5 +211,6 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   // Its own start (registering its command) counts toward the 2,000 too.
   assert.ok(r.taken > 1990 && r.taken <= 2000, `took ${r.taken}`);
   const gap = await app.page.evaluate(() => (window as unknown as { gap: number }).gap);
-  assert.ok(gap < 2000, `the page went ${Math.round(gap)} ms without running`);
+  // On main, without the share, the same flood stalls the page about 370 ms; refusing it mustn't cost much more.
+  assert.ok(gap < 600, `the page went ${Math.round(gap)} ms without running`);
 });
