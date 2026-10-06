@@ -78,7 +78,8 @@ export default {
       return out;
     }
     const out = new Response(res.body, res);
-    out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
+    // Whatever answers under /uploads/ (a refusal, a sign-in, a 405) is under the uploads' policy, never the app's.
+    out.headers.set("Content-Security-Policy", url.pathname.startsWith("/uploads/") ? UPLOAD_CSP : appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
     return out;
   },
