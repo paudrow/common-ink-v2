@@ -479,6 +479,9 @@ function contributions(v: unknown, id: string): Contributions {
   };
 }
 
+/** Text that shows something: not empty, and not only spaces, control and format characters (zero-width ones). */
+const visible = (name: string) => (/[^\s\p{Cc}\p{Cf}\p{Z}]/u.test(name) ? name : "");
+
 /**
  * An extension.json's manifest, or what's wrong with it. The folder names the extension; an "id" in the
  * file must match. Only built-ins, which the app's build compiles, may be written in TypeScript.
@@ -532,7 +535,8 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
     const publisher = text(m.publisher, '"publisher"', true);
     return {
       id: folderId,
-      name: text(m.name, '"name"', true) || folderId,
+      // A name with nothing to see (blank, or only spaces and invisible characters) is its folder's id.
+      name: visible(text(m.name, '"name"', true)) || folderId,
       version: text(m.version, '"version"', true) || "0.0.0",
       description: text(m.description, '"description"', true),
       ...(publisher ? { publisher } : {}),

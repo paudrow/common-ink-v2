@@ -41,8 +41,8 @@ export interface ShellDeps {
   /** Show a view in the focused window; run a command, done when what it does is. */
   openView(id: string): void;
   run(command: string): unknown;
-  /** The note on show as a step of its own over the place's entry, when coming on show made none (it was on show already). */
-  stepOver(): void;
+  /** Navigation's own place in its history (navigation.ts), for the entry of a note on show. */
+  visitId(): number | null;
   notice(message: string): void;
   /** What's on show in the window: which tab (its key, as layout.ts writes it), its title, and whether it's a note. */
   showing(): { key: string; title: string; note: boolean } | null;
@@ -56,20 +56,30 @@ export interface ShellDeps {
   kept(): { windows: number; tabs: number };
   search(): void;
   newNote(): void;
-  /** The browser's history, for the place shown: a new entry, the one you're on in its place, or back `n` entries. */
+  /** The browser's history: a new entry, the one you're on in its place, or back `n` entries. */
   push(state: ShellEntry): void;
   replace(state: ShellEntry): void;
   back(n: number): void;
 }
 
 /**
- * What the shell keeps in a browser history entry: the place it's at, and how many entries it is above
- * that place's own (0 is the place's own). A place's entry has `shell`, and shows the place itself.
+ * What a browser history entry shows on a phone: the place it's in, what's on show (`show`: "list", or a
+ * tab's key, as layout.ts writes it), whether that's the place's own screen (`own`: the Feed's list, or a
+ * view place's view), and how many entries it is above the place's first (0 is the first: the place's own
+ * screen, or the note a command's place went to).
  */
 export interface ShellEntry {
   place: string;
+  show: string;
   above: number;
-  shell?: true;
+  own?: true;
+  nav?: number;
+}
+
+/** A history entry's state, if it's one the shell made. */
+export function entryOf(state: unknown): ShellEntry | null {
+  const e = state as Partial<ShellEntry> | null;
+  return e && typeof e.place === "string" && typeof e.show === "string" && typeof e.above === "number" ? (e as ShellEntry) : null;
 }
 
 type Child = Node | string | null | false | "";
@@ -95,20 +105,34 @@ function placeName(p: Place): HTMLElement {
   return el("span", { className: "shell-place-name" }, el("span", { textContent: p.title }), p.from ? el("small", { className: "shell-place-from", textContent: p.from }) : null);
 }
 
-/** Half a second's press, without moving away, runs `held`; the click a press ends with is then not a tap. */
+/**
+ * Half a second's press, without moving more than 10px, runs `held`; the click that press ends with is
+ * then not a tap. A drag or a swipe isn't a press, and a click from the keyboard is never swallowed.
+ */
 function longPress(b: HTMLElement, held: () => void): void {
   let timer = 0;
   let fired = false;
-  b.addEventListener("pointerdown", () => {
+  let from: { x: number; y: number } | null = null;
+  const cancel = () => {
+    clearTimeout(timer);
+    from = null;
+  };
+  b.addEventListener("pointerdown", (e) => {
     fired = false;
+    from = { x: e.clientX, y: e.clientY };
     timer = window.setTimeout(() => ((fired = true), held()), 500);
+  });
+  b.addEventListener("pointermove", (e) => {
+    if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > 10) cancel();
   });
   for (const end of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(end, () => clearTimeout(timer));
   b.addEventListener("contextmenu", (e) => e.preventDefault());
   b.addEventListener(
     "click",
     (e) => {
-      if (!fired) return;
+      const swallow = fired && e.detail > 0;
+      fired = false;
+      if (!swallow) return;
       e.stopImmediatePropagation();
       e.preventDefault();
     },
@@ -127,8 +151,10 @@ export class Shell {
   private root: string | null = null;
   /** A place's command went somewhere: what shows next is the place. */
   private awaitingRoot = false;
-  /** How many history entries the one you're on is above the place's own: -1 while the place has none. */
-  private depth = -1;
+  /** History is reconciled with what's on show once the app has started, and not while the browser restores an entry. */
+  private ready = false;
+  private holding = 0;
+  private reconciling = false;
   private sheet: Modal | null = null;
   private on = false;
 
@@ -173,21 +199,23 @@ export class Shell {
     this.drawTop();
     this.drawBar();
     this.drawToolbar();
+    this.reconcile();
   }
 
   /**
-   * Go to a place: its screen, and its entry in the browser's history unless that's how you came. The
-   * place you're on, from a note over it, is back down the history to its entry; tapped again on it,
-   * nothing. Another place takes the place of the entry you're on if it's a place's, and is a new one
-   * over a note, so back comes back to the note.
+   * Go to a place. Tapped again, the place you're on goes back down the history to its first entry, or
+   * does nothing there. Its history entry is made by the reconciling, once it's on show.
    */
   go(id: string, how: { push?: boolean } = {}): void {
     const place = this.deps.places().find((p) => p.id === id);
     if (!place) return;
     this.sheet?.close();
     const fromHistory = how.push === false || !this.on;
-    if (!fromHistory && id === this.place && this.depth > 0) return this.deps.back(this.depth);
-    if (!fromHistory && id === this.place && this.depth === 0 && !("command" in place.open)) return this.update();
+    const at = entryOf(history.state);
+    if (!fromHistory && id === this.place && at?.place === id) {
+      if (at.above > 0) return this.deps.back(at.above);
+      if (!this.awaitingRoot) return this.update();
+    }
     this.place = id;
     this.root = null;
     this.awaitingRoot = false;
@@ -199,86 +227,116 @@ export class Shell {
     } else {
       this.screen = "window";
       this.awaitingRoot = true;
-      // Done, and nothing came on show (its note was on show already): that's the place now, as a step of its own.
-      void Promise.resolve(this.deps.run(place.open.command)).then(() => {
-        if (this.place !== id || !this.awaitingRoot) return;
-        if (!fromHistory) this.deps.stepOver();
-        this.showWindow();
-      });
-    }
-    if (!fromHistory) {
-      const entry: ShellEntry = { place: id, above: 0, shell: true };
-      // A command's place (Today) goes to a note, whose opening makes its entry: over the place's entry you're
-      // on, so back comes back to it; from a note, as the place's own.
-      if ("command" in place.open) this.depth = this.depth === 0 ? 0 : -1;
-      else {
-        if (this.depth === 0) this.deps.replace(entry);
-        else this.deps.push(entry);
-        this.depth = 0;
-      }
+      // Its note comes on show (opened), or was on show already: either way, once it's done, that's the place.
+      void Promise.resolve(this.deps.run(place.open.command)).then(() => this.awaitingRoot && this.place === id && this.showWindow());
     }
     this.update();
+  }
+
+  /** What's on show, as a history entry would say it, or null while a place's command is still on its way. */
+  private onShow(): Omit<ShellEntry, "above"> | null {
+    if (this.screen === "list") return { place: this.place, show: "list", own: true };
+    if (this.awaitingRoot) return null;
+    const key = this.deps.showing()?.key ?? "list";
+    return { place: this.place, show: key, ...(key === this.root && key.startsWith("view:") ? { own: true as const } : {}) };
   }
 
   /**
-   * What goes in the entry for a note being opened, with a jump, while the shell is on: its place, and
-   * how far above the place's entry it is. Undefined when the shell is off.
+   * The one rule for the browser's history on a phone: the entry you're on says what's on show. However
+   * something came on show (a tap, Search, a command, a link, a view an extension opened), once it has:
+   * the same thing, nothing; a place's own screen takes the place of a place's own entry, and is a new one
+   * over anything else; anything else is a new entry over the one you're on.
    */
-  entryFor(): ShellEntry | undefined {
-    if (!this.on) return undefined;
-    this.depth = this.depth < 0 ? 0 : this.depth + 1;
-    return { place: this.place, above: this.depth };
+  reconcile(): void {
+    if (!this.on || !this.ready || this.holding || this.reconciling) return;
+    this.reconciling = true;
+    queueMicrotask(() => {
+      this.reconciling = false;
+      if (!this.on || !this.ready || this.holding) return;
+      const want = this.onShow();
+      if (!want) return;
+      const at = entryOf(history.state);
+      if (at && at.place === want.place && at.show === want.show && !!at.own === !!want.own) return;
+      const nav = this.deps.visitId();
+      if (want.own) {
+        const entry: ShellEntry = { ...want, above: 0 };
+        if (at?.own) this.deps.replace(entry);
+        else this.deps.push(entry);
+      } else this.deps.push({ ...want, above: at && at.place === want.place ? at.above + 1 : 0, ...(nav !== null ? { nav } : {}) });
+      this.update();
+    });
   }
 
-  /** The app started on a note: under the shell it shows over the Feed, so back goes to the Feed and then leaves. */
-  started(state: unknown, hereEntry: (entry: ShellEntry) => void): void {
-    if (!this.on) return;
-    const kept = state as Partial<ShellEntry> | null;
-    if (kept && typeof kept.place === "string" && typeof kept.above === "number") {
-      // A reload: where it was.
-      if (kept.shell) return this.go(kept.place, { push: false });
-      [this.place, this.depth, this.screen] = [kept.place, kept.above, "window"];
+  /**
+   * An entry for a jump the app's own history makes, while the shell is on: what's on show, over the
+   * entry you're on. Undefined when the shell is off, or isn't keeping history yet.
+   */
+  entryFor(show: string): Omit<ShellEntry, "nav"> | undefined {
+    if (!this.on || !this.ready) return undefined;
+    if (this.awaitingRoot) [this.root, this.awaitingRoot] = [show, false];
+    this.screen = "window";
+    const at = entryOf(history.state);
+    return { place: this.place, show, above: at && at.place === this.place ? at.above + 1 : 0 };
+  }
+
+  /**
+   * The app has started. A reload shows what its entry says. Otherwise the Feed's own entry goes under
+   * what's on show, so back goes to the Feed, and then leaves.
+   */
+  started(state: unknown): void {
+    if (!this.on) return void (this.ready = true);
+    const kept = entryOf(state);
+    if (kept) {
+      this.ready = true;
+      if (kept.own) return this.go(kept.place, { push: false });
+      const place = this.deps.places().find((p) => p.id === kept.place);
+      [this.place, this.screen, this.root] = [kept.place, "window", place && "command" in place.open && kept.above === 0 ? kept.show : null];
       return this.update();
     }
-    this.deps.replace({ place: this.place, above: 0, shell: true });
-    this.depth = 0;
-    // Nothing on show: the Feed itself.
+    this.deps.replace({ place: this.place, show: "list", own: true, above: 0 });
     if (!this.deps.showing()) this.screen = "list";
-    else hereEntry(this.entryFor()!);
+    this.ready = true;
     this.update();
   }
 
-  /** A note was opened (from the list, a link, search): it shows over the place. */
+  /** Something came on show in the window (a note opened, a view): it shows over the place. */
   showWindow(): void {
     this.screen = "window";
     if (this.awaitingRoot) [this.root, this.awaitingRoot] = [this.deps.showing()?.key ?? null, false];
     this.update();
   }
 
-  /** The browser went back or forward to an entry. A place's own, the shell shows, and says so; a note's, it notes where it is. */
-  popped(state: unknown): boolean {
-    const entry = state as Partial<ShellEntry> | null;
-    if (!this.on || !entry || typeof entry.place !== "string" || typeof entry.above !== "number") {
-      this.depth = -1;
-      return false;
-    }
-    if (entry.shell) {
+  /** The browser goes back or forward to an entry: show what it says; history isn't reconciled until it's on show. */
+  popped(state: unknown): ShellEntry | null {
+    const entry = entryOf(state);
+    if (!this.on || !entry) return null;
+    if (entry.own) {
       this.go(entry.place, { push: false });
-      this.depth = 0;
-      return true;
+      return entry;
     }
-    if (entry.place !== this.place) [this.place, this.root, this.awaitingRoot] = [entry.place, null, false];
-    this.depth = entry.above;
-    return false;
+    const place = this.deps.places().find((p) => p.id === entry.place);
+    [this.place, this.screen, this.awaitingRoot] = [entry.place, "window", false];
+    this.root = place && "command" in place.open && entry.above === 0 ? entry.show : place && "view" in place.open ? `view:${place.open.view}` : null;
+    this.update();
+    return entry;
   }
 
-  /** Back, up to the place the note is over: down the history to its entry, or, without one below, to the place in this entry's stead. */
+  /** While the browser's entry is being put on show (a note loading), history is left as it is. */
+  hold<T>(work: Promise<T>): Promise<T> {
+    this.holding++;
+    return work.finally(() => {
+      this.holding--;
+      this.update();
+    });
+  }
+
+  /** Back, up to the place: down the history to its first entry, or, with none below, the place's own screen in this entry's stead. */
   private back(): void {
-    if (this.depth > 0) return this.deps.back(this.depth);
+    const at = entryOf(history.state);
+    if (at && at.place === this.place && at.above > 0) return this.deps.back(at.above);
     const place = this.deps.places().find((p) => p.id === this.place);
     if (place && !("command" in place.open)) {
-      this.deps.replace({ place: this.place, above: 0, shell: true });
-      this.depth = 0;
+      this.deps.replace({ place: this.place, show: "list" in place.open ? "list" : `view:${place.open.view}`, own: true, above: 0 });
       return this.go(this.place, { push: false });
     }
     this.go(this.place);

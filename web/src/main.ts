@@ -196,7 +196,7 @@ const browserHistory = (() => {
     pushVisit(visit: Visit) {
       clearTimeout(timer);
       write();
-      history.pushState({ nav: visit.id, ...shell?.entryFor() }, "", addressFor(visit.file));
+      history.pushState({ nav: visit.id, ...shell?.entryFor(L.openableKey(L.fileTab(visit.file))) }, "", addressFor(visit.file));
     },
     /** An entry of a place the phone shell shows: a new one, or the one you're on in its place. */
     place(state: ShellEntry, replace: boolean) {
@@ -227,6 +227,8 @@ const workbench = new Workbench(
       // On a phone, a note opened shows over the place it was opened from.
       if (how === "push") shell?.showWindow();
     },
+    // On a phone, a file opened shows over the place, the one on show already included.
+    opened: () => shell?.showWindow(),
     focus(path) {
       // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
       if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
@@ -274,14 +276,14 @@ function navigate(by: -1 | 1) {
 // An entry from before the app kept places, or one it no longer keeps, opens the file its address names.
 addEventListener("popstate", (e) => {
   browserHistory.moved();
-  // One of the places the phone shell showed: it shows it again.
-  if (shell?.popped(e.state)) return;
-  shell?.showWindow();
+  // On a phone, the shell shows what the entry says: a place's own screen, or the note it was on.
+  if (shell?.popped(e.state)?.own) return;
   const id = (e.state as { nav?: unknown } | null)?.nav;
-  void (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then((went) => {
+  const restore = (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then(async (went) => {
     const file = went ? null : fileFromUrl(location.search);
-    if (file) void workbench.open(file, { jump: false });
+    if (file) await workbench.open(file, { jump: false });
   });
+  void (shell ? shell.hold(restore) : restore);
 });
 
 /** Each settings file's settings the last time it could be read. */
@@ -456,8 +458,6 @@ function renderList() {
       a.addEventListener("click", async (e) => {
         e.preventDefault();
         await workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
-        stepOver();
-        shell?.showWindow();
       });
       const li = document.createElement("li");
       li.append(a);
@@ -1024,25 +1024,28 @@ async function setBar(ids: string[]) {
     }
   }
 }
-/**
- * On a phone, the note on show as a step of its own over the place's entry you're on. Opening the note
- * that was on show already (from the list, or Today when today's note was open) moves nothing in the
- * app's own history, so nothing made it an entry; back should still come back to the place.
- */
-function stepOver() {
-  const here = workbench.navigation.here;
-  if (shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && here) browserHistory.pushVisit(here);
-}
 /** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
-  const on = extensions.host.on();
-  const placed = new Set(on.flatMap((m) => m.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
+  const on = extensions.host.records.filter((r) => r.state === "inactive" || r.state === "active");
+  const placed = new Set(on.flatMap((r) => r.manifest.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
+  /**
+   * Who a place is from, said beside it so no extension's place passes for the app's own: a workspace
+   * extension says so, so one named like the app can't pass for a built-in; a built-in named as its place
+   * (Tasks' Tasks) isn't said twice.
+   */
+  const from = (r: (typeof on)[number], title: string) => {
+    if (r.workspace) return `${r.manifest.name} · workspace extension`;
+    return r.manifest.name.trim().toLowerCase() === title.trim().toLowerCase() ? undefined : r.manifest.name;
+  };
+  const place = (r: (typeof on)[number], p: Omit<Place, "from">): Place => {
+    const by = from(r, p.title);
+    return by ? { ...p, from: by } : p;
+  };
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
-    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's;
-    // and each says whose it is, so none passes for the app's own by its title.
-    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: p.title, from: m.name, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
-    ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id }, from: m.name }))),
+    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
+    ...on.flatMap((r) => r.manifest.contributes.places.map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
   ];
@@ -1060,7 +1063,7 @@ shell = new Shell({
   openView: (id) => workbench.openView(id),
   // Done when what the command does is (a note opened), or at once when it's off here.
   run: (command) => (commands.get(command)?.off?.() ? void commands.run(command) : commands.get(command)?.run()),
-  stepOver,
+  visitId: () => workbench.navigation.here?.id ?? null,
   notice: (message) => workbench.notice(message),
   showing: () => {
     const tab = L.activeTab(workbench.focusedGroup);
@@ -1218,12 +1221,9 @@ try {
   });
   await loadPlaces();
   const { missing } = await workbench.start(asked);
-  // On a phone the note the app opens on shows over the Feed: an entry for the Feed below it, so back goes there first.
+  // On a phone the note the app opens on shows over the Feed: the Feed's entry goes below it, so back goes there first.
   shell.update();
-  shell.started(history.state, (entry) => {
-    const here = workbench.navigation.here;
-    if (here) history.pushState({ nav: here.id, ...entry }, "", location.href);
-  });
+  shell.started(history.state);
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {
     workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [

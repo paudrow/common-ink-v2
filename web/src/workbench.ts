@@ -85,6 +85,8 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
+  /** A file was opened (shown, or shown again if it was on show already). */
+  opened?(path: FilePath): void;
   /** Where you are changed: a jump to a new place ("push"), or where you are, updated ("replace"). */
   navigated?(how: "push" | "replace", visit: Visit): void;
 }
@@ -289,6 +291,7 @@ export class Workbench {
     }
     // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
+    this.on.opened?.(path);
   }
 
   /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */

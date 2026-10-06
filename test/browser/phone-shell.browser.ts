@@ -41,7 +41,8 @@ browserTest(h, "the Places sheet lists what there is, and the bottom bar's place
   await tap(app, '#shell-bar [aria-label="Places"]');
   const places = await app.page.locator(".shell-sheet .shell-place").allInnerTexts();
   // Each extension's place says whose it is, under its name.
-  assert.deepEqual(places, ["Feed", "Today\nDaily notes", "Tasks\nTasks", "Calendar\nCalendar", "Contacts\nContacts", "Sources\nData sources", "Uploads\nUploads", "Extensions", "Settings", "Customize the bottom bar…"]);
+  // Each extension's place says whose it is, under its name, unless that's its name too.
+  assert.deepEqual(places, ["Feed", "Today\nDaily notes", "Tasks", "Calendar", "Contacts", "Sources\nData sources", "Uploads", "Archive", "Trash", "Extensions", "Settings", "Customize the bottom bar…"]);
   await app.page.locator(".shell-sheet .shell-place", { hasText: "Customize" }).tap();
   await app.page.locator(".shell-sheet label", { hasText: "Calendar" }).locator("input").uncheck();
   await app.page.locator(".shell-sheet label", { hasText: "Tasks" }).locator("input").check();
@@ -121,7 +122,7 @@ browserTest(h, "F2 a sandboxed extension's place can't take over the core's Sett
   await app.page.waitForTimeout(1000);
   assert.equal(await app.page.locator(".settings-editor").count(), 1, "the core's Settings row opens the settings editor");
   await tap(app, '#shell-bar [aria-label="Places"]');
-  assert.deepEqual(await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings/ }).allInnerTexts(), ["Settings\nSpoof", "Settings"], "the extension's says whose it is");
+  assert.deepEqual(await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings/ }).allInnerTexts(), ["Settings\nSpoof · workspace extension", "Settings"], "the extension's says whose it is");
 });
 
 // The browser says so for each request it can't send offline; anything else the page logs fails the test.
@@ -253,6 +254,22 @@ browserTest(h, "an extension's place on the bar says whose it is when held", { s
   await app.page.mouse.up();
   assert.ok((await app.state()).notices.includes("Today comes from Daily notes."));
   assert.notEqual(await title(app), "Journal/2026-10-05", "a long press isn't a tap");
+  // The next tap is a tap.
+  await today.tap();
+  await app.page.locator("#shell-top h1", { hasText: /^Journal\// }).waitFor({ timeout: 3000 });
+});
+
+browserTest(h, "a slow drag across a bar button isn't a long press, and the tap after it still goes", { scenario: "lists", device: "phone" }, async (app) => {
+  const calendar = app.page.locator('#shell-bar [aria-label="Calendar"]');
+  const box = (await calendar.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  await app.page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2, { steps: 5 });
+  await app.page.waitForTimeout(700);
+  await app.page.mouse.up();
+  assert.ok(!(await app.state()).notices.some((n) => n.includes("comes from")), "no long press");
+  await calendar.tap();
+  await app.page.locator("#shell-top h1", { hasText: "Calendar" }).waitFor({ timeout: 3000 });
 });
 
 browserTest(h, "a reload on Settings, a place from the Places sheet, stays on Settings, and adds no entry", { scenario: "lists", device: "phone" }, async (app) => {
@@ -264,4 +281,47 @@ browserTest(h, "a reload on Settings, a place from the Places sheet, stays on Se
   await app.page.locator(".settings-editor").waitFor();
   assert.equal(await title(app), "Settings");
   assert.equal(await len(app), before);
+});
+
+browserTest(h, "H1 Today, Calendar, Today again: Today's note is a step over Calendar, and a reload keeps it", { scenario: "lists", device: "phone" }, async (app) => {
+  for (const p of ["Today", "Calendar", "Today"]) {
+    await tap(app, `#shell-bar [aria-label="${p}"]`);
+    await app.page.waitForTimeout(800);
+  }
+  assert.match(await title(app), /^Journal\//);
+  await app.reload();
+  await app.page.waitForTimeout(900);
+  assert.match(await title(app), /^Journal\//, "a reload keeps Today's note");
+  await app.page.goBack();
+  await app.page.locator("#shell-top h1", { hasText: "Calendar" }).waitFor({ timeout: 3000 });
+});
+
+browserTest(h, "H2 after a reload on the Feed, a note opened and ‹ back leave no second Feed entry", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Feed"]');
+  await app.reload();
+  await app.page.waitForTimeout(900);
+  await tap(app, '#notes a:text("Lists tour")');
+  await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
+  await tap(app, '#shell-top [aria-label="Back to Feed"]');
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
+  await app.page.goBack();
+  await app.page.waitForTimeout(500);
+  assert.ok(!app.page.url().startsWith(app.base) || (await title(app)) !== "Feed", "back from the Feed doesn't show the Feed again");
+});
+
+browserTest(h, "H3 Search on a phone, picking the note that was open, shows it over the place", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Feed"]');
+  const before = await len(app);
+  await tap(app, '#shell-bar [aria-label="Search"]');
+  await app.page.locator("#command-bar:not([hidden]) input").waitFor();
+  await app.page.keyboard.insertText("Basil");
+  await app.page.locator("#command-bar li", { hasText: "Lists tour" }).first().waitFor();
+  await app.page.locator("#command-bar li", { hasText: "Lists tour" }).first().tap();
+  await app.page.waitForTimeout(800);
+  assert.equal(await title(app), "Lists tour");
+  // The Feed was reached by going back to its entry, so the note's old entry ahead of it is replaced, not added to.
+  assert.ok((await len(app)) <= before + 1);
+  assert.deepEqual(await app.page.evaluate(() => (history.state as { place: string; show: string }) && { place: history.state.place, show: history.state.show }), { place: "feed", show: "file:Lists tour.md" }, "the entry says what's on show");
+  await app.page.goBack();
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
 });
