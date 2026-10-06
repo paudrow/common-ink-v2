@@ -42,8 +42,16 @@ export default {
       const view = ctx.editor.focused();
       if (view && !run(view)) otherwise?.(view);
     };
-    ctx.commands.register("lists.indent", onEditor(indent, indentMore));
-    ctx.commands.register("lists.dedent", onEditor(dedent, indentLess));
+    /** Shift the lines as text, and leave the cursor on the first one's first character, as Vim's > and < do. */
+    const asText = (shift: (view: EditorView) => boolean) => (view: EditorView) => {
+      const first = view.state.doc.lineAt(view.state.selection.main.from).number;
+      shift(view);
+      const line = view.state.doc.line(first);
+      view.dispatch({ selection: { anchor: line.from + /^\s*/.exec(line.text)![0].length } });
+      return true;
+    };
+    ctx.commands.register("lists.indent", onEditor(indent, asText(indentMore)));
+    ctx.commands.register("lists.dedent", onEditor(dedent, asText(indentLess)));
     // Alt-Right and Alt-Left: on a list item, indent and dedent it; anywhere else, false, so the key does what it would have.
     const onItem = (run: (view: EditorView) => boolean) => () => {
       const view = ctx.editor.focused();

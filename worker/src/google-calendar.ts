@@ -3,7 +3,7 @@
 // the app sees calendar.ts's events. Writes are PATCHes of the fields Common Ink models, so what it
 // doesn't (guests, reminders, video calls) is left as Google has it.
 import { fullWall, wallTimeAt, type Calendar, type CalendarEvent, type EventFields, type RecordOp } from "./calendar.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
+import { Conflict, Gone, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import type { GoogleConfig } from "./google.ts";
 
 /** An event as the Calendar API sends and takes it (the fields Common Ink uses). */
@@ -134,16 +134,28 @@ export class GoogleCalendar implements Adapter {
   constructor(
     private config: GoogleConfig,
     /** The connected person's refresh token, or null if nobody's connected. */
-    private refreshToken: () => string | null,
+    private refreshToken: () => Promise<string | null>,
     private fetcher: typeof fetch = fetch,
     private now: () => number = Date.now,
+    /** How long one call to Google may take: pushes take turns, so a call that hangs would hold up every edit after it. */
+    private timeout = 30_000,
   ) {}
+
+  /** A fetch to Google that fails, as a failure for now, if Google doesn't answer in time. */
+  private async send(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetcher(url, { ...init, signal: AbortSignal.timeout(this.timeout) });
+    } catch (err) {
+      if ((err as Error)?.name === "TimeoutError") throw new Error(`Google didn't answer within ${this.timeout / 1000} seconds`);
+      throw err;
+    }
+  }
 
   private async access(fresh = false): Promise<string> {
     if (!fresh && this.token && this.token.until > this.now() + 60_000) return this.token.value;
-    const refresh = this.refreshToken();
+    const refresh = await this.refreshToken();
     if (!refresh) throw new ReconnectNeeded("Google Calendar isn't connected");
-    const res = await this.fetcher("https://oauth2.googleapis.com/token", {
+    const res = await this.send("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: this.config.clientId, client_secret: this.config.clientSecret, refresh_token: refresh, grant_type: "refresh_token" }),
@@ -162,7 +174,7 @@ export class GoogleCalendar implements Adapter {
       const headers: Record<string, string> = { Authorization: `Bearer ${await this.access(attempt > 0)}` };
       if (init.body !== undefined) headers["Content-Type"] = "application/json";
       if (init.etag) headers["If-Match"] = init.etag;
-      const res = await this.fetcher(url, { method, headers, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}) });
+      const res = await this.send(url, { method, headers, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}) });
       if (res.status === 401 && attempt === 0) continue;
       if (res.status === 401 || res.status === 403) {
         const reason = ((await res.clone().json().catch(() => null)) as { error?: { errors?: Array<{ reason?: string }> } } | null)?.error?.errors?.[0]?.reason;
@@ -181,25 +193,49 @@ export class GoogleCalendar implements Adapter {
     if (calendar?.timeZone) this.zones.set(calendar.id, calendar.timeZone);
     if (op.op === "delete") {
       const res = await this.call("DELETE", this.path(e.calendar, e.id), { etag });
-      if (res.status === 412) throw await this.conflict(e);
-      // Gone already is what we wanted.
+      if (res.status === 412) {
+        const now = await this.current(e);
+        // Gone already is what we wanted.
+        if (!now || now.status === "cancelled") return {};
+        throw this.conflict(e, now);
+      }
       if (!res.ok && res.status !== 404 && res.status !== 410) throw await failure(res, `deleting ${e.title || e.id}`);
       return {};
     }
     const body = eventToGoogle(e, this.zones.get(e.calendar));
     // A new event keeps the id we gave it; a changed occurrence is made by changing it where Google keeps it.
     const res = op.created && e.series === undefined ? await this.call("POST", this.path(e.calendar), { body: { ...body, id: e.id } }) : await this.call("PATCH", this.path(e.calendar, e.id), { body, etag });
-    if (res.status === 412) throw await this.conflict(e);
+    if (res.status === 412) {
+      const now = await this.current(e);
+      if (!now) throw new Gone("It was deleted in Google");
+      throw this.conflict(e, now);
+    }
     if (res.status === 409) return this.push({ op: "put", event: e, created: false }, null, calendar);
+    if (res.status === 404 || res.status === 410) throw new Gone("It was deleted in Google");
     if (!res.ok) throw await failure(res, `saving ${e.title || e.id}`);
     return { etag: ((await res.json()) as GoogleEvent).etag };
   }
 
-  /** The event as Google has it now, for merging with ours. */
-  private async conflict(e: CalendarEvent): Promise<Conflict> {
+  /**
+   * The event as Google has it now, or null if Google deleted it: Google answers a deleted event
+   * cancelled, or 404 or 410. An occurrence cancelled on its own is still its series', so it's
+   * merged with like any change. If Google can't say, that's a failure for now: the edit waits with
+   * the etag it has, so it never goes out without one.
+   */
+  private async current(e: CalendarEvent): Promise<GoogleEvent | null> {
     const res = await this.call("GET", this.path(e.calendar, e.id));
-    if (!res.ok) return new Conflict(null, null);
+    if (res.status === 404 || res.status === 410) return null;
+    // Not knowing how Google has it isn't a reason to drop the edit at once: it waits and tries again.
+    if (!res.ok) {
+      const error = (await failure(res, `reading ${e.title || e.id}`)) instanceof Refusal ? Unreadable : Error;
+      throw new error(`Google Calendar answered ${res.status} reading ${e.title || e.id}`);
+    }
     const g = (await res.json()) as GoogleEvent;
+    return g.status === "cancelled" && !g.recurringEventId ? null : g;
+  }
+
+  /** Google's version of an event, for merging with ours. */
+  private conflict(e: CalendarEvent, g: GoogleEvent): Conflict {
     return new Conflict(eventFromGoogle(g, e.calendar, this.zones.get(e.calendar)), g.etag ?? null);
   }
 
@@ -208,9 +244,16 @@ export class GoogleCalendar implements Adapter {
    * (all of them the first time, or when Google says the token's too old).
    */
   async sync(io: SyncIO): Promise<void> {
-    const listed = await this.call("GET", "/users/me/calendarList", { query: { maxResults: "250" } });
-    if (!listed.ok) throw new Error(`Google Calendar answered ${listed.status} listing calendars`);
-    const entries = ((await listed.json()) as { items?: GoogleCalendarEntry[] }).items ?? [];
+    // Every page of the list: a calendar left off it would go, with its events.
+    const entries: GoogleCalendarEntry[] = [];
+    let page: string | undefined;
+    do {
+      const listed = await this.call("GET", "/users/me/calendarList", { query: { maxResults: "250", ...(page ? { pageToken: page } : {}) } });
+      if (!listed.ok) throw new Error(`Google Calendar answered ${listed.status} listing calendars`);
+      const body = (await listed.json()) as { items?: GoogleCalendarEntry[]; nextPageToken?: string };
+      entries.push(...(body.items ?? []));
+      page = body.nextPageToken;
+    } while (page);
     const calendars = entries.filter((c) => c.accessRole !== "freeBusyReader");
     for (const c of calendars) this.zones.set(collectionOf(c), c.timeZone ?? "UTC");
     io.calendars(calendars.map(calendarFromGoogle));
@@ -218,6 +261,21 @@ export class GoogleCalendar implements Adapter {
   }
 
   private async syncCalendar(io: SyncIO, calendar: string, zone: string): Promise<void> {
+    // Read again what the last sync left for a change made here meanwhile. One Google can't find is gone.
+    for (const id of io.recheck(calendar)) {
+      const res = await this.call("GET", this.path(calendar, id));
+      if (res.status === 404 || res.status === 410) {
+        io.remove(calendar, id);
+        continue;
+      }
+      if (!res.ok) throw new Error(`Google Calendar answered ${res.status} reading ${id} again`);
+      const g = (await res.json()) as GoogleEvent;
+      if (g.status === "cancelled" && !g.recurringEventId) io.remove(calendar, g.id);
+      else {
+        const e = eventFromGoogle(g, calendar, zone);
+        if (e) io.put(e, g.etag ?? null);
+      }
+    }
     let token = io.token(calendar);
     const seen = new Set<string>();
     let page: string | undefined;

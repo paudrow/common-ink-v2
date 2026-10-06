@@ -1,0 +1,9 @@
+{
+  "pr": 50,
+  "title": "Uploads served as their names say, and only trusted extensions' code as scripts",
+  "steps": [
+    "Upload a .txt (Upload a file…). Open .common-ink/uploads.json, change that upload's \"type\" to \"text/javascript\" and save. Open /uploads/<its name>: DevTools shows Content-Type text/plain.",
+    "Customize a built-in in Extensions (Word count from the Catalog won't do: it runs sandboxed). The copy loads as before.",
+    "Every response has Strict-Transport-Security: max-age=31536000 (DevTools > Network)."
+  ]
+}
