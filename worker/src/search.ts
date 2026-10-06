@@ -13,6 +13,8 @@ export interface NoteResult {
   edited: number;
   author: Author;
   archived?: true;
+  /** Deleted, and in Trash: only with is:trashed. */
+  trashed?: true;
   line?: { number: number; text: string };
 }
 
@@ -79,11 +81,16 @@ export class SearchIndex {
     if (!current) db.run(FTS);
     db.run("CREATE TABLE IF NOT EXISTS search_docs(id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, title TEXT NOT NULL)");
     db.run("CREATE TABLE IF NOT EXISTS search_mark(revision INTEGER NOT NULL)");
+    db.run("CREATE TABLE IF NOT EXISTS search_merge(since INTEGER NOT NULL)");
   }
 
-  /** A file was written (text) or deleted (null) at a revision: keep its words, if it's a note, and how far the index has got. */
-  observe(path: string, text: string | null, revision: number): void {
+  /**
+   * A file was written (text) or deleted (null) at a revision: keep its words, if it's a note, and how
+   * far the index has got. After a purge, the index is due a merge (`mergePurged`).
+   */
+  observe(path: string, text: string | null, revision: number, purged = false): void {
     this.mark(revision);
+    if (purged && !this.mergeDue()) this.db.run("INSERT INTO search_merge(since) VALUES (?)", revision);
     if (!isNotePath(path)) return;
     const [doc] = this.db.all<{ id: number }>("SELECT id FROM search_docs WHERE path = ?", path);
     if (doc) this.db.run("DELETE FROM search WHERE rowid = ?", doc.id);
@@ -95,6 +102,25 @@ export class SearchIndex {
     const id = doc?.id ?? this.db.all<{ id: number }>("INSERT INTO search_docs(path, title) VALUES (?, ?) RETURNING id", path, title)[0].id;
     if (doc) this.db.run("UPDATE search_docs SET title = ? WHERE id = ?", title, id);
     this.db.run("INSERT INTO search(rowid, words) VALUES (?, ?)", id, indexed(path, text));
+  }
+
+  /** Whether a purge since the index was last merged left a deleted note's words in its blocks. */
+  mergeDue(): boolean {
+    return this.db.all("SELECT 1 FROM search_merge").length > 0;
+  }
+
+  /**
+   * After purges, merge the index's blocks into one, so no purged note's words stay in them: a
+   * contentless index keeps a deleted row's words until its blocks are merged, and secure-delete can't
+   * find them without the text. It rewrites the whole index (2 s at 30,000 notes), so the workspace's
+   * alarm does it soon after Delete forever, once for any number of them, and not while you wait.
+   */
+  mergePurged(): void {
+    if (!this.mergeDue()) return;
+    this.db.tx(() => {
+      this.db.run("INSERT INTO search(search) VALUES ('optimize')");
+      this.db.run("DELETE FROM search_merge");
+    });
   }
 
   private mark(revision: number) {
@@ -172,6 +198,7 @@ export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit 
         edited: n.edited,
         author: n.author,
         ...(n.archived ? { archived: true as const } : {}),
+        ...(n.trashed ? { trashed: true as const } : {}),
         ...(at >= 0 ? { line: { number: at + 1, text: lines[at].trim().slice(0, 200) } } : {}),
       };
     }),

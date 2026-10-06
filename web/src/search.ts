@@ -63,6 +63,7 @@ export const CHIPS: ReadonlyArray<{ label: string; filter: string }> = [
   { label: "This week", filter: "edited:<7d" },
   { label: "Events", filter: "type:event" },
   { label: "Tasks", filter: "type:task" },
+  { label: "Trash", filter: "is:trashed" },
 ];
 
 const sameFilter = (t: Term, f: Term) => t.kind === "filter" && f.kind === "filter" && !t.negated && t.key === f.key && t.value.toLowerCase() === f.value.toLowerCase();

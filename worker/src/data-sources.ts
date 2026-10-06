@@ -5,7 +5,7 @@
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
 import { SearchIndex } from "./search.ts";
-import { ARCHIVE_PATH, archiveAgain, mergeArchive } from "./archive.ts";
+import { ARCHIVE_PATH, archiveAgain, deleteNote, mergeArchive } from "./archive.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -752,9 +752,9 @@ export function openWorkspace(
     db,
     Date.now,
     announce,
-    (path, text, revision) => {
+    (path, text, revision, purged) => {
       records.observe(path, text);
-      search.observe(path, text, revision);
+      search.observe(path, text, revision, purged);
     },
     (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
   );
@@ -791,11 +791,24 @@ export function readCalendar(text: string): Calendar | null {
 export async function undoChanges(files: Files, sources: DataSources, revisions: Revision[], author: Author): Promise<UndoResult[]> {
   const change = (r: Revision) => files.recent({ before: r + 1, limit: 1 }).find((c) => c.revision === r);
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
-  const plain = revisions.filter((r) => !isRecord(r));
-  // A note's delete undone brings back its archiving too, in the same transaction.
+  const plain = [...new Set(revisions.filter((r) => !isRecord(r)))];
+  // A restore (a change that undid a delete) undone while its note is as it left it deletes the note
+  // again, back to Trash, rather than leave it empty. A note's delete undone brings back its archiving
+  // too. All in one transaction.
+  const restoreOf = (r: Revision) => {
+    const c = change(r);
+    return c?.undoes && change(c.undoes)?.deleted && files.read(c.path)?.revision === r ? c : null;
+  };
   const out: UndoResult[] = plain.length
     ? files.atomically(() => {
-        const results = files.undo(plain, author);
+        const again = plain.flatMap((r): UndoResult[] => {
+          const c = restoreOf(r);
+          if (!c) return [];
+          const result = deleteNote(files, { path: c.path, text: "", base: r, author, undoes: r });
+          return [{ revision: r, status: result.status === "conflict" ? "conflict" : "undone", ...(result.file ? { file: result.file } : {}) }];
+        });
+        const done = new Set(again.map((u) => u.revision));
+        const results = [...again, ...files.undo(plain.filter((r) => !done.has(r)), author)].sort((a, b) => b.revision - a.revision);
         archiveAgain(files, results.flatMap((u) => (u.status === "undone" && change(u.revision)?.deleted ? [{ path: change(u.revision)!.path, deleted: u.revision }] : [])), author);
         return results;
       })

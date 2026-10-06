@@ -6,14 +6,16 @@ import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
 import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
-import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
+import { DEFAULT_SETTINGS, defaultsText, isReadOnly, WORKSPACE_SETTINGS } from "./settings.ts";
+import { DAY, inTrash, retentionDays } from "./trash.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
-import { format, parse, problems, type Query } from "./query.ts";
+import { inGlobs } from "./globs.ts";
+import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
 import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
-import type { SearchOptions, SearchResults } from "./search.ts";
-import { isNote, parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { present, type SearchOptions, type SearchResults } from "./search.ts";
+import { isNote, parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -38,7 +40,18 @@ export interface Store {
   /** Delete a note, and take it out of the archive with it (archive.ts). */
   deleteNote(w: Write): Promise<WriteResult> | WriteResult;
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
+  /** Deletes in effect since a time, newest first: what's in Trash (Files.deleted). */
+  deleted(since: number): Promise<Deleted[]> | Deleted[];
+  /** Take deleted notes' text out of history, by their deletes (Files.purge). */
+  purge(deletes: Revision[], author: Author): Promise<Array<{ path: FilePath; revision: Revision }>> | Array<{ path: FilePath; revision: Revision }>;
+  /** How long deleted notes stay in Trash: the trash.retentionDays a person last set (trash.ts). */
+  retention(): Promise<number> | number;
+  /** Bring a note in Trash back (trash.ts). */
+  restoreDeleted(d: Deleted, author: Author): Promise<Restored> | Restored;
 }
+
+/** A note brought back from Trash, or why it couldn't be. */
+export type Restored = { path: FilePath; revision: Revision } | { error: string };
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
 export interface EventFound {
@@ -53,7 +66,7 @@ export interface EventFound {
 
 /** The person whose data sources an author reads: themselves, or whoever an agent works for. */
 function personOf(author: Author): string {
-  const email = author.kind === "user" ? author.email : author.kind === "sync" ? undefined : author.by;
+  const email = author.kind === "user" ? author.email : author.kind === "sync" || author.kind === "retention" ? undefined : author.by;
   if (!email) throw new Error("Data sources belong to a person, and this agent isn't working for one");
   return email;
 }
@@ -73,6 +86,8 @@ type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; internal?:
 
 export interface Operation<T = unknown> {
   description: string;
+  /** Only the app offers it, to a person: not MCP, and not agents by any route. */
+  appOnly?: true;
   /** JSON Schema for the arguments, as MCP lists it. */
   input: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   parse(args: Args): Parsed<T>;
@@ -213,7 +228,10 @@ export const OPERATIONS = {
       if (a.edit !== undefined && !isEditId(a.edit)) return fail('"edit" must be an id of letters, digits, - and _, up to 64');
       return ok({ path, text: a.text, base, ...(a.edit !== undefined ? { edit: a.edit as string } : {}) });
     },
-    run: async (store, w, author) => store.write({ ...w, author }),
+    run: async (store, w, author) => {
+      await personOnlySettings(store, w.path, w.text, author);
+      return store.write({ ...w, author });
+    },
   }),
   delete_file: op<{ path: FilePath; base: Revision }>({
     description:
@@ -228,7 +246,10 @@ export const OPERATIONS = {
       if (!base) return fail('"base" must be the revision you read');
       return ok({ path, base });
     },
-    run: async (store, { path, base }, author) => (isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true })),
+    run: async (store, { path, base }, author) => {
+      await personOnlySettings(store, path, "", author);
+      return isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true });
+    },
   }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
@@ -467,19 +488,28 @@ export const OPERATIONS = {
     },
     run: async (store, { path, edit }) => ({ path, edit, applied: await store.editApplied(path, edit) }),
   }),
-  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } }>({
+  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } | { trash: Revision | null } }>({
     description:
-      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone.",
-    input: { type: "object", properties: { path: PATH, revision: { type: "integer", minimum: 0 }, before: { type: "integer", minimum: 1 } }, required: ["path"] },
+      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone. With neither, a note comes back from Trash: the one deleted by the change `deleted` (a revision from trash), or the path's latest. It comes back at its path with its history, or as \"<name> (restored).md\" if another note has the path now. Says where it went.",
+    input: { type: "object", properties: { path: PATH, revision: { type: "integer", minimum: 0 }, before: { type: "integer", minimum: 1 }, deleted: { type: "integer", minimum: 1 } }, required: ["path"] },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const revision = count(a.revision);
       const before = count(a.before);
       if (!path) return fail('"path" must be a path ending in .md or .json');
       if (revision !== undefined) return ok({ path, at: { revision } });
-      return before ? ok({ path, at: { before } }) : fail('Say which version: "revision", or "before" a change');
+      if (a.before !== undefined) return before ? ok({ path, at: { before } }) : fail('"before" must be a change\'s revision');
+      if (a.deleted !== undefined && !count(a.deleted)) return fail('"deleted" must be the revision of a note\'s delete, from trash');
+      return ok({ path, at: { trash: count(a.deleted) ?? null } });
     },
-    run: async (store, { path, at }, author) => store.restore(path, at, author),
+    run: async (store, { path, at }, author) => {
+      if (!("trash" in at)) return store.restore(path, at, author);
+      const target = (await notesInTrash(store, Date.now())).find((d) => d.path === path && (at.trash === null || d.revision === at.trash));
+      if (!target) throw new OperationError(`${path} isn't in Trash`);
+      const restored = await store.restoreDeleted(target, author);
+      if ("error" in restored) throw new OperationError(restored.error);
+      return { status: "restored", ...restored };
+    },
   }),
   labels: op<{ path?: FilePath }>({
     description: "Labels: names given to a note's state at one revision. All of them, or one file's.",
@@ -535,7 +565,56 @@ export const OPERATIONS = {
     },
     run: async (store, { query, limit, zone, within }) => {
       const q = parse(query);
-      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, archived: await archivedIn(store), within })) };
+      const ctx = { now: Date.now(), zone };
+      // Notes in Trash aren't in the index: they're searched only when the query asks for them.
+      const inside = within ? inGlobs(within) : () => true;
+      const found = asksFor(q, "trashed")
+        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        : await store.search(q, { ctx, limit, archived: await archivedIn(store), within });
+      return { query: format(q), problems: problems(q), ...found };
+    },
+  }),
+  trash: op<Record<string, never>>({
+    description:
+      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged; `byHand` ones, from history before notes had ids, are kept until a person deletes them forever. `earlier` lists other parts of the same note, by path and their last text, that deleting it forever takes too. Restore one with restore, its path and its revision as `deleted`.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store) => {
+      const now = Date.now();
+      const days = await retentionOf(store);
+      const notes = await Promise.all((await notesInTrash(store, now)).map((d) => withText(store, d)));
+      return Promise.all(
+        notes.map(async ({ text, earlier, ...d }) => {
+          // Earlier parts of the note, with text other than what it shows: deleting it forever takes them too.
+          const seen = new Set([text]);
+          const parts = [];
+          for (const e of earlier ?? []) {
+            const old = (await store.versionAt(e.path, e.before)) ?? "";
+            if (seen.has(old)) continue;
+            seen.add(old);
+            parts.push({ path: e.path, text: old });
+          }
+          return { ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)), ...(parts.length ? { earlier: parts } : {}) };
+        }),
+      );
+    },
+  }),
+  purge: op<{ deleted: Revision[] }>({
+    appOnly: true,
+    description:
+      "Delete notes in Trash forever, by their deletes' revisions (from trash): each one's text leaves history, and one change says who purged it and when. It can't be undone. Only a person can, in the app, after it asks; agents and extensions can't (decision 18).",
+    input: { type: "object", properties: { deleted: { type: "array", items: { type: "integer", minimum: 1 }, minItems: 1, maxItems: 500 } }, required: ["deleted"] },
+    parse: (a) => {
+      const deleted = Array.isArray(a.deleted) ? a.deleted.map(count) : [];
+      return deleted.length && deleted.length <= 500 && deleted.every((r) => r !== undefined && r > 0) ? ok({ deleted: deleted as number[] }) : fail('"deleted" must be a list of deletes\' revisions, from trash');
+    },
+    run: async (store, { deleted }, author) => {
+      if (author.kind !== "user") throw new OperationError("Only a person can delete notes forever, in the app. Agents and extensions can restore them instead.");
+      // Only what's in Trash now, by the same cutoff as its list.
+      const trashed = new Set((await notesInTrash(store, Date.now())).map((d) => d.revision));
+      const purged = await store.purge(deleted.filter((r) => trashed.has(r)), author);
+      if (!purged.length) throw new OperationError(`Nothing to delete forever: ${deleted.length === 1 ? "that isn't" : "those aren't"} in Trash`);
+      return { purged };
     },
   }),
   archive: op<{ paths: FilePath[] }>({
@@ -624,6 +703,26 @@ function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
   return ok({ paths: [...new Set(paths)] });
 }
 
+/** How long deleted notes stay in Trash: the trash.retentionDays a person last set. */
+const retentionOf = async (store: Store): Promise<number> => store.retention();
+
+/** Refuse a change to trash.retentionDays by anyone but a person (decision 18: agents can't purge, so they can't hasten it). */
+async function personOnlySettings(store: Store, path: FilePath, text: string, author: Author): Promise<void> {
+  if (path !== WORKSPACE_SETTINGS || author.kind === "user") return;
+  if (retentionDays((await store.read(path))?.text ?? "") !== retentionDays(text)) throw new OperationError("Only a person can change trash.retentionDays: it decides when notes in Trash are deleted forever.");
+}
+
+/** Notes in Trash now, newest first. Restore and search keep to the same cutoff as the list. */
+async function notesInTrash(store: Store, now: number): Promise<Deleted[]> {
+  const days = await retentionOf(store);
+  return inTrash(await store.deleted(now - days * DAY), days, now);
+}
+
+/** A note in Trash with its text, as it was just before it was deleted. */
+async function withText(store: Store, d: Deleted): Promise<Deleted & { text: string }> {
+  return { ...d, text: d.before ? ((await store.versionAt(d.path, d.before)) ?? "") : "" };
+}
+
 async function archivedIn(store: Store): Promise<Set<string>> {
   return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
 }
@@ -646,6 +745,9 @@ export class OperationError extends Error {}
 export type OperationName = keyof typeof OPERATIONS;
 
 export const isOperation = (name: string): name is OperationName => Object.hasOwn(OPERATIONS, name);
+
+/** Whether agents may be offered an operation over MCP: all but the app's own, like purge. */
+export const offeredToAgents = (name: OperationName) => !(OPERATIONS[name] as Operation).appOnly;
 
 /** Parse and run an operation. */
 export async function runOperation(name: OperationName, args: Args, store: Store, author: Author): Promise<Parsed<unknown>> {
