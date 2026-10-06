@@ -207,6 +207,7 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/contacts": "list_contacts",
   "POST /api/diff": "diff",
   "GET /api/version": "read_version",
+  "GET /api/edit": "edit_applied",
   "POST /api/restore": "restore",
   "GET /api/labels": "labels",
   "POST /api/labels": "add_label",
