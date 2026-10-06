@@ -9,6 +9,7 @@
 import { EditorSelection, EditorState, Facet, Prec, StateField, type Extension, type Line, type Range, type StateCommand } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet, type ViewUpdate, type WidgetType } from "@codemirror/view";
+import { getCM } from "@replit/codemirror-vim";
 
 /** One thing to draw on a line, at document positions. */
 export interface Preview {
@@ -114,32 +115,63 @@ const blockFields = Facet.define<StateField<DecorationSet>>();
 /**
  * A block preview collapses its lines into one widget, and vertical motion (j/k, the arrows) would
  * step straight over it. When a one-step move jumps over collapsed blocks, it lands on the first of
- * their lines going down, or the last going up, which shows that block's text to edit. A click lands
- * where it was clicked. (Vim's j and k carry no user event, so this can't wait for one.)
+ * their lines going down, or the last going up, which shows that block's text to edit. A block that
+ * ends the note (or starts it) has no line past it: the move lands inside it, and that's one step
+ * too. A click lands where it was clicked. (Vim's j and k carry no user event, so this can't wait
+ * for one.)
  */
+/** Whether Vim is partway through a command: a count, an operator, a register, or a key waiting for its argument ('j's "j" names a mark). */
+function vimPending(view: EditorView): boolean {
+  const input = (getCM(view) as { state?: { vim?: { inputState?: { prefixRepeat: string[]; motionRepeat: string[]; operator?: string | null; keyBuffer: string[]; registerName?: string } } } } | null)?.state?.vim?.inputState;
+  return !!input && (input.prefixRepeat.length > 0 || input.motionRepeat.length > 0 || !!input.operator || input.keyBuffer.length > 0 || !!input.registerName);
+}
+
+/**
+ * Whether the key being handled steps one line up or down (j, k, or an arrow, by the character typed).
+ * Only such a step goes into a block at a note's very start or end: a G, a count, a search or a click
+ * that lands there is where it was sent, though it looks the same as a transaction.
+ */
+let stepping = false;
+const watchSteps = EditorView.domEventObservers({
+  keydown(e, view) {
+    stepping = ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !vimPending(view);
+    // Over once the key is handled: the move it makes comes while it is.
+    queueMicrotask(() => (stepping = false));
+  },
+});
+
 const stepIntoBlocks = EditorState.transactionFilter.of((tr) => {
   if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1 || tr.isUserEvent("select.pointer")) return tr;
   const start = tr.startState;
   const doc = start.doc;
   const a = doc.lineAt(start.selection.main.head).number;
   const b = doc.lineAt(tr.selection.main.head).number;
-  if (Math.abs(b - a) < 2) return tr;
-  const [lo, hi] = a < b ? [a, b] : [b, a];
+  if (a === b) return tr;
+  const down = b > a;
+  const [lo, hi] = down ? [a, b] : [b, a];
   let hidden = 0;
   let target: number | null = null;
+  /** Whether the move landed inside a block that ends (or starts) the note. */
+  let inside = false;
   for (const field of start.facet(blockFields)) {
-    start.field(field, false)?.between(doc.line(lo).to, doc.line(hi).from, (from, to, d) => {
+    start.field(field, false)?.between(doc.line(lo).from, doc.line(hi).to, (from, to, d) => {
       if (!d.spec.block || from === to) return;
       const first = doc.lineAt(from).number;
       const last = doc.lineAt(to).number;
-      if (first <= lo || last >= hi) return;
-      hidden += last - first + 1;
-      if (b > a) target = target === null ? doc.line(first).from : Math.min(target, doc.line(first).from);
+      // Past it, or inside it when it ends the note (going down) or starts it (going up).
+      const past = down ? first > a && last < b : last < a && first > b;
+      const into = stepping && (down ? first > a && last === doc.lines && first <= b && last >= b : last < a && first === 1 && first <= b && last >= b);
+      if (!past && !into) return;
+      inside ||= into;
+      hidden += Math.min(last, hi) - Math.max(first, lo) + 1;
+      if (down) target = target === null ? doc.line(first).from : Math.min(target, doc.line(first).from);
       else target = target === null ? doc.line(last).from : Math.max(target, doc.line(last).from);
     });
   }
-  // Only a move of one visible line: a jump further (G, a search) goes where it was sent.
-  if (target === null || Math.abs(b - a) - hidden !== 1) return tr;
+  // Only a one-step move: one visible line on, past blocks, or straight into a block at the note's end with
+  // no line between. A jump further (G, gg, a count, a search) goes where it was sent.
+  const plain = hi - lo - hidden;
+  if (target === null || plain !== (inside ? 0 : 1)) return tr;
   const main = tr.selection.main;
   return [tr, { selection: EditorSelection.single(main.empty ? target : main.anchor, target), sequential: true }];
 });
@@ -208,5 +240,5 @@ export function blockPreview(source: BlockPreviewSource): Extension {
       tr.docChanged || tr.selection || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? buildBlocks(tr.state, source) : blocks,
     provide: (f) => EditorView.decorations.from(f),
   });
-  return [field, blockFields.of(field), stepIntoBlocks, blockKeys];
+  return [field, blockFields.of(field), stepIntoBlocks, watchSteps, blockKeys];
 }

@@ -139,6 +139,54 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
+  // Math, a table, a code block and math again, then a task and a table that ends the note.
+  const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";
+  await app.writeFile("Edges.md", text);
+  await app.goto({}, "Edges");
+  await app.idle();
+  await app.call("cursor", 1, 1);
+  const lines: number[] = [];
+  for (let i = 0; i < 16; i++) {
+    lines.push((await where(app)).line);
+    await app.keys(i < 15 ? "j" : "");
+  }
+  for (let i = 0; i < 15; i++) {
+    await app.keys("k");
+    lines.push((await where(app)).line);
+  }
+  const numbers = Array.from({ length: 16 }, (_, i) => i + 1);
+  assert.deepEqual(lines, [...numbers, ...numbers.reverse().slice(1)]);
+});
+
+browserTest(h, "around a table or math block at a note's start or end, G, gg, counts and clicks go where they're sent", { scenario: "empty", viewport: { width: 1200, height: 1000 } }, async (app) => {
+  const line = async (keys: string, from: number) => {
+    await app.call("cursor", from, 1);
+    await app.keys(keys);
+    await app.page.waitForTimeout(100);
+    return (await where(app)).line;
+  };
+  for (const [kind, block] of [["table", ["| a | b |", "|--|--|", "| 1 | 2 |"]], ["math", ["$$", "x^2", "$$"]]] as const) {
+    await app.writeFile("End.md", ["top", "", ...block].join("\n"));
+    await app.goto({}, "End");
+    await app.idle();
+    assert.deepEqual([await line("G", 1), await line("G", 2), await line("3j", 1), await line("5j", 1), await line("2j", 2), await line("3j", 2), await line("j", 2)], [5, 5, 5, 5, 5, 5, 3], `${kind} at the end: G, G, 3j, 5j, 2j, 3j, j`);
+    // A mark named j: 'j goes to its line, not one step.
+    await app.call("cursor", 5, 1);
+    await app.keys("mj");
+    assert.equal(await line("'j", 2), 5, `${kind} at the end: 'j`);
+    await app.writeFile("Start.md", [...block, "", "end"].join("\n"));
+    await app.goto({}, "Start");
+    await app.idle();
+    assert.deepEqual([await line("gg", 5), await line("gg", 4), await line("2k", 5), await line("3k", 5), await line("5k", 5), await line("2k", 4), await line("3k", 4), await line("k", 4)], [1, 1, 1, 1, 1, 1, 1, 3], `${kind} at the start: gg, gg, 2k, 3k, 5k, 2k, 3k, k`);
+    // A click on the drawn block puts the cursor where it was clicked: in the block, which shows its markdown.
+    await app.call("cursor", 5, 1);
+    await app.page.locator(kind === "table" ? ".tab-editor:not([hidden]) .cm-content td" : ".tab-editor:not([hidden]) .cm-content .katex").first().click();
+    await app.page.waitForTimeout(100);
+    assert.equal((await where(app)).line, 1, `a click on the ${kind}`);
+  }
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
@@ -166,4 +214,17 @@ browserTest(h, "the settings editor's User and Workspace each show their own val
   assert.equal(await chips.locator(".badge", { hasText: "Modified" }).count(), 0, "not set in workspace settings");
   await app.settings.switchTo("User");
   assert.equal(await chips.locator(".badge", { hasText: "Modified" }).count(), 1);
+});
+
+browserTest(h, "with reduced motion asked for, nothing on screen pulses or flashes in a loop", { scenario: "empty" }, async (app) => {
+  await app.page.emulateMedia({ reducedMotion: "reduce" });
+  const looping = await app.page.evaluate(() =>
+    [...document.querySelectorAll("*")].flatMap((e) => {
+      const s = getComputedStyle(e);
+      // The text cursor blinks, as the system's own does.
+      if (e.closest(".cm-cursorLayer")) return [];
+      return s.animationName !== "none" && s.animationIterationCount === "infinite" ? [e.id || e.className.toString()] : [];
+    }),
+  );
+  assert.deepEqual(looping, []);
 });

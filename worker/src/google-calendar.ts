@@ -232,9 +232,16 @@ export class GoogleCalendar implements Adapter {
    * (all of them the first time, or when Google says the token's too old).
    */
   async sync(io: SyncIO): Promise<void> {
-    const listed = await this.call("GET", "/users/me/calendarList", { query: { maxResults: "250" } });
-    if (!listed.ok) throw new Error(`Google Calendar answered ${listed.status} listing calendars`);
-    const entries = ((await listed.json()) as { items?: GoogleCalendarEntry[] }).items ?? [];
+    // Every page of the list: a calendar left off it would go, with its events.
+    const entries: GoogleCalendarEntry[] = [];
+    let page: string | undefined;
+    do {
+      const listed = await this.call("GET", "/users/me/calendarList", { query: { maxResults: "250", ...(page ? { pageToken: page } : {}) } });
+      if (!listed.ok) throw new Error(`Google Calendar answered ${listed.status} listing calendars`);
+      const body = (await listed.json()) as { items?: GoogleCalendarEntry[]; nextPageToken?: string };
+      entries.push(...(body.items ?? []));
+      page = body.nextPageToken;
+    } while (page);
     const calendars = entries.filter((c) => c.accessRole !== "freeBusyReader");
     for (const c of calendars) this.zones.set(collectionOf(c), c.timeZone ?? "UTC");
     io.calendars(calendars.map(calendarFromGoogle));

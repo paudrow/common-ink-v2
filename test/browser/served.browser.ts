@@ -40,3 +40,11 @@ test("pages, the API and uploads tell the browser to use HTTPS for a year", asyn
     assert.equal((await fetch(`${h.base}${path}`)).headers.get("Strict-Transport-Security"), "max-age=31536000", path);
   }
 });
+
+test("redirects and the sandbox route ask for HTTPS too", async () => {
+  const v1 = await fetch(`${h.base}/s/abc`, { redirect: "manual" });
+  assert.equal(v1.status, 302);
+  for (const res of [v1, await fetch(`${h.base}/sandbox/host`), await fetch(`${h.base}/sandbox/host.js`)]) {
+    assert.equal(res.headers.get("Strict-Transport-Security"), "max-age=31536000", res.url);
+  }
+});
