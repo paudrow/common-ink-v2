@@ -486,9 +486,9 @@ export const OPERATIONS = {
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
   }),
-  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
+  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today: string }>({
     description:
-      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. `today` is the person's day (YYYY-MM-DD) where they are, which is what done: and last: say. Both changes are yours; undo them together with both revisions.",
     input: {
       type: "object",
       properties: {
@@ -496,17 +496,17 @@ export const OPERATIONS = {
         line: { type: "integer", minimum: 1, description: "The task's line number, from 1" },
         text: { type: "string", description: "The task's line as you read it, so a note that changed meanwhile isn't ticked in the wrong place" },
         done: { type: "boolean", description: "false to untick it" },
-        today: { type: "string", description: "The person's day, YYYY-MM-DD" },
+        today: { type: "string", description: "The person's day where they are, YYYY-MM-DD" },
       },
-      required: ["path", "line"],
+      required: ["path", "line", "today"],
     },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const line = count(a.line);
       if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
       if (!line) return fail('"line" must be the task\'s line number, from 1');
-      if (a.today !== undefined && (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today))) return fail('"today" must be a day like 2026-10-05');
-      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today as string | undefined });
+      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s day, like 2026-10-05: the tick writes it as done: and last:');
+      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
       try {
