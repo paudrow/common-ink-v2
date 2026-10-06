@@ -229,11 +229,12 @@ function fetchOptions(value: unknown): { method?: string; headers?: Record<strin
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
   readonly broker: PermissionBroker;
-  private handlers = new Map<string, () => unknown>();
+  /** Each command's code, by id, with the extension that registered it: a command runs only its own extension's. */
+  private handlers = new Map<string, { owner: string; run: () => unknown }>();
   private renderers = new Map<string, ViewRenderer>();
   private describers: Array<(change: Change) => string | null> = [];
   /** How each embed language draws, once its extension has said. */
-  private embedDrawers = new Map<string, (el: HTMLElement, embed: Embed, tools: HTMLElement) => Updater | null>();
+  private embedDrawers = new Map<string, { owner: string; draw: (el: HTMLElement, embed: Embed, tools: HTMLElement) => Updater | null }>();
   /** How to give each drawn embed new arguments or body in place, for the ones whose extension can take them. */
   private updaters = new WeakMap<HTMLElement, Updater>();
   /** How each URL embed draws, by its id. */
@@ -359,18 +360,20 @@ export class ExtensionRuntime {
   }
 
   /** Run a command for an extension's status item: a sandboxed one's runs only its own, checked as it's clicked. */
-  runFor(owner: string, command: string): void {
+  runFor(owner: string, command: string, by: "app" | "sandbox" = "app"): void {
     const m = this.host.on().find((x) => x.id === owner);
-    if (m && this.bindable(m)(command)) this.app.commands.run(command);
+    if (m && this.bindable(m)(command)) this.app.commands.run(command, by);
   }
 
   /**
    * The extension that draws an embed: one that runs in the page (a built-in, or one you trust) before a
-   * sandboxed one, then the first that declares it. A sandboxed extension draws only the embeds it's that for.
+   * sandboxed one, even while it's off on this device (its embed then says so), then the first that
+   * declares it. A sandboxed extension draws only the embeds it's that for.
    */
   private embedOwner(language: string): ExtensionManifest | undefined {
-    const declaring = this.host.on().filter((m) => m.contributes.embeds.some((e) => e.language === language));
-    return declaring.find((m) => !this.sandboxed(m)) ?? declaring[0];
+    const declares = (r: ExtensionRecord) => r.manifest.contributes.embeds.some((e) => e.language === language);
+    const page = this.host.records.find((r) => r.tier === "page" && (r.state === "inactive" || r.state === "active" || r.state === "unmet") && declares(r));
+    return page?.manifest ?? this.host.on().find((m) => m.contributes.embeds.some((e) => e.language === language));
   }
 
   /** What an extension that's on may bind or list: a sandboxed one, only commands that went in for it. */
@@ -380,19 +383,24 @@ export class ExtensionRuntime {
 
   /** Keybindings extensions that are on declare, before the user's and the workspace's. */
   keybindings(): Keybinding[] {
-    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k && this.bindable(m)(k.command) ? [{ key: k.key, command: k.command }] : [])));
+    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k && this.bindable(m)(k.command) ? [{ key: k.key, command: k.command, ...this.by(m) }] : [])));
   }
 
   /** Commands extensions add to a menu, with their titles. */
-  menu(id: MenuId): Array<{ command: string; title: string }> {
+  menu(id: MenuId): Array<{ command: string; title: string; by?: "sandbox" }> {
     return this.host.on().flatMap((m) =>
-      (m.contributes.menus[id] ?? []).filter((item) => this.bindable(m)(item.command)).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })),
+      (m.contributes.menus[id] ?? []).filter((item) => this.bindable(m)(item.command)).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command, ...this.by(m) })),
     );
   }
 
   /** Every keybinding in effect, with the Vim sequences extensions declare (never a sandboxed one's). */
-  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }> {
-    const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key }] : []));
+  /** Who what an extension's manifest contributes (a key, a menu item, a status item) runs its command for: a sandboxed one's runs for it, so app-only commands refuse. */
+  private by(m: ExtensionManifest): { by?: "sandbox" } {
+    return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: "sandbox" } : {};
+  }
+
+  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: "sandbox" }> {
+    const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key, ...(k.by ? { by: k.by } : {}) }] : []));
     const vim = this.host
       .on()
       .filter((m) => !this.sandboxed(m))
@@ -440,13 +448,15 @@ export class ExtensionRuntime {
           this.broker.cause(m.id, { kind: "command", title: c.title });
           // Started already, its answer comes back at once: false declines a key (commands.runForKey).
           const handler = this.handlers.get(c.command);
-          return handler ? handler() : this.runCommand(c.command);
+          return handler?.owner === m.id ? handler.run() : this.runCommand(m, c.command);
         },
       };
+      // Code another extension registered under this id, while it was theirs, isn't this one's.
+      if (this.handlers.get(c.command)?.owner !== m.id) this.handlers.delete(c.command);
       this.app.commands.register(command);
       this.owners.command.set(c.command, { owner: m.id, is: command });
     }
-    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, command: item.command !== undefined && this.bindable(m)(item.command) ? item.command : undefined, owner: m.id })));
+    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, command: item.command !== undefined && this.bindable(m)(item.command) ? item.command : undefined, owner: m.id, ...this.by(m) })));
     for (const view of Object.values(m.contributes.views).flat()) {
       if (sandboxed && (this.app.workbench.viewIds().includes(view.id) || this.app.commands.has(`${view.id}.openInWindow`)) && !this.owns(m, "view", view.id)) continue;
       const declared: View = {
@@ -542,7 +552,8 @@ export class ExtensionRuntime {
     }
     if (drawer) this.broker.cause(drawer.id, { kind: "embed", title: drawer.contributes.embeds.find((e) => e.language === embed.language)!.title, note: embed.note });
     await this.activateFor(`onEmbed:${embed.language}`, declares);
-    const draw = this.embedDrawers.get(embed.language);
+    const put = this.embedDrawers.get(embed.language);
+    const draw = drawer && put?.owner === drawer.id ? put.draw : undefined;
     if (draw) {
       const updater = draw(el, embed, tools);
       if (updater) this.updaters.set(el, updater);
@@ -655,9 +666,14 @@ export class ExtensionRuntime {
     if (owner && owner.state === "inactive") await this.host.activate(owner);
   }
 
-  private async runCommand(id: string): Promise<unknown> {
-    if (!this.handlers.has(id)) await this.activateFor(`onCommand:${id}`, (m) => m.contributes.commands.some((c) => c.command === id));
-    const run = this.handlers.get(id);
+  /** Run a command `m` declared, starting it first if it hasn't registered its code yet. */
+  private async runCommand(m: ExtensionManifest, id: string): Promise<unknown> {
+    const own = () => {
+      const handler = this.handlers.get(id);
+      return handler?.owner === m.id ? handler.run : undefined;
+    };
+    if (!own()) await this.activateFor(`onCommand:${id}`, (x) => x === m);
+    const run = own();
     if (!run) this.app.workbench.notice(`The command "${id}" isn't available: its extension is off, or didn't start.`);
     return run?.();
   }
@@ -779,9 +795,9 @@ export class ExtensionRuntime {
       commands: {
         register: (id, run) => {
           if (!m.contributes.commands.some((c) => c.command === id)) throw new Error(`Command "${id}" isn't declared in ${m.id}'s contributes.commands`);
-          this.handlers.set(id, guard(run));
+          this.handlers.set(id, { owner: m.id, run: guard(run) });
         },
-        run: (id) => app.commands.run(id),
+        run: (id, by) => app.commands.run(id, by === "sandbox" ? "sandbox" : "app"),
         all: () => this.allCommands(),
         shortcut: (id) => this.shortcut(id),
         keybindings: () => this.allKeybindings(),
@@ -849,9 +865,9 @@ export class ExtensionRuntime {
       embeds: {
         register: (language, provider) => {
           if (!m.contributes.embeds.some((e) => e.language === language)) throw new Error(`Embed "${language}" isn't declared in ${m.id}'s contributes.embeds`);
-          this.embedDrawers.set(
-            language,
-            "resolve" in provider
+          this.embedDrawers.set(language, {
+            owner: m.id,
+            draw: "resolve" in provider
               ? (el, embed, tools) =>
                   this.framed(el, m, embed, tools, (box, hooks, first) => {
                     const handle = this.webviewHandle(m, `embed:${language}`, box, hooks);
@@ -862,7 +878,7 @@ export class ExtensionRuntime {
                   drawSafely(el, `${m.name}'s ${language} embed`, () => provider.render(el, embed), failed);
                   return provider.update ? (next) => (guard(() => provider.update!(el, next))(), true) : null;
                 },
-          );
+          });
         },
       },
       media: (() => {
@@ -1028,12 +1044,12 @@ export class ExtensionRuntime {
         switch (method) {
           case "commands.register":
             if (!this.owns(m, "command", a)) throw new Error(`Command "${a}" isn't one of ${m.name}'s: declare it in contributes.commands, named under "${m.id}."`);
-            this.handlers.set(a, () => host.invoke(`command:${a}`).catch(failed));
+            this.handlers.set(a, { owner: m.id, run: () => host.invoke(`command:${a}`).catch(failed) });
             return;
           case "commands.run":
             // Only its own: an app command acts as you, on whatever is open.
             if (!this.owns(m, "command", a)) throw new Error(`${m.name} can run only its own commands`);
-            return app.commands.run(a);
+            return app.commands.run(a, "sandbox");
           case "commands.all":
             return this.allCommands();
           case "commands.shortcut":
@@ -1108,14 +1124,14 @@ export class ExtensionRuntime {
             if (this.embedOwner(a) !== m) throw new Error(`Embed "${a}" isn't one of ${m.name}'s to draw: declare it in contributes.embeds, and no other extension may draw it`);
             // Whether its provider takes new arguments in place: said as it registers, since a change can't wait on the frame to answer.
             const updates = b === true;
-            this.embedDrawers.set(a, (el, embed, tools) =>
+            this.embedDrawers.set(a, { owner: m.id, draw: (el, embed, tools) =>
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
                 keep(view);
                 void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
-            );
+            });
             return;
           }
           case "state.get":

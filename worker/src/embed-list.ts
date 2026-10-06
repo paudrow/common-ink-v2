@@ -60,17 +60,20 @@ export async function embedFrameHosts(store: Store, person: string | null): Prom
   const off = await idsIn(store, "extensions.disabled", person);
   const trusted = await idsIn(store, "extensions.trusted", person);
   const manifests = new Map<string, ExtensionManifest>(BUILT_IN_MANIFESTS.map((m) => [m.id, m]));
-  // A copy in the workspace runs in a built-in's place: trusted, in the page; or else sandboxed, framing nothing.
+  // A trusted copy runs in a built-in's place, in the page. An untrusted copy of a built-in leaves the built-in
+  // running as it shipped; any other untrusted extension is sandboxed, and frames nothing.
   for (const [id, m] of await workspaceManifests(store)) {
     if (trusted.has(id)) manifests.set(id, m);
-    else manifests.delete(id);
+    else if (!BUILT_IN_MANIFESTS.some((b) => b.id === id)) manifests.delete(id);
   }
   return [...new Set([...manifests.values()].filter((m) => !off.has(m.id)).flatMap((m) => m.contributes.urlEmbeds.flatMap((e) => e.frameHosts)))].sort();
 }
 
 export async function listEmbeds(store: Store, person: string | null): Promise<EmbedType[]> {
-  // A workspace extension with a built-in's id runs in its place.
-  const manifests = new Map<string, ExtensionManifest>([...BUILT_IN_MANIFESTS.map((m) => [m.id, m] as const), ...(await workspaceManifests(store))]);
+  // A workspace extension with a built-in's id runs in its place once it's trusted; until then the built-in does.
+  const trusted = await idsIn(store, "extensions.trusted", person);
+  const copies = [...(await workspaceManifests(store))].filter(([id]) => trusted.has(id) || !BUILT_IN_MANIFESTS.some((b) => b.id === id));
+  const manifests = new Map<string, ExtensionManifest>([...BUILT_IN_MANIFESTS.map((m) => [m.id, m] as const), ...copies]);
   const off = await idsIn(store, "extensions.disabled", person);
   return [...manifests.values()].flatMap((m) => m.contributes.embeds.map((e) => ({ ...e, extension: m.id, on: !off.has(m.id), example: exampleOf(e) })));
 }

@@ -144,7 +144,7 @@ export default {
     // Every extension's Vim sequences, this one's included, as normal-mode keys that run their commands.
     // Vim's own Ctrl-W in normal mode does nothing, and as a whole key it would swallow Ctrl-W h and the rest.
     Vim.unmap("<C-w>", "normal");
-    for (const { vim: keys, command, operator } of ctx.commands.keybindings()) {
+    for (const { vim: keys, command, operator, by } of ctx.commands.keybindings()) {
       if (!keys) continue;
       const name = `run:${command}`;
       if (operator) {
@@ -152,7 +152,7 @@ export default {
         // paragraph, or the visual selection), the command acts on the selection, and the cursor stays.
         Vim.defineOperator(name, (cm: CM, _args: unknown, ranges: ReadonlyArray<{ anchor: Pos; head: Pos }>) => {
           const doc = cm.cm6.state.doc;
-          ctx.commands.run(command);
+          ctx.commands.run(command, by);
           // A command that put the cursor somewhere (a list item moved by the outline's rules) keeps it there.
           if (cm.cm6.state.doc !== doc && cm.cm6.state.selection.main.empty) return cm.getCursor();
           // Nothing changed (the outline's rules refused), or the motion's range is still selected (a
@@ -163,7 +163,7 @@ export default {
         Vim.mapCommand(keys, "operator", name, {}, {});
         continue;
       }
-      Vim.defineAction(name, () => void ctx.commands.run(command));
+      Vim.defineAction(name, () => void ctx.commands.run(command, by));
       Vim.mapCommand(keys, "action", name, {}, { context: "normal" });
     }
   },
