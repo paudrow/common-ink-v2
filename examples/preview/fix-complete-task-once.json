@@ -1,0 +1,7 @@
+{
+  "pr": 74,
+  "title": "complete_task ticks and logs in one step",
+  "steps": [
+    "Agents only. From an MCP client on this Preview's /mcp, call complete_task twice at once on the same repeating task with its `text`: one call ticks it, the other says the line isn't that task any more, and today's daily note has one ## Done line for it."
+  ]
+}

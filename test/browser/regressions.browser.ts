@@ -158,6 +158,15 @@ browserTest(h, "with storage blocked, edits waiting to be sent say they're lost 
   await app.page.context().setOffline(false);
 });
 
+browserTest(h, "going offline with nothing to send says Offline at once, and back online it goes at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+  await app.idle();
+  await app.page.context().setOffline(true);
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline", null, { timeout: 1000 });
+  await app.page.context().setOffline(false);
+  // Nothing waiting to be sent, and nothing else asking the server: the page checks as it's back.
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "", null, { timeout: 3000 });
+});
+
 browserTest(h, "an indent the outline refuses leaves the cursor where Vim leaves a shift, not past the lines it covered", { scenario: "empty" }, async (app) => {
   const L = "# L\n\n- one\n- two\n- three\n\nend\n";
   const CB = "# C\n\n```\ncode one\ncode two\n```\n\nend\n";
@@ -362,6 +371,45 @@ browserTest(h, "restoring a kept edit that changed the same line as the note sin
   assert.equal(await app.readFile("Trip.md"), "# Trip to Paris\n- a\n");
 });
 
+browserTest(h, "an edit sent by beacon as the page went, and kept as a draft too, lands once", { scenario: "empty" }, async (app) => {
+  for (let run = 0; run < 4; run++) {
+    await app.writeFile("Trip.md", "# Trip\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 1, 7);
+    // The editor's own saves held back: only the beacon, and the draft kept as the page goes, carry the edit.
+    await app.call("slow", "^PUT /api/file", 60_000);
+    await app.keys(`o- packed ${run}<Esc>`);
+    await app.page.goto("about:blank");
+    await app.page.waitForTimeout(500);
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(800);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), `# Trip\n- packed ${run}\n`, `run ${run}: once`);
+  }
+});
+
+browserTest(h, "an edit undone before it was saved isn't brought back by a reload", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 3);
+  // Nothing reaches the server while this runs: the edit is only kept in this browser, as it's typed.
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("dw");
+  await app.page.waitForTimeout(300);
+  await app.keys("u");
+  await app.page.waitForTimeout(300);
+  await app.reload();
+  await app.open("Trip");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n");
+  assert.equal(await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Trip" }).count(), 1);
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");
@@ -403,7 +451,7 @@ browserTest(h, "a sign-out typed in the address bar straight after typing leaves
   await app.goto({}, "Trip");
   await app.idle();
   await app.call("cursor", 1, 7);
-  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.call("slow", "^(PUT /api/file|POST /api/file/beacon)", 60_000);
   await app.keys("o- private<Esc>");
   // The page can't see where it's going: it keeps its draft as it goes, after sign-out cleared storage.
   await app.page.goto(`${app.base}/auth/sign-out`);
@@ -439,6 +487,27 @@ browserTest(h, "a note deleted elsewhere while it's open isn't written back when
   await app.idle();
   const after = await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`);
   assert.equal(((await after.json()) as { revision: number; text: string }).text ?? "", "");
+});
+
+browserTest(h, "an edit that clashes with someone else's is still there, clashing, after a reload", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  const clashing = async () => ((await app.state()) as { pending: Array<{ path: string; status: string }> }).pending.some((p) => p.path === "Plan.md" && p.status === "conflict");
+  for (let i = 0; i < 40 && !(await clashing()); i++) await app.page.waitForTimeout(250);
+  assert.ok(await clashing(), "it clashes");
+  await app.call("cursor", 5, 1);
+  await app.keys("A too<Esc>");
+  await app.page.waitForTimeout(300);
+  await app.reload();
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta mine" }).waitFor();
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "gamma too" }).waitFor();
+  assert.ok(await clashing(), "it still clashes");
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n", "theirs is what the server has");
 });
 
 browserTest(h, "Vim's visual block inserts, appends and deletes on every line it covers, lists too", { scenario: "empty" }, async (app) => {
@@ -498,6 +567,104 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+  await button.waitFor();
+  const pressed = await button.elementHandle();
+  const box = (await button.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  // A file changes while the button is held: the panel would be drawn again under the pointer.
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForTimeout(800);
+  const same = await pressed!.evaluate((b) => b.isConnected);
+  await app.page.mouse.up();
+  await app.page.getByText("Install an extension from a URL").waitFor({ timeout: 3000 });
+  assert.ok(same, "the button held is still the one on the page");
+});
+
+browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, A, a block's I and a . each go in one step", { scenario: "empty" }, async (app) => {
+  const START = "# U\n\nabcd\nefgh\nijkl\nmnop\n";
+  // Each key more than half a second after the last: further apart than edits are joined otherwise.
+  const slowly = async (keys: string[]) => {
+    for (const k of keys) {
+      await app.keys(k);
+      await app.page.waitForTimeout(600);
+    }
+  };
+  for (const [name, keys, after] of [
+    ["cw", ["cw", "Z", "Y", "<Esc>", "u"], START],
+    ["o", ["o", "H", "i", "<Esc>", "u"], START],
+    ["A", ["A", "!", "?", "<Esc>", "u"], START],
+    ["a block's I", ["<C-v>jjI", "X", "Y", "<Esc>", "u"], START],
+    // Enter in insert mode is typing too.
+    ["A…<CR>…", ["A", "x", "<CR>", "y", "<Esc>", "u"], START],
+    ["cw…<CR>…", ["cw", "Z", "<CR>", "Y", "<Esc>", "u"], START],
+    ["o…<CR>…", ["o", "H", "<CR>", "i", "<Esc>", "u"], START],
+    ["S with two Enters", ["S", "a", "<CR>", "b", "<CR>", "c", "<Esc>", "u"], START],
+    // The second change, made by ., is the step u takes back.
+    [".", ["cwZ<Esc>", "j", ".", "u"], "# U\n\naZ\nefgh\nijkl\nmnop\n"],
+    // An arrow in insert mode starts a new step, as in Vim.
+    ["an arrow inside", ["A", "x", "<Left>", "y", "<Esc>", "u"], "# U\n\nabcdx\nefgh\nijkl\nmnop\n"],
+    // Each normal-mode change is its own step.
+    ["x, x", ["x", "x", "u"], "# U\n\nacd\nefgh\nijkl\nmnop\n"],
+  ] as const) {
+    await app.writeFile("U.md", START);
+    await app.open("U");
+    await app.idle();
+    await app.call("cursor", 3, 2);
+    await app.keys("<Esc>");
+    await slowly([...keys]);
+    await app.idle();
+    for (let i = 0; i < 20 && (await app.readFile("U.md")) !== after; i++) await app.page.waitForTimeout(250);
+    assert.equal(await app.readFile("U.md"), after, name);
+  }
+});
+
+browserTest(h, "in a list, Enter continuing it and Enter ending it are part of the change u takes back", { scenario: "empty" }, async (app) => {
+  const START = "# L\n\n- one\n- two\n";
+  for (const [name, keys] of [
+    ["a bullet continued", ["A", "<CR>", "t", "h", "r", "e", "e", "<Esc>", "u"]],
+    ["the list ended", ["A", "<CR>", "<CR>", "a", "f", "t", "e", "r", "<Esc>", "u"]],
+  ] as const) {
+    await app.writeFile("L.md", START);
+    await app.open("L");
+    await app.idle();
+    await app.call("cursor", 4, 1);
+    await app.keys("<Esc>");
+    for (const k of keys) {
+      await app.keys(k);
+      await app.page.waitForTimeout(600);
+    }
+    await app.idle();
+    for (let i = 0; i < 20 && (await app.readFile("L.md")) !== START; i++) await app.page.waitForTimeout(250);
+    assert.equal(await app.readFile("L.md"), START, name);
+  }
+});
+
+browserTest(h, "someone else's change arriving while you type isn't part of your undo step", { scenario: "empty" }, async (app) => {
+  await app.writeFile("U.md", "# U\n\nabcd\nefgh\nijkl\nmnop\n");
+  await app.open("U");
+  await app.idle();
+  await app.call("cursor", 3, 1);
+  await app.keys("<Esc>A");
+  await app.keys("x");
+  await app.idle();
+  const { revision } = (await (await app.page.context().request.get(`${app.base}/api/file?path=U.md`)).json()) as { revision: number };
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "U.md", text: "# U\n\nabcdx\nefgh\nijkl\nMNOP\n", base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "MNOP" }).waitFor();
+  await app.page.waitForTimeout(600);
+  await app.keys("y<Esc>u");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("U.md")).startsWith("# U\n\nabcd\n"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "yours went in one step; theirs stays");
+  await app.keys("u");
+  await app.idle();
+  await app.page.waitForTimeout(500);
+  assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "and u has nothing of theirs to take back");
+});
+
 /** The files every window's tabs show, in order. */
 async function tabFiles(app: App): Promise<string[]> {
   const state = (await app.state()) as { layout: { root: unknown } };
@@ -538,6 +705,35 @@ browserTest(h, "a drag from outside the page opens a note at most: crafted drops
   assert.equal(await app.readFile("Welcome.md"), before);
 });
 
+browserTest(h, "a tab dragged from one window of the app to another opens its note there", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  await app.open("Shopping");
+  await app.idle();
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Chores");
+  await other.idle();
+  const before = await tabFiles(other);
+  // The drag as the browser makes it from the first window's tab, caught before it leaves (CDP).
+  const from = await app.page.context().newCDPSession(app.page);
+  await from.send("Input.setInterceptDrags", { enabled: true });
+  const caught = new Promise<{ data: unknown }>((done) => from.once("Input.dragIntercepted", done as never));
+  const tab = (await app.page.locator(".group .tabs .tab", { hasText: "Shopping" }).boundingBox())!;
+  const [x, y] = [tab.x + tab.width / 2, tab.y + tab.height / 2];
+  await from.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1, buttons: 1 });
+  for (let i = 1; i <= 5; i++) await from.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + i * 8, y: y + i * 6, button: "left", buttons: 1 });
+  const { data } = await caught;
+  await from.send("Input.setInterceptDrags", { enabled: false });
+  await from.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  // Dropped on the other window's tab bar.
+  const to = await other.page.context().newCDPSession(other.page);
+  const bar = (await other.page.locator(".group .tabs").first().boundingBox())!;
+  for (const type of ["dragEnter", "dragOver", "dragOver", "drop"] as const) await to.send("Input.dispatchDragEvent", { type, x: bar.x + bar.width - 20, y: bar.y + bar.height / 2, data: data as never });
+  await other.page.waitForTimeout(300);
+  await other.idle();
+  // It shows there (the windows share their tabs, so it may have been one already).
+  assert.equal((await other.call<{ path: string } | null>("where"))?.path, "Shopping.md", `tabs before: ${before.join(", ")}`);
+  await other.page.close();
+});
+
 browserTest(h, "a tab dropped on another window's editor opens there, and its name isn't typed into the note", { scenario: "tasks", open: "Welcome" }, async (app) => {
   await app.keys(":vs Chores<CR>");
   await app.idle();
@@ -555,6 +751,39 @@ browserTest(h, "a tab dropped on another window's editor opens there, and its na
   assert.deepEqual((await tabFiles(app)).filter((f) => f === "Chores.md" || f === "Welcome.md").sort(), ["Chores.md", "Welcome.md"]);
   assert.equal(await app.readFile("Welcome.md"), welcome);
   assert.equal(await app.readFile("Chores.md"), chores);
+});
+
+browserTest(h, "a click in an extension's details lands though they're drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  await app.page.locator(".extensions-view .extension-open", { hasText: /^Lists/ }).first().click();
+  const source = app.page.locator(".extension-details button", { hasText: "Source" });
+  await source.waitFor();
+  const pressed = await source.elementHandle();
+  const box = (await source.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForTimeout(800);
+  const same = await pressed!.evaluate((b) => b.isConnected);
+  await app.page.mouse.up();
+  assert.ok(same, "the button held is still the one on the page");
+  // Source closes the details and opens the extension's code.
+  await app.page.locator(".extension-details").waitFor({ state: "detached", timeout: 3000 });
+});
+
+browserTest(h, "a press whose release the page never hears (another tab took it) doesn't hold the Extensions panel back", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+  await button.waitFor();
+  const pressed = await button.elementHandle();
+  const box = (await button.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere.
+  await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForFunction((b) => !b.isConnected, pressed, { timeout: 3000 });
+  await app.page.mouse.up();
 });
 
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
@@ -603,6 +832,16 @@ browserTest(h, "around a table or math block at a note's start or end, G, gg, co
     await app.page.waitForTimeout(100);
     assert.equal((await where(app)).line, 1, `a click on the ${kind}`);
   }
+});
+
+browserTest(h, "resizing a window with a Kanban board in it reports no ResizeObserver loop", { scenario: "tasks", open: "Boards tour.md" }, async (app) => {
+  await app.idle();
+  for (const keys of [":vs Boards tour<CR>", "<C-w>>", "<C-w>>", "<C-w><", "<C-w>=", "<C-w>H", "<C-w>c"]) {
+    await app.keys(`<Esc>${keys}`);
+    await app.page.waitForTimeout(300);
+  }
+  const problems = ((await app.state()) as { problems: Array<{ message: string }> }).problems.map((p) => p.message);
+  assert.deepEqual(problems, []);
 });
 
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
