@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attrsRecord, directiveText, parseAttrs, parseDirectiveLine, serializeAttrs, withValues } from "../web/src/directives.ts";
+import { attrsRecord, directiveText, LEAF, parseAttrs, parseDirectiveLine, serializeAttrs, withValues } from "../web/src/directives.ts";
 
 test("a directive's attributes read in order, quoted or bare, and a bare key is true", () => {
   const attrs = parseAttrs(`duration=25m label="Deep work" note='a "quote"' muted`);
@@ -32,4 +32,30 @@ test("a value with braces in it, as an embed's form may write one, reads back as
     assert.deepEqual(attrsRecord(parseDirectiveLine(line)?.attrs ?? []), { duration: "25m", label }, line);
   }
   assert.deepEqual(attrsRecord(parseDirectiveLine(`:::kanban{done='Done }'}`)?.attrs ?? []), { done: "Done }" });
+});
+
+test("a directive is alone on its line: prose with directives or braces in it stays text, so a settings save can't rewrite it", () => {
+  for (const line of [
+    `::timer{label="a"} and ::timer{label="b"}`,
+    "::timer{duration=5m} remember {this}",
+    "::x{a=1} trailing }",
+    "::x{a=1}}",
+    "::x{a=1} {b=2}",
+    ":::kanban{done=Shipped} notes {wip}",
+    "::query{q=don't}",
+  ]) {
+    assert.equal(parseDirectiveLine(line), null, line);
+  }
+  assert.deepEqual(attrsRecord(parseDirectiveLine(`::timer{label="}}}{{{"}`)?.attrs ?? []), { label: "}}}{{{" });
+  assert.deepEqual(attrsRecord(parseDirectiveLine(`::timer{label='a}b'}  `)?.attrs ?? []), { label: "a}b" });
+  assert.equal(parseDirectiveLine("::timer{}")?.name, "timer");
+});
+
+test("reading a long line that only nearly makes a directive takes moments, whatever's in it", () => {
+  const n = 100_000;
+  for (const line of ["::x{" + '"'.repeat(n), "::x{" + "}".repeat(n) + "x", '::x{a="' + "}".repeat(n), "::x{" + "a='".repeat(n / 3) + "}", "::x{" + " ".repeat(n)]) {
+    const start = performance.now();
+    LEAF.exec(line);
+    assert.ok(performance.now() - start < 200, `${line.slice(0, 12)}…: ${performance.now() - start}ms`);
+  }
 });
