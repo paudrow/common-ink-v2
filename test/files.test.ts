@@ -375,3 +375,32 @@ test("JavaScript is a file only as a workspace extension's code", () => {
   assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
   assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
 });
+
+test("history filtered by author finds its changes far back in a long history, newest first, and pages with before", () => {
+  const files = new Files(memoryDb());
+  const agent: Author = { kind: "agent", name: "Claude", by: "ada@example.com" };
+  const byAgent: number[] = [];
+  for (let i = 1; i <= 2500; i++) {
+    const result = files.write({ path: "Log.md" as FilePath, text: `${i}\n`, base: files.read("Log.md" as FilePath)?.revision ?? 0, author: i % 900 === 0 ? agent : ada });
+    if (i % 900 === 0) byAgent.push(result.status === "conflict" ? -1 : result.file.revision);
+  }
+  assert.deepEqual(byAgent, [900, 1800]);
+  const found = files.recent({ author: "agent:Claude:ada@example.com", limit: 5 });
+  assert.deepEqual(found.map((c) => c.revision), [1800, 900]);
+  assert.deepEqual(found.map((c) => authorKey(c.author)), ["agent:Claude:ada@example.com", "agent:Claude:ada@example.com"]);
+  assert.deepEqual(files.recent({ author: "agent:Claude:ada@example.com", before: 1800 }).map((c) => c.revision), [900]);
+  assert.deepEqual(files.recent({ path: "Log.md" as FilePath, limit: 3, before: 1001 }).map((c) => c.revision), [1000, 999, 998]);
+});
+
+test("history and diffs of more than a hundred changes at once work within a Durable Object's 100-parameter limit", () => {
+  const files = new Files(memoryDb());
+  const revisions: number[] = [];
+  for (let i = 1; i <= 150; i++) {
+    const result = files.write({ path: "Log.md" as FilePath, text: `${i}\n`, base: files.read("Log.md" as FilePath)?.revision ?? 0, author: ada });
+    if (result.status !== "conflict") revisions.push(result.file.revision);
+  }
+  assert.deepEqual(files.recent({ limit: 120 }).map((c) => c.revision), revisions.slice(-120).reverse());
+  assert.deepEqual(files.recent({ path: "Log.md" as FilePath, author: "user:ada@example.com", limit: 101 }).length, 101);
+  const [diff] = files.combined(revisions);
+  assert.deepEqual([diff.path, diff.runs.length, diff.runs[0].before, diff.runs[0].after], ["Log.md", 1, "", "150\n"]);
+});
