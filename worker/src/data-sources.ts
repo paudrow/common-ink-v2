@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -92,6 +92,8 @@ interface StateRow {
   conflict?: string;
   /** Sync tokens, by calendar. */
   tokens?: Record<string, string>;
+  /** Events a sync left as they were here, by calendar, for the next sync to read again. */
+  recheck?: Record<string, string[]>;
 }
 
 export class DataSources {
@@ -103,6 +105,8 @@ export class DataSources {
   private again: Promise<SourceState> | null = null;
   /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
   private refusals = new Map<number, string>();
+  /** The record whose edit is being pushed now, if any. */
+  private pushing: string | null = null;
 
   constructor(
     private db: Db,
@@ -373,6 +377,7 @@ export class DataSources {
 
   private async flushQueued(source: SourceId): Promise<string | null> {
     const adapter = this.adapters[source];
+    const conflicts = new Map<number, number>();
     for (;;) {
       const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
       if (!row) return null;
@@ -380,7 +385,14 @@ export class DataSources {
       const op = JSON.parse(row.op) as RecordOp;
       const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
       try {
-        const pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
+        this.pushing = row.path;
+        let pushed: Pushed;
+        try {
+          pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
+        } finally {
+          // In the same step as the row goes below, so no sync sees the row while nothing is pushing it.
+          this.pushing = null;
+        }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
           if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
@@ -388,9 +400,15 @@ export class DataSources {
         });
         this.setState(source, { error: undefined });
       } catch (err) {
-        if (err instanceof Conflict && row.attempts < 3) {
+        if (err instanceof Conflict) {
+          // Merged onto Google's version either way, so the next try has its etag. Three in one flush and it waits for the next.
+          const tries = (conflicts.get(row.seq) ?? 0) + 1;
+          conflicts.set(row.seq, tries);
           this.resolve(source, row, op, err);
-          continue;
+          if (tries < 3) continue;
+          this.db.run("UPDATE outbox SET error = ? WHERE seq = ?", err.message, row.seq);
+          this.setState(source, { error: err.message });
+          return err.message;
         }
         if (err instanceof Refusal) {
           this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
@@ -512,22 +530,29 @@ export class DataSources {
 
   /**
    * What a sync writes through. A record with an edit waiting to go out is left as it is: pushing the
-   * edit merges it with Google's version. One changed here since the sync began is left too, since the
-   * page it came on may be older than the change; its calendar's sync token then stays where it was,
-   * so the next sync reads it again.
+   * edit merges it with Google's version. One changed here since the sync began, or whose edit is
+   * being pushed now, is left too, since its page may be older or newer than that change; the next
+   * sync reads it again by id.
    */
   private syncIO(source: SourceId, since: Revision): SyncIO {
     const author = SYNC_AUTHOR[source];
-    const held = new Set<string>();
+    const left = new Map<string, Set<string>>();
+    const leave = (path: FilePath) => {
+      const key = keyOfPath(path);
+      if (key) left.set(key.collection, (left.get(key.collection) ?? new Set()).add(key.id));
+    };
     const pending = (path: FilePath) => {
-      if (this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length) return true;
+      if (this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length) {
+        if (path === this.pushing) leave(path);
+        return true;
+      }
       const changed = this.db.all(
         "SELECT 1 FROM changes WHERE path = ? AND revision > ? AND NOT (json_extract(author, '$.kind') = 'sync' AND json_extract(author, '$.source') = ?) LIMIT 1",
         path,
         since,
         author.source,
       ).length;
-      if (changed) held.add(keyOfPath(path)?.collection ?? "");
+      if (changed) leave(path);
       return changed > 0;
     };
     const write = (path: FilePath, text: string | null) => {
@@ -551,12 +576,15 @@ export class DataSources {
           for (const p of this.records.inCalendar(source, id)) dropEvent(p);
           write(path, null);
           this.setToken(source, id, null);
+          this.setRecheck(source, id, []);
         }
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
-        if (!held.has(calendar)) this.setToken(source, calendar, token);
+        this.setToken(source, calendar, token);
+        this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
+      recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
         const path = eventPath(event.calendar, event.id);
         if (pending(path)) return;
@@ -571,6 +599,13 @@ export class DataSources {
         for (const p of this.records.inCalendar(source, calendar)) if (!keep.has(keyOfPath(p)?.id ?? "")) dropEvent(p);
       },
     };
+  }
+
+  private setRecheck(source: SourceId, calendar: string, ids: string[]) {
+    const recheck = { ...this.state(source).recheck };
+    if (ids.length) recheck[calendar] = ids;
+    else delete recheck[calendar];
+    this.setState(source, { recheck });
   }
 
   private setToken(source: SourceId, calendar: string, token: string | null) {

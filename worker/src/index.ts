@@ -16,6 +16,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -132,9 +133,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
-      const size = Number(req.headers.get("Content-Length") ?? "0");
-      if (size > MAX_UPLOAD_BYTES) return secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
-      const result = await workspace.upload(url.searchParams.get("name") ?? "", await req.arrayBuffer(), authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+      const tooBig = secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
+      if (Number(req.headers.get("Content-Length") ?? "0") > MAX_UPLOAD_BYTES) return tooBig;
+      const data = await bytesUpTo(req.body, MAX_UPLOAD_BYTES).catch(() => undefined);
+      if (data === undefined) return secure(json({ error: "The upload didn't arrive whole. Try again." }, 400));
+      if (data === null) return tooBig;
+      const result = await workspace.upload(url.searchParams.get("name") ?? "", data, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
       return secure(result.status === "refused" ? json({ error: result.error }, 400) : json(result));
     }
     if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
@@ -231,25 +235,33 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
   if (!upload) return secure(new Response("Not found\n", { status: 404 }));
-  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return secure(new Response(null, { status: 304 }));
+  // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
+  // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
+  const sandboxed = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    out.headers.set("ETag", `"${upload.hash}"`);
+    // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
+    out.headers.set("Cache-Control", "private, no-cache");
+    return out;
+  };
+  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
   const blob = await env.UPLOADS.get(blobKey(upload.hash));
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
   const type = typeFor(upload.name);
-  const out = secure(
+  return sandboxed(
     new Response(blob.body, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
         "Content-Disposition": `${showsInline(type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
-        ETag: `"${upload.hash}"`,
-        // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
-        "Cache-Control": "private, no-cache",
       },
     }),
   );
-  out.headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
-  return out;
 }
+
+/** An upload's policy: sandboxed, so an SVG or a PDF opened by itself runs nothing as this site. */
+const UPLOAD_CSP = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
 
 /** A URL's path, decoded, or "" if it can't be. */
 function decodedPath(url: URL): string {
