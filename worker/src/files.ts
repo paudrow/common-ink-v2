@@ -216,6 +216,21 @@ export class Files {
     db.tx(() => SCHEMA.forEach((step) => step(db)));
   }
 
+  /** Changes made in the transaction running now, announced once it's kept. */
+  private heard: ChangeNotice[] = [];
+
+  /** A transaction of writes. Open pages hear of its changes only once it commits, so never of a revision that was rolled back. */
+  private tx<T>(fn: () => T): T {
+    this.heard = [];
+    try {
+      const out = this.db.tx(fn);
+      for (const notice of this.heard) this.announce(notice);
+      return out;
+    } finally {
+      this.heard = [];
+    }
+  }
+
   /** Every file but data sources' records, which are listed by their kind (records.ts). */
   list(): FileSummary[] {
     return this.db.all<FileSummary>("SELECT path, revision FROM files WHERE path NOT LIKE '.common-ink/records/%' ORDER BY path");
@@ -289,7 +304,7 @@ export class Files {
    * reverse into the file as it is now, so later edits elsewhere in the file stay.
    */
   undo(revisions: Revision[], author: Author): UndoResult[] {
-    return this.db.tx(() =>
+    return this.tx(() =>
       [...new Set(revisions)]
         .sort((a, b) => b - a)
         .map((revision) => {
@@ -347,7 +362,7 @@ export class Files {
    * lost: the changes since stay in history, and this one can be undone like any other.
    */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): WriteResult | null {
-    return this.db.tx(() => {
+    return this.tx(() => {
       const revision =
         "revision" in at
           ? at.revision
@@ -364,12 +379,12 @@ export class Files {
    * edits are merged line by line; if they touch the same lines, nothing is saved.
    */
   write(w: Write): WriteResult {
-    return this.db.tx(() => this.apply(w));
+    return this.tx(() => this.apply(w));
   }
 
   /** Several writes in one transaction, with `also` run in it after them: all of it happens, or none. */
   writeAll(ws: readonly Write[], also: () => void = () => {}): WriteResult[] {
-    return this.db.tx(() => {
+    return this.tx(() => {
       const results = ws.map((w) => this.apply(w));
       also();
       return results;
@@ -394,7 +409,7 @@ export class Files {
    * seeded: a demo the PR changed shows as it is now, and what was there is in history.
    */
   seed(seed: Seed): void {
-    this.db.tx(() => {
+    this.tx(() => {
       const [applied] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'seed'");
       if (applied?.value === seed.id) return;
       const added = new Set<string>();
@@ -457,7 +472,7 @@ export class Files {
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
       this.observe(path, null);
-      this.announce({ path, revision, author });
+      this.heard.push({ path, revision, author });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
@@ -465,7 +480,7 @@ export class Files {
       path, next, revision,
     );
     this.observe(path, next);
-    this.announce({ path, revision, author });
+    this.heard.push({ path, revision, author });
     return { status, file: { path, text: next, revision } };
   }
 

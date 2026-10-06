@@ -544,10 +544,102 @@ for (const [how, deleted] of [
   });
 }
 
-/** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */
-function googleWith(answer: (url: string, method: string) => Response | undefined) {
+test("Google's change made while our push of the same event was in flight comes in on a later sync", async () => {
   const { fake } = google();
-  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => answer(String(input), init?.method ?? "GET") ?? fake.fetch(input, init));
+  let failing = 2;
+  let pageGate: Promise<void> | null = null;
+  let openPage!: () => void;
+  let pushGate: Promise<void> | null = null;
+  let openPush!: () => void;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    const patch = init?.method === "PATCH" && String(input).endsWith("/events/dentist");
+    if (patch && failing-- > 0) return new Response("{}", { status: 503 });
+    if (pageGate && String(input).includes("/calendars/primary/events?")) await pageGate;
+    const answer = await fake.fetch(input, init);
+    if (patch && pushGate) {
+      fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "Room 9" });
+      openPage();
+      await pushGate;
+    }
+    return answer;
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string }).status, "queued");
+  pageGate = new Promise<void>((r) => (openPage = r));
+  pushGate = new Promise<void>((r) => (openPush = r));
+  const syncing = store.sources.sync();
+  await new Promise((r) => setTimeout(r, 10));
+  const pushing = store.sources.flush("google");
+  await syncing;
+  pageGate = null;
+  openPush();
+  await pushing;
+  pushGate = null;
+  await store.sources.sync();
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string; location?: string } }).event;
+  assert.deepEqual([here.title, here.location], ["Dentist (Dr Lee)", "Room 9"]);
+});
+
+test("after a full sync that left an event for a change made meanwhile, the next sync is incremental and still brings Google's version", async () => {
+  const { fake } = google();
+  let gate: Promise<void> | null = null;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if (gate && String(input).includes("/calendars/primary/events?")) await gate;
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  fake.expireSyncTokens();
+  let open!: () => void;
+  gate = new Promise<void>((r) => (open = r));
+  const syncing = op(store, "sync_calendar", { force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 1" });
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "Room 9" });
+  gate = null;
+  open();
+  await syncing;
+  const before = fake.calls.length;
+  await op(store, "sync_calendar", { force: true });
+  const lists = fake.calls.slice(before).filter((c) => c.startsWith("GET /calendar/v3/calendars/primary/events?"));
+  assert.ok(lists.length > 0 && lists.every((c) => c.includes("syncToken=")), `incremental: ${lists.join(", ")}`);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { location?: string } }).event;
+  assert.equal(here.location, "Room 9");
+});
+
+for (const [how, answer] of [
+  ["answering a read with the event, cancelled", null],
+  ["answering a read with 404", 404],
+] as const) {
+  test(`an event Google deleted during a sync in which we edited it goes on the next sync, Google ${how}`, async () => {
+    const { fake } = google();
+    let gate: Promise<void> | null = null;
+    const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+      if (gate && String(input).includes("/calendars/primary/events?")) await gate;
+      if (answer && (init?.method ?? "GET") === "GET" && String(input).endsWith("/events/dentist")) return new Response("{}", { status: answer });
+      return fake.fetch(input, init);
+    });
+    store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+    await op(store, "sync_calendar", {});
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    const syncing = op(store, "sync_calendar", { force: true });
+    await new Promise((r) => setTimeout(r, 10));
+    await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 1" });
+    fake.remove("ada@example.com", "dentist");
+    gate = null;
+    open();
+    await syncing;
+    await op(store, "sync_calendar", { force: true });
+    assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null);
+  });
+}
+
+/** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */
+function googleWith(answer: (url: string, method: string) => Response | undefined, now?: () => number) {
+  const { fake } = google();
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => answer(String(input), init?.method ?? "GET") ?? fake.fetch(input, init), [], now);
   store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
   return { fake, store };
 }
@@ -582,19 +674,40 @@ test("a sync that works doesn't hide edits still waiting for Google: the source 
   assert.deepEqual([state.state, state.pending, state.error], ["error", 1, "Google Calendar answered 503 saving Dentist (Dr Lee)"]);
 });
 
-test("an edit whose event Google keeps refusing to read is refused after a few tries, so the edits behind it still go", async () => {
+test("an edit whose event Google keeps refusing to read is refused after half an hour of it, so the edits behind it still go", async () => {
   let unreadable = false;
-  const { fake, store } = googleWith((url, method) => (unreadable && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 400, message: "Bad Request" } }, { status: 400 }) : undefined));
+  let clock = Date.parse("2026-10-05T09:00:00Z");
+  const { fake, store } = googleWith((url, method) => (unreadable && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 400, message: "Bad Request" } }, { status: 400 }) : undefined), () => clock);
   await op(store, "sync_calendar", {});
   fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
   unreadable = true;
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
   await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
-  for (let i = 0; i < 3; i++) await store.sources.flush("google");
+  for (let i = 0; i < 5; i++) await store.sources.flush("google");
+  assert.equal(store.sources.outbox("google").length, 2, "quick tries don't use up its time");
+  clock += 31 * 60_000;
+  await store.sources.flush("google");
   assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff", "the edit behind it went");
   assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist");
   assert.deepEqual(store.sources.outbox("google"), []);
   assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to Dentist (Dr Lee): Google Calendar answered 400 reading Dentist (Dr Lee). It's back as it was, and the change is in its history.");
+});
+
+test("an edit that waited out failures, then meets one unreadable answer after a 412, still reaches Google", async () => {
+  let patch503 = 2;
+  let read403 = 0;
+  const { fake, store } = googleWith((url, method) => {
+    if (method === "PATCH" && patch503 > 0 && patch503--) return new Response("{}", { status: 503 });
+    if (method === "GET" && url.endsWith("/events/dentist") && read403 > 0 && read403--) return Response.json({ error: { code: 403, message: "Forbidden", errors: [{ reason: "forbidden" }] } }, { status: 403 });
+  });
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await store.sources.flush("google");
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  read403 = 1;
+  await store.sources.flush("google");
+  await store.sources.flush("google");
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist (Dr Lee)", "14 High Street"]);
 });
 
 test("an event Google deleted while an edit of it waited goes here too, with the edit in its history", async () => {
