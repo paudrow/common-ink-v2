@@ -23,20 +23,24 @@ const US_CODE: Record<string, string> = { ".": "Period", ",": "Comma", "/": "Sla
 const usCode = (ch: string) => US_CODE[ch] ?? (/^[a-z]$/.test(ch) ? `Key${ch.toUpperCase()}` : /^[0-9]$/.test(ch) ? `Digit${ch}` : null);
 const ASCII = /^[\x20-\x7e]$/;
 
-/** Whether a key press is the shortcut `keys`, such as "Mod-Shift-p". */
-export function matchKeys(e: KeyLike, keys: string, mac = IS_MAC): boolean {
+/**
+ * Whether a key press is the shortcut `keys`, such as "Mod-Shift-p". With `byPlace` false, only by the
+ * character typed, not by what the layout map says the key types.
+ */
+export function matchKeys(e: KeyLike, keys: string, mac = IS_MAC, byPlace = true): boolean {
   const parts = keys.split(/-(?=.)/);
   const last = parts.pop()!;
   const has = (m: string) => parts.includes(m);
   if (e.metaKey !== (has("Mod") && mac) || e.ctrlKey !== (has("Ctrl") || (has("Mod") && !mac)) || e.altKey !== has("Alt")) return false;
   // A shifted character without Shift ("Mod->"): that character typed, or its key with Shift ("Mod-Shift-."),
   // whichever the layout needs and whichever the browser reports.
-  if (last.length === 1 && UNSHIFTED[last] && !has("Shift")) return e.key === last || (e.shiftKey && matchKeys(e, [...parts, "Shift", UNSHIFTED[last]].join("-"), mac));
+  if (last.length === 1 && UNSHIFTED[last] && !has("Shift")) return e.key === last || (e.shiftKey && matchKeys(e, [...parts, "Shift", UNSHIFTED[last]].join("-"), mac, byPlace));
   if (e.shiftKey !== has("Shift")) return false;
   const want = last.length === 1 ? last.toLowerCase() : last;
   if (want.length > 1) return e.key === want;
   const typed = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (typed === want || (e.shiftKey && typed === SHIFTED[want])) return true;
+  if (!byPlace) return false;
   const plain = layout?.get(e.code);
   if (plain && ASCII.test(plain)) return plain.toLowerCase() === want;
   // No layout map, or a layout without Latin letters: the key where it is on a US keyboard.

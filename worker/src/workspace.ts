@@ -4,12 +4,14 @@
 // connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
-import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { restoreFromTrash } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
+import { deleteNote } from "./archive.ts";
 import { RESET_CLOSE } from "./levers.ts";
 import type { Query } from "./query.ts";
 import type { SearchIndex, SearchOptions } from "./search.ts";
@@ -148,8 +150,20 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.secret("sandbox-key");
   }
 
+  deleted(since: number) {
+    return this.files.deleted(since);
+  }
+
+  restoreDeleted(d: Deleted, author: Author) {
+    return restoreFromTrash(this.files, d, author);
+  }
+
   search(query: Query, options: SearchOptions) {
     return this.index.search(query, options);
+  }
+
+  deleteNote(w: Write) {
+    return deleteNote(this.files, w);
   }
 
   /** Tick a task and log its completion, in one step (complete-task.ts). */

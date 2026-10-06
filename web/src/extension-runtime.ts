@@ -4,7 +4,7 @@
 // object; sandboxed ones run in a host frame and call the same services over messages. Either way,
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
-import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { parseFilePath, type Change, type ChangeNotice, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { inGlobs } from "../../worker/src/globs.ts";
 import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
@@ -55,6 +55,8 @@ export interface RuntimeApp {
   statusItems: StatusItems;
   onSaved: Array<(path: FilePath) => void>;
   onFocus: Array<(path: FilePath | null) => void>;
+  /** Each change the live connection hears of. */
+  onChange: Array<(change: ChangeNotice) => void>;
   /** After any data source's record changes. */
   onRecords: Array<() => void>;
   /** Keep an answer to a permission prompt in your settings. */
@@ -914,13 +916,14 @@ export class ExtensionRuntime {
         notice: (message, actions) => app.workbench.notice(message, actions),
         canGo: (by) => !!app.workbench.navigation.step(by),
       },
-      util: { fuzzyFilter, notePathFor: (name) => notePathFor(name), label: docLabel },
+      util: { fuzzyFilter, notePathFor: (name, from) => notePathFor(name, from), label: docLabel },
       extensions: {
         api: async <T,>(id: string) => (await this.host.api(id)) as T | undefined,
       },
       events: {
         onSaved: (fn) => void app.onSaved.push(guard(fn)),
         onFocus: (fn) => void app.onFocus.push(guard(fn)),
+        onChange: (fn) => void app.onChange.push(guard(({ path, revision, deleted, undoes }: ChangeNotice) => fn({ path, revision, ...(deleted ? { deleted } : {}), ...(undoes ? { undoes } : {}) }))),
       },
     };
   }

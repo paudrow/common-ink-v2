@@ -50,9 +50,13 @@ export class Commands {
   }
 }
 
-/** The command a key press is bound to, if any. A later binding for the same key wins, and a null command unbinds it. */
+/**
+ * The command a key press is bound to, if any. A later binding for the same key wins, and a null command
+ * unbinds it. A binding the character typed matches comes before one matched by where the key sits, so
+ * ⌘⇧E isn't taken for ⌘⇧. when the layout map says that key types a dot.
+ */
 export function commandForKey(e: KeyLike, bindings: readonly Keybinding[], mac?: boolean): string | null {
-  for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac)) return bindings[i].command;
+  for (const byPlace of [false, true]) for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac, byPlace)) return bindings[i].command;
   return null;
 }
 

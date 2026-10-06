@@ -13,6 +13,8 @@ export interface NoteResult {
   edited: number;
   author: Author;
   archived?: true;
+  /** Deleted, and in Trash: only with is:trashed. */
+  trashed?: true;
   line?: { number: number; text: string };
 }
 
@@ -172,6 +174,7 @@ export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit 
         edited: n.edited,
         author: n.author,
         ...(n.archived ? { archived: true as const } : {}),
+        ...(n.trashed ? { trashed: true as const } : {}),
         ...(at >= 0 ? { line: { number: at + 1, text: lines[at].trim().slice(0, 200) } } : {}),
       };
     }),

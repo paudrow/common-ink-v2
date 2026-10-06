@@ -6,13 +6,16 @@ import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
 import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
-import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
+import { DEFAULT_SETTINGS, defaultsText, isReadOnly, WORKSPACE_SETTINGS } from "./settings.ts";
+import { DAY, inTrash, retentionDays } from "./trash.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
-import { format, parse, problems, type Query } from "./query.ts";
-import type { SearchOptions, SearchResults } from "./search.ts";
-import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { inGlobs } from "./globs.ts";
+import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
+import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
+import { present, type SearchOptions, type SearchResults } from "./search.ts";
+import { isNote, parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -34,8 +37,17 @@ export interface Store {
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
   completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
+  /** Delete a note, and take it out of the archive with it (archive.ts). */
+  deleteNote(w: Write): Promise<WriteResult> | WriteResult;
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
+  /** Deletes in effect since a time, newest first: what's in Trash (Files.deleted). */
+  deleted(since: number): Promise<Deleted[]> | Deleted[];
+  /** Bring a note in Trash back (trash.ts). */
+  restoreDeleted(d: Deleted, author: Author): Promise<Restored> | Restored;
 }
+
+/** A note brought back from Trash, or why it couldn't be. */
+export type Restored = { path: FilePath; revision: Revision } | { error: string };
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
 export interface EventFound {
@@ -174,10 +186,13 @@ function op<T>(o: Operation<T>): Operation<T> {
 
 export const OPERATIONS = {
   list_files: op<Record<string, never>>({
-    description: "List every file in the workspace (notes and workspace JSON) with its revision.",
+    description: "List every file in the workspace (notes and workspace JSON) with its revision. Archived notes say `archived: true`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
-    run: async (store) => store.list(),
+    run: async (store) => {
+      const archived = await archivedIn(store);
+      return (await store.list()).map((f) => (archived.has(f.path) ? { ...f, archived: true } : f));
+    },
   }),
   read_file: op<{ path: WorkspaceFile["path"] }>({
     description: "Read a file's text and revision. Pass the revision back as `base` when you write it.",
@@ -222,7 +237,7 @@ export const OPERATIONS = {
       if (!base) return fail('"base" must be the revision you read');
       return ok({ path, base });
     },
-    run: async (store, { path, base }, author) => store.write({ path, text: "", base, author, delete: true }),
+    run: async (store, { path, base }, author) => (isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true })),
   }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
@@ -461,19 +476,28 @@ export const OPERATIONS = {
     },
     run: async (store, { path, edit }) => ({ path, edit, applied: await store.editApplied(path, edit) }),
   }),
-  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } }>({
+  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } | { trash: Revision | null } }>({
     description:
-      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone.",
-    input: { type: "object", properties: { path: PATH, revision: { type: "integer", minimum: 0 }, before: { type: "integer", minimum: 1 } }, required: ["path"] },
+      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone. With neither, a note comes back from Trash: the one deleted by the change `deleted` (a revision from trash), or the path's latest. It comes back at its path with its history, or as \"<name> (restored).md\" if another note has the path now. Says where it went.",
+    input: { type: "object", properties: { path: PATH, revision: { type: "integer", minimum: 0 }, before: { type: "integer", minimum: 1 }, deleted: { type: "integer", minimum: 1 } }, required: ["path"] },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const revision = count(a.revision);
       const before = count(a.before);
       if (!path) return fail('"path" must be a path ending in .md or .json');
       if (revision !== undefined) return ok({ path, at: { revision } });
-      return before ? ok({ path, at: { before } }) : fail('Say which version: "revision", or "before" a change');
+      if (a.before !== undefined) return before ? ok({ path, at: { before } }) : fail('"before" must be a change\'s revision');
+      if (a.deleted !== undefined && !count(a.deleted)) return fail('"deleted" must be the revision of a note\'s delete, from trash');
+      return ok({ path, at: { trash: count(a.deleted) ?? null } });
     },
-    run: async (store, { path, at }, author) => store.restore(path, at, author),
+    run: async (store, { path, at }, author) => {
+      if (!("trash" in at)) return store.restore(path, at, author);
+      const target = (await notesInTrash(store, Date.now())).find((d) => d.path === path && (at.trash === null || d.revision === at.trash));
+      if (!target) throw new OperationError(`${path} isn't in Trash`);
+      const restored = await store.restoreDeleted(target, author);
+      if ("error" in restored) throw new OperationError(restored.error);
+      return { status: "restored", ...restored };
+    },
   }),
   labels: op<{ path?: FilePath }>({
     description: "Labels: names given to a note's state at one revision. All of them, or one file's.",
@@ -529,8 +553,42 @@ export const OPERATIONS = {
     },
     run: async (store, { query, limit, zone, within }) => {
       const q = parse(query);
-      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, within })) };
+      const ctx = { now: Date.now(), zone };
+      // Notes in Trash aren't in the index: they're searched only when the query asks for them.
+      const inside = within ? inGlobs(within) : () => true;
+      const found = asksFor(q, "trashed")
+        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        : await store.search(q, { ctx, limit, archived: await archivedIn(store), within });
+      return { query: format(q), problems: problems(q), ...found };
     },
+  }),
+  trash: op<Record<string, never>>({
+    description:
+      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged. Restore one with restore, its path and its revision as `deleted`.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store) => {
+      const now = Date.now();
+      const days = await retentionOf(store);
+      const notes = await Promise.all((await notesInTrash(store, now)).map((d) => withText(store, d)));
+      return notes.map(({ text, ...d }) => ({ ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)) }));
+    },
+  }),
+  archive: op<{ paths: FilePath[] }>({
+    description:
+      "Archive notes: they stay where they are, unchanged and still linked, but leave the Feed and come last in search, marked archived. It's one change to .common-ink/archive.json, by you; undo its revision to take it back. Says the change's revision (null if they were all archived already) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      for (const path of paths) if (!(await store.read(path))) throw new OperationError(`There's no note at ${path}`);
+      return setArchived(store, paths, true, author);
+    },
+  }),
+  unarchive: op<{ paths: FilePath[] }>({
+    description: "Take notes out of the archive, back into the Feed. One change to .common-ink/archive.json, by you. Says the change's revision (null if none of them was archived) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => setArchived(store, paths, false, author),
   }),
   list_embeds: op<Record<string, never>>({
     description:
@@ -594,6 +652,45 @@ export const OPERATIONS = {
     },
   }),
 };
+
+/** Notes' paths, from an operation's arguments. */
+function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
+  const paths = Array.isArray(v) ? v.map(parseFilePath) : [];
+  if (!paths.length || paths.length > 500 || !paths.every((p): p is FilePath => !!p && p.endsWith(".md"))) return fail('"paths" must be a list of notes\' paths, ending in .md');
+  return ok({ paths: [...new Set(paths)] });
+}
+
+/** How long deleted notes stay in Trash: the workspace's trash.retentionDays. */
+async function retentionOf(store: Store): Promise<number> {
+  return retentionDays((await store.read(WORKSPACE_SETTINGS))?.text ?? "");
+}
+
+/** Notes in Trash now, newest first. Restore and search keep to the same cutoff as the list. */
+async function notesInTrash(store: Store, now: number): Promise<Deleted[]> {
+  const days = await retentionOf(store);
+  return inTrash(await store.deleted(now - days * DAY), days, now);
+}
+
+/** A note in Trash with its text, as it was just before it was deleted. */
+async function withText(store: Store, d: Deleted): Promise<Deleted & { text: string }> {
+  return { ...d, text: d.before ? ((await store.versionAt(d.path, d.before)) ?? "") : "" };
+}
+
+async function archivedIn(store: Store): Promise<Set<string>> {
+  return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
+}
+
+/** Archive or unarchive notes: one change to the archive file. A write that meets another's is merged as a set (archive.ts). */
+async function setArchived(store: Store, paths: FilePath[], archived: boolean, author: Author): Promise<{ revision: Revision | null; archived: FilePath[] }> {
+  const file = await store.read(ARCHIVE_PATH);
+  const current = readArchive(file?.text ?? "");
+  if (!current) throw new OperationError(`${ARCHIVE_PATH} isn't valid JSON with an "archived" list, so it wasn't changed. Fix it, or put back an earlier version from History.`);
+  const next = withArchived(current, paths, archived);
+  if (next.archived.join("\n") === current.archived.join("\n")) return { revision: null, archived: next.archived };
+  const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
+  if (result.status === "conflict") throw new OperationError("The archive changed meanwhile and couldn't be merged; try again");
+  return { revision: result.file.revision, archived: parseArchive(result.file.text) };
+}
 
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */
 export class OperationError extends Error {}
