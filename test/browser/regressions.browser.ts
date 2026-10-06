@@ -296,6 +296,26 @@ browserTest(h, "restoring a kept edit that changed the same line as the note sin
   assert.equal(await app.readFile("Trip.md"), "# Trip to Paris\n- a\n");
 });
 
+browserTest(h, "an edit undone before it was saved isn't brought back by a reload", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 3);
+  // Nothing reaches the server while this runs: the edit is only kept in this browser, as it's typed.
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("dw");
+  await app.page.waitForTimeout(300);
+  await app.keys("u");
+  await app.page.waitForTimeout(300);
+  await app.reload();
+  await app.open("Trip");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n");
+  assert.equal(await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Trip" }).count(), 1);
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");

@@ -578,7 +578,9 @@ export class Workbench {
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
+    // Back to the text the server has (an undo, say): the draft kept of an edit since is no edit now.
     if (draft) void this.net.keepDraft(draft);
+    else void this.net.dropDraft(file.path);
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
