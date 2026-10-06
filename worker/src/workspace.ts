@@ -21,6 +21,8 @@ export interface WorkspaceEnv {
   /** "1" in a browser test's Worker, with LEVERS: Google Calendar is a fake Google (fake-google.ts), connected. Never in production. */
   FAKE_GOOGLE?: string;
   LEVERS?: string;
+  /** Seals Google's refresh tokens at rest, as well as signing sessions. */
+  SESSION_SECRET?: string;
 }
 
 /** How often a connected Google Calendar syncs on its own. */
@@ -65,13 +67,14 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, (input, init) => this.fake!.fetch(input, init));
+      // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.fake!.fetch(input, init));
       this.fake ??= this.sampleFake();
-      if (!sources.syncs) sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+      if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
       return [files, sources];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
-    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google }, announce);
+    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google, tokenKey: this.env.SESSION_SECRET }, announce);
     return [files, sources];
   }
 
@@ -91,8 +94,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   // Pages only listen; anything they send is ignored.
   webSocketMessage() {}
 
-  webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code === 1005 ? 1000 : code, "closing");
+  // A page that went without a close frame comes as 1006, which can't be sent back, so the reply is always 1000.
+  webSocketClose(ws: WebSocket) {
+    ws.close(1000, "closing");
   }
 
   list() {
@@ -197,13 +201,14 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
 
   /** Keep Google's grant, then send what waited for it and sync, soon, without holding up sign-in. */
   async connectGoogle(granted: Granted) {
-    const ok = this.sources.connect(granted);
+    const ok = await this.sources.connect(granted);
     if (ok) await this.ctx.storage.setAlarm(Date.now() + 1000);
     return ok;
   }
 
   /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
   async alarm() {
+    await this.sources.sealTokens();
     await this.sources.sync();
     await this.scheduleSync();
   }
@@ -223,7 +228,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   }
 
   disconnectGoogle(email: string) {
-    this.sources.disconnect(email);
+    return this.sources.disconnect(email);
   }
 
   sourceStatus(email: string) {

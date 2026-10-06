@@ -7,15 +7,16 @@ import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
 import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
-import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
+import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { statePath } from "./extensions.ts";
+import { extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -41,6 +42,8 @@ const HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
+  // Browsers ignore it over plain HTTP (npm run dev), so it's the same everywhere.
+  "Strict-Transport-Security": "max-age=31536000",
 };
 
 /** Hosts a page may frame, handed from `handle` to `fetch`, and never sent. */
@@ -57,13 +60,23 @@ function secure(res: Response, frameHosts: readonly string[] = []): Response {
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+/** Where a page sends its last save with navigator.sendBeacon. */
+const BEACON = "/api/file/beacon";
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const elsewhere = redirectFor(url);
-    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
+    if (elsewhere) return new Response(null, { status: elsewhere.status, headers: { Location: elsewhere.location, "Strict-Transport-Security": HEADERS["Strict-Transport-Security"] } });
     const res = await handle(req, env, url);
-    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    // A WebSocket's answer can't be rewrapped; everything else asks for HTTPS, the sandbox route's included.
+    if (res.status === 101) return res;
+    if (res.headers.get("Content-Security-Policy") !== "{app}") {
+      if (res.headers.has("Strict-Transport-Security")) return res;
+      const out = new Response(res.body, res);
+      out.headers.set("Strict-Transport-Security", HEADERS["Strict-Transport-Security"]);
+      return out;
+    }
     const out = new Response(res.body, res);
     out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
@@ -106,15 +119,22 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
-    // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
+    // A save sent with sendBeacon is a simple request, with no preflight, so it has to show it's from
+    // this site rather than only not say otherwise. Browsers always say where a beacon came from.
+    if (url.pathname === BEACON && origin !== url.origin && req.headers.get("Sec-Fetch-Site") !== "same-origin") {
+      return secure(page("Not from here", "<p>That request didn't say it came from this site.</p>", 403));
+    }
+    // A trusted workspace extension's code, from its files, so the page can import it under
+    // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
     const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
     if (code && isExtensionScript(code)) {
-      const file = await (workspace as unknown as Store).read(code);
+      const trusted = await idsIn(workspace as unknown as Store, "extensions.trusted", who.kind === "user" ? who.email : null);
+      const file = trusted.has(extensionFileOf(code)?.id ?? "") ? await (workspace as unknown as Store).read(code) : null;
       if (!file) return secure(new Response("No such file\n", { status: 404 }));
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
-    if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
+    if (url.pathname.startsWith("/uploads/") && (req.method === "GET" || req.method === "HEAD")) return serveUpload(req, url, env, workspace as unknown as Store);
     const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
@@ -128,9 +148,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
-      const size = Number(req.headers.get("Content-Length") ?? "0");
-      if (size > MAX_UPLOAD_BYTES) return secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
-      const result = await workspace.upload(url.searchParams.get("name") ?? "", await req.arrayBuffer(), authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+      const tooBig = secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
+      if (Number(req.headers.get("Content-Length") ?? "0") > MAX_UPLOAD_BYTES) return tooBig;
+      const data = await bytesUpTo(req.body, MAX_UPLOAD_BYTES).catch(() => undefined);
+      if (data === undefined) return secure(json({ error: "The upload didn't arrive whole. Try again." }, 400));
+      if (data === null) return tooBig;
+      const result = await workspace.upload(url.searchParams.get("name") ?? "", data, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
       return secure(result.status === "refused" ? json({ error: result.error }, 400) : json(result));
     }
     if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
@@ -166,6 +189,8 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
+  // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.
+  "POST /api/file/beacon": "write_file",
   "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
@@ -205,7 +230,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
     if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
-  if (!result.ok) return json({ error: result.error }, 400);
+  if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
   if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
@@ -213,37 +238,61 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
 }
 
 /**
- * An upload's bytes, under the type its name gives. Every one is served sandboxed, so an SVG or a PDF
+ * An upload's bytes, under the type its name gives (not the type in the uploads file, which anyone who
+ * can write files can change). Every one is served sandboxed, so an SVG or a PDF
  * opened by itself can't run script as this site; anything that isn't an image, audio, video, PDF or
  * plain text downloads instead of opening.
  */
 async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  // Every answer under /uploads/ carries the upload's policy, a 404 or 503 too: what the browser shows at
+  // an upload's address is never a page of this site.
+  const underPolicy = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    return out;
+  };
+  const notFound = () => underPolicy(new Response("Not found\n", { status: 404 }));
   let name: string;
   try {
     name = decodeURIComponent(url.pathname.slice("/uploads/".length));
   } catch {
-    return secure(new Response("Not found\n", { status: 404 }));
+    return notFound();
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
-  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
-  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return secure(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash));
-  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
-  const out = secure(
-    new Response(blob.body, {
+  if (!upload) return notFound();
+  // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
+  // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
+  const sandboxed = (res: Response) => {
+    const out = underPolicy(res);
+    out.headers.set("ETag", `"${upload.hash}"`);
+    // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
+    out.headers.set("Cache-Control", "private, no-cache");
+    return out;
+  };
+  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
+  // A HEAD asks only whether the bytes are there; it doesn't read them.
+  const key = blobKey(upload.hash);
+  const read: Promise<R2Object | R2ObjectBody | null> = req.method === "HEAD" ? env.UPLOADS.head(key) : env.UPLOADS.get(key);
+  const blob = await read.catch((err) => {
+    console.error("Reading an upload's bytes failed:", err);
+    return undefined;
+  });
+  if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
+  if (!blob) return notFound();
+  const type = typeFor(upload.name);
+  return sandboxed(
+    new Response("body" in blob ? blob.body : null, {
       headers: {
-        "Content-Type": upload.type,
+        "Content-Type": type,
         "Content-Length": String(upload.size),
-        "Content-Disposition": `${showsInline(upload.type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
-        ETag: `"${upload.hash}"`,
-        // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
-        "Cache-Control": "private, no-cache",
+        "Content-Disposition": `${showsInline(type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
       },
     }),
   );
-  out.headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
-  return out;
 }
+
+/** An upload's policy: sandboxed, so an SVG or a PDF opened by itself runs nothing as this site. */
+const UPLOAD_CSP = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
 
 /** A URL's path, decoded, or "" if it can't be. */
 function decodedPath(url: URL): string {
