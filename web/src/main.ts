@@ -318,7 +318,9 @@ async function renderUnsent() {
   // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
   const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  // Kept in memory only (this browser won't keep site data): they're gone if the page closes before they're sent.
+  const fragile = waiting > 0 && !(await offline.durable());
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}${fragile ? ", lost if this page closes" : ""}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
   unsentLine.textContent = parts.filter(Boolean).join(" · ");
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";

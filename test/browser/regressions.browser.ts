@@ -138,6 +138,26 @@ browserTest(h, "with this site's storage blocked, the app still opens a note and
   assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
 });
 
+browserTest(h, "with storage blocked, edits waiting to be sent say they're lost if the page closes", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.page.addInitScript(() => {
+    Object.defineProperty(IDBFactory.prototype, "open", {
+      value: () => {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+  });
+  await app.page.reload();
+  await app.ready();
+  await app.open("Trip");
+  await app.idle();
+  await app.page.context().setOffline(true);
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline · 1 unsent change, lost if this page closes");
+  await app.page.context().setOffline(false);
+});
+
 browserTest(h, "going offline with nothing to send says Offline at once, and back online it goes at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await app.idle();
   await app.page.context().setOffline(true);
