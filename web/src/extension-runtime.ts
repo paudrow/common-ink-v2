@@ -804,6 +804,11 @@ export class ExtensionRuntime {
     const services = this.services(m);
     const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
+    /** A new webview, kept by id for its extension's messages; ones whose frame has gone (a closed window's embed) go then. */
+    const keep = (view: Webview) => {
+      for (const [id, v] of webviews) if (!v.frame.isConnected) webviews.delete(id);
+      webviews.set(view.id, view);
+    };
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
     // An edit's answer names the events it wrote: only for an extension that may read them already.
@@ -853,7 +858,7 @@ export class ExtensionRuntime {
                 // A webview keeps running between redraws; only a missing one is made again.
                 if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
                 const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`view:${a}`, view.id).catch((err) => (failed(err), showDrawError(el, `${m.name}'s view`, err)));
               },
             });
@@ -865,7 +870,7 @@ export class ExtensionRuntime {
             this.embedDrawers.set(a, (el, embed, tools) =>
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
