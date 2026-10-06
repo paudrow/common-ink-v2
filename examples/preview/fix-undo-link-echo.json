@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 124,
   "title": "Undo all after a sync between edits",
   "steps": [
     "With Google Calendar connected, have an agent rename one day of a repeating event, wait for a sync, then have it set that day's place.",
