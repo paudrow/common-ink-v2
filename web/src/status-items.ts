@@ -8,11 +8,11 @@ export class StatusItems {
   constructor(
     private left: HTMLElement,
     private right: HTMLElement,
-    private run: (command: string) => void,
+    private run: (command: string, by: "app" | "sandbox") => void,
   ) {}
 
   /** Place every declared item, highest priority outermost, as VS Code does. Items already placed are left alone. */
-  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string }>): void {
+  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string; by?: "sandbox" }>): void {
     const sorted = [...items].sort((a, b) => b.priority - a.priority);
     for (const item of sorted) {
       if (this.items.has(item.id)) continue;
@@ -20,7 +20,7 @@ export class StatusItems {
       el.className = "status-item";
       el.dataset.item = item.id;
       el.hidden = true;
-      if (item.command) el.addEventListener("click", () => this.run(item.command!));
+      if (item.command) el.addEventListener("click", () => this.run(item.command!, item.by ?? "app"));
       if (item.alignment === "left") this.left.append(el);
       else this.right.prepend(el);
       this.items.set(item.id, { el, owner: item.owner });
