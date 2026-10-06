@@ -9,7 +9,7 @@ import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
-import { logDone } from "./complete-task.ts";
+import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
 import { RESET_CLOSE } from "./levers.ts";
 
 export interface WorkspaceEnv {
@@ -135,9 +135,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.secret("sandbox-key");
   }
 
-  /** Log a task's completion in a daily note, in one step (complete-task.ts). */
-  logDone(path: FilePath, entry: string, day: string, author: Author) {
-    return logDone(this.files, path, entry, day, author);
+  /** Tick a task and log its completion, in one step (complete-task.ts). */
+  completeTask(args: TaskArgs, author: Author) {
+    return completeTaskIn(this.files, args, author);
   }
 
   /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */
