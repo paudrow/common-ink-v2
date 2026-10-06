@@ -543,3 +543,41 @@ for (const [how, deleted] of [
     assert.deepEqual(await listed(store), ["2026-10-08 Offsite"]);
   });
 }
+
+/** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */
+function googleWith(answer: (url: string, method: string) => Response | undefined) {
+  const { fake } = google();
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => answer(String(input), init?.method ?? "GET") ?? fake.fetch(input, init));
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  return { fake, store };
+}
+
+test("after a 412, a read Google answers with a 403 that isn't about limits keeps the edit waiting, not refused", async () => {
+  let forbid = false;
+  const { fake, store } = googleWith((url, method) => (forbid && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 403, message: "Forbidden", errors: [{ reason: "forbidden" }] } }, { status: 403 }) : undefined));
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  forbid = true;
+  const edit = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(edit.status, "queued");
+  forbid = false;
+  await store.sources.flush("google");
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+test("an edit Google answers 404 or 410 for says the event was deleted in Google, as after a 412", async () => {
+  for (const status of [404, 410]) {
+    const { store } = googleWith((url, method) => (method === "PATCH" && url.endsWith("/events/dentist") ? Response.json({ error: { code: status, message: "Not Found" } }, { status }) : undefined));
+    await op(store, "sync_calendar", {});
+    const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+  }
+});
+
+test("a sync that works doesn't hide edits still waiting for Google: the source keeps saying why", async () => {
+  const { store } = googleWith((url, method) => (method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  const state = (await op(store, "sync_calendar", { force: true })) as { state: string; pending: number; error?: string };
+  assert.deepEqual([state.state, state.pending, state.error], ["error", 1, "Google Calendar answered 503 saving Dentist (Dr Lee)"]);
+});
