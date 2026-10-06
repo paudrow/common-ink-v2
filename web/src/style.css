@@ -413,6 +413,33 @@ button.status-item:hover {
   }
 }
 
+/* A phone has no status bar. Saving shows only when something isn't saved, as a line at the top. */
+#not-saved {
+  display: none;
+}
+
+@media (max-width: 599px) {
+  body {
+    grid-template: "not-saved" auto "editor" 1fr "panel" auto / 1fr;
+  }
+  #status {
+    display: none;
+  }
+  #not-saved:not([hidden]) {
+    grid-area: not-saved;
+    display: block;
+    margin: 0;
+    padding: 0.25rem 1rem;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.75rem;
+    color: var(--warn-ink);
+  }
+  #not-saved[data-state="conflict"] {
+    color: var(--bad);
+    cursor: pointer;
+  }
+}
+
 #command-bar {
   position: fixed;
   top: 12vh;

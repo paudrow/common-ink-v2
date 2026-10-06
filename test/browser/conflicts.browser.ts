@@ -43,7 +43,7 @@ browserTest(h, "an agent's edit to the line you're typing on: the status bar say
   assert.equal(await app.readFile("Plan.md"), NOTE.replace("beta", "beta mine"));
   await app.page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
   assert.equal(await app.page.locator("#resolve").isHidden(), true);
-  assert.equal(await app.page.locator("#unsent").textContent(), "");
+  assert.equal(await app.page.locator("#unsent").textContent(), "Online");
 });
 
 for (const how of ["the command", "a click on Compare…"]) browserTest(h, `Use theirs, from ${how}, puts their version in the editor, and u straight away brings yours back to be saved`, { scenario: "empty" }, async (app) => {
@@ -81,5 +81,5 @@ browserTest(h, "an edit made offline that clashes says so once back online, inst
   await app.page.locator(".clash button", { hasText: "Keep mine" }).click();
   await app.idle();
   assert.equal(await app.readFile("Plan.md"), NOTE.replace("beta", "beta mine"));
-  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "");
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Online");
 });

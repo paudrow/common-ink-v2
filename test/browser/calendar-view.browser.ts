@@ -218,7 +218,7 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await app.page.locator("#unsent", { hasText: "1 unsent change" }).waitFor();
   await app.page.context().setOffline(false);
   await until(app, "the dentist moved once back online", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-08T11:00:00");
-  await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
+  await app.page.locator("#unsent", { hasText: /^Online$/ }).waitFor();
 });
 
 browserTest(h, "a closed calendar tab stops loading events when they change", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {

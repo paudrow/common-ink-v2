@@ -138,13 +138,13 @@ browserTest(h, "with this site's storage blocked, the app still opens a note and
   assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
 });
 
-browserTest(h, "going offline with nothing to send says Offline at once, and back online it goes at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+browserTest(h, "going offline with nothing to send says Offline at once, and back online it says Online at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await app.idle();
   await app.page.context().setOffline(true);
   await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline", null, { timeout: 1000 });
   await app.page.context().setOffline(false);
   // Nothing waiting to be sent, and nothing else asking the server: the page checks as it's back.
-  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "", null, { timeout: 3000 });
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Online", null, { timeout: 3000 });
 });
 
 browserTest(h, "an indent the outline refuses leaves the cursor where Vim leaves a shift, not past the lines it covered", { scenario: "empty" }, async (app) => {
@@ -327,7 +327,7 @@ for (const choice of ["Restore", "Discard"] as const) {
     // Restored, it goes onto the note as it is now: the other edit stays.
     assert.equal(await app.readFile("Trip.md"), choice === "Restore" ? "# Trip to Rome\n- a\n- packed\n" : "# Trip to Rome\n- a\n");
     assert.equal(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")).length), 0, "nothing's kept now");
-    assert.equal(await app.page.locator("#unsent").textContent(), "");
+    assert.equal(await app.page.locator("#unsent").textContent(), "Online");
   });
 }
 

@@ -53,6 +53,20 @@ export interface Network {
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
 export const unreachable = (err: unknown) => err instanceof TypeError || (err as Error)?.name === "TypeError";
 
+/**
+ * What the status line says about reaching the server. `wide` is always there: Online, or Offline and
+ * what's waiting. `phone` says only that something isn't saved, since a phone has no status bar.
+ * `clashing` are the labels of notes whose edits can't be merged.
+ */
+export function syncLine({ online, waiting, clashing }: { online: boolean; waiting: number; clashing: string[] }): { wide: string; phone: string; state: "" | "waiting" | "conflict" } {
+  const parts = [online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${clashing[0]}` : ""];
+  return {
+    wide: parts.filter(Boolean).join(" · ") || "Online",
+    phone: clashing.length ? "Not saved: changed elsewhere" : !online && waiting ? "Not saved: offline" : "",
+    state: clashing.length ? "conflict" : waiting || !online ? "waiting" : "",
+  };
+}
+
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 

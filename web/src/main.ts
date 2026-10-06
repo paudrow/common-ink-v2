@@ -32,7 +32,7 @@ import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.t
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
-import { idbKV, Offline } from "./offline.ts";
+import { idbKV, Offline, syncLine } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
@@ -57,6 +57,7 @@ const list = $<HTMLUListElement>("#notes ul");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
+const notSavedLine = $("#not-saved");
 const resolveButton = $<HTMLButtonElement>("#resolve");
 const reloadLine = $("#reload");
 const netLine = $("#net-activity");
@@ -297,25 +298,31 @@ async function refreshList() {
   extensionsChanged();
 }
 
-/** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
+/** Online or Offline, and how many edits are waiting to be sent; on a phone, only that something isn't saved. */
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
   // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
   const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
-  unsentLine.textContent = parts.filter(Boolean).join(" · ");
+  const line = syncLine({ online: offline.online, waiting, clashing: clashing.map(docLabel) });
+  unsentLine.textContent = line.wide;
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
-  unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
+  unsentLine.dataset.state = line.state;
+  notSavedLine.textContent = line.phone;
+  notSavedLine.hidden = !line.phone;
+  notSavedLine.dataset.state = line.state;
 }
 offline.onChange(() => void renderUnsent());
-unsentLine.addEventListener("click", async () => {
+/** Open the first note whose edit can't be merged, and show the two. */
+async function openClash() {
   const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
   if (!clashing) return;
   if (clashing !== workbench.focusedPath) await workbench.open(clashing, { newTab: true });
   await resolveConflict();
-});
+}
+unsentLine.addEventListener("click", () => void openClash());
+notSavedLine.addEventListener("click", () => void openClash());
 resolveButton.addEventListener("click", () => void resolveConflict());
 
 /**
