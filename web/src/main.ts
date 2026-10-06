@@ -505,15 +505,20 @@ const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.
 const search = new Search({
   manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
   notes: {
-    search: async (query, limit) =>
-      (await api.search(format(query), limit)).results.map((r) => ({
-        title: r.title,
-        path: r.path,
-        detail: r.line?.text ?? r.path,
-        aside: `${r.archived ? "archived · " : ""}${ago(r.edited)}`,
-        dim: r.archived === true,
-        run: () => openFromBar(r.path as FilePath),
-      })),
+    search: async (query, limit, within) => {
+      const answer = await api.search(format(query), limit, within);
+      return {
+        more: answer.more,
+        results: answer.results.map((r) => ({
+          title: r.title,
+          path: r.path,
+          detail: r.line?.text ?? r.path,
+          aside: `${r.archived ? "archived · " : ""}${ago(r.edited)}`,
+          dim: r.archived === true,
+          run: () => openFromBar(r.path as FilePath),
+        })),
+      };
+    },
   },
   values: (key) => (key === "in" ? folders() : []),
 });

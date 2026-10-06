@@ -2,6 +2,7 @@
 // answer for (`contributes.search`: tasks, events). One query, in the query language (docs/queries.md),
 // goes to each kind; `type:` picks kinds. The command bar draws it, with chips and Tab completion.
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
+import { inGlobs } from "../../worker/src/globs.ts";
 import { FILTERS, format, parse, type Query, type Term } from "../../worker/src/query.ts";
 
 /** One thing search found, as a row: what it is, a line about it, and a few words at its end. */
@@ -16,9 +17,22 @@ export interface SearchResult {
   run(): unknown;
 }
 
-/** Answers a query for one kind of result. Filters it doesn't have should find nothing (docs/queries.md). */
+/**
+ * Answers a query for one kind of result. Filters it doesn't have should find nothing (docs/queries.md).
+ * Given `within`, it answers only with results in files whose paths match one of those globs, and leaves
+ * the rest out before it applies the limit: what an extension may read, for its searches.
+ */
 export interface SearchProvider {
-  search(query: Query, limit: number): SearchResult[] | Promise<SearchResult[]>;
+  search(query: Query, limit: number, within?: readonly string[]): SearchResult[] | Promise<SearchResult[]>;
+}
+
+/** Notes, from the workspace's `search` operation: `more` when it stopped before reading every note it might find. */
+export interface NoteSearch {
+  search(query: Query, limit: number, within?: readonly string[]): NoteAnswer | Promise<NoteAnswer>;
+}
+export interface NoteAnswer {
+  results: SearchResult[];
+  more?: boolean;
 }
 
 export interface SearchSection {
@@ -27,6 +41,8 @@ export interface SearchSection {
   results: SearchResult[];
   /** Why there are no results to show when there might be: notes can't be searched offline. */
   note?: string;
+  /** Search stopped before it read every note it might have found: add words or filters. */
+  more?: true;
 }
 
 /** How long search waits for an extension's provider before it leaves that kind out. */
@@ -72,9 +88,10 @@ export function toggleFilter(text: string, filter: string, extra: readonly strin
  */
 export function complete(text: string, caret: number, filters: readonly FilterInfo[]): { text: string; caret: number } | null {
   const before = text.slice(0, caret);
-  // Inside a quoted value (in:"Old pro), the word goes back to its key, spaces and all.
-  const open = ((before.match(/"/g) ?? []).length % 2 === 1);
-  const start = (open ? before.slice(0, before.lastIndexOf('"')) : before).search(/\S*$/);
+  // Inside a quoted value (in:"Old pro), or just after one (in:"Old projects/"), the word goes back to its key, spaces and all.
+  const open = (before.match(/"/g) ?? []).length % 2 === 1;
+  const quote = open ? before.lastIndexOf('"') : before.endsWith('"') ? before.lastIndexOf('"', before.length - 2) : -1;
+  const start = (quote >= 0 ? before.slice(0, quote) : before).search(/\S*$/);
   const word = text.slice(start, caret);
   const sign = word.startsWith("-") ? "-" : "";
   const bare = word.slice(sign.length);
@@ -85,7 +102,7 @@ export function complete(text: string, caret: number, filters: readonly FilterIn
     if (key) done = `${key.key}:`;
   } else {
     const filter = filters.find((f) => f.key === bare.slice(0, colon).toLowerCase());
-    const typed = bare.slice(colon + 1).replace(/^"/, "").toLowerCase();
+    const typed = bare.slice(colon + 1).replace(/^"|"$/g, "").toLowerCase();
     const values = filter?.values ?? [];
     const exact = values.findIndex((v) => v.toLowerCase() === typed);
     const value = exact >= 0 ? values[(exact + 1) % values.length] : values.find((v) => v.toLowerCase().startsWith(typed));
@@ -104,7 +121,7 @@ export class Search {
       /** The manifests of the extensions that are on, for the kinds and filters they add. */
       manifests(): readonly ExtensionManifest[];
       /** Notes, from the workspace. */
-      notes: SearchProvider;
+      notes: NoteSearch;
       /** Values for filters that depend on the workspace, like its folders for `in:`. */
       values?(key: string): readonly string[];
     },
@@ -150,17 +167,23 @@ export class Search {
    * nothing typed, it's the notes changed last. An extension's provider that takes longer than
    * PROVIDER_MS is left out; `progress` hears the sections found so far, as each one comes, so notes
    * can show before the rest. Notes that can't be searched (offline) say so in their section's `note`.
+   *
+   * `within` scopes a find to what an extension may read: for each kind, null for all of it, or path
+   * globs, so only results in files that match them are found, ranked, limited and counted. A kind
+   * given no globs isn't asked at all.
    */
-  async find(text: string, limit: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]> {
+  async find(text: string, limit: number, progress?: (sections: SearchSection[]) => void, within: (type: string) => readonly string[] | null = () => null): Promise<SearchSection[]> {
     const extra = this.extraKeys();
     const query = parse(text, extra);
     const types = (negated: boolean) => query.terms.flatMap((t) => (t.kind === "filter" && t.key === "type" && t.negated === negated && t.value ? [t.value.toLowerCase()] : []));
     const [wanted, unwanted] = [types(false), types(true)];
     const rest: Query = { terms: query.terms.filter((t) => !(t.kind === "filter" && t.key === "type")) };
     const notes = async (q: Query, title: string): Promise<SearchSection | null> => {
+      const globs = within("note");
+      if (globs && !globs.length) return null;
       try {
-        const results = await this.deps.notes.search(q, limit);
-        return results.length ? { type: "note", title, results } : null;
+        const { results, more } = await this.deps.notes.search(q, limit, globs ?? undefined);
+        return results.length ? { type: "note", title, results, ...(more ? { more: true as const } : {}) } : null;
       } catch {
         return { type: "note", title, results: [], note: "Search needs a connection: notes by name are below" };
       }
@@ -180,8 +203,12 @@ export class Search {
           found[i] = rest.terms.some((t) => t.kind === "filter" && !own.has(t.key)) ? null : await notes(rest, title);
         } else {
           const provider = this.providers.get(type);
+          const globs = within(type);
+          const inside = globs && inGlobs(globs);
           const late = new Promise<SearchResult[]>((resolve) => setTimeout(() => resolve([]), PROVIDER_MS));
-          const results = provider ? await Promise.race([Promise.resolve(provider.search(rest, limit)).catch(() => []), late]) : [];
+          const answered = provider && !(globs && !globs.length) ? await Promise.race([Promise.resolve(provider.search(rest, limit, globs ?? undefined)).catch(() => []), late]) : [];
+          // A provider that doesn't keep to `within` still has what's outside it taken out before the limit.
+          const results = inside ? answered.filter((r) => r.path && inside(r.path)) : answered;
           found[i] = results.length ? { type, title, results: results.slice(0, limit) } : null;
         }
         report();

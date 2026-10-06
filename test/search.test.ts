@@ -78,3 +78,45 @@ test("a search of filters alone counts every note; one with words reads at most 
   const words = (await runOperation("search", { query: "alpha", zone: "UTC" }, store, ada)) as { ok: true; value: { total: number; more?: true } };
   assert.deepEqual([all.total, words.value.total, words.value.more], [1003, 1000, true]);
 });
+
+test("sort:edited and sort:title order every note with the words, not a sample of them", async (t) => {
+  let clock = Date.parse("2026-10-01T00:00:00Z");
+  t.mock.method(Date, "now", () => (clock += 1000));
+  const store = memoryStore();
+  // Written oldest first, and titled so the newest note's title comes first: the notes a capped,
+  // unordered sample would leave out are the ones each order puts first.
+  for (let i = 0; i < 1003; i++) store.files.write({ path: `N/${i}.md` as FilePath, text: `# t${String(1002 - i).padStart(4, "0")}\nalpha`, base: 0, author: ada });
+  const first = async (query: string) => (await runOperation("search", { query, zone: "UTC", limit: 3 }, store, ada)) as { ok: true; value: { results: Array<{ path: string; title: string }>; more?: true } };
+  assert.deepEqual((await first("alpha sort:edited")).value.results.map((r) => r.path), ["N/1002.md", "N/1001.md", "N/1000.md"]);
+  assert.deepEqual((await first("alpha sort:title")).value.results.map((r) => r.title), ["t0000", "t0001", "t0002"]);
+  assert.equal((await first("alpha sort:title")).value.more, true);
+});
+
+test("-word and has: read notes in the query's order, so the first results are right, and say when they stopped short", async () => {
+  const store = memoryStore();
+  for (let i = 0; i < 1003; i++) store.files.write({ path: `N/${i}.md` as FilePath, text: `# t${String(i).padStart(4, "0")}\n- [ ] task ${i}`, base: 0, author: ada });
+  for (const query of ["-zebra sort:title", "has:task sort:title"]) {
+    const out = (await runOperation("search", { query, zone: "UTC", limit: 2 }, store, ada)) as { ok: true; value: { results: Array<{ title: string }>; total: number; more?: true } };
+    assert.deepEqual([out.value.results.map((r) => r.title), out.value.total, out.value.more], [["t0000", "t0001"], 1000, true], query);
+  }
+});
+
+test("a search within some paths ranks, limits and counts only the notes there", async () => {
+  const store = memoryStore();
+  store.files.write({ path: "Public/Decoy.md" as FilePath, text: "# Decoy\nzebra stripes", base: 0, author: ada });
+  store.files.write({ path: "Secret/Plan.md" as FilePath, text: "# Zebra acquisition\nconfidential", base: 0, author: ada });
+  for (let i = 0; i < 1001; i++) store.files.write({ path: `Secret/${i}.md` as FilePath, text: `# Secret ${i}\nzebra`, base: 0, author: ada });
+  const within = async (query: string, limit: number) => (await runOperation("search", { query, zone: "UTC", limit, within: ["Public/**"] }, store, ada)) as { ok: true; value: { results: Array<{ path: string }>; total: number; more?: true } };
+  for (const query of ["zebra", "zebra sort:title", "zebra sort:edited", "-giraffe", "is:pinned", "-is:archived"]) {
+    const [one, twenty] = [await within(query, 1), await within(query, 20)];
+    assert.deepEqual(one.value.results, twenty.value.results.slice(0, 1), query);
+    assert.ok(twenty.value.results.every((r) => r.path.startsWith("Public/")), query);
+    assert.equal(twenty.value.more, undefined, query);
+    assert.equal(twenty.value.total, twenty.value.results.length, query);
+  }
+  assert.deepEqual((await within("zebra", 1)).value.results.map((r) => r.path), ["Public/Decoy.md"]);
+  // From the query string, the globs come as JSON.
+  const fromUrl = (await runOperation("search", { query: "zebra", zone: "UTC", within: '["Public/**"]' }, store, ada)) as { ok: true; value: { total: number } };
+  assert.equal(fromUrl.value.total, 1);
+  assert.equal((await runOperation("search", { query: "zebra", zone: "UTC", within: "Public/**" }, store, ada)).ok, false);
+});

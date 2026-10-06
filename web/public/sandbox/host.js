@@ -115,10 +115,10 @@
         provide(type, provider) {
           // Each search's results replace the last one's, so their handlers don't pile up.
           let previous = [];
-          handlers.set(`search:${type}`, async (query, limit) => {
+          handlers.set(`search:${type}`, async (query, limit, within) => {
             for (const run of previous) handlers.delete(`item:${run}`);
             previous = [];
-            return (await provider.search(query, limit)).map((result) => {
+            return (await provider.search(query, limit, within)).map((result) => {
               const run = `search-${type}:${++items}`;
               previous.push(run);
               handlers.set(`item:${run}`, () => result.run());
