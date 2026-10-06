@@ -296,6 +296,25 @@ browserTest(h, "restoring a kept edit that changed the same line as the note sin
   assert.equal(await app.readFile("Trip.md"), "# Trip to Paris\n- a\n");
 });
 
+browserTest(h, "an edit sent by beacon as the page went, and kept as a draft too, lands once", { scenario: "empty" }, async (app) => {
+  for (let run = 0; run < 4; run++) {
+    await app.writeFile("Trip.md", "# Trip\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 1, 7);
+    // The editor's own saves held back: only the beacon, and the draft kept as the page goes, carry the edit.
+    await app.call("slow", "^PUT /api/file", 60_000);
+    await app.keys(`o- packed ${run}<Esc>`);
+    await app.page.goto("about:blank");
+    await app.page.waitForTimeout(500);
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(800);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), `# Trip\n- packed ${run}\n`, `run ${run}: once`);
+  }
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");

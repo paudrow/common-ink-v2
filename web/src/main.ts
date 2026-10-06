@@ -818,7 +818,12 @@ window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
-  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  // Then sent as a beacon, which outlives the page more surely than a keepalive request. One the
+  // browser won't take (too big) waits as a draft: a keepalive request would draw on the same budget.
+  for (const u of unsaved) {
+    if (typeof navigator.sendBeacon === "function") api.beacon(u.path, u.text, u.base, u.edit);
+    else void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  }
 });
 
 // The app's own files, kept by a service worker so it opens offline.
