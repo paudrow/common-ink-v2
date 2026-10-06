@@ -36,6 +36,7 @@ export interface FilterInfo {
 
 /** What a chip writes into the query, so the query stays the whole story (study, section 6.3). */
 export const CHIPS: ReadonlyArray<{ label: string; filter: string }> = [
+  { label: "Archived", filter: "is:archived" },
   { label: "Agents", filter: "from:agent" },
   { label: "Mine", filter: "from:me" },
   { label: "This week", filter: "edited:<7d" },

@@ -76,6 +76,8 @@ export default {
       else if (!arg.replace(/^!\s*/, "") && (force || !ctx.workbench.hasUnsavedChanges())) ctx.commands.run("note.reload");
     });
     Vim.defineEx("quit", "q", run("tab.close"));
+    Vim.defineEx("archive", "archive", run("archive.archive"));
+    Vim.defineEx("unarchive", "unarchive", run("archive.unarchive"));
     Vim.defineEx("close", "clo", run("window.close"));
     Vim.defineEx("only", "on", run("window.only"));
     exOpen("split", "sp", (p) => ctx.workbench.split("down", p), run("window.splitDown"));

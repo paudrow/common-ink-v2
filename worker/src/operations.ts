@@ -11,6 +11,7 @@ import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
 import { format, parse, problems, type Query } from "./query.ts";
+import { ARCHIVE_PATH, archiveText, parseArchive, withArchived } from "./archive.ts";
 import type { SearchOptions, SearchResults } from "./search.ts";
 import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
@@ -160,10 +161,13 @@ function op<T>(o: Operation<T>): Operation<T> {
 
 export const OPERATIONS = {
   list_files: op<Record<string, never>>({
-    description: "List every file in the workspace (notes and workspace JSON) with its revision.",
+    description: "List every file in the workspace (notes and workspace JSON) with its revision. Archived notes say `archived: true`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
-    run: async (store) => store.list(),
+    run: async (store) => {
+      const archived = await archivedIn(store);
+      return (await store.list()).map((f) => (archived.has(f.path) ? { ...f, archived: true } : f));
+    },
   }),
   read_file: op<{ path: WorkspaceFile["path"] }>({
     description: "Read a file's text and revision. Pass the revision back as `base` when you write it.",
@@ -513,8 +517,24 @@ export const OPERATIONS = {
     },
     run: async (store, { query, limit, zone }) => {
       const q = parse(query);
-      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit })) };
+      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, archived: await archivedIn(store) })) };
     },
+  }),
+  archive: op<{ paths: FilePath[] }>({
+    description:
+      "Archive notes: they stay where they are, unchanged and still linked, but leave the Feed and come last in search, marked archived. It's one change to .common-ink/archive.json, by you; undo its revision to take it back. Says the change's revision (null if they were all archived already) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      for (const path of paths) if (!(await store.read(path))) throw new OperationError(`There's no note at ${path}`);
+      return setArchived(store, paths, true, author);
+    },
+  }),
+  unarchive: op<{ paths: FilePath[] }>({
+    description: "Take notes out of the archive, back into the Feed. One change to .common-ink/archive.json, by you. Says the change's revision (null if none of them was archived) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => setArchived(store, paths, false, author),
   }),
   list_embeds: op<Record<string, never>>({
     description:
@@ -578,6 +598,30 @@ export const OPERATIONS = {
     },
   }),
 };
+
+/** Notes' paths, from an operation's arguments. */
+function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
+  const paths = Array.isArray(v) ? v.map(parseFilePath) : [];
+  if (!paths.length || paths.length > 500 || !paths.every((p): p is FilePath => !!p && p.endsWith(".md"))) return fail('"paths" must be a list of notes\' paths, ending in .md');
+  return ok({ paths: [...new Set(paths)] });
+}
+
+async function archivedIn(store: Store): Promise<Set<string>> {
+  return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
+}
+
+/** Archive or unarchive notes: one change to the archive file, read again and retried if someone else wrote it meanwhile. */
+async function setArchived(store: Store, paths: FilePath[], archived: boolean, author: Author): Promise<{ revision: Revision | null; archived: FilePath[] }> {
+  for (let tries = 0; tries < 3; tries++) {
+    const file = await store.read(ARCHIVE_PATH);
+    const current = parseArchive(file?.text ?? "");
+    const next = withArchived(current, paths, archived);
+    if (next.join("\n") === current.join("\n")) return { revision: null, archived: next };
+    const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
+    if (result.status !== "conflict") return { revision: result.file.revision, archived: next };
+  }
+  throw new OperationError("The archive kept changing; try again");
+}
 
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */
 export class OperationError extends Error {}

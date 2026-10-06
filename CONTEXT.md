@@ -106,3 +106,7 @@ The app with only built-in extensions running, for when a workspace extension br
 **Query**:
 Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
 _Avoid_: Filter (that's one part of a query), search string
+
+**Archive**:
+A state a note can be in: kept, out of the Feed, shown last in search, still in place and still linked. Its path is listed in `.common-ink/archive.json`; archiving doesn't move or change the note.
+_Avoid_: Hide, move to archive
