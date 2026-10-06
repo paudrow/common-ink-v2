@@ -22,3 +22,14 @@ test("a drop in a tab bar lands before the tab whose middle it's left of", () =>
   assert.equal(tabIndexAt(tabs, 150), 2);
   assert.equal(tabIndexAt([], 10), 0);
 });
+
+test("a tab dragged in from another window of the app opens its note here, rather than moving one of this window's tabs", async () => {
+  const { DRAG_TYPE, dragged, startDrag, endDrag } = await import("../web/src/extensions/workbench/dnd.ts");
+  const event = (data: string) => ({ dataTransfer: { types: [DRAG_TYPE, "text/plain"], getData: (t: string) => (t === DRAG_TYPE ? data : "") } }) as unknown as DragEvent;
+  const tab = { item: { file: "Plan.md" }, from: { group: "g1", index: 0 } };
+  assert.deepEqual(dragged(event(JSON.stringify(tab))), { item: { file: "Plan.md" } }, "from another window: just the note");
+  const here = { dataTransfer: { setData: () => {}, effectAllowed: "" } } as unknown as DragEvent;
+  startDrag(here, tab as never, "Plan");
+  assert.deepEqual(dragged(event(JSON.stringify(tab))), tab, "from this window: the tab, to move");
+  endDrag();
+});
