@@ -21,27 +21,98 @@ const hosts = () => {
   return box;
 };
 
-/**
- * Whether a value from a frame is plain data: text, numbers, booleans, null, and lists and objects of
- * them. A structured clone also keeps String and Number objects, Dates and the like, which compare
- * unlike the text they turn into, so a check on one could pass where the use of it wouldn't.
- */
-export function plainValue(v: unknown, depth = 0): boolean {
-  if (v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return true;
-  if (depth > 32 || typeof v !== "object") return false;
-  if (Array.isArray(v)) return v.every((x) => plainValue(x, depth + 1));
-  return Object.getPrototypeOf(v) === Object.prototype && Object.values(v).every((x) => plainValue(x, depth + 1));
+/** The most one call to or answer from a frame may carry, in characters as JSON would write it: twice what a file may hold. */
+const MAX_CALL = 2_000_000;
+/** What a frame's calls may carry together in a moment, how many there may be, and how long that moment is. */
+const SHARE = { size: 10_000_000, calls: 2_000, ms: 10_000 };
+/** How deep a value from a frame may nest. */
+const MAX_DEPTH = 32;
+
+const counted = (n: number) => n.toLocaleString("en-US");
+
+/** How much longer JSON writes a string than its length: two for its quotes, and its escapes. */
+function escapes(s: string): number {
+  let extra = 2;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 0x22 || c === 0x5c || c === 0x08 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d) extra += 1;
+    else if (c < 0x20) extra += 5;
+    // A surrogate without its other half is written \udXXX.
+    else if (c >= 0xd800 && c <= 0xdbff && !(s.charCodeAt(i + 1) >= 0xdc00 && s.charCodeAt(i + 1) <= 0xdfff)) extra += 5;
+    else if (c >= 0xdc00 && c <= 0xdfff && !(s.charCodeAt(i - 1) >= 0xd800 && s.charCodeAt(i - 1) <= 0xdbff)) extra += 5;
+  }
+  return extra;
 }
 
-/** The most text one call from a frame may carry: twice what a file may hold. */
-const MAX_CALL_TEXT = 2_000_000;
+/**
+ * A value from a frame, measured once, as JSON would write it: its size, Infinity as soon as it's past
+ * `limit` (without walking the rest), or null if it isn't plain data (text, numbers, booleans, null,
+ * and lists and plain objects of them, nested at most 32 deep). A structured clone also keeps String
+ * objects, Dates, cycles and the like, which compare unlike the text they'd turn into.
+ */
+export function measure(v: unknown, limit: number): number | null {
+  let size = 0;
+  /** False if `x` isn't plain data; true otherwise, or once the size is past the limit. */
+  const walk = (x: unknown, depth: number): boolean => {
+    if (x === null || x === undefined) size += 4;
+    else if (typeof x === "boolean") size += x ? 4 : 5;
+    else if (typeof x === "number") size += Number.isFinite(x) ? JSON.stringify(x).length : 4;
+    else if (typeof x === "string") size += x.length + (x.length > limit ? 2 : escapes(x));
+    else if (typeof x !== "object" || depth >= MAX_DEPTH) return false;
+    else if (Array.isArray(x)) {
+      // Brackets and commas, and at least a character an item (a hole is "null"): a list too long is too much whatever's in it.
+      size += 1 + Math.max(x.length, 1);
+      if (size + x.length > limit) return (size = Infinity), true;
+      for (let i = 0; i < x.length; i++) {
+        if (!(i in x)) size += 4;
+        else if (!walk(x[i], depth + 1)) return false;
+        if (size > limit) return true;
+      }
+    } else {
+      if (Object.getPrototypeOf(x) !== Object.prototype) return false;
+      // JSON leaves out a key whose value is undefined.
+      const entries = Object.entries(x).filter(([, item]) => item !== undefined);
+      size += 1 + Math.max(entries.length, 1);
+      for (const [k, item] of entries) {
+        size += k.length + escapes(k) + 1;
+        if (!walk(item, depth + 1)) return false;
+        if (size > limit) return true;
+      }
+    }
+    return true;
+  };
+  if (!walk(v, 0)) return null;
+  return size > limit ? Infinity : size;
+}
 
-/** How much text a plain value holds, its keys included. */
-function textSize(v: unknown): number {
-  if (typeof v === "string") return v.length;
-  if (Array.isArray(v)) return v.reduce((n: number, x) => n + textSize(x), 0);
-  if (v && typeof v === "object") return Object.entries(v).reduce((n, [k, x]) => n + k.length + textSize(x), 0);
-  return 0;
+/** A frame's share of a moment: what its calls carried and how many there were, kept as a running total. */
+export class CallShare {
+  private calls: Array<{ at: number; size: number }> = [];
+  private first = 0;
+  private total = 0;
+  /** Its refusals, in words, made once: a flood is refused at the cost of the calls, not of the words. */
+  private tooOften: string;
+  private tooMuch: string;
+
+  constructor(
+    name: string,
+    private limits: { size: number; calls: number; ms: number },
+  ) {
+    const every = `every ${limits.ms / 1000} seconds`;
+    this.tooOften = `${name} is calling too often: it can make ${counted(limits.calls)} calls ${every}`;
+    this.tooMuch = `${name} is sending too much at once: it can send ${counted(limits.size)} characters' worth ${every}`;
+  }
+
+  /** Null if a call of `size` fits in what's left of the moment at `now`, and counts it; otherwise why it doesn't. */
+  take(size: number, now: number): string | null {
+    while (this.first < this.calls.length && now - this.calls[this.first].at >= this.limits.ms) this.total -= this.calls[this.first++].size;
+    if (this.first > 1024 && this.first * 2 > this.calls.length) [this.calls, this.first] = [this.calls.slice(this.first), 0];
+    if (this.calls.length - this.first >= this.limits.calls) return this.tooOften;
+    if (this.total + size > this.limits.size) return this.tooMuch;
+    this.calls.push({ at: now, size });
+    this.total += size;
+    return null;
+  }
 }
 
 /** A frame's MessagePort, once its shell has loaded: the only way the app and the frame talk. */
@@ -66,13 +137,22 @@ export class SandboxHost {
   private frame: HTMLIFrameElement | null = null;
   private pending = new Map<string, Pending>();
   private next = 0;
+  /** Its share of a moment. */
+  private share: CallShare;
+  /** Its refusals for a call or an answer too big, or not plain data, made once. */
+  private tooBig: { call: string; answer: string };
+  private notPlain: string;
 
   constructor(
     private extension: ExtensionManifest,
     private dispatch: Dispatch,
     /** It reported an error after starting: an uncaught exception, say. */
     private failed: (message: string) => void,
-  ) {}
+  ) {
+    this.share = new CallShare(extension.name, SHARE);
+    this.notPlain = `${extension.name} can pass only plain values (text, numbers, lists and objects)`;
+    this.tooBig = { call: `${extension.name} sent more than ${counted(MAX_CALL)} characters' worth in one call`, answer: `${extension.name} answered with more than ${counted(MAX_CALL)} characters' worth` };
+  }
 
   /** Load the frame and start the extension's code from `code`. Resolves once it's activated; rejects with its error. */
   async start(code: string, settings: Record<string, unknown>, me: string | undefined, device: unknown): Promise<void> {
@@ -99,7 +179,10 @@ export class SandboxHost {
         else if (m.t === "result" || m.t === "reject") {
           const p = this.pending.get(m.id!);
           this.pending.delete(m.id!);
-          if (m.t === "result") p?.resolve(m.value);
+          const size = m.t === "result" ? measure(m.value, MAX_CALL) : 0;
+          if (size === null) p?.reject(new Error(`${this.extension.name} can answer only with plain values (text, numbers, lists and objects)`));
+          else if (size > MAX_CALL) p?.reject(new Error(this.tooBig.answer));
+          else if (m.t === "result") p?.resolve(m.value);
           else p?.reject(new Error(m.message));
         }
       };
@@ -108,10 +191,20 @@ export class SandboxHost {
     await started;
   }
 
+  /** Why a call can't be made, or null: not plain data, too big, or past its share of the moment. */
+  private refusal(method: unknown, args: unknown): string | null {
+    const size = typeof method === "string" && Array.isArray(args) ? measure(args, MAX_CALL) : null;
+    if (size === null) return this.notPlain;
+    if (size > MAX_CALL) return this.tooBig.call;
+    // performance.now() only goes forward: a clock set back can't hold a frame's moment open.
+    return this.share.take(size, performance.now());
+  }
+
   private async answer(id: string, method: string, args: unknown[]) {
+    // Refused at the cost of a message: no Error, no words made, nothing awaited.
+    const refused = this.refusal(method, args);
+    if (refused) return this.port!.postMessage({ t: "reject", id, message: refused });
     try {
-      if (typeof method !== "string" || !Array.isArray(args) || !args.every(plainValue)) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
-      if (textSize(args) > MAX_CALL_TEXT) throw new Error(`${this.extension.name} sent more than 2 MB in one call`);
       this.port!.postMessage({ t: "result", id, value: (await this.dispatch(method, args)) ?? null });
     } catch (err) {
       this.port!.postMessage({ t: "reject", id, message: (err as Error).message });
@@ -211,7 +304,13 @@ export class Webview {
       });
       port.onmessage = (e) => {
         const m = e.data as { type: string; data?: unknown; id?: number; height?: number; drawn?: WebviewStatus["drawn"] };
-        if (m.type === "message") onMessage(m.data);
+        // A webview's page is the extension's too: what it sends its extension is held to the size of a call.
+        if (m.type === "message") {
+          const size = measure(m.data, MAX_CALL);
+          if (size !== null && size <= MAX_CALL) onMessage(m.data);
+          // Dropped, the page that sent it hears why, in its console.
+          else port.postMessage({ type: "dropped", why: size === null ? "Only plain values (text, numbers, lists and objects) reach the extension" : `A message over ${counted(MAX_CALL)} characters' worth doesn't reach the extension` });
+        }
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
         if (m.type === "loaded") {
           this.status.loaded = true;
