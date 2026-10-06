@@ -193,6 +193,22 @@ browserTest(h, "scrolling sideways goes on through the weeks, drawing only a few
   assert.equal(await title.innerText(), "Monday, October 5, 2026");
 });
 
+browserTest(h, "scrolled to the first week drawn, the week grid stays on it while it draws the weeks before", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const title = app.page.locator(".cal-title-text");
+  // Once the grid has its width and has been laid out again for it, a frame later.
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").hover({ position: { x: 400, y: 300 } });
+  await app.page.mouse.wheel(-4000, 0);
+  // Three weeks before it are drawn, from Aug 24, and nothing more is asked for.
+  await app.page.locator('.cal-day[data-day="2026-08-24"]').waitFor({ state: "attached" });
+  await app.idle();
+  assert.equal(await title.innerText(), "Sep 14 – 20, 2026");
+  await app.page.waitForTimeout(500);
+  assert.equal(await title.innerText(), "Sep 14 – 20, 2026");
+});
+
 browserTest(h, "an event moved while offline waits in this browser, says so, and goes once it's back online", { scenario: "calendar", open: "Calendar tour", levers: LEVERS, allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await openCalendar(app);
   await app.page.context().setOffline(true);
