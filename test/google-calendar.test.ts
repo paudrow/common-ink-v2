@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
+import type { GoogleEvent } from "../worker/src/google-calendar.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { recordPath } from "../worker/src/records.ts";
 import type { Occurrence } from "../worker/src/calendar.ts";
@@ -515,16 +516,30 @@ test("an edit that failed for a while, then meets one 412 once Google is back, m
   assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
 });
 
-test("an edit of an event Google deleted meanwhile is refused and goes away with the next sync; deleting one is done already", async () => {
-  const { fake, store } = google();
-  await op(store, "sync_calendar", {});
-  fake.remove("ada@example.com", "dentist");
-  const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
-  assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
-  assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
-  fake.remove("ada@example.com", "standup");
-  await op(store, "delete_event", { address: "event:google/primary/standup_20261005T160000Z", scope: "all" });
-  assert.deepEqual(store.sources.outbox("google"), []);
-  await op(store, "sync_calendar", { force: true });
-  assert.deepEqual(await listed(store), ["2026-10-08 Offsite"]);
-});
+for (const [how, deleted] of [
+  ["with the event, cancelled", (g: GoogleEvent) => Response.json({ ...g, status: "cancelled" })],
+  ["with 410", () => Response.json({ error: { code: 410, message: "Resource has been deleted" } }, { status: 410 })],
+] as const) {
+  test(`an edit of an event Google deleted meanwhile is refused and goes away with the next sync, Google answering a read ${how}; deleting one is done already`, async () => {
+    const { fake } = google();
+    const gone = new Set<string>();
+    const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+      const id = /\/events\/([^/?]+)$/.exec(String(input))?.[1];
+      if ((init?.method ?? "GET") === "GET" && id && gone.has(decodeURIComponent(id))) return deleted(fake.event("ada@example.com", decodeURIComponent(id))!);
+      return fake.fetch(input, init);
+    });
+    store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+    await op(store, "sync_calendar", {});
+    fake.remove("ada@example.com", "dentist");
+    gone.add("dentist");
+    const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+    assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
+    fake.remove("ada@example.com", "standup");
+    gone.add("standup");
+    await op(store, "delete_event", { address: "event:google/primary/standup_20261005T160000Z", scope: "all" });
+    assert.deepEqual(store.sources.outbox("google"), []);
+    await op(store, "sync_calendar", { force: true });
+    assert.deepEqual(await listed(store), ["2026-10-08 Offsite"]);
+  });
+}
