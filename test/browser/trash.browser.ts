@@ -129,7 +129,13 @@ browserTest(h, "on a phone, a swipe left asks, then deletes forever", { scenario
   for (let x = 300; x >= 60; x -= 30) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(x) });
   assert.match((await row.getAttribute("data-swipe")) ?? "", /delete armed/, "red, and ready to delete");
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await page.locator(".dialog-actions button", { hasText: "Delete forever" }).tap();
+  // The tap on the dialog's button goes through the same touch input as the swipe, as a finger's would.
+  const button = page.locator(".dialog-actions button", { hasText: "Delete forever" });
+  await button.waitFor();
+  const b = (await button.boundingBox())!;
+  const tap = [{ x: b.x + b.width / 2, y: b.y + b.height / 2 }];
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: tap });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.locator(".trash-empty").waitFor();
   assert.deepEqual(await historyOf(page, "Groceries.md"), ["purged by user"]);
 });
