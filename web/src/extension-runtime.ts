@@ -9,7 +9,7 @@ import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
-import { PermissionBroker } from "./broker.ts";
+import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
@@ -767,10 +767,19 @@ export class ExtensionRuntime {
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
     // An edit's answer names the events it wrote: only for an extension that may read them already.
     const readAsk: Ask = { kind: "data:calendar:read" };
-    const mayRead = (r: EditResult): Partial<EditResult> =>
-      decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk)
-        ? r
-        : { status: r.status, address: r.address, ...(r.error ? { error: r.error } : {}) };
+    // Its words, a refusal's included, can name the event: they go as they are only to one that may read it.
+    const canRead = () => decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk);
+    const mayRead = async (edit: Promise<EditResult>): Promise<Partial<EditResult>> => {
+      let r: EditResult;
+      try {
+        r = await edit;
+      } catch (err) {
+        if (canRead() || err instanceof PermissionDenied) throw err;
+        throw new Error(`The calendar refused ${m.name}'s change to the event`);
+      }
+      if (canRead()) return r;
+      return { status: r.status, address: r.address, ...(r.error ? { error: `The calendar doesn't have ${m.name}'s change yet` } : {}) };
+    };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -884,11 +893,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return mayRead(await data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
+            return mayRead(data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return mayRead(await data.calendar.update(address(a), eventInput(b), scopeOf(c)));
+            return mayRead(data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return mayRead(await data.calendar.remove(address(a), scopeOf(b)));
+            return mayRead(data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
