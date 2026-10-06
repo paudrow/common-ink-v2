@@ -462,3 +462,31 @@ for (const [what, series, move] of moves) {
     });
   }
 }
+
+test("an edit of a whole series' fields reaches its changed occurrences where they still had the series' old value, here and in Google", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Daily sync", location: "Room 4", scope: "all" });
+  const there = (id: string) => [fake.event("ada@example.com", id)?.summary, fake.event("ada@example.com", id)?.location];
+  assert.deepEqual(there("standup_20261006T160000Z"), ["Standup (late)", "Room 4"], "its own title stays, the place it shared with the series follows");
+  assert.deepEqual(there("standup_20261009T160000Z"), ["Kickoff", "Room 4"]);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await listed(store), [
+    "2026-10-05T16:00 Daily sync",
+    "2026-10-06T17:00 Standup (late)",
+    "2026-10-06T21:30 Dentist",
+    "2026-10-08 Offsite",
+    "2026-10-09T16:00 Kickoff",
+  ]);
+});
+
+test("a series renamed for all events renames a moved occurrence that kept the series' name", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", start: "2026-10-09T10:00", scope: "this" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Daily sync", scope: "all" });
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.summary, "Daily sync");
+  await op(store, "sync_calendar", { force: true });
+  assert.ok((await listed(store)).includes("2026-10-09T17:00 Daily sync"));
+});
