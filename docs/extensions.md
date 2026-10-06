@@ -5,7 +5,7 @@ Built-in features are extensions on the same manifest and API anyone else's use 
 - `extension.json`, the manifest: what the extension is, what it adds, when its code starts, and what it may ask for.
 - Its code: `main` (default `index.js`), an ES module whose default export has `activate(ctx)`, plus any modules `main` imports from the same folder. Everything else it needs comes through `ctx`, or, for trusted extensions that change editors, from the libraries below.
 
-A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from the Catalog in the Extensions view, or from where it's published with Install from URL, which copies its files in.
+A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from the Catalog in the Extensions view, or from where it's published with Install from URL, which copies its files in. Installing from a URL takes the id out of every trusted list first (the workspace's and each person's), so new code under an id someone trusted starts sandboxed, and the app says so. If a settings file that lists trusted extensions isn't valid JSON, the install waits until it's fixed. Trust you give is kept in your settings; Stop trusting takes the id out of yours and the workspace's.
 
 ## Libraries
 

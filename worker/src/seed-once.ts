@@ -9,14 +9,28 @@ export interface SeedRun {
   running: Promise<void> | null;
 }
 
-export function seedOnce(run: SeedRun, load: () => Promise<Seed | null>, apply: (seed: Seed) => Promise<unknown>): Promise<void> {
+/**
+ * How long requests wait on a seeding. A request's work can be cancelled when its page goes away, and
+ * a seeding started there might never settle; after this, the next request starts another.
+ */
+const SEED_WAIT = 20_000;
+
+export function seedOnce(run: SeedRun, load: () => Promise<Seed | null>, apply: (seed: Seed) => Promise<unknown>, wait = SEED_WAIT): Promise<void> {
   if (run.done) return Promise.resolve();
-  run.running ??= (async () => {
-    const seed = await load();
-    if (seed) await apply(seed);
-    run.done = true;
-  })()
-    .catch((err) => console.error("Seeding the workspace failed; the next request tries again.", err))
-    .finally(() => (run.running = null));
+  if (!run.running) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const seeding = (async () => {
+      const seed = await load();
+      if (seed) await apply(seed);
+      run.done = true;
+    })();
+    const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`Seeding took over ${wait / 1000} seconds`)), wait)));
+    run.running = Promise.race([seeding, late])
+      .catch((err) => console.error("Seeding the workspace failed; the next request tries again.", err))
+      .finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        run.running = null;
+      });
+  }
   return run.running;
 }

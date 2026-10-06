@@ -94,7 +94,13 @@ export function isPrivateIPv6(ip: string): boolean {
   if (g[0] === 0x64 && g[1] === 0xff9b) return !zero(2, 6) || inside(g[6], g[7]);
   if (g[0] === 0x2002) return inside(g[1], g[2]);
   if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true;
-  if (g[0] === 0x100 && zero(1, 4)) return true;
+  // Benchmarking (2001:2::/48) and ORCHID (2001:10::/28); 2001:20::/28 beside it is reachable.
+  if (g[0] === 0x2001 && ((g[1] === 2 && g[2] === 0) || (g[1] & 0xfff0) === 0x10)) return true;
+  // Documentation (3fff::/20) and SRv6 SIDs (5f00::/16).
+  if (g[0] === 0x3fff && (g[1] & 0xf000) === 0) return true;
+  if (g[0] === 0x5f00) return true;
+  // Discard (100::/64) and dummy prefixes (100:0:0:1::/64).
+  if (g[0] === 0x100 && zero(1, 3) && (g[3] === 0 || g[3] === 1)) return true;
   return (g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xffc0) === 0xfec0 || (g[0] & 0xff00) === 0xff00;
 }
 
