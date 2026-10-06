@@ -4,7 +4,7 @@
 // doesn't (guests, reminders, video calls) is left as Google has it.
 import { fullWall, wallTimeAt, type Calendar, type CalendarEvent, type EventFields, type RecordOp } from "./calendar.ts";
 import { Conflict, Gone, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
-import type { GoogleConfig } from "./google.ts";
+import { GOOGLE_TIMEOUT, sendToGoogle, type GoogleConfig } from "./google.ts";
 
 /** An event as the Calendar API sends and takes it (the fields Common Ink uses). */
 export interface GoogleEvent {
@@ -138,17 +138,12 @@ export class GoogleCalendar implements Adapter {
     private fetcher: typeof fetch = fetch,
     private now: () => number = Date.now,
     /** How long one call to Google may take: pushes take turns, so a call that hangs would hold up every edit after it. */
-    private timeout = 30_000,
+    private timeout = GOOGLE_TIMEOUT,
   ) {}
 
   /** A fetch to Google that fails, as a failure for now, if Google doesn't answer in time. */
-  private async send(url: string, init: RequestInit): Promise<Response> {
-    try {
-      return await this.fetcher(url, { ...init, signal: AbortSignal.timeout(this.timeout) });
-    } catch (err) {
-      if ((err as Error)?.name === "TimeoutError") throw new Error(`Google didn't answer within ${this.timeout / 1000} seconds`);
-      throw err;
-    }
+  private send(url: string, init: RequestInit): Promise<Response> {
+    return sendToGoogle(this.fetcher, url, init, this.timeout);
   }
 
   private async access(fresh = false): Promise<string> {

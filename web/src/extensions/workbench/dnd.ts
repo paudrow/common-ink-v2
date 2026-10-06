@@ -12,14 +12,17 @@ export interface Dragged {
 }
 
 // Browsers only show what's being dragged on drop, so the zones shown while dragging read it from here.
-let current: Dragged | null = null;
+// Its id is in the drag's data too: a drop that carries another one isn't it, even if its dragend never came.
+let current: { dragged: Dragged; id: string } | null = null;
 
 export function startDrag(e: DragEvent, dragged: Dragged, label: string): void {
-  current = dragged;
-  e.dataTransfer?.setData(DRAG_TYPE, JSON.stringify(dragged));
+  const id = Math.random().toString(36).slice(2);
+  current = { dragged, id };
+  e.dataTransfer?.setData(DRAG_TYPE, JSON.stringify({ ...dragged, drag: id }));
   // Dropped outside the app, it's just its name.
   e.dataTransfer?.setData("text/plain", label);
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = dragged.from ? "move" : "copyMove";
+  // A tab moves within the page; another window of the app takes a copy, its note opened there.
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
 }
 
 export function endDrag(): void {
@@ -31,7 +34,7 @@ export function endDrag(): void {
  * While dragging, a browser shows what's dragged in from outside only on drop, so that's when it's read.
  */
 export function droppable(e: DragEvent): boolean {
-  return !!current || !!e.dataTransfer?.types.includes(DRAG_TYPE);
+  return !!e.dataTransfer?.types.includes(DRAG_TYPE);
 }
 
 /**
@@ -41,14 +44,20 @@ export function droppable(e: DragEvent): boolean {
  * code file.
  */
 export function dragged(e: DragEvent): Dragged | null {
-  if (current) return current;
   if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return null;
+  const data = e.dataTransfer.getData(DRAG_TYPE);
+  // While dragging, the data can't be read: this page's drag is what it started, if there is one.
+  if (!data) return current?.dragged ?? null;
   let item: unknown;
   try {
-    item = (JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as { item?: unknown } | null)?.item;
+    const parsed = JSON.parse(data) as { item?: unknown; drag?: unknown } | null;
+    if (current && parsed?.drag === current.id) return current.dragged;
+    item = parsed?.item;
   } catch {
     return null;
   }
+  // Not this page's drag: one of ours that never ended is over.
+  current = null;
   const file = item && typeof item === "object" ? parseFilePath((item as { file?: unknown }).file) : null;
   return file && isNote(file) && !file.startsWith(".common-ink/") ? { item: { file } } : null;
 }
