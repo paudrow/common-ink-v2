@@ -16,6 +16,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { seedOnce, type SeedRun } from "./seed-once.ts";
 import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
@@ -32,6 +33,8 @@ interface Env extends WorkspaceEnv {
   ACCESS_AUD?: string;
   /** Set by `npm run dev` and in Previews: who you are signed in as there. */
   DEV_USER?: string;
+  /** Set by `npm run dev`: which run started this Worker (scripts/dev.ts). */
+  DEV_RUN?: string;
   /** "1" in Previews and local development: the workspace is filled from the build's seed.json. */
   SEED?: string;
   /** "1" in Previews, local development and the browser tests, with DEV_USER: test levers (docs/TESTING.md). */
@@ -143,7 +146,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       const isPage = asset.headers.get("Content-Type")?.startsWith("text/html");
       const out = secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
       if (!levers || !isPage) return out;
-      await seedOnce(env, workspace);
+      await seedPreview(env, workspace);
       const seeded = await workspace.scenario();
       return withLeversMeta(out, { scenario: seeded?.name ?? "", ...(seeded?.now ? { now: seeded.now } : {}) });
     }
@@ -169,12 +172,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       if (extensionAnswer) return secure(extensionAnswer);
     }
     if (levers && url.pathname.startsWith("/api/levers")) {
-      await seedOnce(env, workspace);
-      const answer = await leversApi(req, url, env.ASSETS, workspace);
+      await seedPreview(env, workspace);
+      const answer = await leversApi(req, url, env.ASSETS, workspace, env.DEV_RUN);
       if (answer) return secure(answer);
     }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
-    await seedOnce(env, workspace);
+    await seedPreview(env, workspace);
     return secure(await api(req, url, who, store));
   }
 }
@@ -311,13 +314,15 @@ function decodedPath(url: URL): string {
   }
 }
 
-let seeded = false;
+const seedRun: SeedRun = { done: false, running: null };
 
-/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate. */
-async function seedOnce(env: Env, workspace: DurableObjectStub<Workspace>) {
-  if (seeded || env.SEED !== "1") return;
-  const res = await env.ASSETS.fetch("https://assets.local/seed.json");
-  // A missing file comes back as the web app's index.html, since the app handles its own routes.
-  if (res.headers.get("Content-Type")?.startsWith("application/json")) await workspace.seed((await res.json()) as Seed);
-  seeded = true;
+/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate (seed-once.ts). */
+async function seedPreview(env: Env, workspace: DurableObjectStub<Workspace>) {
+  if (env.SEED !== "1") return;
+  const load = async () => {
+    const res = await env.ASSETS.fetch("https://assets.local/seed.json");
+    // A missing file comes back as the web app's index.html, since the app handles its own routes.
+    return res.headers.get("Content-Type")?.startsWith("application/json") ? ((await res.json()) as Seed) : null;
+  };
+  await seedOnce(seedRun, load, (seed) => workspace.seed(seed));
 }

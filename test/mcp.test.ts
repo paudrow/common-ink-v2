@@ -94,22 +94,23 @@ test("eight tasks ticked at once each get their line in the daily note", async (
   assert.deepEqual(chores.filter((chore) => !logged.includes(`- [x] ${chore} done:2026-10-05`)), []);
 });
 
-test("a tick that clashes with an edit of the same line is an error, and nothing is logged", async () => {
+test("a repeating task in today's daily note is ticked and logged in that note", async () => {
   const files = memoryStore();
-  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d\n", base: 0 }, files, agent);
-  const store = {
-    ...files,
-    write: (w: Parameters<typeof files.write>[0]) => {
-      if (w.path === "Chores.md" && w.author === agent) {
-        const d = files.files.read(w.path)!;
-        files.files.write({ path: w.path, text: d.text.replace("Water the plants", "Water the ferns"), base: d.revision, author: { kind: "user", email: "ada@example.com" } });
-      }
-      return files.write(w);
-    },
-  };
-  const result = await runOperation("complete_task", { path: "Chores.md", line: 3, today: "2026-10-05" }, store, agent);
-  assert.deepEqual(result, { ok: false, error: "Chores.md changed on line 3 meanwhile, so it wasn't ticked. Read it and try again." });
-  assert.equal(files.files.read("Journal/2026-10-05.md" as never), null);
+  const daily = "Journal/2026-10-05.md";
+  await runOperation("write_file", { path: daily, text: "# 2026-10-05\n\n- [ ] Stretch due:2026-10-05 rec:1d\n", base: 0 }, files, agent);
+  const ticked = await runOperation("complete_task", { path: daily, line: 3, today: "2026-10-05" }, files, agent);
+  assert.equal(ticked.ok, true);
+  assert.equal(files.files.read(daily as never)?.text, "# 2026-10-05\n\n- [ ] Stretch due:2026-10-06 rec:1d last:2026-10-05\n\n## Done\n\n- [x] Stretch done:2026-10-05 ([[Journal/2026-10-05]])\n");
+});
+
+test("the same tick sent twice at once, as a client's retry does, ticks once and logs once", async () => {
+  const files = memoryStore();
+  const line = "- [ ] Water the plants due:2026-10-05 rec:3d";
+  await runOperation("write_file", { path: "Chores.md", text: `# Chores\n\n${line}\n`, base: 0 }, files, agent);
+  const both = await Promise.all([0, 1].map(() => runOperation("complete_task", { path: "Chores.md", line: 3, text: line, today: "2026-10-05" }, files, agent)));
+  assert.deepEqual(both.map((r) => r.ok).sort(), [false, true]);
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05\n");
+  assert.equal(files.files.read("Journal/2026-10-05.md" as never)!.text.split("\n").filter((l) => l.includes("Water the plants")).length, 1);
 });
 
 test("an operation that fails unexpectedly says so in a sentence, logs why, and leaks no stack", async () => {

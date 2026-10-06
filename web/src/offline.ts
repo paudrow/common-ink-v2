@@ -76,7 +76,20 @@ export class Offline {
   constructor(
     private kv: KV,
     private net: Network,
-  ) {}
+  ) {
+    // The browser says its connection went: offline now, rather than at the next request. And when it
+    // says it's back, one request says whether the server can be reached, or an idle page says Offline on.
+    if (typeof addEventListener !== "undefined") {
+      addEventListener("offline", () => this.reached(false));
+      addEventListener("online", () => void this.check());
+    }
+  }
+
+  /** Ask the server whether it can be reached: the list of files, kept as the last seen. */
+  async check(): Promise<boolean> {
+    await this.list().catch(() => {});
+    return this.online;
+  }
 
   /** Be told when unsent changes or reachability change. */
   onChange(fn: () => void): void {
@@ -396,20 +409,30 @@ export function memoryKV(): KV {
   };
 }
 
-/** The browser's IndexedDB, as a KV. If IndexedDB isn't there (a private window, say), a memory store stands in. */
+/**
+ * The browser's IndexedDB, as a KV. If IndexedDB isn't there, or won't open (a private window, or
+ * storage blocked for this site), a memory store stands in: the app works, keeping nothing past the page.
+ */
 export function idbKV(name = "common-ink"): KV {
-  if (typeof indexedDB === "undefined") return memoryKV();
-  const db = new Promise<IDBDatabase>((resolve, reject) => {
-    // Version 2 adds "ops"; upgrading makes whichever stores are missing.
-    const open = indexedDB.open(name, 2);
-    open.onupgradeneeded = () => {
-      for (const store of ["files", "unsent", "meta", "ops"]) if (!open.result.objectStoreNames.contains(store)) open.result.createObjectStore(store);
-    };
-    open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error);
+  const memory = memoryKV();
+  if (typeof indexedDB === "undefined") return memory;
+  const db = new Promise<IDBDatabase | null>((resolve) => {
+    try {
+      // Version 2 adds "ops"; upgrading makes whichever stores are missing.
+      const open = indexedDB.open(name, 2);
+      open.onupgradeneeded = () => {
+        for (const store of ["files", "unsent", "meta", "ops"]) if (!open.result.objectStoreNames.contains(store)) open.result.createObjectStore(store);
+      };
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
   });
-  const run = async <T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest): Promise<T> => {
-    const tx = (await db).transaction(store, mode);
+  const run = async <T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest, instead: (kv: KV) => Promise<T>): Promise<T> => {
+    const open = await db;
+    if (!open) return instead(memory);
+    const tx = open.transaction(store, mode);
     const req = fn(tx.objectStore(store));
     return new Promise<T>((resolve, reject) => {
       tx.oncomplete = () => resolve(req.result as T);
@@ -417,10 +440,10 @@ export function idbKV(name = "common-ink"): KV {
     });
   };
   return {
-    get: (store, key) => run(store, "readonly", (s) => s.get(key)),
-    set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key)),
-    del: (store, key) => run(store, "readwrite", (s) => s.delete(key)),
-    all: (store) => run(store, "readonly", (s) => s.getAll()),
-    keys: async (store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys())).map(String),
+    get: <T>(store: Store, key: string) => run<T | undefined>(store, "readonly", (s) => s.get(key), (kv) => kv.get<T>(store, key)),
+    set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key), (kv) => kv.set(store, key, value)),
+    del: (store, key) => run(store, "readwrite", (s) => s.delete(key), (kv) => kv.del(store, key)),
+    all: <T>(store: Store) => run<T[]>(store, "readonly", (s) => s.getAll(), (kv) => kv.all<T>(store)),
+    keys: async (store: Store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys(), (kv) => kv.keys(store))).map(String),
   };
 }

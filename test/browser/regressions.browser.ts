@@ -118,6 +118,61 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "with this site's storage blocked, the app still opens a note and saves edits", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.page.addInitScript(() => {
+    const blocked = () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    };
+    Object.defineProperty(window, "localStorage", { get: blocked });
+    Object.defineProperty(IDBFactory.prototype, "open", { value: blocked });
+  });
+  await app.page.reload();
+  await app.ready();
+  await app.open("Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.idle();
+  for (let i = 0; i < 20 && (await app.readFile("Trip.md")) !== "# Trip\n- packed\n"; i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
+});
+
+browserTest(h, "going offline with nothing to send says Offline at once, and back online it goes at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+  await app.idle();
+  await app.page.context().setOffline(true);
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline", null, { timeout: 1000 });
+  await app.page.context().setOffline(false);
+  // Nothing waiting to be sent, and nothing else asking the server: the page checks as it's back.
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "", null, { timeout: 3000 });
+});
+
+browserTest(h, "an indent the outline refuses leaves the cursor where Vim leaves a shift, not past the lines it covered", { scenario: "empty" }, async (app) => {
+  const L = "# L\n\n- one\n- two\n- three\n\nend\n";
+  const CB = "# C\n\n```\ncode one\ncode two\n```\n\nend\n";
+  // The text, where the cursor starts, the keys, and where Vim puts the cursor: the first line's first non-blank.
+  const cases: Array<[string, number, string, number, number]> = [
+    [L, 3, ">>", 3, 1],
+    [L, 3, ">ip", 3, 1],
+    [L, 3, "Vj>", 3, 1],
+    // The first >> nests two under one; the . would nest it deeper than that, and is refused.
+    [L, 4, ">>.", 4, 3],
+    // A plain shift, in a code block: Vim's own.
+    [CB, 4, ">ip", 3, 3],
+    [CB, 4, ">>", 4, 3],
+  ];
+  for (const [i, [text, line, keys, toLine, toColumn]] of cases.entries()) {
+    await app.writeFile(`R${i}.md`, text);
+    await app.open(`R${i}`);
+    await app.idle();
+    await app.call("cursor", line, 1);
+    await app.keys(`<Esc>${keys}`);
+    await app.idle();
+    const at = await where(app);
+    assert.deepEqual([at.line, at.column, at.mode], [toLine, toColumn, "normal"], `${keys} from line ${line}`);
+  }
+});
+
 browserTest(h, "closing a note's tab after an edit keeps the edit, rather than putting back the note as it opened", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");
@@ -296,6 +351,26 @@ browserTest(h, "restoring a kept edit that changed the same line as the note sin
   assert.equal(await app.readFile("Trip.md"), "# Trip to Paris\n- a\n");
 });
 
+browserTest(h, "an edit undone before it was saved isn't brought back by a reload", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 3);
+  // Nothing reaches the server while this runs: the edit is only kept in this browser, as it's typed.
+  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.keys("dw");
+  await app.page.waitForTimeout(300);
+  await app.keys("u");
+  await app.page.waitForTimeout(300);
+  await app.reload();
+  await app.open("Trip");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n");
+  assert.equal(await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Trip" }).count(), 1);
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");
@@ -453,6 +528,94 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+/** The files every window's tabs show, in order. */
+async function tabFiles(app: App): Promise<string[]> {
+  const state = (await app.state()) as { layout: { root: unknown } };
+  const groups = (n: { kind: string; tabs?: Array<{ file?: string; view?: string }>; children?: unknown[] }): Array<{ file?: string; view?: string }> =>
+    n.kind === "group" ? n.tabs! : n.children!.flatMap((c) => groups(c as never));
+  return groups(state.layout.root as never).map((t) => t.file ?? `view:${t.view}`);
+}
+
+browserTest(h, "a drag from outside the page opens a note at most: crafted drops can't open settings, code or views, or write into a note", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  const before = await app.readFile("Welcome.md");
+  const tabs = await tabFiles(app);
+  const cdp = await app.page.context().newCDPSession(app.page);
+  const drop = async (payload: unknown, where: "bar" | "center") => {
+    const box = (await app.page.locator(where === "bar" ? ".group .tabs" : ".group .editors").first().boundingBox())!;
+    const [x, y] = where === "bar" ? [box.x + box.width - 20, box.y + box.height / 2] : [box.x + box.width / 2, box.y + box.height / 2];
+    const data = { items: [{ mimeType: "application/x-common-ink-openable", data: JSON.stringify(payload) }, { mimeType: "text/plain", data: "DROPPED" }], dragOperationsMask: 1 | 2 | 16 };
+    for (const type of ["dragEnter", "dragOver", "drop"] as const) await cdp.send("Input.dispatchDragEvent", { type, x, y, data });
+    await app.page.waitForTimeout(300);
+    await app.idle();
+  };
+  for (const where of ["bar", "center"] as const) {
+    for (const payload of [
+      { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
+      { item: { file: ".common-ink/layout.json" } },
+      { item: { file: ".common-ink/extensions/word-count/main.js" } },
+      { item: { view: "extensions" } },
+      { item: { file: "../x.md" } },
+      { item: "Shopping.md" },
+    ]) {
+      await drop(payload, where);
+      assert.deepEqual(await tabFiles(app), tabs, `${where}: ${JSON.stringify(payload)}`);
+    }
+  }
+  assert.equal(await app.readFile("Welcome.md"), before, "nothing dropped was typed into the note");
+  // A note, from another window of the app: it opens here, and that's all.
+  await drop({ item: { file: "Shopping.md" }, from: { group: "g1", index: 0 } }, "bar");
+  assert.deepEqual(await tabFiles(app), [...tabs, "Shopping.md"]);
+  assert.equal(await app.readFile("Welcome.md"), before);
+});
+
+browserTest(h, "a tab dragged from one window of the app to another opens its note there", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  await app.open("Shopping");
+  await app.idle();
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Chores");
+  await other.idle();
+  const before = await tabFiles(other);
+  // The drag as the browser makes it from the first window's tab, caught before it leaves (CDP).
+  const from = await app.page.context().newCDPSession(app.page);
+  await from.send("Input.setInterceptDrags", { enabled: true });
+  const caught = new Promise<{ data: unknown }>((done) => from.once("Input.dragIntercepted", done as never));
+  const tab = (await app.page.locator(".group .tabs .tab", { hasText: "Shopping" }).boundingBox())!;
+  const [x, y] = [tab.x + tab.width / 2, tab.y + tab.height / 2];
+  await from.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1, buttons: 1 });
+  for (let i = 1; i <= 5; i++) await from.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + i * 8, y: y + i * 6, button: "left", buttons: 1 });
+  const { data } = await caught;
+  await from.send("Input.setInterceptDrags", { enabled: false });
+  await from.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  // Dropped on the other window's tab bar.
+  const to = await other.page.context().newCDPSession(other.page);
+  const bar = (await other.page.locator(".group .tabs").first().boundingBox())!;
+  for (const type of ["dragEnter", "dragOver", "dragOver", "drop"] as const) await to.send("Input.dispatchDragEvent", { type, x: bar.x + bar.width - 20, y: bar.y + bar.height / 2, data: data as never });
+  await other.page.waitForTimeout(300);
+  await other.idle();
+  // It shows there (the windows share their tabs, so it may have been one already).
+  assert.equal((await other.call<{ path: string } | null>("where"))?.path, "Shopping.md", `tabs before: ${before.join(", ")}`);
+  await other.page.close();
+});
+
+browserTest(h, "a tab dropped on another window's editor opens there, and its name isn't typed into the note", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  await app.keys(":vs Chores<CR>");
+  await app.idle();
+  const welcome = await app.readFile("Welcome.md");
+  const chores = await app.readFile("Chores.md");
+  const tab = (await app.page.locator(".group").nth(1).locator(".tab").first().boundingBox())!;
+  const target = (await app.page.locator(".group").nth(0).locator(".editors").boundingBox())!;
+  await app.page.mouse.move(tab.x + tab.width / 2, tab.y + tab.height / 2);
+  await app.page.mouse.down();
+  for (let i = 1; i <= 10; i++) await app.page.mouse.move(tab.x + tab.width / 2 + ((target.x + target.width / 2 - tab.x - tab.width / 2) * i) / 10, tab.y + tab.height / 2 + ((target.y + target.height / 2 - tab.y - tab.height / 2) * i) / 10);
+  await app.page.mouse.up();
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  assert.equal(await app.page.locator(".group").count(), 1, "the tab moved into the other window, which closed");
+  assert.deepEqual((await tabFiles(app)).filter((f) => f === "Chores.md" || f === "Welcome.md").sort(), ["Chores.md", "Welcome.md"]);
+  assert.equal(await app.readFile("Welcome.md"), welcome);
+  assert.equal(await app.readFile("Chores.md"), chores);
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";
@@ -499,6 +662,16 @@ browserTest(h, "around a table or math block at a note's start or end, G, gg, co
     await app.page.waitForTimeout(100);
     assert.equal((await where(app)).line, 1, `a click on the ${kind}`);
   }
+});
+
+browserTest(h, "resizing a window with a Kanban board in it reports no ResizeObserver loop", { scenario: "tasks", open: "Boards tour.md" }, async (app) => {
+  await app.idle();
+  for (const keys of [":vs Boards tour<CR>", "<C-w>>", "<C-w>>", "<C-w><", "<C-w>=", "<C-w>H", "<C-w>c"]) {
+    await app.keys(`<Esc>${keys}`);
+    await app.page.waitForTimeout(300);
+  }
+  const problems = ((await app.state()) as { problems: Array<{ message: string }> }).problems.map((p) => p.message);
+  assert.deepEqual(problems, []);
 });
 
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
