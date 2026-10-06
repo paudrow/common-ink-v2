@@ -192,17 +192,26 @@ browserTest(h, "an edited note moved to another window while offline is sent onc
   assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
 });
 
-browserTest(h, "a reload straight after an edit keeps it", { scenario: "empty" }, async (app) => {
-  await app.writeFile("Trip.md", "# Trip\n");
-  await app.goto({}, "Trip");
-  await app.idle();
-  await app.call("cursor", 1, 7);
-  await app.keys("o- packed<Esc>");
-  await app.reload();
-  await app.idle();
-  for (let i = 0; i < 20 && (await app.readFile("Trip.md")) !== "# Trip\n- packed\n"; i++) await app.page.waitForTimeout(250);
-  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
-});
+for (const leave of ["a reload", "leaving the page"] as const) {
+  browserTest(h, `${leave} straight after an edit keeps it, every time`, { scenario: "empty" }, async (app) => {
+    for (let run = 0; run < 8; run++) {
+      await app.writeFile("Trip.md", "# Trip\n");
+      await app.goto({}, "Trip");
+      await app.idle();
+      await app.call("cursor", 1, 7);
+      // The page goes before the edit reaches the server: the requests that carry it never get out.
+      await app.call("slow", "^PUT /api/file", 60_000);
+      await app.keys(`o- packed ${run}<Esc>`);
+      if (leave === "a reload") await app.page.reload();
+      else await app.page.goto("about:blank");
+      await app.goto({}, "Trip");
+      await app.idle();
+      let text = "";
+      for (let i = 0; i < 20 && (text = await app.readFile("Trip.md")) !== `# Trip\n- packed ${run}\n`; i++) await app.page.waitForTimeout(250);
+      assert.equal(text, `# Trip\n- packed ${run}\n`, `run ${run}`);
+    }
+  });
+}
 
 browserTest(h, "a note deleted elsewhere while it's open isn't written back when its tab closes", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n- packed\n");
