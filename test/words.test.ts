@@ -31,7 +31,15 @@ test("code, math, diagrams and widget lines aren't words; the prose around them 
   assert.equal(countWords("An unclosed fence\n```\nhides the rest"), 3);
 });
 
-test("HTML tags and their attributes aren't words, the text in them is", () => {
+test("only a line that's $$ alone opens math, and a fence indented four spaces isn't one", () => {
+  assert.equal(countWords("$$5 is the price\nand more"), 6);
+  assert.equal(countWords("    ```\nindented code words\n    ```"), 3);
+  assert.equal(countWords("   ```\nhidden\n```\nshown"), 1);
+  assert.equal(countWords("> ```\n> quoted code\n> ```\nafter"), 1);
+});
+
+test("HTML tags and their attributes aren't words, the text in them is; an autolink is one word", () => {
+  assert.equal(countWords("See <https://example.com/a-b> now"), 3);
   assert.equal(countWords('<p class="lead">Hello <b>big</b> world</p><br/>'), 3);
   assert.equal(countWords('<img src="a.png" alt="A cat"> <!-- a note to self --> seen'), 1);
 });
@@ -66,7 +74,7 @@ test("a code block typed in reads only its own lines; one left open reads on to 
 
 test("edits anywhere, of any size, leave the same count as counting the note afresh", async () => {
   const { forAll } = await import("./property/gen.ts");
-  const pieces = ["word", "two words", "\n", "\n```\n", "```js", "\n~~~\n", "$$", "\n$$\n", "<b>", "</b>", "::timer{d=1m}", "\n:::kanban\n", ":::", "- [ ] ", "[a](https://x.y)", "東京", "  ", ""];
+  const pieces = ["word", "two words", "\n", "\n```\n", "```js", "\n~~~\n", "    ", "> ", "$$", "\n$$\n", "<https://a.b>", "<b>", "</b>", "::timer{d=1m}", "\n:::kanban\n", ":::", "- [ ] ", "[a](https://x.y)", "東京", "  ", ""];
   forAll(
     (r) => ({
       start: r.array(0, 30, (r) => r.pick(pieces)).join(""),

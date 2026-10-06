@@ -76,6 +76,8 @@ let settings: Settings = DEFAULTS;
 /** Every setting there is: the app's, and each installed extension's, once their manifests are read. */
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
+/** Back online with edits still held: they go at their next retry, so until one fails again, they're being sent. */
+let sending = false;
 const savedListeners: Array<(path: FilePath) => void> = [];
 const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
@@ -187,6 +189,8 @@ const workbench = new Workbench(
     status(status, message) {
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
+      // A save that failed with the server reachable: it isn't on its way.
+      if (status === "offline") sending = false;
       resolveButton.hidden = status !== "conflict";
       queueMicrotask(() => void renderUnsent());
     },
@@ -307,7 +311,8 @@ async function renderUnsent() {
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
   // Kept in memory only (this browser won't keep site data): they're gone if the page closes before they're sent.
   const fragile = waiting > 0 && !(await offline.durable());
-  const line = syncLine({ online: offline.online, waiting, fragile, clashing: clashing.map(docLabel) });
+  if (!waiting) sending = false;
+  const line = syncLine({ online: offline.online, waiting, fragile, sending, clashing: clashing.map(docLabel) });
   unsentLine.textContent = line.wide;
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = line.state;
@@ -315,7 +320,12 @@ async function renderUnsent() {
   notSavedLine.hidden = !line.phone;
   notSavedLine.dataset.state = line.state;
 }
-offline.onChange(() => void renderUnsent());
+let wasOnline = offline.online;
+offline.onChange(() => {
+  sending = offline.online && (sending || !wasOnline);
+  wasOnline = offline.online;
+  void renderUnsent();
+});
 /** Open the first note whose edit can't be merged, and show the two. */
 async function openClash() {
   const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
@@ -325,6 +335,8 @@ async function openClash() {
 }
 unsentLine.addEventListener("click", () => void openClash());
 notSavedLine.addEventListener("click", () => void openClash());
+// A tap on the pill leaves the note focused, so a phone's keyboard stays up.
+notSavedLine.addEventListener("mousedown", (e) => e.preventDefault());
 resolveButton.addEventListener("click", () => void resolveConflict());
 
 /**

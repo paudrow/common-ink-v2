@@ -13,6 +13,56 @@ const words = (app: App) => app.page.locator('[data-item="words.count"]');
 const shown = (app: App, selector: string) => app.page.locator(selector).isVisible();
 const top = (app: App, selector: string) => app.page.locator(selector).evaluate((e) => e.getBoundingClientRect().top);
 
+/** What the not-saved pill covers: controls, tabs and lines of the note, by their text. */
+const covered = (app: App) =>
+  app.page.evaluate(() => {
+    const pill = document.querySelector("#not-saved")!.getBoundingClientRect();
+    const overlaps = (r: DOMRect) => r.left < pill.right && pill.left < r.right && r.top < pill.bottom && pill.top < r.bottom;
+    return [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [role=tab], .tab, .cm-line")]
+      .filter((e) => e.id !== "not-saved" && e.checkVisibility() && overlaps(e.getBoundingClientRect()))
+      .map((e) => e.getAttribute("aria-label") || e.textContent?.trim() || e.className);
+  });
+
+for (const width of [320, 375]) {
+  browserTest(h, `at ${width}px the not-saved pill covers no tab, control or text of the note, and a tap on it stays on it`, { scenario: "empty", viewport: { width, height: 700 }, ...OFFLINE }, async (app) => {
+    await app.writeFile("A note with a fairly long title.md", "# A note with a fairly long title\nalpha beta gamma delta epsilon zeta eta theta\n");
+    await app.writeFile("B.md", "beta\n");
+    await app.writeFile("C.md", "gamma\n");
+    await app.goto({}, "A note with a fairly long title");
+    await app.idle();
+    await app.command("Keep tab open");
+    await app.open("B");
+    await app.command("Keep tab open");
+    await app.open("C");
+    await app.idle();
+    const tabs = async () => (await app.state()).windows.flatMap((w) => w.tabs.map((t) => t.label));
+    const before = await tabs();
+
+    await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+    await app.call("cursor", 1, 1);
+    await app.keys("Amore words here<Esc>");
+    await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor();
+    assert.deepEqual(await covered(app), [], "the longest wording");
+    const pill = (await app.page.locator("#not-saved").boundingBox())!;
+    await app.page.mouse.click(pill.x + pill.width - 6, pill.y + pill.height / 2);
+    assert.deepEqual(await tabs(), before, "a tap on the pill closed nothing");
+    assert.equal((await app.state()).focus.element, "div.cm-content.cm-lineWrapping", "and left the note focused");
+    await app.page.unroute("**/api/file**");
+    await app.page.locator("#not-saved").waitFor({ state: "hidden", timeout: 15_000 });
+
+    await app.page.context().setOffline(true);
+    await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline");
+    await app.keys("Aagain<Esc>");
+    await app.page.locator("#not-saved", { hasText: /^Not saved: offline\.$/ }).waitFor();
+    assert.deepEqual(await covered(app), [], "the offline wording");
+    await app.page.context().setOffline(false);
+    // Back online, it's on its way: not "can't reach the server" while it waits for its retry.
+    await app.page.locator("#not-saved", { hasText: /^Sending…$/ }).waitFor({ timeout: 2000 });
+    assert.deepEqual(await covered(app), [], "the sending wording");
+    await app.page.locator("#not-saved").waitFor({ state: "hidden", timeout: 15_000 });
+  });
+}
+
 browserTest(h, "on a laptop the status line counts the focused note's words as you type, and says nothing about the server while it's reached", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip to Rome\n\n- [ ] Book the train\n\n```js\nconst left = 3;\n```\n::timer{duration=25m}\n<b>Pack</b>\n");
   await app.writeFile("Other.md", "# Other\n");

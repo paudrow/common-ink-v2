@@ -6,12 +6,17 @@ import { Text, type ChangeSet } from "@codemirror/state";
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 /** A quote's >, a list item's bullet or number, and a task's checkbox: "> 1. ", "- [x] ". */
 const MARKS = /^[ \t>]*(?:(?:\d+[.)]|[-*+])[ \t]+)?(?:\[[ xX]\][ \t])?/;
+const AUTOLINK = /<https?:\/\/[^\s>]*>/g;
 const TAG = /<!--.*?-->|<\/?[A-Za-z][^>]*>/g;
 const LINK_TARGET = /\]\([^)]*\)/g;
 const URL = /\bhttps?:\/\/\S+/g;
-const FENCE = /^[ \t>]*(`{3,}|~{3,})(.*)$/;
-const FENCE_END = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/;
-const MATH = /^[ \t>]*\$\$/;
+/** Quotes' >, then at most three spaces: indented four, it's not a fence (CommonMark). */
+const LEAD = String.raw`^(?:[ ]{0,3}>[ ]?)*[ ]{0,3}`;
+const FENCE = new RegExp(`${LEAD}(\`{3,}|~{3,})(.*)$`);
+const FENCE_END = new RegExp(`${LEAD}(\`{3,}|~{3,})[ \t]*$`);
+/** `$$` alone opens a math block; `$$ … $$` alone on a line is one. A line that only starts with $$ is prose. */
+const MATH_OPEN = new RegExp(`${LEAD}\\$\\$[ \t]*$`);
+const MATH_LINE = new RegExp(`${LEAD}\\$\\$.*\\$\\$[ \t]*$`);
 /** `::timer{duration=25m}`, `:::kanban`, and the `:::` that closes it. */
 const DIRECTIVE = /^[ \t]*:{2,}(?:[A-Za-z][\w-]*)?(?:\[[^\]]*\])?(?:\{.*\})?[ \t]*$/;
 
@@ -19,7 +24,7 @@ const DIRECTIVE = /^[ \t]*:{2,}(?:[A-Za-z][\w-]*)?(?:\[[^\]]*\])?(?:\{.*\})?[ \t
 type Block = string;
 
 function countProse(line: string): number {
-  const text = line.replace(MARKS, "").replace(TAG, " ").replace(LINK_TARGET, "]").replace(URL, "link");
+  const text = line.replace(MARKS, "").replace(AUTOLINK, " link ").replace(TAG, " ").replace(LINK_TARGET, "]").replace(URL, "link");
   let n = 0;
   for (const s of segmenter.segment(text)) if (s.isWordLike) n++;
   return n;
@@ -35,7 +40,8 @@ function readLine(text: string, block: Block): [number, Block] {
   const fence = FENCE.exec(text);
   // A backtick fence's language can't have a backtick in it: "```a``` b" is inline code.
   if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) return [0, fence[1]];
-  if (MATH.test(text)) return [0, text.slice(text.indexOf("$$") + 2).includes("$$") ? "" : "$$"];
+  if (MATH_OPEN.test(text)) return [0, "$$"];
+  if (MATH_LINE.test(text)) return [0, ""];
   if (DIRECTIVE.test(text)) return [0, ""];
   return [countProse(text), ""];
 }

@@ -61,15 +61,15 @@ export const UNREACHABLE_TEXT = "Not saved: can't reach the server. Trying again
 /**
  * What the status line says about reaching the server: nothing while it's reached and nothing waits.
  * `wide` is the status bar's; `phone` is the not-saved line, there whenever an edit hasn't reached the
- * server, offline or not. `fragile`: this browser keeps waiting edits in memory only. `clashing` are the
- * labels of notes whose edits can't be merged.
+ * server, offline or not. `fragile`: this browser keeps waiting edits in memory only. `sending`: back
+ * online, and they haven't failed since. `clashing` are the labels of notes whose edits can't be merged.
  */
-export function syncLine({ online, waiting, fragile = false, clashing }: { online: boolean; waiting: number; fragile?: boolean; clashing: string[] }): { wide: string; phone: string; state: "" | "waiting" | "conflict" } {
+export function syncLine({ online, waiting, fragile = false, sending = false, clashing }: { online: boolean; waiting: number; fragile?: boolean; sending?: boolean; clashing: string[] }): { wide: string; phone: string; state: "" | "waiting" | "conflict" } {
   const lost = fragile && waiting ? ", lost if this page closes" : "";
   const parts = [online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}${lost}` : "", clashing.length ? `${clashing.length} can't be merged: open ${clashing[0]}` : ""];
   return {
     wide: parts.filter(Boolean).join(" · "),
-    phone: clashing.length ? "Not saved: changed elsewhere" : !waiting ? "" : `${online ? UNREACHABLE_TEXT : "Not saved: offline."}${lost ? " Lost if this page closes." : ""}`,
+    phone: clashing.length ? "Not saved: changed elsewhere" : !waiting ? "" : `${!online ? "Not saved: offline." : sending ? "Sending…" : UNREACHABLE_TEXT}${lost ? " Lost if this page closes." : ""}`,
     state: clashing.length ? "conflict" : waiting || !online ? "waiting" : "",
   };
 }

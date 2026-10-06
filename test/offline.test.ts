@@ -370,6 +370,10 @@ test("the status line says nothing while the server is reached and nothing waits
   assert.deepEqual(syncLine({ online: true, waiting: 0, clashing: ["Plan", "Trip"] }), { wide: "2 can't be merged: open Plan", phone: "Not saved: changed elsewhere", state: "conflict" });
 });
 
+test("back online, a phone says held edits are being sent until one fails again", () => {
+  assert.deepEqual(syncLine({ online: true, waiting: 1, sending: true, clashing: [] }), { wide: "1 unsent change", phone: "Sending…", state: "waiting" });
+});
+
 test("a phone says an edit isn't saved when it's waiting, even while the server is reachable", () => {
   assert.deepEqual(syncLine({ online: true, waiting: 1, clashing: [] }), { wide: "1 unsent change", phone: "Not saved: can't reach the server. Trying again.", state: "waiting" });
 });

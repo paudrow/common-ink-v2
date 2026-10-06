@@ -28,6 +28,8 @@
   --del: #b91c1c;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
+  /* A window's tab row, without its border. */
+  --tab-row: 2rem;
   font-family: var(--prose);
 }
 
@@ -176,7 +178,7 @@ body {
   scrollbar-width: none;
   border-bottom: 1px solid var(--line);
   font-size: 0.8125rem;
-  min-height: 2rem;
+  min-height: var(--tab-row);
 }
 
 /* Back and forward, when the Workbench's navigationArrows setting shows them: over the start of the top left tab bar. */
@@ -187,7 +189,7 @@ body {
   z-index: 1;
   display: flex;
   align-items: center;
-  height: 2rem;
+  height: var(--tab-row);
   padding: 0 0.25rem;
   gap: 0.125rem;
 }
@@ -413,10 +415,10 @@ button.status-item:hover {
   }
 }
 
-/* A phone has no status bar. While an edit hasn't reached the server, a pill at the top right says so.
-   It floats over the note rather than taking a row, so the note doesn't move as you type, and stays
-   clear of the on-screen keyboard and anything along the bottom. A top bar over the note sets
-   --not-saved-top to sit below it. */
+/* A phone has no status bar. While an edit hasn't reached the server, a pill says so, at the right just
+   under the top window's tab row: over a note, that's the editor's empty top margin, so it covers no text
+   and no control, and the note doesn't move as it comes and goes. It takes its own taps, so a tap on it
+   never lands on something it hides. A top bar above the windows moves it down with --not-saved-top. */
 #not-saved {
   display: none;
 }
@@ -428,26 +430,24 @@ button.status-item:hover {
   #not-saved:not([hidden]) {
     position: fixed;
     z-index: 15;
-    top: var(--not-saved-top, calc(env(safe-area-inset-top) + 0.5rem));
+    top: var(--not-saved-top, calc(var(--tab-row) + 1px + 0.25rem));
     right: calc(env(safe-area-inset-right) + 0.5rem);
     display: block;
-    max-width: calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right));
+    max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right));
     box-sizing: border-box;
     margin: 0;
-    padding: 0.25rem 0.625rem;
+    padding: 0.1875rem 0.625rem;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 0.875rem;
     background: var(--bg-elev);
     box-shadow: var(--shadow-sm);
     font-size: 0.75rem;
-    line-height: 1.3;
+    line-height: 1.25;
     color: var(--warn-ink);
-    pointer-events: none;
   }
   #not-saved[data-state="conflict"] {
     color: var(--bad);
     cursor: pointer;
-    pointer-events: auto;
   }
 }
 
