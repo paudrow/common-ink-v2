@@ -7,15 +7,16 @@ import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
 import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
-import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
+import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, typeFor, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
 import { embedFrameHosts, idsIn } from "./embed-list.ts";
-import { statePath } from "./extensions.ts";
+import { extensionFileOf, statePath } from "./extensions.ts";
 import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
 export { Workspace } from "./workspace.ts";
@@ -41,6 +42,8 @@ const HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Cross-Origin-Opener-Policy": "same-origin",
+  // Browsers ignore it over plain HTTP (npm run dev), so it's the same everywhere.
+  "Strict-Transport-Security": "max-age=31536000",
 };
 
 /** Hosts a page may frame, handed from `handle` to `fetch`, and never sent. */
@@ -106,10 +109,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
-    // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
+    // A trusted workspace extension's code, from its files, so the page can import it under
+    // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
     const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
     if (code && isExtensionScript(code)) {
-      const file = await (workspace as unknown as Store).read(code);
+      const trusted = await idsIn(workspace as unknown as Store, "extensions.trusted", who.kind === "user" ? who.email : null);
+      const file = trusted.has(extensionFileOf(code)?.id ?? "") ? await (workspace as unknown as Store).read(code) : null;
       if (!file) return secure(new Response("No such file\n", { status: 404 }));
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
@@ -128,9 +133,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An upload's bytes come as the request body, not JSON: PUT /api/upload?name=photo.png.
     if (url.pathname === "/api/upload" && req.method === "PUT") {
-      const size = Number(req.headers.get("Content-Length") ?? "0");
-      if (size > MAX_UPLOAD_BYTES) return secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
-      const result = await workspace.upload(url.searchParams.get("name") ?? "", await req.arrayBuffer(), authorFor(who, req.headers.get("X-Common-Ink-Agent")));
+      const tooBig = secure(json({ error: `Uploads can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB` }, 413));
+      if (Number(req.headers.get("Content-Length") ?? "0") > MAX_UPLOAD_BYTES) return tooBig;
+      const data = await bytesUpTo(req.body, MAX_UPLOAD_BYTES).catch(() => undefined);
+      if (data === undefined) return secure(json({ error: "The upload didn't arrive whole. Try again." }, 400));
+      if (data === null) return tooBig;
+      const result = await workspace.upload(url.searchParams.get("name") ?? "", data, authorFor(who, req.headers.get("X-Common-Ink-Agent")));
       return secure(result.status === "refused" ? json({ error: result.error }, 400) : json(result));
     }
     if (url.pathname === "/api/sources/disconnect" && req.method === "POST" && who.kind === "user") {
@@ -205,7 +213,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
     if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
-  if (!result.ok) return json({ error: result.error }, 400);
+  if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
   if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
@@ -213,7 +221,8 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
 }
 
 /**
- * An upload's bytes, under the type its name gives. Every one is served sandboxed, so an SVG or a PDF
+ * An upload's bytes, under the type its name gives (not the type in the uploads file, which anyone who
+ * can write files can change). Every one is served sandboxed, so an SVG or a PDF
  * opened by itself can't run script as this site; anything that isn't an image, audio, video, PDF or
  * plain text downloads instead of opening.
  */
@@ -226,24 +235,33 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
   if (!upload) return secure(new Response("Not found\n", { status: 404 }));
-  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return secure(new Response(null, { status: 304 }));
+  // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
+  // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
+  const sandboxed = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    out.headers.set("ETag", `"${upload.hash}"`);
+    // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
+    out.headers.set("Cache-Control", "private, no-cache");
+    return out;
+  };
+  if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
   const blob = await env.UPLOADS.get(blobKey(upload.hash));
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
-  const out = secure(
+  const type = typeFor(upload.name);
+  return sandboxed(
     new Response(blob.body, {
       headers: {
-        "Content-Type": upload.type,
+        "Content-Type": type,
         "Content-Length": String(upload.size),
-        "Content-Disposition": `${showsInline(upload.type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
-        ETag: `"${upload.hash}"`,
-        // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
-        "Cache-Control": "private, no-cache",
+        "Content-Disposition": `${showsInline(type) ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(upload.name)}`,
       },
     }),
   );
-  out.headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'");
-  return out;
 }
+
+/** An upload's policy: sandboxed, so an SVG or a PDF opened by itself runs nothing as this site. */
+const UPLOAD_CSP = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
 
 /** A URL's path, decoded, or "" if it can't be. */
 function decodedPath(url: URL): string {
