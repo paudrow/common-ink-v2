@@ -83,6 +83,17 @@ export interface Change {
   deleted?: true;
 }
 
+/** A file in Trash: its delete change, and its text just before. */
+export interface Deleted {
+  path: FilePath;
+  /** The delete's revision: undoing it restores the file. */
+  revision: Revision;
+  author: Author;
+  time: number;
+  /** The file's last revision before the delete: its text then is the note in Trash. 0 if it had none. */
+  before: Revision;
+}
+
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
 export interface UndoResult {
   revision: Revision;
@@ -138,8 +149,8 @@ export interface Write {
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
-  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
-  edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
+  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. With `delete`, the agent deletes the note instead, so Trash has something in it. */
+  edits?: Array<{ path: string; text: string; agent: string; label?: string; delete?: true }>;
   /** The scenario it was made from (docs/TESTING.md), and the clock that scenario starts at. */
   scenario?: { name: string; now?: string };
 }
@@ -226,6 +237,10 @@ export interface ChangeNotice {
   path: FilePath;
   revision: Revision;
   author: Author;
+  /** The change deleted the file. */
+  deleted?: true;
+  /** The change undid this one (a restore from Trash is one). */
+  undoes?: Revision;
 }
 
 export class Files {
@@ -236,6 +251,8 @@ export class Files {
     private announce: (notice: ChangeNotice) => void = () => {},
     /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
     private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
+    /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
+    private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
@@ -245,35 +262,49 @@ export class Files {
   private heard: ChangeNotice[] = [];
   /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
   private depth = 0;
+  /** A transaction inside the one running now failed: the outer one is rolled back too, even if it caught the error. */
+  private innerFailed = false;
 
   /**
    * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
-   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest.
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest. One
+   * inside another is part of the outer one, since SQLite has one transaction at a time: it can't be
+   * rolled back alone, so if it fails, the outer one fails as it ends, whether or not it caught the
+   * error, and none of either is kept.
    */
   private tx<T>(fn: () => T): T {
-    const mark = this.heard.length;
     this.depth++;
     try {
-      const out = this.db.tx(fn);
-      if (this.depth === 1) {
-        const notices = this.heard;
-        this.heard = [];
-        for (const notice of notices) {
-          try {
-            this.announce(notice);
-          } catch (err) {
-            console.error("Announcing a change failed:", err);
-          }
+      if (this.depth > 1) return fn();
+      this.innerFailed = false;
+      const out = this.db.tx(() => {
+        const out = fn();
+        if (this.innerFailed) throw new Error("A write inside this one failed, so none of them were kept");
+        return out;
+      });
+      const notices = this.heard;
+      this.heard = [];
+      for (const notice of notices) {
+        try {
+          this.announce(notice);
+        } catch (err) {
+          console.error("Announcing a change failed:", err);
         }
       }
       return out;
     } catch (err) {
-      // This transaction's changes were rolled back; an outer one's stay.
-      this.heard.length = mark;
+      if (this.depth > 1) this.innerFailed = true;
+      // Rolled back: nobody hears of any of it.
+      else this.heard = [];
       throw err;
     } finally {
       this.depth--;
     }
+  }
+
+  /** Run `fn` as one transaction: its writes all happen, or none do, and nothing comes between them. */
+  atomically<T>(fn: () => T): T {
+    return this.tx(fn);
   }
 
   /** Every file but data sources' records, which are listed by their kind (records.ts). */
@@ -359,7 +390,7 @@ export class Files {
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
-          const undone = merge(current?.text ?? "", after, before);
+          const undone = (this.mergeFor(change.path) ?? merge)(current?.text ?? "", after, before);
           if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
           if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
           const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
@@ -394,6 +425,30 @@ export class Files {
       close();
       return { path, runs };
     });
+  }
+
+  /**
+   * Deletes since a time that are in effect, newest first: each is a file in Trash, whatever is at its
+   * path now (a daily note made again, say). A delete that was undone, or restored, isn't one, nor is
+   * one whose restore a later delete undid: that delete is the note's row now. Only revisions and times
+   * are read here; a deleted file's text is `versionAt(path, before)`, when asked.
+   */
+  deleted(since: number): Deleted[] {
+    const undoneBy = this.undoneBy();
+    const deletedAgain = (revision: Revision) => this.db.all("SELECT 1 FROM changes r JOIN changes x ON x.undoes = r.revision AND x.deletes = 1 WHERE r.undoes = ? LIMIT 1", revision).length > 0;
+    return this.db
+      .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
+      .filter((d) => undoneBy(d.revision) === null && !deletedAgain(d.revision))
+      .map(({ revision, path, author, time }) => {
+        const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+        return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
+      });
+  }
+
+  /** A file's text just before a revision (of any file): "" if it had none yet. */
+  textBefore(path: FilePath, revision: Revision): string {
+    const [row] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+    return row?.r ? (this.textAt(path, row.r) ?? "") : "";
   }
 
   /** A file's text at one of its revisions, or null if it never had that revision. */
@@ -476,10 +531,10 @@ export class Files {
         this.db.run("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, textHash(text));
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
-      for (const { path, text, agent, label } of seed.edits ?? []) {
+      for (const { path, text, agent, label, delete: deleting } of seed.edits ?? []) {
         const current = added.has(path) ? this.read(path as FilePath) : null;
         if (!current) continue;
-        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent }, ...(deleting ? { delete: true as const } : {}) });
         if (label && result.file) labels.push({ name: label, path: current.path, revision: result.file.revision });
       }
       if (labels.length) {
@@ -533,7 +588,7 @@ export class Files {
     let status: "saved" | "merged" = "saved";
     if (!deleting && base !== (current?.revision ?? 0)) {
       const baseText = this.textAt(path, base);
-      const merged = baseText === null ? null : merge(text, baseText, currentText);
+      const merged = baseText === null ? null : (this.mergeFor(path) ?? merge)(text, baseText, currentText);
       if (merged === null) return { status: "conflict", file: current };
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
@@ -547,7 +602,7 @@ export class Files {
     if (deleting) {
       this.db.run("DELETE FROM files WHERE path = ?", path);
       this.observe(path, null, revision);
-      this.heard.push({ path, revision, author });
+      this.heard.push({ path, revision, author, deleted: true, ...(undoes ? { undoes } : {}) });
       return { status, file: { path, text: "", revision } };
     }
     this.db.run(
@@ -555,7 +610,7 @@ export class Files {
       path, next, revision,
     );
     this.observe(path, next, revision);
-    this.heard.push({ path, revision, author });
+    this.heard.push({ path, revision, author, ...(undoes ? { undoes } : {}) });
     return { status, file: { path, text: next, revision } };
   }
 
@@ -572,6 +627,9 @@ export class Files {
     return text.join("\n");
   }
 }
+
+/** A three-way merge of a file's text: mine and theirs, from base. Null when they can't be merged. */
+export type Merge = (mine: string, base: string, theirs: string) => string | null;
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {

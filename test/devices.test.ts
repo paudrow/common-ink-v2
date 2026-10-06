@@ -119,6 +119,7 @@ async function runtimeOn(device: ReturnType<typeof fakeDevice>) {
     commands,
     bar: { provide() {}, open() {} } as never,
     search: { provide() {}, find: async () => [], extraKeys: () => [], ownerOf: () => undefined } as never,
+    onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => void notices.push(m) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
@@ -246,7 +247,7 @@ test("Vim needs a keyboard, tabs 600px and windows side by side 840px; their com
 
 test("extensions add places and keyboard toolbar buttons; the bottom bar's places come from places.json", async () => {
   const { barOf, DEFAULT_BAR } = await import("../worker/src/places.ts");
-  const { ICONS } = await import("../web/src/icons.ts");
+  const { ICON_PATHS: ICONS } = await import("../web/src/icons.ts");
   const m = parseManifest(
     {
       contributes: {

@@ -85,7 +85,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string,
 
 /** A button with an icon and a label for screen readers (and, `shown`, beside the icon). */
 function iconButton(name: IconName, label: string, run: () => void, shown = false): HTMLButtonElement {
-  const b = el("button", { type: "button", className: "shell-icon", ariaLabel: label, title: label }, icon(name), shown ? el("span", { textContent: label }) : null);
+  const b = el("button", { type: "button", className: "shell-icon", ariaLabel: label, title: label }, icon(name, "1em"), shown ? el("span", { textContent: label }) : null);
   b.addEventListener("click", run);
   return b;
 }
@@ -342,7 +342,7 @@ export class Shell {
     this.toolbar.hidden = !editing;
     if (!editing || was) return;
     const buttons = this.deps.toolbar().map((a) => {
-      const b = el("button", { type: "button", className: "shell-tool", ariaLabel: a.title, title: a.off ? `${a.title}: ${a.off}` : a.title }, a.icon && isIcon(a.icon) ? icon(a.icon) : (a.label ?? a.title));
+      const b = el("button", { type: "button", className: "shell-tool", ariaLabel: a.title, title: a.off ? `${a.title}: ${a.off}` : a.title }, a.icon && isIcon(a.icon) ? icon(a.icon, "1em") : (a.label ?? a.title));
       if (a.off) b.setAttribute("aria-disabled", "true");
       // Tapped without taking focus from the note, so the keyboard stays up.
       b.addEventListener("pointerdown", (e) => e.preventDefault());
@@ -350,7 +350,7 @@ export class Shell {
       b.addEventListener("click", () => this.deps.run(a.command));
       return b;
     });
-    const done = el("button", { type: "button", className: "shell-tool done", ariaLabel: "Hide the keyboard", title: "Hide the keyboard" }, icon("keyboard-off"));
+    const done = el("button", { type: "button", className: "shell-tool done", ariaLabel: "Hide the keyboard", title: "Hide the keyboard" }, icon("keyboard-off", "1em"));
     done.addEventListener("pointerdown", (e) => e.preventDefault());
     done.addEventListener("click", () => (document.activeElement as HTMLElement | null)?.blur());
     this.toolbar.replaceChildren(el("div", { className: "shell-tools" }, ...buttons), done);
@@ -435,7 +435,7 @@ export class Shell {
         sheet.close();
         this.update();
       });
-      body.append(el("h2", { textContent: "The bottom bar" }), note, ...places.map((p, i) => el("label", { className: "shell-place" }, boxes[i], icon(p.icon), placeName(p))), save);
+      body.append(el("h2", { textContent: "The bottom bar" }), note, ...places.map((p, i) => el("label", { className: "shell-place" }, boxes[i], icon(p.icon, "1em"), placeName(p))), save);
     });
   }
 

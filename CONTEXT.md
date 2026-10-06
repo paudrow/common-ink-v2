@@ -111,6 +111,14 @@ _Avoid_: Activity, section, tab (a tab holds an open window)
 Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
 _Avoid_: Filter (that's one part of a query), search string
 
+**Archive**:
+A state a note can be in: kept, out of the Feed, shown last in search, still in place and still linked. Its path is listed in `.common-ink/archive.json`; archiving doesn't move or change the note.
+_Avoid_: Hide, move to archive
+
+**Trash**:
+The notes deleted in the last `trash.retentionDays` days (30 by default), whatever is at their paths now. It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history, or beside the note that has its path now.
+_Avoid_: Bin, recycle
+
 **Device**:
 One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
 
