@@ -49,12 +49,13 @@ const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
  */
 function safeNext(next: string | null): string {
   const base = "https://next.invalid";
-  // Longer, and the sign-in cookie carrying it would be past what a browser keeps.
-  if (!next?.startsWith("/") || next.length > 2000) return "/";
+  if (!next?.startsWith("/")) return "/";
   try {
     const u = new URL(next, base);
     const path = `${u.pathname}${u.search}${u.hash}`;
-    return u.origin === base && !path.startsWith("//") ? path : "/";
+    // Measured as it's kept, percent-encoded: longer, and the sign-in cookie carrying it would be past
+    // what a browser keeps.
+    return u.origin === base && !path.startsWith("//") && path.length <= 1500 ? path : "/";
   } catch {
     return "/";
   }
