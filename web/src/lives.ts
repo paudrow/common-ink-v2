@@ -171,11 +171,15 @@ export class Lives {
   private shown = { top: NaN, left: NaN, width: NaN, height: NaN };
   private watching = 0;
   private still = 0;
+  /** A placing of the boxes asked for on the next frame, if one is. */
+  private placing = 0;
   private resized: Pick<ResizeObserver, "observe" | "unobserve" | "disconnect"> = typeof ResizeObserver === "undefined" ? { observe() {}, unobserve() {}, disconnect() {} } : new ResizeObserver((entries) => {
     let changed = false;
     for (const entry of entries) {
       if (entry.target === this.view?.dom) {
-        changed = true;
+        // The editor changed size (its window was resized): the boxes go over their slots on the next frame.
+        // Placed now, their new widths would be observed in this same delivery, a loop the browser reports.
+        if (!this.placing) this.placing = requestAnimationFrame(() => ((this.placing = 0), this.place()));
         continue;
       }
       const key = this.keyOfBox(entry.target as HTMLElement);
