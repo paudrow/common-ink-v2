@@ -322,6 +322,12 @@ browserTest(h, "three windows floating at once are all on the page, their bars i
     }).length,
   );
   assert.equal(covered, 0, "every ↩ and ✕ in reach");
+  // Nor over any of another window: they're stacked apart.
+  const overlaps = await app.page.evaluate(() => {
+    const rects = [...document.querySelectorAll<HTMLElement>(".cm-embed.is-floating")].map((f) => f.getBoundingClientRect());
+    return rects.flatMap((a, i) => rects.slice(i + 1).filter((b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom)).length;
+  });
+  assert.equal(overlaps, 0, "no window over another");
 });
 
 browserTest(h, "a floating window moves with the arrow keys from its bar, and Home, a double-click or Reset floating video position put it back", { sites: SITES }, async (app) => {

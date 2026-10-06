@@ -118,11 +118,13 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
-browserTest(h, "going offline with nothing to send says Offline at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+browserTest(h, "going offline with nothing to send says Offline at once, and back online it goes at once", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await app.idle();
   await app.page.context().setOffline(true);
   await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline", null, { timeout: 1000 });
   await app.page.context().setOffline(false);
+  // Nothing waiting to be sent, and nothing else asking the server: the page checks as it's back.
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "", null, { timeout: 3000 });
 });
 
 browserTest(h, "Vim's visual block inserts, appends and deletes on every line it covers, lists too", { scenario: "empty" }, async (app) => {

@@ -52,7 +52,8 @@ interface Corner {
 const FLOAT = "common-ink.media-float";
 /** Where a floating window goes first: above the mini player. Each more window floating goes this much above the last. */
 const HOME: Corner = { right: 16, bottom: 88 };
-const STACK = 220;
+// A floating video is about 223 px tall (its bar, a 16:9 frame 320 px wide, and its border): with a gap.
+const STACK = 232;
 /** A floating window's width and a gap: where the next column of them goes. */
 const COLUMN = 336;
 
