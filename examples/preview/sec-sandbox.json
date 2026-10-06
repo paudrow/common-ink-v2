@@ -1,0 +1,9 @@
+{
+  "pr": 48,
+  "title": "The sandbox, with no way out through settings or its shells",
+  "steps": [
+    "Open <this Preview>/sandbox/webview by itself and run window.origin in its console: it says \"null\", as it does inside the app's frames.",
+    "Boards, Word count and the html-app samples draw and work as before.",
+    "A sandboxed extension that tries to write .common-ink/settings.json, your user settings or any extension's files is refused, even when allowed to change every file: test/browser/sandbox-escape.browser.ts shows it."
+  ]
+}

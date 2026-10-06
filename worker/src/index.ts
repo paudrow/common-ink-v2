@@ -5,13 +5,14 @@ import { isExtensionScript, parseFilePath, type Seed } from "./files.ts";
 import { mcp } from "./mcp.ts";
 import { schema, SCHEMA_URL } from "./settings.ts";
 import { runOperation, type OperationName, type Store } from "./operations.ts";
-import { allowedEmails, page, sessionEmail, signInRoute, SESSION_COOKIE, type SignInConfig } from "./sign-in.ts";
-import { cookie } from "./session.ts";
+import { allowedEmails, page, sessionEmail, signInRoute, type SignInConfig } from "./sign-in.ts";
 import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
-import { embedFrameHosts } from "./embed-list.ts";
+import { embedFrameHosts, idsIn } from "./embed-list.ts";
+import { statePath } from "./extensions.ts";
+import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
@@ -97,9 +98,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       }
       return secure(new Response("Sign in to use Common Ink.\n", { status: 401 }));
     }
-    // A signed-in browser's cookie goes with requests other sites make; only this site may change things.
+    // A browser sends what signs you in (a cookie, or on this machine the address itself) with requests
+    // other sites make, and says where they came from when one changes something or opens a socket.
+    // Only this site may. The CLI and agents send no Origin.
     const origin = req.headers.get("Origin");
-    if (req.method !== "GET" && origin && origin !== url.origin && cookie(req, SESSION_COOKIE)) {
+    const changes = (req.method !== "GET" && req.method !== "HEAD") || req.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
     // A workspace extension's code, from its files, so the page can import it under `script-src 'self'`.
@@ -111,7 +115,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     }
     // An uploaded file, by name, from R2.
     if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
-    const levers = leversOn(env);
+    const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
       // The app's page may frame the hosts of the link embeds that are on for this person.
@@ -182,6 +186,9 @@ const ROUTES: Record<string, OperationName> = {
   "POST /api/labels": "add_label",
 };
 
+/** Operations that change a file named by `path`. */
+const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
+
 async function api(req: Request, url: URL, who: Identity, store: Store): Promise<Response> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/me") return json(who);
@@ -189,6 +196,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   if (!name) return json({ error: `No route for ${route}` }, 404);
   const body = req.method === "GET" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
+  // A second gate behind the app's: a change in an extension's name to the files that decide trust,
+  // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  const extension = req.headers.get("X-Common-Ink-Extension");
+  const path = parseFilePath(args.path);
+  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+    const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+  }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
