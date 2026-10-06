@@ -1,0 +1,7 @@
+{
+  "pr": 101,
+  "title": "Switching calendar views quickly stays on the day you were on",
+  "steps": [
+    "⌘⇧P, Show calendar. Press m, then y, then a, quickly: the agenda opens on today, not on July 1 or January 1, 2023."
+  ]
+}

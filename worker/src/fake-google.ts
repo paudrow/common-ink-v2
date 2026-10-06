@@ -63,6 +63,10 @@ export class FakeGoogle {
     const url = new URL(String(input));
     const method = init.method ?? "GET";
     this.calls.push(`${method} ${url.pathname}${url.search}`);
+    if (url.href === "https://oauth2.googleapis.com/revoke") {
+      this.revoked = true;
+      return new Response(null, { status: 200 });
+    }
     if (url.href === "https://oauth2.googleapis.com/token") {
       if (this.revoked) return json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, 400);
       return json({ access_token: "fake-access", expires_in: 3599, token_type: "Bearer" });

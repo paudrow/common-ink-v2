@@ -9,6 +9,12 @@ export class ReconnectNeeded extends Error {}
 /** The source won't take a change as it is (an invalid field, a rule of the calendar's), so sending it again won't help. */
 export class Refusal extends Error {}
 
+/** The source deleted the record, so a change to it can't go. */
+export class Gone extends Refusal {}
+
+/** The source won't say how a record is now, for a reason that may last (Google's 403 for a calendar no longer shared, say). It's tried again a few times, then refused. */
+export class Unreadable extends Error {}
+
 /** What a source says about one pushed edit. */
 export interface Pushed {
   /** The source's version tag for the record, for its next edit. */
