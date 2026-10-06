@@ -28,7 +28,10 @@ interface OpenFile {
   timer: number;
   /** Whether the server has it yet. A file opened by name starts out unsaved. */
   exists: boolean;
-  /** What the editor starts with: the file, or this browser's unsent edit to it. */
+  /**
+   * The file's text while no editor shows it: at first the file, or this browser's unsent edit to it;
+   * then what its last editor showed when it went, for a save still to come or the next editor.
+   */
   startText: string;
 }
 
@@ -451,10 +454,11 @@ export class Workbench {
       session: new Session(
         held ? { ...fetched, revision: held.base } : fetched,
         {
-          text: () => this.primary(file)?.state.doc.toString() ?? startText,
+          text: () => this.primary(file)?.state.doc.toString() ?? file.startText,
           replace: (text, remote) => {
             const view = this.primary(file);
             if (view) replaceText(view, text, remote);
+            else file.startText = text;
           },
         },
         (path, text, base) => this.net.write(path, text, base),
@@ -535,7 +539,8 @@ export class Workbench {
 
   private dropView(k: string, view: EditorView) {
     this.views.delete(k);
-    for (const file of this.files.values()) file.views.delete(view);
+    // A save can still come once it's gone (its blur saves): it sends what this showed, not the text the file opened with.
+    for (const file of this.files.values()) if (file.views.delete(view) && !file.views.size) file.startText = view.state.doc.toString();
     view.destroy();
   }
 
