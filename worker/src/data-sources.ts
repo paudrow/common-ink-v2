@@ -4,7 +4,7 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
-import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planUnchange, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
+import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
 import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
@@ -306,7 +306,7 @@ export class DataSources {
       // Deleting a record that was never written (an occurrence nobody changed) has nothing to do.
       if (op.op === "delete" && !base) continue;
       const write: Write = op.op === "put" ? { path, text: recordText(op.event), base, author } : { path, text: "", base, author, delete: true };
-      writes.push({ op, write: undoes !== undefined && ops.length === 1 ? { ...write, undoes } : write, before: current?.text ?? null });
+      writes.push({ op, write: undoes !== undefined && op === ops[0] ? { ...write, undoes } : write, before: current?.text ?? null });
     }
     const queued: number[] = [];
     this.files.writeAll(
@@ -538,11 +538,12 @@ export class DataSources {
     const before = readEvent(this.files.read(path)?.text ?? "");
     const after = text ? readEvent(text) : null;
     if (text && !after) return { status: "refused", error: `That version of ${path} isn't an event` };
-    const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [planUnchange(this.family(key.source, key.collection, key.id).flatMap((e) => {
+    const family = this.family(key.source, key.collection, key.id).flatMap((e) => {
       const going = undoing.get(recordPath({ source: key.source, kind: "event", collection: e.calendar, id: e.id }));
       const event = going === undefined ? e : readEvent(going);
       return event ? [event] : [];
-    }), before)] : [];
+    });
+    const ops = planRevert(family, before, after);
     return this.apply(key.source, ops, author, addressOf(key), undoes);
   }
 }
