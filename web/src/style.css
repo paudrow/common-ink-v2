@@ -746,7 +746,7 @@ button.status-item:hover {
 }
 
 #resolve {
-  color: #c2410c;
+  color: var(--bad);
   text-decoration: underline;
 }
 
@@ -761,11 +761,11 @@ button.status-item:hover {
 }
 
 .clash .add {
-  color: #15803d;
+  color: var(--add, #15803d);
 }
 
 .clash .del {
-  color: #b91c1c;
+  color: var(--del, #b91c1c);
   text-decoration: line-through;
 }
 
