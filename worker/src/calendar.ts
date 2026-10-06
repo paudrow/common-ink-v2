@@ -522,6 +522,23 @@ function endBefore(series: Series, start: Day | WallTime, viewer: string): { cut
   return { cut: [...cut, ...datesLine("RDATE", added, series)], left: count ? count - before : null };
 }
 
+/** The fields an edit of a whole series carries to its changed occurrences. */
+const FOLLOWED = ["title", "location", "description", "colorId"] as const;
+
+/** A changed occurrence after its series' fields changed: each field it still had as the series did takes the series' new value. */
+function followed(e: Exception, before: CalendarEvent, after: CalendarEvent): Exception {
+  const out = { ...e } as Exception & Partial<Record<(typeof FOLLOWED)[number], string>>;
+  for (const key of FOLLOWED) {
+    const [was, now] = [before[key] ?? "", after[key] ?? ""];
+    if ((e[key] ?? "") !== was || now === was) continue;
+    if (now) out[key] = now;
+    else delete out[key];
+  }
+  return out;
+}
+
+const recordOf = (e: CalendarEvent) => JSON.stringify(e);
+
 /** A changed occurrence moved to where its original start goes in a series (perhaps a new one), with these times. */
 function rekeyed(e: Exception, series: CalendarEvent, shift: (s: Day | WallTime) => Day | WallTime, timing: EventTiming): RecordOp[] {
   const originalStart = shift(e.originalStart);
@@ -605,8 +622,12 @@ export function planUpdate(events: readonly CalendarEvent[], target: Target, cha
     const startsMove = !!timing && (timing.start !== series.start || timing.allDay !== series.allDay || zoneOf(timing) !== zoneOf(series));
     const recurrence = own.recurrence !== undefined ? own.recurrence : startsMove ? movedLines(series, timing!, shift, days, viewer) : undefined;
     const put = applied(series, { ...own, timing, recurrence });
-    if (!startsMove) return [{ op: "put", event: put, created: false }, ...self.map((e) => ({ op: "put" as const, event: e, created: false }))];
-    return [{ op: "put", event: put, created: false }, ...oncePerRecord([...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...others.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))], put, viewer)];
+    const along = others.map((e) => followed(e, series, put));
+    if (!startsMove) {
+      const changed = along.filter((e, i) => recordOf(e) !== recordOf(others[i]));
+      return [{ op: "put", event: put, created: false }, ...[...self, ...changed].map((e) => ({ op: "put" as const, event: e, created: false }))];
+    }
+    return [{ op: "put", event: put, created: false }, ...oncePerRecord([...self.flatMap((e) => rekeyed(e, put, shift, timingOf(e))), ...along.flatMap((e) => rekeyed(e, put, shift, moveAlong(e)))], put, viewer)];
   }
 
   const { cut, left } = endBefore(series, occurrence.originalStart, viewer);

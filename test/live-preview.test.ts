@@ -12,6 +12,7 @@ Object.assign(globalThis, {
 });
 
 const { EditorView } = await import("@codemirror/view");
+const { forceParsing } = await import("@codemirror/language");
 const { Prec } = await import("@codemirror/state");
 const { getCM, Vim, vim } = await import("@replit/codemirror-vim");
 const { addMarkdownSyntax, createState, reconfigure } = await import("../web/src/editor.ts");
@@ -41,6 +42,8 @@ function editor(settings = DEFAULTS) {
   });
   // The cursor on the last, empty line: every other line is drawn.
   view.dispatch({ selection: { anchor: view.state.doc.length } });
+  // Parsed to the end, as it would be a moment later: on a busy machine the first parse may stop short.
+  forceParsing(view, view.state.doc.length, 5000);
   return view;
 }
 

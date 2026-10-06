@@ -71,3 +71,52 @@ browserTest(h, "a sandboxed extension's event edit with a scope or field it can'
   });
   assert.equal(sent.length, 1);
 });
+
+const WRITER = `export default { activate(ctx) {
+  ctx.commands.register("planner.run", async () => {
+    const r = {};
+    const edit = await ctx.data.calendar.update("event:sample/work/standup", { title: "Moved" }, "this");
+    r.edit = edit;
+    try { r.status = await ctx.data.status(); } catch (e) { r.status = "refused"; }
+    await ctx.workbench.notice("WRITER " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "an extension that may only change events learns nothing about them from its edits or the source's status", { scenario: "calendar", levers: { permissions: "allow" }, allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/planner/extension.json", JSON.stringify(PLANNER));
+  await app.writeFile(".common-ink/extensions/planner/index.js", WRITER);
+  await app.page.route(/\/api\/event$/, (route) =>
+    route.fulfill({ json: { status: "saved", address: "event:sample/work/standup", written: [{ id: "standup", title: "Board meeting about layoffs" }], deleted: ["event:sample/work/x"] } }),
+  );
+  await app.reload();
+  await app.command("Run Planner");
+  const said = (await app.page.locator(".notice p", { hasText: "WRITER" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), { edit: { status: "saved", address: "event:sample/work/standup" }, status: "refused" });
+});
+
+const REFUSED = `export default { activate(ctx) {
+  ctx.commands.register("planner.run", async () => {
+    const r = {};
+    try { await ctx.data.calendar.update("event:sample/work/standup", { title: "Moved" }, "this"); r.refused = "no"; } catch (e) { r.refused = e.message; }
+    r.queued = await ctx.data.calendar.update("event:sample/work/standup", { title: "Moved again" }, "this");
+    await ctx.workbench.notice("REFUSED " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "when Google refuses or holds a write-only extension's edit, what it hears doesn't name the event", { scenario: "calendar", levers: { permissions: "allow" }, allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/planner/extension.json", JSON.stringify(PLANNER));
+  await app.writeFile(".common-ink/extensions/planner/index.js", REFUSED);
+  let calls = 0;
+  await app.page.route(/\/api\/event$/, (route) =>
+    ++calls === 1
+      ? route.fulfill({ status: 400, json: { error: "Google Calendar refused the change to Board meeting about layoffs: it was deleted" } })
+      : route.fulfill({ json: { status: "queued", address: "event:sample/work/standup", written: [], deleted: [], error: "Google Calendar has a newer Board meeting about layoffs" } }),
+  );
+  await app.reload();
+  await app.command("Run Planner");
+  const said = (await app.page.locator(".notice p", { hasText: "REFUSED" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), {
+    refused: "The calendar refused Planner's change to the event",
+    queued: { status: "queued", address: "event:sample/work/standup", error: "The calendar doesn't have Planner's change yet" },
+  });
+});

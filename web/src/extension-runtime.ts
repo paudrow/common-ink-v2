@@ -9,12 +9,14 @@ import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
-import { PermissionBroker } from "./broker.ts";
+import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
+import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { newEventId, type Scope } from "../../worker/src/calendar.ts";
@@ -460,8 +462,17 @@ export class ExtensionRuntime {
     }
   }
 
+  /** Each extension's state writes, one after another, in the order asked: two at once would clash. */
+  private stateWrites = new Map<string, Promise<void>>();
+
   /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
-  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+  private writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const write = (this.stateWrites.get(m.id) ?? Promise.resolve()).catch(() => {}).then(() => this.sendState(m, value));
+    this.stateWrites.set(m.id, write);
+    return write;
+  }
+
+  private async sendState(m: ExtensionManifest, value: unknown): Promise<void> {
     const path = statePath(m.id);
     const text = `${JSON.stringify(value, null, 2)}\n`;
     for (let tries = 0; tries < 3; tries++) {
@@ -664,6 +675,36 @@ export class ExtensionRuntime {
           );
         },
       },
+      media: (() => {
+        // Every part of it needs the media permission, as the manifest says.
+        const may = () => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play or control media`);
+        };
+        const of = (id: number) => (may(), mediaSession(id));
+        return {
+          session: (spec) => {
+            may();
+            return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+          },
+          current: () => {
+            may();
+            const s = currentMedia();
+            return s && mediaInfo(s);
+          },
+          onChange: (fn) => (may(), void onMedia(guard(fn))),
+          play: (id) => of(id)?.play(),
+          pause: (id) => of(id)?.pause(),
+          stop: (id) => {
+            const s = of(id);
+            if (s) stopMedia(s);
+          },
+          reveal: (id) => {
+            const s = of(id);
+            if (s?.el) revealMedia(s);
+            else if (s?.note) void app.workbench.open(s.note);
+          },
+        };
+      })(),
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
@@ -763,8 +804,28 @@ export class ExtensionRuntime {
     const services = this.services(m);
     const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
+    /** A new webview, kept by id for its extension's messages; ones whose frame has gone (a closed window's embed) go then. */
+    const keep = (view: Webview) => {
+      for (const [id, v] of webviews) if (!v.frame.isConnected) webviews.delete(id);
+      webviews.set(view.id, view);
+    };
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    // An edit's answer names the events it wrote: only for an extension that may read them already.
+    const readAsk: Ask = { kind: "data:calendar:read" };
+    // Its words, a refusal's included, can name the event: they go as they are only to one that may read it.
+    const canRead = () => decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk);
+    const mayRead = async (edit: Promise<EditResult>): Promise<Partial<EditResult>> => {
+      let r: EditResult;
+      try {
+        r = await edit;
+      } catch (err) {
+        if (canRead() || err instanceof PermissionDenied) throw err;
+        throw new Error(`The calendar refused ${m.name}'s change to the event`);
+      }
+      if (canRead()) return r;
+      return { status: r.status, address: r.address, ...(r.error ? { error: `The calendar doesn't have ${m.name}'s change yet` } : {}) };
+    };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -806,7 +867,7 @@ export class ExtensionRuntime {
                 // A webview keeps running between redraws; only a missing one is made again.
                 if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
                 const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`view:${a}`, view.id).catch((err) => (failed(err), showDrawError(el, `${m.name}'s view`, err)));
               },
             });
@@ -818,7 +879,7 @@ export class ExtensionRuntime {
             this.embedDrawers.set(a, (el, embed, tools) =>
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
@@ -850,7 +911,8 @@ export class ExtensionRuntime {
             const path = filePath(a);
             if (decidesTrust(path)) {
               this.broker.record(m.id, { kind: "files:write", target: path }, "denied");
-              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: it runs sandboxed, and that decides what extensions may do`);
+              if (path === statePath(m.id)) throw new Error(`${m.name} can't change its own state.json as a file: use ctx.state`);
+              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: sandboxed extensions never change settings or extensions' files`);
             }
             return services.write(path, String(b), Number(c));
           }
@@ -867,6 +929,7 @@ export class ExtensionRuntime {
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
+            await services.check({ kind: "data:calendar:read" });
             return data.status();
           case "data.sync":
             return data.sync(a === "force");
@@ -877,11 +940,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]);
+            return mayRead(data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return data.calendar.update(address(a), eventInput(b), scopeOf(c));
+            return mayRead(data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return data.calendar.remove(address(a), scopeOf(b));
+            return mayRead(data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
@@ -909,3 +972,5 @@ export class ExtensionRuntime {
   }
 }
 
+/** A session as extensions see it. */
+const mediaInfo = (s: MediaSession) => ({ id: s.id, title: s.title, kind: s.kind, playing: s.playing, note: noteOfMedia(s) ?? s.note ?? null });

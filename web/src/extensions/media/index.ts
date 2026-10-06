@@ -1,19 +1,22 @@
-// Media, a built-in extension: `::noise` embeds (noise.ts), and the media controller for what plays.
-// One sound plays at a time. While one is loaded, a mini player in the corner shows it with play,
-// pause, volume and stop; the status bar names it; and the keyboard's media keys work (Media Session).
-// It keeps playing when its note closes. Each embed's volume is kept in the extension's state.
+// Media, a built-in extension: `::noise` embeds (noise.ts), and the media controller for whatever plays
+// (ctx.media): background noise, and videos and tracks in link embeds. The mini player in the corner shows
+// the one played last, with its note (a link back to it), play, pause and stop, and volume for noise; the
+// status bar names it; and the keyboard's media keys work (Media Session). Noise keeps playing when its
+// note closes. Each noise embed's volume is kept in the extension's state.
 import { EditorView } from "@codemirror/view";
-import type { Embed, ExtensionContext } from "../../extension-api.ts";
+import type { Embed, ExtensionContext, MediaHandle } from "../../extension-api.ts";
 import { COLORS, NoisePlayer, type Color } from "./noise.ts";
 
-interface Playing {
+interface Noise {
   key: string;
-  title: string;
   player: NoisePlayer;
+  media: MediaHandle;
 }
 
 const colorOf = (embed: Embed): Color => (COLORS.includes(embed.args.color as Color) ? (embed.args.color as Color) : "brown");
 const titleOf = (embed: Embed) => embed.args.label || `${colorOf(embed)[0].toUpperCase()}${colorOf(embed).slice(1)} noise`;
+/** A note's name, as the mini player says where something plays. */
+const nameOf = (path: string) => path.replace(/\.md$/, "").split("/").pop() ?? path;
 
 const theme = EditorView.theme({
   ".noise-embed": { display: "flex", alignItems: "center", gap: "0.75em", padding: "0.4em 0.75em", border: "1px solid var(--line)", borderRadius: "6px", fontFamily: "var(--prose)" },
@@ -27,7 +30,8 @@ export default {
     const kept = (await ctx.state.get()) as { volumes?: Record<string, number> } | null;
     const volumes: Record<string, number> = { ...(kept?.volumes ?? {}) };
     let context: AudioContext | null = null;
-    let now: Playing | null = null;
+    /** The noise loaded: one at a time. */
+    let noise: Noise | null = null;
     const live = new Set<{ el: HTMLElement; update(): void }>();
 
     const volumeFor = (embed: Embed) => volumes[embed.key] ?? Math.min(Math.max(Number(embed.args.volume ?? 0.3) || 0.3, 0), 1);
@@ -49,7 +53,7 @@ export default {
       return input;
     };
 
-    // The mini player: in the corner while something is loaded.
+    // The mini player: in the corner while something plays, or noise is loaded.
     const mini = document.createElement("div");
     mini.className = "mini-player";
     mini.setAttribute("role", "region");
@@ -59,17 +63,24 @@ export default {
     miniToggle.addEventListener("click", () => toggle());
     const miniTitle = document.createElement("span");
     miniTitle.className = "title";
+    // Where it plays: a link back to its note.
+    const miniNote = document.createElement("button");
+    miniNote.className = "note";
+    miniNote.addEventListener("click", () => {
+      const now = ctx.media.current();
+      if (now) ctx.media.reveal(now.id);
+    });
     const miniVolume = slider(
       0.3,
-      (v) => now && (now.player.volume = v),
-      (v) => now && keepVolume(now.key, v),
+      (v) => noise && (noise.player.volume = v),
+      (v) => noise && keepVolume(noise.key, v),
     );
     const miniStop = document.createElement("button");
     miniStop.textContent = "■";
     miniStop.title = "Stop";
     miniStop.setAttribute("aria-label", "Stop");
     miniStop.addEventListener("click", () => stop());
-    mini.append(miniToggle, miniTitle, miniVolume, miniStop);
+    mini.append(miniToggle, miniTitle, miniNote, miniVolume, miniStop);
     document.body.append(mini);
 
     const refresh = () => {
@@ -77,46 +88,79 @@ export default {
         if (item.el.isConnected) item.update();
         else live.delete(item);
       }
-      const playing = !!now?.player.playing;
+      const now = ctx.media.current();
+      const playing = !!now?.playing;
       mini.hidden = !now;
       if (now) {
         miniTitle.textContent = now.title;
         miniToggle.textContent = playing ? "⏸" : "▶";
         miniToggle.title = playing ? "Pause" : "Play";
         miniToggle.setAttribute("aria-label", miniToggle.title);
-        miniVolume.value = String(now.player.volume);
+        miniNote.hidden = !now.note;
+        miniNote.textContent = now.note ? nameOf(now.note) : "";
+        miniNote.title = now.note ? `Go to ${nameOf(now.note)}` : "";
+        const isNoise = now.id === noise?.media.id;
+        miniVolume.hidden = !isNoise;
+        if (isNoise) miniVolume.value = String(noise!.player.volume);
       }
-      ctx.statusBar.set("media.playing", now ? `♪ ${now.title}${playing ? "" : " (paused)"}` : "", now ? (playing ? "Pause it" : "Play it") : undefined);
+      const where = now?.note ? ` · ${nameOf(now.note)}` : "";
+      ctx.statusBar.set("media.playing", now ? `♪ ${now.title}${where}${playing ? "" : " (paused)"}` : "", now ? (playing ? "Pause it" : "Play it") : undefined);
       if ("mediaSession" in navigator) {
-        navigator.mediaSession.metadata = now ? new MediaMetadata({ title: now.title, artist: "Common Ink" }) : null;
+        navigator.mediaSession.metadata = now ? new MediaMetadata({ title: now.title, artist: now.note ? nameOf(now.note) : "Common Ink" }) : null;
         navigator.mediaSession.playbackState = now ? (playing ? "playing" : "paused") : "none";
       }
     };
 
     const play = (embed: Embed) => {
       context ??= new AudioContext();
-      if (now?.key !== embed.key || now.player.color !== colorOf(embed)) {
-        now?.player.pause();
-        now = { key: embed.key, title: titleOf(embed), player: new NoisePlayer(context, colorOf(embed), volumeFor(embed)) };
+      if (noise?.key !== embed.key || noise.player.color !== colorOf(embed)) {
+        noise?.player.pause();
+        noise?.media.end();
+        const player = new NoisePlayer(context, colorOf(embed), volumeFor(embed));
+        const media = ctx.media.session({
+          title: titleOf(embed),
+          kind: "audio",
+          note: ctx.workbench.focusedPath(),
+          sticky: true,
+          play: () => {
+            player.play();
+            media.set({ playing: true });
+          },
+          pause: () => {
+            player.pause();
+            media.set({ playing: false });
+          },
+          stop: () => {
+            player.pause();
+            media.end();
+            if (noise?.media === media) noise = null;
+          },
+        });
+        noise = { key: embed.key, player, media };
       }
-      now.player.play();
-      refresh();
+      noise.player.play();
+      noise.media.set({ playing: true, title: titleOf(embed) });
     };
+    /** Play or pause what the controls control. */
     const toggle = () => {
-      if (!now) return;
-      if (now.player.playing) now.player.pause();
-      else now.player.play();
-      refresh();
+      const now = ctx.media.current();
+      if (now) (now.playing ? ctx.media.pause : ctx.media.play)(now.id);
     };
     const stop = () => {
-      now?.player.pause();
-      now = null;
-      refresh();
+      const now = ctx.media.current();
+      if (now) ctx.media.stop(now.id);
     };
+    ctx.media.onChange(refresh);
 
     if ("mediaSession" in navigator) {
-      navigator.mediaSession.setActionHandler("play", () => now && !now.player.playing && toggle());
-      navigator.mediaSession.setActionHandler("pause", () => now?.player.playing && toggle());
+      navigator.mediaSession.setActionHandler("play", () => {
+        const now = ctx.media.current();
+        if (now && !now.playing) ctx.media.play(now.id);
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        const now = ctx.media.current();
+        if (now?.playing) ctx.media.pause(now.id);
+      });
       navigator.mediaSession.setActionHandler("stop", () => stop());
     }
 
@@ -130,22 +174,24 @@ export default {
         box.className = "noise-embed";
         const button = document.createElement("button");
         button.type = "button";
-        button.addEventListener("click", () => (now?.key === ref.embed.key && now.player.playing ? toggle() : play(ref.embed)));
+        button.addEventListener("click", () => (noise?.key === ref.embed.key && noise.player.playing ? ctx.media.pause(noise.media.id) : play(ref.embed)));
         const title = document.createElement("span");
         const volume = slider(
           volumeFor(first),
-          (v) => now?.key === ref.embed.key && (now.player.volume = v),
+          (v) => noise?.key === ref.embed.key && (noise.player.volume = v),
           (v) => keepVolume(ref.embed.key, v),
         );
         box.append(button, title, volume);
         ref.update = () => {
-          const playing = now?.key === ref.embed.key && now.player.playing;
+          const playing = noise?.key === ref.embed.key && noise.player.playing;
           button.textContent = playing ? "Pause" : "Play";
           title.textContent = titleOf(ref.embed);
           box.classList.toggle("playing", playing);
-          volume.value = String(now?.key === ref.embed.key ? now.player.volume : volumeFor(ref.embed));
+          volume.value = String(noise?.key === ref.embed.key ? noise.player.volume : volumeFor(ref.embed));
         };
         el.replaceChildren(box);
+        // Boxes whose window closed go as new ones come, or nothing playing would ever let go of them.
+        for (const item of live) if (!item.el.isConnected) live.delete(item);
         live.add({ el: box, update: () => ref.update() });
         drawn.set(el, ref);
         ref.update();
