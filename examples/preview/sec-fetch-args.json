@@ -1,0 +1,8 @@
+{
+  "pr": 56,
+  "title": "Extensions' fetch arguments parsed where they come in",
+  "steps": [
+    "Open Link embeds tour: its cards and the Bluesky post draw as before.",
+    "Install Word count from the Catalog and allow it: it counts as before."
+  ]
+}

@@ -31,7 +31,7 @@ export interface SyncIO {
   calendars(list: Calendar[]): void;
   token(calendar: string): string | null;
   setToken(calendar: string, token: string | null): void;
-  /** An event as the source has it. One with an edit here waiting to go out is left as it is. */
+  /** An event as the source has it. One with an edit here waiting to go out, or changed here since the sync began, is left as it is. */
   put(event: CalendarEvent, etag: string | null): void;
   remove(calendar: string, id: string): void;
   /** After a full sync: the calendar's other events are gone from the source. */
