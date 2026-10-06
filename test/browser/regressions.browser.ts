@@ -175,6 +175,65 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+/** The files every window's tabs show, in order. */
+async function tabFiles(app: App): Promise<string[]> {
+  const state = (await app.state()) as { layout: { root: unknown } };
+  const groups = (n: { kind: string; tabs?: Array<{ file?: string; view?: string }>; children?: unknown[] }): Array<{ file?: string; view?: string }> =>
+    n.kind === "group" ? n.tabs! : n.children!.flatMap((c) => groups(c as never));
+  return groups(state.layout.root as never).map((t) => t.file ?? `view:${t.view}`);
+}
+
+browserTest(h, "a drag from outside the page opens a note at most: crafted drops can't open settings, code or views, or write into a note", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  const before = await app.readFile("Welcome.md");
+  const tabs = await tabFiles(app);
+  const cdp = await app.page.context().newCDPSession(app.page);
+  const drop = async (payload: unknown, where: "bar" | "center") => {
+    const box = (await app.page.locator(where === "bar" ? ".group .tabs" : ".group .editors").first().boundingBox())!;
+    const [x, y] = where === "bar" ? [box.x + box.width - 20, box.y + box.height / 2] : [box.x + box.width / 2, box.y + box.height / 2];
+    const data = { items: [{ mimeType: "application/x-common-ink-openable", data: JSON.stringify(payload) }, { mimeType: "text/plain", data: "DROPPED" }], dragOperationsMask: 1 | 2 | 16 };
+    for (const type of ["dragEnter", "dragOver", "drop"] as const) await cdp.send("Input.dispatchDragEvent", { type, x, y, data });
+    await app.page.waitForTimeout(300);
+    await app.idle();
+  };
+  for (const where of ["bar", "center"] as const) {
+    for (const payload of [
+      { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
+      { item: { file: ".common-ink/layout.json" } },
+      { item: { file: ".common-ink/extensions/word-count/main.js" } },
+      { item: { view: "extensions" } },
+      { item: { file: "../x.md" } },
+      { item: "Shopping.md" },
+    ]) {
+      await drop(payload, where);
+      assert.deepEqual(await tabFiles(app), tabs, `${where}: ${JSON.stringify(payload)}`);
+    }
+  }
+  assert.equal(await app.readFile("Welcome.md"), before, "nothing dropped was typed into the note");
+  // A note, from another window of the app: it opens here, and that's all.
+  await drop({ item: { file: "Shopping.md" }, from: { group: "g1", index: 0 } }, "bar");
+  assert.deepEqual(await tabFiles(app), [...tabs, "Shopping.md"]);
+  assert.equal(await app.readFile("Welcome.md"), before);
+});
+
+browserTest(h, "a tab dropped on another window's editor opens there, and its name isn't typed into the note", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  await app.keys(":vs Chores<CR>");
+  await app.idle();
+  const welcome = await app.readFile("Welcome.md");
+  const chores = await app.readFile("Chores.md");
+  const tab = (await app.page.locator(".group").nth(1).locator(".tab").first().boundingBox())!;
+  const target = (await app.page.locator(".group").nth(0).locator(".editors").boundingBox())!;
+  await app.page.mouse.move(tab.x + tab.width / 2, tab.y + tab.height / 2);
+  await app.page.mouse.down();
+  for (let i = 1; i <= 10; i++) await app.page.mouse.move(tab.x + tab.width / 2 + ((target.x + target.width / 2 - tab.x - tab.width / 2) * i) / 10, tab.y + tab.height / 2 + ((target.y + target.height / 2 - tab.y - tab.height / 2) * i) / 10);
+  await app.page.mouse.up();
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  assert.equal(await app.page.locator(".group").count(), 1, "the tab moved into the other window, which closed");
+  assert.deepEqual((await tabFiles(app)).filter((f) => f === "Chores.md" || f === "Welcome.md").sort(), ["Chores.md", "Welcome.md"]);
+  assert.equal(await app.readFile("Welcome.md"), welcome);
+  assert.equal(await app.readFile("Chores.md"), chores);
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";

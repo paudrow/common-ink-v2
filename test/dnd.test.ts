@@ -30,6 +30,32 @@ test("a tab dragged in from another window of the app opens its note here, rathe
   assert.deepEqual(dragged(event(JSON.stringify(tab))), { item: { file: "Plan.md" } }, "from another window: just the note");
   const here = { dataTransfer: { setData: () => {}, effectAllowed: "" } } as unknown as DragEvent;
   startDrag(here, tab as never, "Plan");
-  assert.deepEqual(dragged(event(JSON.stringify(tab))), tab, "from this window: the tab, to move");
+  assert.deepEqual(dragged(event(JSON.stringify({ item: { file: "Other.md" } }))), tab, "from this page: what it started, whatever the data says");
   endDrag();
+});
+
+test("a drop from outside the page opens a note at most: never a settings or code file, a view, or a tab to move", async () => {
+  const { DRAG_TYPE, dragged, droppable } = await import("../web/src/extensions/workbench/dnd.ts");
+  const event = (data: string) => ({ dataTransfer: { types: [DRAG_TYPE], getData: (t: string) => (t === DRAG_TYPE ? data : "") } }) as unknown as DragEvent;
+  for (const payload of [
+    { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
+    { item: { file: ".common-ink/layout.json" } },
+    { item: { file: ".common-ink/extensions/word-count/main.js" } },
+    { item: { file: ".common-ink/users/x/notes.md" } },
+    { item: { view: "extensions" } },
+    { item: { file: 123 } },
+    { item: { file: "../x.md" } },
+    { item: "Shopping.md" },
+    { item: null },
+    { from: { group: "g1", index: 0 } },
+    null,
+  ]) {
+    assert.equal(dragged(event(JSON.stringify(payload))), null, JSON.stringify(payload));
+  }
+  assert.equal(dragged(event("{not json")), null);
+  assert.deepEqual(dragged(event(JSON.stringify({ item: { file: "Projects/Plan.md" }, from: { group: "g1", index: 2 } }))), { item: { file: "Projects/Plan.md" } });
+  // While dragging, the browser hides what's dragged in from outside: it's taken, and read on drop.
+  assert.equal(droppable(event("")), true);
+  assert.equal(dragged(event("")), null);
+  assert.equal(droppable({ dataTransfer: { types: ["text/plain"] } } as unknown as DragEvent), false);
 });
