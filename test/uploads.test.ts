@@ -85,7 +85,7 @@ test("agents upload through the operations with base64, and list uploads with th
 });
 
 test("an upload's bytes are read only up to the limit, however the body comes", async () => {
-  const { bytesUpTo } = await import("../worker/src/uploads.ts");
+  const { bytesUpTo } = await import("../worker/src/body.ts");
   let pulled = 0;
   const body = (chunks: number, size: number) =>
     new ReadableStream<Uint8Array>({
