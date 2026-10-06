@@ -217,3 +217,21 @@ test("edits made at once go to Google once each, in order", async () => {
     ["PATCH /calendar/v3/calendars/primary/events/dentist", "PATCH /calendar/v3/calendars/primary/events/standup_20261005T160000Z"],
   );
 });
+
+test("an edit that keeps meeting Google's newer versions waits, then goes once Google holds still, with the edits behind it", async () => {
+  const { fake } = google();
+  let busy = 4;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if (init?.method === "PATCH" && String(input).endsWith("/events/dentist") && busy-- > 0) fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, colorId: String(busy) });
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  const first = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(first.status, "queued");
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
+  await store.sources.flush("google");
+  assert.deepEqual(store.sources.outbox("google"), []);
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (Dr Lee)");
+  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff");
+});
