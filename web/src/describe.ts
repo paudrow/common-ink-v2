@@ -17,6 +17,8 @@ export function describeAuthor(author: Author, me?: string): string {
       return SYNCS[author.source] ?? `${author.source} sync`;
     case "agent":
       return author.by ? `${author.name} (for ${author.by === me ? "you" : author.by})` : author.name;
+    case "retention":
+      return "Trash retention";
   }
 }
 

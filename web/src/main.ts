@@ -987,14 +987,22 @@ connectLive({
     if (notice.deleted && isNote(notice.path)) {
       void refreshList();
       const who = notice.author.kind === "user" && notice.author.email === me ? "" : ` by ${describeAuthor(notice.author, me)}`;
-      if (workbench.pending().some((p) => p.path === notice.path)) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}: your changes are still here, and Restore in Trash brings the note back.`);
-      else if (L.groups(workbench.layout).some((g) => g.tabs.some((t) => "file" in t && t.file === notice.path))) {
+      const open = L.groups(workbench.layout).some((g) => g.tabs.some((t) => "file" in t && t.file === notice.path));
+      if (notice.purged) {
+        // Deleted forever: nothing of it stays here, open, kept for offline, or waiting to be sent.
+        if (open) workbench.forget([notice.path]);
+        await offline.forget(notice.path);
+        if (open) workbench.notice(`"${name(notice.path)}" was deleted forever${who}`);
+      } else if (workbench.pending().some((p) => p.path === notice.path)) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}: your changes are still here, and Restore in Trash brings the note back.`);
+      else if (open) {
         workbench.forget([notice.path]);
         if (who) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}`);
       }
       heardChange(notice.path);
       return;
     }
+    // A note deleted forever where another note is now: what this browser kept for the purged one goes.
+    if (notice.purged) await offline.forgetPurged(notice.path, async (r) => (await api.version(notice.path, r).catch(() => "")) === null);
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
     // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.

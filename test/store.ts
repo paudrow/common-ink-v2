@@ -4,7 +4,7 @@ import type { Store } from "../worker/src/operations.ts";
 import { addUpload, type Blobs } from "../worker/src/uploads.ts";
 import { completeTaskIn } from "../worker/src/complete-task.ts";
 import { deleteNote } from "../worker/src/archive.ts";
-import { restoreFromTrash } from "../worker/src/trash.ts";
+import { restoreFromTrash, retentionOf } from "../worker/src/trash.ts";
 import type { DataSources } from "../worker/src/data-sources.ts";
 import type { Files } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
@@ -50,6 +50,8 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     search: (q, options) => search.search(q, options),
     deleted: (since) => files.deleted(since),
     restoreDeleted: (d, a) => restoreFromTrash(files, d, a),
+    purge: (deletes, author) => files.purge(deletes, author),
+    retention: () => retentionOf(files),
   };
   return store;
 }
