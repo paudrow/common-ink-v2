@@ -36,7 +36,7 @@ export const APP_MODULES = {
     exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planRevert", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
   },
   "common-ink/icons": { file: "web/src/icons.ts", exports: ["ICON_PATHS", "icon"] },
-  "common-ink/query": { file: "worker/src/query.ts", exports: ["FILTERS", "asksFor", "format", "holds", "matches", "matchesWords", "parse", "problems", "select", "sortOf", "titleOf", "tokens"] },
+  "common-ink/query": { file: "worker/src/query.ts", exports: ["FILTERS", "asksFor", "format", "holds", "inGlobs", "matches", "matchesWords", "ordered", "parse", "problems", "select", "sortOf", "titleOf", "tokens"] },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {
     file: "worker/src/uploads.ts",

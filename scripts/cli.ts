@@ -139,7 +139,8 @@ const commands: Record<string, () => Promise<void>> = {
       [
         ...data.problems.map((p) => `! ${p}`),
         ...data.results.map((r) => `${ago(r.edited).padEnd(11)} ${r.path}${r.archived ? "  (archived)" : ""}${r.line ? `\n${String(r.line.number).padStart(15)}: ${r.line.text}` : ""}`),
-        `${data.total} found${data.total > data.results.length ? `, ${data.results.length} shown` : ""}  ${data.query}`,
+        `${data.total}${data.more ? "+" : ""} found${data.total > data.results.length || data.more ? `, ${data.results.length} shown` : ""}  ${data.query}`,
+        ...(data.more ? ["More notes than one search reads: add words or filters to find the rest."] : []),
       ].join("\n"),
     );
   },
