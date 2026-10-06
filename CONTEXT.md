@@ -100,3 +100,9 @@ One that runs in the app's page, with access to note editors: the built-ins, and
 
 **Safe mode**:
 The app with only built-in extensions running, for when a workspace extension breaks it. Open the app with `?safe=1`.
+
+## Navigation
+
+**Query**:
+Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
+_Avoid_: Filter (that's one part of a query), search string
