@@ -145,6 +145,23 @@ const settle = (el: HTMLElement) => {
   if (!el.querySelector(".cm-embed-frame.is-pending")) delete el.dataset.pending;
 };
 
+/** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
+function address(value: unknown): string {
+  if (typeof value !== "string") throw new Error("An address has to be text");
+  return value;
+}
+
+/** The options of a sandboxed extension's fetch: a method, headers and a body, each as text, and nothing else it sent. */
+function fetchOptions(value: unknown): { method?: string; headers?: Record<string, string>; body?: string } {
+  const o = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const headers = o.headers && typeof o.headers === "object" && !Array.isArray(o.headers) ? Object.entries(o.headers as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string") : [];
+  return {
+    ...(typeof o.method === "string" ? { method: o.method } : {}),
+    ...(headers.length ? { headers: Object.fromEntries(headers) } : {}),
+    ...(typeof o.body === "string" ? { body: o.body } : {}),
+  };
+}
+
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
   readonly broker: PermissionBroker;
@@ -796,9 +813,9 @@ export class ExtensionRuntime {
           case "files.write":
             return services.write(a as FilePath, String(b), Number(c));
           case "net.fetch":
-            return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });
+            return services.fetch(address(a), fetchOptions(b));
           case "net.card":
-            return services.card(a);
+            return services.card(address(a));
           case "clipboard.read":
             await services.check({ kind: "clipboard:read" });
             return navigator.clipboard.readText();
