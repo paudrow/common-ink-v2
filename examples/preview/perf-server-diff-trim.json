@@ -1,0 +1,8 @@
+{
+  "pr": 0,
+  "title": "Long notes save at once",
+  "steps": [
+    "Paste a long note (thousands of lines, with blank lines between paragraphs) and change one line: it says Saved at once, not after seconds of Saving….",
+    "Edit the same long note in two tabs, one near the top and one near the bottom: both edits are kept."
+  ]
+}
