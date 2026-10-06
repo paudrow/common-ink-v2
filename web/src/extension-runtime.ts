@@ -15,6 +15,8 @@ import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
+import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { newEventId, type Scope } from "../../worker/src/calendar.ts";
@@ -460,8 +462,17 @@ export class ExtensionRuntime {
     }
   }
 
+  /** Each extension's state writes, one after another, in the order asked: two at once would clash. */
+  private stateWrites = new Map<string, Promise<void>>();
+
   /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
-  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+  private writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const write = (this.stateWrites.get(m.id) ?? Promise.resolve()).catch(() => {}).then(() => this.sendState(m, value));
+    this.stateWrites.set(m.id, write);
+    return write;
+  }
+
+  private async sendState(m: ExtensionManifest, value: unknown): Promise<void> {
     const path = statePath(m.id);
     const text = `${JSON.stringify(value, null, 2)}\n`;
     for (let tries = 0; tries < 3; tries++) {
@@ -664,6 +675,36 @@ export class ExtensionRuntime {
           );
         },
       },
+      media: (() => {
+        // Every part of it needs the media permission, as the manifest says.
+        const may = () => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play or control media`);
+        };
+        const of = (id: number) => (may(), mediaSession(id));
+        return {
+          session: (spec) => {
+            may();
+            return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+          },
+          current: () => {
+            may();
+            const s = currentMedia();
+            return s && mediaInfo(s);
+          },
+          onChange: (fn) => (may(), void onMedia(guard(fn))),
+          play: (id) => of(id)?.play(),
+          pause: (id) => of(id)?.pause(),
+          stop: (id) => {
+            const s = of(id);
+            if (s) stopMedia(s);
+          },
+          reveal: (id) => {
+            const s = of(id);
+            if (s?.el) revealMedia(s);
+            else if (s?.note) void app.workbench.open(s.note);
+          },
+        };
+      })(),
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
@@ -765,6 +806,12 @@ export class ExtensionRuntime {
     const webviews = new Map<string, Webview>();
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    // An edit's answer names the events it wrote: only for an extension that may read them already.
+    const readAsk: Ask = { kind: "data:calendar:read" };
+    const mayRead = (r: EditResult): Partial<EditResult> =>
+      decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk)
+        ? r
+        : { status: r.status, address: r.address, ...(r.error ? { error: r.error } : {}) };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -867,6 +914,7 @@ export class ExtensionRuntime {
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
+            await services.check({ kind: "data:calendar:read" });
             return data.status();
           case "data.sync":
             return data.sync(a === "force");
@@ -877,11 +925,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]);
+            return mayRead(await data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return data.calendar.update(address(a), eventInput(b), scopeOf(c));
+            return mayRead(await data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return data.calendar.remove(address(a), scopeOf(b));
+            return mayRead(await data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
@@ -909,3 +957,5 @@ export class ExtensionRuntime {
   }
 }
 
+/** A session as extensions see it. */
+const mediaInfo = (s: MediaSession) => ({ id: s.id, title: s.title, kind: s.kind, playing: s.playing, note: noteOfMedia(s) ?? s.note ?? null });

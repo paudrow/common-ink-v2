@@ -17,7 +17,7 @@ An edit (from the app, an agent or the CLI) is planned as the records it writes,
 
 Adapters run in the Worker, next to the Durable Object that holds the refresh token, which never reaches a page. `Adapter` (`worker/src/adapter.ts`) is the seam another source plugs into: push one record's change, and sync.
 
-When Google changed an event while our edit of it waited, the push's etag no longer matches and Google answers 412. The edit, and every edit of that record queued after it, is then merged onto Google's version field by field, each from what it started from: each field takes the side that changed it, and where both changed the same field, Google's wins. The Data sources view says so, and the record's history still has ours. Pushes are PATCHes of the fields Common Ink models, so guests, reminders and video calls stay as Google has them.
+When Google changed an event while our edit of it waited, the push's etag no longer matches and Google answers 412. The edit, and every edit of that record queued after it, is then merged onto Google's version field by field, each from what it started from: each field takes the side that changed it, and where both changed the same field, Google's wins. The Data sources view says so, and the record's history still has ours. Pushes are PATCHes of the fields Common Ink models, so guests, reminders and video calls stay as Google has them. An edit waiting with no etag of ours (an occurrence's first edit) meets Google's change the same way: the sync that hears of the change gives the edit an etag that can't match. The echo of our own delete isn't such a change, so undoing a move still puts back the occurrence the move cancelled.
 
 ## Sync brings Google's changes back as changes by the sync
 

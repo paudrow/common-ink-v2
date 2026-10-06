@@ -2,20 +2,57 @@
   "id": "media",
   "name": "Media",
   "version": "1.0.0",
-  "description": "Background sound in notes, made in the browser with nothing fetched: `::noise{color=brown volume=0.3}`. While something plays, a mini player shows it, the status bar names it, and the keyboard's media keys pause and play it.",
+  "description": "Background sound in notes, made in the browser with nothing fetched: `::noise{color=brown volume=0.3}`. And the media controller for whatever plays, noise or a video or track in a link embed: a mini player shows the one played last with its note, the status bar names it, and the keyboard's media keys pause and play it. A playing video floats in a small window while its note is out of sight (media.whenHidden).",
   "main": "index.ts",
-  "files": ["index.ts", "noise.ts"],
-  "activationEvents": ["onEmbed:noise", "onCommand:media.toggle", "onCommand:media.stop"],
+  "files": [
+    "index.ts",
+    "noise.ts"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
   "permissions": {
-    "editor": { "why": "Draw sound players in notes" },
-    "media": { "why": "Play background sound" }
+    "editor": {
+      "why": "Draw sound players in notes"
+    },
+    "media": {
+      "why": "Play background sound, and control what plays"
+    }
   },
   "contributes": {
     "commands": [
-      { "command": "media.toggle", "title": "Play or pause background sound" },
-      { "command": "media.stop", "title": "Stop background sound" }
+      {
+        "command": "media.toggle",
+        "title": "Play or pause what's playing"
+      },
+      {
+        "command": "media.stop",
+        "title": "Stop what's playing"
+      }
     ],
-    "statusBarItems": [{ "id": "media.playing", "alignment": "right", "priority": 20, "command": "media.toggle" }],
+    "configuration": {
+      "title": "Media",
+      "properties": {
+        "media.whenHidden": {
+          "type": "string",
+          "enum": [
+            "float",
+            "keepPlaying",
+            "pause"
+          ],
+          "default": "float",
+          "description": "What a playing video or track does when its note goes out of sight (another tab, the tab closed, or scrolled away). float: a video plays on in a small window you can drag, and goes back into the note when it shows again; a track plays on unseen, in the mini player. keepPlaying: both play on unseen, in the mini player. pause: both pause."
+        }
+      }
+    },
+    "statusBarItems": [
+      {
+        "id": "media.playing",
+        "alignment": "right",
+        "priority": 20,
+        "command": "media.toggle"
+      }
+    ],
     "embeds": [
       {
         "language": "noise",
@@ -23,9 +60,25 @@
         "title": "Background noise",
         "description": "White, pink or brown noise, for focus or sleep, made in the browser. Play it in the note; it keeps playing when the note closes, and the mini player controls it.",
         "arguments": {
-          "color": { "type": "string", "description": "white, pink or brown (softest)", "default": "brown", "enum": ["brown", "pink", "white"] },
-          "volume": { "type": "number", "description": "From 0 to 1", "default": "0.3" },
-          "label": { "type": "string", "description": "What it's called in the mini player" }
+          "color": {
+            "type": "string",
+            "description": "white, pink or brown (softest)",
+            "default": "brown",
+            "enum": [
+              "brown",
+              "pink",
+              "white"
+            ]
+          },
+          "volume": {
+            "type": "number",
+            "description": "From 0 to 1",
+            "default": "0.3"
+          },
+          "label": {
+            "type": "string",
+            "description": "What it's called in the mini player"
+          }
         }
       }
     ]
