@@ -1,0 +1,8 @@
+{
+  "pr": 46,
+  "title": "Another site's requests are refused, whoever is signed in",
+  "steps": [
+    "Use the app as usual: edit a note, open the calendar, install Word count from the Catalog. Everything the app's own page asks works as before.",
+    "From another site's console (any page), run fetch(\"<this Preview>/api/file\", { method: \"PUT\", mode: \"no-cors\", headers: { \"Content-Type\": \"text/plain\" }, body: JSON.stringify({ path: \"From elsewhere.md\", text: \"x\", base: 0 }) }). No note called From elsewhere appears here."
+  ]
+}
