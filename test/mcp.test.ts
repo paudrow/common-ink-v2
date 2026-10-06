@@ -111,3 +111,13 @@ test("a tick that clashes with an edit of the same line is an error, and nothing
   assert.deepEqual(result, { ok: false, error: "Chores.md changed on line 3 meanwhile, so it wasn't ticked. Read it and try again." });
   assert.equal(files.files.read("Journal/2026-10-05.md" as never), null);
 });
+
+test("the same tick sent twice at once, as a client's retry does, ticks once and logs once", async () => {
+  const files = memoryStore();
+  const line = "- [ ] Water the plants due:2026-10-05 rec:3d";
+  await runOperation("write_file", { path: "Chores.md", text: `# Chores\n\n${line}\n`, base: 0 }, files, agent);
+  const both = await Promise.all([0, 1].map(() => runOperation("complete_task", { path: "Chores.md", line: 3, text: line, today: "2026-10-05" }, files, agent)));
+  assert.deepEqual(both.map((r) => r.ok).sort(), [false, true]);
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05\n");
+  assert.equal(files.files.read("Journal/2026-10-05.md" as never)!.text.split("\n").filter((l) => l.includes("Water the plants")).length, 1);
+});
