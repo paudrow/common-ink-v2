@@ -142,3 +142,13 @@ test("a note archived when it was deleted comes back archived", async () => {
   await run(store, "restore", { path: "Kept.md" });
   assert.deepEqual((await run(store, "list_files")).filter((f) => f.archived).map((f) => f.path), ["Kept.md"]);
 });
+
+test("a search within some paths finds only the notes in Trash there", async () => {
+  const { store, write, remove } = workspace();
+  write("Public/Gone.md", "# Gone\nzebra");
+  write("Secret/Plan.md", "# Plan\nzebra");
+  remove("Public/Gone.md");
+  remove("Secret/Plan.md");
+  const found = await run(store, "search", { query: "zebra is:trashed", within: ["Public/**"] });
+  assert.deepEqual([(found.results as Array<{ path: string }>).map((r) => r.path), found.total], [["Public/Gone.md"], 1]);
+});

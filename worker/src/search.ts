@@ -3,7 +3,8 @@
 // is. The index only narrows the notes to those that have the query's words; the query language
 // (query.ts) decides what matches and in what order, so the index and the matcher can't disagree.
 import type { Author, Db } from "./files.ts";
-import { holds, select, titleOf, tokens, type MatchContext, type NoteFacts, type Query } from "./query.ts";
+import { inGlobs } from "./globs.ts";
+import { holds, matches, ordered, select, titleOf, tokens, type MatchContext, type NoteFacts, type Query, type Term } from "./query.ts";
 
 /** A note search found: enough to list it, and the first line that has a word searched for. */
 export interface NoteResult {
@@ -30,6 +31,11 @@ export interface SearchOptions {
   limit: number;
   /** The paths in the archive, which come last. */
   archived?: ReadonlySet<string>;
+  /**
+   * Only notes whose paths match one of these globs (globs.ts) are searched: ranked, limited and
+   * counted, as if no other note were there. What an extension may read, for its searches.
+   */
+  within?: readonly string[];
 }
 
 const isNotePath = (path: string) => path.endsWith(".md");
@@ -44,8 +50,11 @@ const indexed = (path: string, text: string) => tokens(`${titleOf(path, text)}\n
 /** The index's table: contentless, so it keeps no second copy of the notes, and its rows can still be deleted. */
 const FTS = `CREATE VIRTUAL TABLE search USING fts5(words, content = '', contentless_delete = 1, tokenize = "unicode61 remove_diacritics 0 categories 'L* N* Co M*'")`;
 
-/** At most this many notes' text is read for one search. A search that matches more says so (`more`). */
+/** At most this many notes' text is read for one search. A search that would read more says so (`more`). */
 export const MAX_CANDIDATES = 1000;
+
+/** Notes' text is read this many at a time, so a search holds little of it at once. */
+const CHUNK = 100;
 
 /**
  * FTS5's query for the notes that may match: every word and phrase the query wants, the last word of
@@ -56,8 +65,8 @@ function ftsQuery(query: Query): string | null {
   return wanted.length ? wanted.join(" AND ") : null;
 }
 
-/** Whether matching needs the notes' text: words to find or leave out, or has:. Filters on state, folder, author and age don't. */
-const needsText = (query: Query) => query.terms.some((t) => (t.kind === "words" && tokens(t.text).length > 0) || (t.kind === "filter" && t.key === "has" && t.value !== ""));
+/** Whether a term needs a note's text to test: words to find or leave out, or has:. Filters on state, folder, author and age don't. */
+const needsText = (t: Term) => (t.kind === "words" && tokens(t.text).length > 0) || (t.kind === "filter" && t.key === "has" && t.value !== "");
 
 export class SearchIndex {
   constructor(private db: Db) {
@@ -112,28 +121,41 @@ export class SearchIndex {
   }
 
   /**
-   * The notes a query finds, in its order: archived ones last. A query of filters alone is answered from
-   * what's known of each note (path, title, last change, archive) without reading any text; one with
-   * words reads only the notes the index finds, at most MAX_CANDIDATES of them.
+   * The notes a query finds, in its order: archived ones last. What's known of each note without its
+   * text (path, title, last change, archive) is enough to order them all and test every filter but
+   * words and has:. A query of only those is answered from it. Otherwise text is read for the notes
+   * that pass, in the query's order, until MAX_CANDIDATES have been read: so the first results are the
+   * right ones however many notes there are, `more` says some were never read, and `total` counts only
+   * those that were.
    */
-  search(query: Query, { ctx, limit, archived = new Set() }: SearchOptions): SearchResults {
+  search(query: Query, { ctx, limit, archived = new Set(), within }: SearchOptions): SearchResults {
     const fts = ftsQuery(query);
-    const text = needsText(query);
-    const rows = this.db.all<{ path: string; title: string; text: string | null; author: string; time: number }>(
-      `SELECT d.path, d.title, ${text ? "f.text" : "NULL AS text"}, c.author, c.time FROM search_docs d JOIN files f ON f.path = d.path JOIN changes c ON c.revision = f.revision
-        ${fts ? "WHERE d.id IN (SELECT rowid FROM search WHERE search MATCH ? ORDER BY rank LIMIT ?)" : text ? "ORDER BY f.revision DESC LIMIT ?" : ""}`,
-      ...(fts ? [fts, MAX_CANDIDATES + 1] : text ? [MAX_CANDIDATES + 1] : []),
-    );
-    const more = text && rows.length > MAX_CANDIDATES;
-    const notes: NoteFacts[] = (more ? rows.slice(0, MAX_CANDIDATES) : rows).map((r) => ({
-      path: r.path,
-      title: r.title,
-      text: r.text ?? "",
-      edited: r.time,
-      author: JSON.parse(r.author) as Author,
-      ...(archived.has(r.path) ? { archived: true } : {}),
-    }));
-    return { ...present(query, notes, { ctx, limit }), ...(more ? { more: true as const } : {}) };
+    const inside = within ? inGlobs(within) : () => true;
+    const authors = new Map<string, Author>();
+    const author = (key: string) => authors.get(key) ?? authors.set(key, JSON.parse(key) as Author).get(key)!;
+    const notes: NoteFacts[] = this.db
+      .all<{ path: string; title: string; author: string; time: number }>(
+        `SELECT d.path, d.title, c.author, c.time FROM search_docs d JOIN files f ON f.path = d.path JOIN changes c ON c.revision = f.revision${fts ? " WHERE d.id IN (SELECT rowid FROM search WHERE search MATCH ?)" : ""}`,
+        ...(fts ? [fts] : []),
+      )
+      .flatMap((r) => (inside(r.path) ? [{ path: r.path, title: r.title, text: "", edited: r.time, author: author(r.author), ...(archived.has(r.path) ? { archived: true } : {}) }] : []));
+    if (!query.terms.some(needsText)) return present(query, notes, { ctx, limit });
+    const known: Query = { terms: query.terms.filter((t) => !needsText(t)) };
+    const candidates = ordered(query, notes.filter((n) => matches(known, n, ctx)));
+    const read = candidates.slice(0, MAX_CANDIDATES);
+    const found: NoteFacts[] = [];
+    let total = 0;
+    for (let i = 0; i < read.length; i += CHUNK) {
+      const chunk = read.slice(i, i + CHUNK);
+      const texts = new Map(this.db.all<{ path: string; text: string }>(`SELECT path, text FROM files WHERE path IN (${chunk.map(() => "?").join(", ")})`, ...chunk.map((n) => n.path)).map((r) => [r.path, r.text]));
+      for (const n of chunk) {
+        const note = { ...n, text: texts.get(n.path) ?? "" };
+        if (!matches(query, note, ctx)) continue;
+        total++;
+        if (found.length < limit) found.push(note);
+      }
+    }
+    return { ...present(query, found, { ctx, limit }), total, ...(candidates.length > MAX_CANDIDATES ? { more: true as const } : {}) };
   }
 }
 

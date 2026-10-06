@@ -11,6 +11,7 @@ import { DAY, inTrash, retentionDays } from "./trash.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
+import { inGlobs } from "./globs.ts";
 import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
 import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
 import { present, type SearchOptions, type SearchResults } from "./search.ts";
@@ -101,6 +102,20 @@ const ZONE = { type: "string", description: "An IANA time zone, like America/New
 const TIME = { type: "string", description: "A wall time like 2026-10-05T09:00, or a day like 2026-10-05 for all day" };
 const SCOPE = { type: "string", enum: ["this", "following", "all"], description: "For an occurrence of a repeating event: this one, this and following, or all of them" };
 const RECURRENCE = { type: ["string", "array", "null"], items: { type: "string" }, description: "weekly, 2w, mon,thu, 1st-tue, last-fri… or RRULE lines" };
+
+/** Path globs, as a list or, from a URL's query, a list in JSON: undefined if there are none, null if they aren't globs. */
+function globsOf(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  let list = value;
+  if (typeof value === "string") {
+    try {
+      list = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return Array.isArray(list) && list.length <= 50 && list.every((g) => typeof g === "string" && g.length > 0 && g.length <= 500) ? (list as string[]) : null;
+}
 
 const zoneOf = (v: unknown): string | null => (v === undefined || v === "" ? "UTC" : typeof v === "string" && isTimeZone(v) ? v : null);
 const scopeOf = (v: unknown): Scope | undefined | null => (v === undefined || v === "" ? undefined : v === "this" || v === "following" || v === "all" ? v : null);
@@ -515,27 +530,30 @@ export const OPERATIONS = {
       throw new OperationError("The labels file kept changing; try again");
     },
   }),
-  search: op<{ query: string; limit: number; zone: string }>({
+  search: op<{ query: string; limit: number; zone: string; within?: string[] }>({
     description:
-      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. A search reads at most 1000 notes with its words: `more` says there were more, so add words or filters. Events are list_events\'.',
+      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. `within` searches only notes whose paths match one of its globs, like ["Projects/**"]. A search reads the text of at most 1000 notes, in its order, so its first results are right: `more` says there were more to read (then `total` counts those read), so add words or filters. Events are list_events\'.',
     input: {
       type: "object",
-      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE },
+      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE, within: { type: "array", items: { type: "string" }, maxItems: 50 } },
       required: ["query"],
     },
     parse: (a) => {
       if (typeof a.query !== "string" || a.query.length > 1000) return fail('"query" is the query, like launch in:Projects/ -is:archived');
       const zone = zoneOf(a.zone);
       if (!zone) return fail('"zone" is a time zone, like America/New_York');
-      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), zone });
+      const within = globsOf(a.within);
+      if (within === null) return fail('"within" is a list of up to 50 path globs, like ["Projects/**"] (in a URL, as JSON)');
+      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), zone, ...(within ? { within } : {}) });
     },
-    run: async (store, { query, limit, zone }) => {
+    run: async (store, { query, limit, zone, within }) => {
       const q = parse(query);
       const ctx = { now: Date.now(), zone };
       // Notes in Trash aren't in the index: they're searched only when the query asks for them.
+      const inside = within ? inGlobs(within) : () => true;
       const found = asksFor(q, "trashed")
-        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
-        : await store.search(q, { ctx, limit, archived: await archivedIn(store) });
+        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        : await store.search(q, { ctx, limit, archived: await archivedIn(store), within });
       return { query: format(q), problems: problems(q), ...found };
     },
   }),
