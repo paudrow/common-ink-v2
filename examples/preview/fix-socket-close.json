@@ -1,0 +1,7 @@
+{
+  "pr": 95,
+  "title": "A page that drops its live connection no longer throws on the server",
+  "steps": [
+    "Nothing should look different. Open a note in two tabs, close one by killing it, and edit in the other: edits save and other tabs hear of them as before."
+  ]
+}

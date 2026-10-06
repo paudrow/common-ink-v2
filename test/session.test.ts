@@ -140,3 +140,19 @@ test("news of a change this session already has, such as its own save, changes n
   assert.equal(editor.text, before);
   assert.equal(session.status, "saved");
 });
+
+test("after a clash, adopting the server's version keeps the editor's text, and a save puts it over theirs", async () => {
+  const { notes, editor, session, statuses } = setup("a\nb\nc\n");
+  editor.text = "a\nb mine\nc\n";
+  session.edited();
+  notes.write({ path: PATH, text: "a\nb theirs\nc\n", base: 1, author: them });
+  await session.absorb(notes.read(PATH)!);
+  assert.equal(statuses.at(-1), "conflict");
+  await session.save();
+  assert.equal(notes.read(PATH)!.text, "a\nb theirs\nc\n", "no save while it clashes");
+  await session.adopt(notes.read(PATH)!);
+  assert.deepEqual([editor.text, statuses.at(-1)], ["a\nb mine\nc\n", "unsaved"]);
+  await session.save(true);
+  assert.deepEqual(notes.read(PATH), { path: PATH, text: "a\nb mine\nc\n", revision: 3 });
+  assert.equal(statuses.at(-1), "saved");
+});
