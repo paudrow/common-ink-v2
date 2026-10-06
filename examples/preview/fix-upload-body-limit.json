@@ -1,0 +1,7 @@
+{
+  "pr": 82,
+  "title": "Uploads are read only up to 25 MB",
+  "steps": [
+    "Drop an image into a note: it uploads and shows as before. A file over 25 MB is refused with a message saying the limit."
+  ]
+}
