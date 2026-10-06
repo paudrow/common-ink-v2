@@ -1,0 +1,7 @@
+{
+  "pr": 54,
+  "title": "History reads a page at a time",
+  "steps": [
+    "Nothing should look different. Open History (⌘⇧P, Show history): changes come newest first, filtering by an author works, and scrolling down loads older ones. Undo one change from there."
+  ]
+}

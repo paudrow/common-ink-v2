@@ -1,0 +1,7 @@
+{
+  "pr": 69,
+  "title": "Another site's write through MCP, tried in a browser",
+  "steps": [
+    "From another site's console, run the fetch in #46's corrected step (examples/preview/sec-origin.json): a no-cors POST to <this Preview>/mcp calling write_file. No note called From elsewhere appears here."
+  ]
+}

@@ -38,6 +38,8 @@ export interface BrowserTestOptions {
   open?: string;
   viewport?: { width: number; height: number };
   dark?: boolean;
+  /** The browser's time zone, such as "America/Chicago": the machine's otherwise. */
+  timezone?: string;
   /** Browser permissions, such as clipboard-read. */
   grant?: string[];
   /** Errors the page may log without failing the test. */
@@ -56,7 +58,7 @@ const tracing = !!(process.env.CI || process.env.TRACE);
 /** One browser test, in its own context, as a person would meet the app: see BrowserTestOptions. */
 export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
   test(name, o.todo ? { todo: o.todo } : {}, async (t) => {
-    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light" });
+    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light", ...(o.timezone ? { timezoneId: o.timezone } : {}) });
     // TypeScript run by the test runner names functions with a helper that pages passed them don't have.
     await context.addInitScript("window.__name = (f) => f");
     if (o.grant) await context.grantPermissions(o.grant, { origin: h.base });
