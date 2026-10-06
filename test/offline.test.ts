@@ -145,6 +145,17 @@ test("held edits of records go once each, however often sending starts, and wait
   assert.deepEqual(await offline.ops(), []);
 });
 
+test("back online, one request says whether the server can be reached, with nothing waiting to send", async () => {
+  const { offline, setUp } = setup();
+  setUp(false);
+  await offline.list();
+  assert.equal(offline.online, false);
+  assert.equal(await offline.check(), false, "the browser says online, the server still can't be reached");
+  setUp(true);
+  assert.equal(await offline.check(), true);
+  assert.equal(offline.online, true);
+});
+
 /** A note saved once, opened by a page signed in as you. */
 async function kept(text = "# Trip\n- a\n") {
   const s = setup();
