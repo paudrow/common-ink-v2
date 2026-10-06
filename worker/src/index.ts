@@ -17,6 +17,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { publicFile } from "./public-files.ts";
 
 export { Workspace } from "./workspace.ts";
 
@@ -75,6 +76,8 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
   {
     // The settings schema is public, so editors outside the app can check settings files against it.
     if (url.pathname === SCHEMA_URL) return secure(json(schema));
+    const file = await publicFile(req, url, env.ASSETS);
+    if (file) return secure(file);
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName("main"));
     // Sandboxed frames send no cookies: the sandbox route answers them without sign-in (sandbox.ts says what's safe there).
     if (url.pathname.startsWith(SANDBOX_PREFIX)) return sandboxRoute(req, url, env.ASSETS, workspace as unknown as SandboxStore);
