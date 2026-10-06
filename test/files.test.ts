@@ -414,3 +414,24 @@ test("open pages hear of changes only once they're kept: a write rolled back ann
   const next = files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
   assert.deepEqual(heard, [1, next.file!.revision]);
 });
+
+test("a one-line save to a long note, and a merge into one from a stale base, take moments, not seconds", () => {
+  // A blank line in every ten: each blank matches every other, which made the whole-text diff slow.
+  const before = Array.from({ length: 10_000 }, (_, i) => (i % 10 === 9 ? "" : `line ${i}`));
+  const edit = (at: number, line: string, from = before) => from.map((l, i) => (i === at ? line : l));
+  const notes = workspace();
+  const first = notes.write({ path: PLAN, text: before.join("\n"), base: 0, author: ada });
+  const timed = (fn: () => void) => {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  };
+  let theirs = first;
+  const save = timed(() => (theirs = notes.write({ path: PLAN, text: edit(9_000, "theirs").join("\n"), base: first.file!.revision, author: bot })));
+  let merged = theirs;
+  const merge = timed(() => (merged = notes.write({ path: PLAN, text: edit(100, "mine").join("\n"), base: first.file!.revision, author: ada })));
+  assert.equal(merged.status, "merged");
+  assert.deepEqual(merged.file?.text, edit(100, "mine", edit(9_000, "theirs")).join("\n"));
+  assert.ok(save < 1000, `a one-line save took ${Math.round(save)} ms`);
+  assert.ok(merge < 1000, `a merge from a stale base took ${Math.round(merge)} ms`);
+});
