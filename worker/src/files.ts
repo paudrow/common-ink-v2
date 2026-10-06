@@ -127,6 +127,8 @@ export interface Write {
   undoes?: Revision;
   /** Delete the file instead: `text` is ignored, and `base` must be its revision. */
   delete?: true;
+  /** An id the writer gave this edit, to ask later whether it was applied: a page that went before it heard back. */
+  edit?: string;
 }
 
 /**
@@ -191,7 +193,12 @@ const SCHEMA: Array<(db: Db) => void> = [
   (db) => {
     if (!hasColumn(db, "changes", "deletes")) db.run("ALTER TABLE changes ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0");
   },
+  // 4. The ids writers gave their edits, by file, once applied.
+  (db) => db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY(path, id))"),
 ];
+
+/** How many edit ids a file keeps, newest first. */
+const EDITS_KEPT = 50;
 
 type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
 const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
@@ -470,7 +477,23 @@ export class Files {
     });
   }
 
-  private apply({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
+  private apply(w: Write): WriteResult {
+    const result = this.applyWrite(w);
+    // Applied, even as a merge or with nothing left to change: the writer may ask by its id.
+    if (w.edit && result.status !== "conflict") {
+      this.db.run("INSERT OR IGNORE INTO edits(path, id, revision) VALUES (?, ?, ?)", w.path, w.edit, result.file.revision);
+      // Only a page that just went asks, about one of its last saves: a file keeps its latest ids.
+      this.db.run("DELETE FROM edits WHERE path = ? AND id NOT IN (SELECT id FROM edits WHERE path = ? ORDER BY revision DESC LIMIT ?)", w.path, w.path, EDITS_KEPT);
+    }
+    return result;
+  }
+
+  /** Whether the edit a writer gave this id was applied to the file. */
+  editApplied(path: FilePath, id: string): boolean {
+    return this.db.all("SELECT 1 FROM edits WHERE path = ? AND id = ?", path, id).length > 0;
+  }
+
+  private applyWrite({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
     // A delete is never merged: it has to be of the file as it is.

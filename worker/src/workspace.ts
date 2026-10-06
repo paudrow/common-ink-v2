@@ -128,6 +128,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  editApplied(path: FilePath, id: string) {
+    return this.files.editApplied(path, id);
+  }
+
   /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
     return restoreFile(this.files, this.sources, path, at, author);

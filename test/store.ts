@@ -29,6 +29,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     undo: (r, a) => undoChanges(files, sources, r, a),
     combined: (r) => files.combined(r),
     versionAt: (p, r) => files.versionAt(p, r),
+    editApplied: (p, id) => files.editApplied(p, id),
     restore: (p, at, a) => restoreFile(files, sources, p, at, a),
     sourceStatus: (e) => sources.status(e),
     calendars: () => sources.calendars(),
