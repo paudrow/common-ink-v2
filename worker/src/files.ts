@@ -152,6 +152,9 @@ function textHash(text: string): string {
 
 const lines = (text: string) => text.split("\n");
 
+/** A Durable Object's SQLite binds at most 100 parameters in a statement, so a list goes in pieces this long. */
+const chunks = <T>(xs: readonly T[], size = 100): T[][] => Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, (i + 1) * size));
+
 const hasTable = (db: Db, name: string) => db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).length > 0;
 
 /** Whether a table's definition has a column. ALTER TABLE ADD COLUMN writes it as ", name TYPE" or "name TYPE". */
@@ -259,20 +262,27 @@ export class Files {
   /** Changes across the workspace, newest first, optionally for one file or one author. */
   recent(q: HistoryQuery = {}): Change[] {
     const limit = Math.min(Math.max(1, q.limit ?? 50), 500);
-    const rows = this.db.all<ChangeRow>(
-      `SELECT * FROM changes WHERE (?1 IS NULL OR path = ?1) AND (?2 IS NULL OR revision < ?2) ORDER BY revision DESC`,
-      q.path ?? null,
-      q.before ?? null,
-    );
-    const undoneBy = this.undoneBy();
-    const out: Change[] = [];
-    for (const row of rows) {
-      const change = toChange(row);
-      if (q.author && authorKey(change.author) !== q.author) continue;
-      out.push({ ...change, undoneBy: undoneBy(change.revision) });
-      if (out.length >= limit) break;
+    // Who made each change is read a page at a time, and only the chosen changes whole, so a long history is never all in memory.
+    const chosen: Revision[] = [];
+    for (let before = q.before ?? null; chosen.length < limit; ) {
+      // One statement per shape, so SQLite pages by the index (changes_by_path, or the revision itself).
+      const where = [...(q.path ? ["path = ?"] : []), ...(before !== null ? ["revision < ?"] : [])];
+      const page = this.db.all<{ revision: number; author: string }>(
+        `SELECT revision, author FROM changes ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY revision DESC LIMIT 1000`,
+        ...(q.path ? [q.path] : []),
+        ...(before !== null ? [before] : []),
+      );
+      for (const { revision, author } of page) {
+        if (chosen.length < limit && (!q.author || authorKey(JSON.parse(author)) === q.author)) chosen.push(revision);
+      }
+      if (page.length < 1000) break;
+      before = page.at(-1)!.revision;
     }
-    return out;
+    const undoneBy = this.undoneBy();
+    return chunks(chosen)
+      .flatMap((some) => this.db.all<ChangeRow>(`SELECT * FROM changes WHERE revision IN (${some.map(() => "?").join(",")})`, ...some))
+      .sort((a, b) => b.revision - a.revision)
+      .map((row) => ({ ...toChange(row), undoneBy: undoneBy(row.revision) }));
   }
 
   /** Which undo, if any, is in effect for a change: the latest undo of it that hasn't been undone itself. */
@@ -320,7 +330,7 @@ export class Files {
    */
   combined(revisions: Revision[]): FileDiff[] {
     const chosen = new Set(revisions);
-    const paths = [...new Set(this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${[...chosen].map(() => "?").join(",") || "NULL"})`, ...chosen).map((r) => r.path))];
+    const paths = [...new Set(chunks([...chosen]).flatMap((some) => this.db.all<{ path: FilePath }>(`SELECT path FROM changes WHERE revision IN (${some.map(() => "?").join(",")})`, ...some).map((r) => r.path)))];
     return paths.sort().map((path) => {
       const history = this.history(path);
       const runs: DiffRun[] = [];

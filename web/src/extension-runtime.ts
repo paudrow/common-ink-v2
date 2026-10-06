@@ -85,7 +85,7 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined,
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
       // The id is made here, so an edit held offline and sent twice makes one event.
-      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
+      create: (event) => send("POST", { ...event, id: newEventId() }, `Add ${event.title}`),
       update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
       remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },
@@ -150,6 +150,52 @@ function filePath(value: unknown): FilePath {
   const path = parseFilePath(value);
   if (!path) throw new Error(`${typeof value === "string" ? value : "That"} isn't a file path`);
   return path;
+}
+
+/**
+ * An event's fields, as a sandboxed extension passed them: each one an event has, of its type. Fields
+ * an event doesn't have are left out; one of the wrong type is refused, not guessed at.
+ */
+function eventInput(value: unknown): EventInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("An event's fields have to be an object");
+  const o = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const take = (k: string, ok: (v: unknown) => boolean, what: string) => {
+    if (!(k in o) || o[k] === undefined) return;
+    if (!ok(o[k])) throw new Error(`An event's ${k} has to be ${what}`);
+    out[k] = o[k];
+  };
+  const text = (v: unknown) => typeof v === "string";
+  const textOrNull = (v: unknown) => typeof v === "string" || v === null;
+  for (const k of ["title", "start", "end", "calendar"]) take(k, text, "text");
+  for (const k of ["timeZone", "location", "description"]) take(k, textOrNull, "text or null");
+  take("allDay", (v) => typeof v === "boolean", "true or false");
+  take("recurrence", (v) => textOrNull(v) || (Array.isArray(v) && v.every(text)), "a rule, a list of rules, or null");
+  return out as EventInput;
+}
+
+/** Which occurrences of a series an edit is for, or none (the Worker's default); anything else is refused. */
+function scopeOf(value: unknown): Scope | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "this" || value === "following" || value === "all") return value;
+  throw new Error('A scope is "this", "following" or "all"');
+}
+
+/** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
+function address(value: unknown): string {
+  if (typeof value !== "string") throw new Error("An address has to be text");
+  return value;
+}
+
+/** The options of a sandboxed extension's fetch: a method, headers and a body, each as text, and nothing else it sent. */
+function fetchOptions(value: unknown): { method?: string; headers?: Record<string, string>; body?: string } {
+  const o = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const headers = o.headers && typeof o.headers === "object" && !Array.isArray(o.headers) ? Object.entries(o.headers as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string") : [];
+  return {
+    ...(typeof o.method === "string" ? { method: o.method } : {}),
+    ...(headers.length ? { headers: Object.fromEntries(headers) } : {}),
+    ...(typeof o.body === "string" ? { body: o.body } : {}),
+  };
 }
 
 export class ExtensionRuntime {
@@ -809,9 +855,9 @@ export class ExtensionRuntime {
             return services.write(path, String(b), Number(c));
           }
           case "net.fetch":
-            return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });
+            return services.fetch(address(a), fetchOptions(b));
           case "net.card":
-            return services.card(a);
+            return services.card(address(a));
           case "clipboard.read":
             await services.check({ kind: "clipboard:read" });
             return navigator.clipboard.readText();
@@ -831,11 +877,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(b as Parameters<DataApi["calendar"]["create"]>[0]);
+            return data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]);
           case "data.update":
-            return data.calendar.update(a, b as EventInput, (c ?? undefined) as Scope | undefined);
+            return data.calendar.update(address(a), eventInput(b), scopeOf(c));
           case "data.remove":
-            return data.calendar.remove(a, (b ?? undefined) as Scope | undefined);
+            return data.calendar.remove(address(a), scopeOf(b));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
