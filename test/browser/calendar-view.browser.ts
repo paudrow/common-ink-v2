@@ -205,6 +205,15 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
 });
 
+browserTest(h, "switching views quickly keeps the last one, with no clash saving it", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.page.locator(".cal-page").focus();
+  for (const key of ["m", "y", "a", "3", "m", "y", "a"]) await app.page.keyboard.press(key);
+  await app.idle();
+  const saved = JSON.parse(await app.readFile(".common-ink/extensions/calendar/state.json")) as { view: string };
+  assert.equal(saved.view, "agenda");
+});
+
 browserTest(h, "saving the editor changes only what you changed, so what someone else changed meanwhile stays", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
   await app.page.locator('.cal-day[data-day="2026-10-06"] .cal-event', { hasText: "Dentist" }).click();

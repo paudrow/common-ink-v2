@@ -275,10 +275,18 @@ export class CalendarPage {
       ...VIEWS.map((v) => el("button", { type: "button", "aria-pressed": String(v === view), title: `${VIEW_NAMES[v].label} (${VIEW_NAMES[v].key})`, onclick: () => this.show(v, this.anchor) }, VIEW_NAMES[v].label)),
     );
     if (this.embedded) return;
-    void this.ctx.state.get().then((s) => {
-      const kept = (s ?? {}) as PageState;
-      if (kept.view !== view) void this.ctx.state.set({ ...kept, view });
-    });
+    this.keep({ view });
+  }
+
+  /** The state's changes, each read and written after the last, so quick switches keep the last one. */
+  private keeping = Promise.resolve();
+  private keep(change: PageState) {
+    this.keeping = this.keeping
+      .then(async () => {
+        const kept = ((await this.ctx.state.get()) ?? {}) as PageState;
+        if (Object.entries(change).some(([k, v]) => JSON.stringify(kept[k as keyof PageState]) !== JSON.stringify(v))) await this.ctx.state.set({ ...kept, ...change });
+      })
+      .catch(() => {});
   }
 
   private goto(day: Day, smooth: boolean) {
@@ -502,7 +510,7 @@ export class CalendarPage {
           this.hidden ??= new Set();
           if (box.checked) this.hidden.delete(c.id);
           else this.hidden.add(c.id);
-          void this.ctx.state.get().then((s) => this.ctx.state.set({ ...((s ?? {}) as PageState), hidden: [...this.hidden!] }));
+          this.keep({ hidden: [...this.hidden!] });
           this.renderer?.redraw();
         });
         return el("label", { class: "fp-item" }, box, el("span", { class: "cal-swatch", style: { "--calendar": c.color } }), el("span", {}, c.title), c.writable ? null : el("span", { class: "cal-muted" }, "read-only"));
