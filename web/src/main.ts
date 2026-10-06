@@ -12,7 +12,7 @@ import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSet
 import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
-import { commandForKey, Commands, keyFor } from "./commands.ts";
+import { bindingForKey, Commands, keyFor } from "./commands.ts";
 import { ago, describeAuthor, docLabel } from "./describe.ts";
 import { Search } from "./search.ts";
 import { format } from "../../worker/src/query.ts";
@@ -549,7 +549,7 @@ const extensions = new ExtensionRuntime({
   commands,
   bar,
   search,
-  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command) => commands.run(command)),
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, by) => commands.run(command, by)),
   panels,
   workbench,
   offline,
@@ -992,9 +992,9 @@ window.addEventListener(
     // A modal has the keys while it's up: its own, and Tab and Escape. So does the command bar while
     // it has focus: off a Mac, its Ctrl-k and Ctrl-p move through what it lists, not open it again.
     if (modalOpen() || bar.hasFocus) return;
-    const id = commandForKey(e, settings.keybindings);
+    const binding = bindingForKey(e, settings.keybindings);
     // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
-    if (!id || !commands.runForKey(id)) return;
+    if (!binding?.command || !commands.runForKey(binding.command, binding.by)) return;
     e.preventDefault();
     e.stopPropagation();
   },

@@ -15,10 +15,13 @@ export interface Command {
 export type { Keybinding } from "../../worker/src/settings.ts";
 import type { Keybinding } from "../../worker/src/settings.ts";
 
+/** Who a command runs for: the app (you, through a key, a menu or the command bar), or a sandboxed extension, by its code or what its manifest contributes. */
+export type RunBy = "app" | "sandbox";
+
 export class Commands {
   private byId = new Map<string, Command>();
 
-  /** @param refused says why a command that's off on this device didn't run. */
+  /** @param refused says why a command didn't run: it's off on this device, or it's app-only and an extension asked. */
   constructor(private refused: (title: string, why: string) => void = () => {}) {}
 
   register(...commands: Command[]): void {
@@ -29,25 +32,30 @@ export class Commands {
     return [...this.byId.values()].sort((a, b) => a.title.localeCompare(b.title));
   }
 
-  /** Run a command by id. False if there's no such command. A sandboxed extension can't run an app-only one: that throws. */
-  run(id: string, by: "app" | "sandbox" = "app"): boolean {
+  /** Run a command by id. False if there's no such command. An app-only one a sandboxed extension asks for is refused, and said so. */
+  run(id: string, by: RunBy = "app"): boolean {
     const command = this.byId.get(id);
     if (!command) return false;
-    if (command.appOnly && by === "sandbox") throw new Error(`Only the app runs "${id}"`);
-    const off = command.off?.();
+    const off = this.refusal(command, by);
     if (off) this.refused(command.title, off);
     else void command.run();
     return true;
   }
 
+  /** Why a command won't run for whoever asked: an app-only one a sandboxed extension asked for, or one off on this device. */
+  private refusal(command: Command, by: RunBy): string | null | undefined {
+    return command.appOnly && by === "sandbox" ? "An extension asked to run it, and only you can" : command.off?.();
+  }
+
   /**
    * Run a command for a key press. A command can decline the key by returning false at once (a list
-   * command off a list): then the key should do what it would have done. True if it took the key.
+   * command off a list): then the key should do what it would have done. True if it took the key. A
+   * sandboxed extension's key for an app-only command is refused, as one that's off is.
    */
-  runForKey(id: string): boolean {
+  runForKey(id: string, by: RunBy = "app"): boolean {
     const command = this.byId.get(id);
     if (!command) return false;
-    const off = command.off?.();
+    const off = this.refusal(command, by);
     if (off) return (this.refused(command.title, off), true);
     return command.run() !== false;
   }
@@ -59,7 +67,12 @@ export class Commands {
  * ⌘⇧E isn't taken for ⌘⇧. when the layout map says that key types a dot.
  */
 export function commandForKey(e: KeyLike, bindings: readonly Keybinding[], mac?: boolean): string | null {
-  for (const byPlace of [false, true]) for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac, byPlace)) return bindings[i].command;
+  return bindingForKey(e, bindings, mac)?.command ?? null;
+}
+
+/** The binding a key press matches, as commandForKey finds it, with who declared it. */
+export function bindingForKey(e: KeyLike, bindings: readonly Keybinding[], mac?: boolean): Keybinding | null {
+  for (const byPlace of [false, true]) for (let i = bindings.length - 1; i >= 0; i--) if (matchKeys(e, bindings[i].key, mac, byPlace)) return bindings[i];
   return null;
 }
 

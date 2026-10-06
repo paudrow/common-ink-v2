@@ -334,18 +334,23 @@ export class ExtensionRuntime {
 
   /** Keybindings extensions that are on declare, before the user's and the workspace's. */
   keybindings(): Keybinding[] {
-    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [{ key: k.key, command: k.command }] : [])));
+    return this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("key" in k ? [{ key: k.key, command: k.command, ...this.by(m) }] : [])));
   }
 
   /** Commands extensions add to a menu, with their titles. */
-  menu(id: MenuId): Array<{ command: string; title: string }> {
-    return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command })));
+  menu(id: MenuId): Array<{ command: string; title: string; by?: "sandbox" }> {
+    return this.host.on().flatMap((m) => (m.contributes.menus[id] ?? []).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command, ...this.by(m) })));
+  }
+
+  /** Who what an extension's manifest contributes (a key, a menu item, a status item) runs its command for: a sandboxed one's runs for it, so app-only commands refuse. */
+  private by(m: ExtensionManifest): { by?: "sandbox" } {
+    return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: "sandbox" } : {};
   }
 
   /** Every keybinding in effect, with the Vim sequences extensions declare. */
-  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true }> {
-    const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key }] : []));
-    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim, ...(k.operator ? { operator: true as const } : {}) }] : [])));
+  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: "sandbox" }> {
+    const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key, ...(k.by ? { by: k.by } : {}) }] : []));
+    const vim = this.host.on().flatMap((m) => m.contributes.keybindings.flatMap((k) => ("vim" in k ? [{ command: k.command, vim: k.vim, ...(k.operator ? { operator: true as const } : {}), ...this.by(m) }] : [])));
     return [...keys, ...vim];
   }
 
@@ -377,7 +382,7 @@ export class ExtensionRuntime {
   }
 
   private declareOne(m: ExtensionManifest): void {
-    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id })));
+    this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id, ...this.by(m) })));
     for (const c of m.contributes.commands)
       this.app.commands.register({
         id: c.command,
@@ -722,7 +727,7 @@ export class ExtensionRuntime {
           if (!m.contributes.commands.some((c) => c.command === id)) throw new Error(`Command "${id}" isn't declared in ${m.id}'s contributes.commands`);
           this.handlers.set(id, guard(run));
         },
-        run: (id) => app.commands.run(id),
+        run: (id, by) => app.commands.run(id, by === "sandbox" ? "sandbox" : "app"),
         all: () => this.allCommands(),
         shortcut: (id) => this.shortcut(id),
         keybindings: () => this.allKeybindings(),
