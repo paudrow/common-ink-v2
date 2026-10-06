@@ -1,0 +1,10 @@
+{
+  "pr": 76,
+  "title": "Clashing edits: the status bar says so, and Compare keeps yours or theirs",
+  "steps": [
+    "Open Shopping and start typing on a line, staying in insert mode. From a terminal, change that same line: COMMON_INK_URL=<this Preview> bin/common-ink write Shopping.md (or have an agent do it). Press Esc.",
+    "The status bar says \"Not saved: this note changed in the same place elsewhere.\", with Compare… beside it. Click it: the two versions as a diff, and who made theirs.",
+    "Keep mine saves yours; theirs is still in History. Or Use theirs: the editor changes to theirs, and u brings yours back.",
+    "Do the same with the test lever offline (⌘⇧P, Test levers: Go offline): back online, the status bar says the edit can't be merged, and a click on it compares."
+  ]
+}

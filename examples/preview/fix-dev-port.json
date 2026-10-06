@@ -1,0 +1,7 @@
+{
+  "pr": 62,
+  "title": "npm run dev never resets a server it didn't start",
+  "steps": [
+    "Local only. Start `npm run dev`, then in another worktree run `npm run dev -- --fresh` on the same port: it says the port is taken and leaves the first server alone. `npm run dev -- --port 0` picks a free port and prints it."
+  ]
+}

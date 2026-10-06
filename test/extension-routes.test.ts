@@ -84,6 +84,20 @@ test("the brokered fetch reaches only declared hosts you've allowed, without cre
   assert.deepEqual(seen.filter((u) => !u.includes("cloudflare-dns")), ["https://api.weather.gov/points"], "nothing else went out");
 });
 
+test("a brokered fetch redirected to a host the extension doesn't declare stops there", async () => {
+  const s = store();
+  write(s, ".common-ink/extensions/weather/extension.json", WEATHER);
+  write(s, ".common-ink/users/you@example.com/settings.json", JSON.stringify({ "extensions.permissions": { weather: { "network:api.weather.gov": "allow" } } }));
+  const seen = await withFetch(
+    (url) => (url === "https://api.weather.gov/moved" ? new Response(null, { status: 302, headers: { location: "https://evil.example/?data=1" } }) : new Response("sunny")),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/fetch", { extension: "weather", url: "https://api.weather.gov/moved" }), new URL("https://app.example/api/extensions/fetch"), you.email, you, s);
+      assert.deepEqual(await res!.json(), { error: "It was sent on to evil.example, which it may not reach" });
+    },
+  );
+  assert.deepEqual(seen.filter((u) => !u.includes("cloudflare-dns")), ["https://api.weather.gov/moved"]);
+});
+
 test("installing copies an extension's files in, as changes by you; a built-in's id is refused", async () => {
   const s = store();
   const files: Record<string, string> = {
