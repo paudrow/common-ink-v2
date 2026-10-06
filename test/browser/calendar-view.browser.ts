@@ -193,6 +193,22 @@ browserTest(h, "scrolling sideways goes on through the weeks, drawing only a few
   assert.equal(await title.innerText(), "Monday, October 5, 2026");
 });
 
+browserTest(h, "scrolled to the first week drawn, the week grid stays on it while it draws the weeks before", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const title = app.page.locator(".cal-title-text");
+  // Once the grid has its width and has been laid out again for it, a frame later.
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").hover({ position: { x: 400, y: 300 } });
+  await app.page.mouse.wheel(-4000, 0);
+  // Three weeks before it are drawn, from Aug 24, and nothing more is asked for.
+  await app.page.locator('.cal-day[data-day="2026-08-24"]').waitFor({ state: "attached" });
+  await app.idle();
+  assert.equal(await title.innerText(), "Sep 14 – 20, 2026");
+  await app.page.waitForTimeout(500);
+  assert.equal(await title.innerText(), "Sep 14 – 20, 2026");
+});
+
 browserTest(h, "an event moved while offline waits in this browser, says so, and goes once it's back online", { scenario: "calendar", open: "Calendar tour", levers: LEVERS, allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
   await openCalendar(app);
   await app.page.context().setOffline(true);
@@ -203,6 +219,19 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await app.page.context().setOffline(false);
   await until(app, "the dentist moved once back online", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-08T11:00:00");
   await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
+});
+
+browserTest(h, "a closed calendar tab stops loading events when they change", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.command("Close tab");
+  await app.idle();
+  let loads = 0;
+  app.page.on("request", (r) => r.url().includes("/api/events") && loads++);
+  const res = await app.page.context().request.fetch(`${app.base}/api/event`, { method: "PATCH", data: { address: "event:sample/personal/dentist", title: "Dentist (moved)" } });
+  assert.ok(res.ok());
+  await app.page.waitForTimeout(1500);
+  await app.idle();
+  assert.equal(loads, 0, "no calendar is on screen to load for");
 });
 
 browserTest(h, "switching views quickly keeps the last one, with no clash saving it", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
@@ -249,4 +278,17 @@ browserTest(h, "a view you've left can't move the calendar, even with a scroll i
   await scrollGone(year);
   await scrollGone(month);
   assert.equal(await title.innerText(), "Monday, October 5, 2026");
+});
+
+browserTest(h, "an event dragged late enough to run past midnight ends on the next day", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  // Scrolled to the bottom of the day, once the grid is laid out: the dentist at 14:30 and 23:30 are both on screen.
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = s.scrollHeight));
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const to = await at(app, "2026-10-06", 23 * 60 + 30);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
+  await until(app, "the dentist moved to 23:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-06T23:30:00");
+  assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T00:15:00", "its 45 minutes, into Wednesday");
 });

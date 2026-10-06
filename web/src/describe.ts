@@ -1,5 +1,5 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
-import { diffPatch } from "node-diff3";
+import { linePatch } from "./line-diff.ts";
 import { isNote, type Author, type Change, type FilePath } from "../../worker/src/files.ts";
 import { keyOfPath } from "../../worker/src/records.ts";
 
@@ -71,7 +71,7 @@ export function docLabel(path: FilePath): string {
 
 /** A before and after, as the lines that changed. */
 export function runLines(before: string, after: string): Array<{ kind: "-" | "+"; text: string }> {
-  return diffPatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
+  return linePatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
     ...buffer1.chunk.map((text) => ({ kind: "-" as const, text })),
     ...buffer2.chunk.map((text) => ({ kind: "+" as const, text })),
   ]);

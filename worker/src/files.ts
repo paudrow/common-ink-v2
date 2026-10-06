@@ -2,7 +2,8 @@
 // in tests. A file is a note (markdown) or workspace JSON (app state such as the layout, in .common-ink/).
 // Every write is recorded as a change with its author, and a file's text is what its changes add up to
 // (ADR 0002). The files table keeps the latest text so reads are cheap.
-import { diff3Merge, diffPatch, patch, type IPatchRes } from "node-diff3";
+import { patch, type IPatchRes } from "node-diff3";
+import { lineMerge, linePatch } from "./line-diff.ts";
 
 export type SqlValue = string | number | null;
 
@@ -218,16 +219,36 @@ export class Files {
 
   /** Changes made in the transaction running now, announced once it's kept. */
   private heard: ChangeNotice[] = [];
+  /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
+  private depth = 0;
 
-  /** A transaction of writes. Open pages hear of its changes only once it commits, so never of a revision that was rolled back. */
+  /**
+   * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest.
+   */
   private tx<T>(fn: () => T): T {
-    this.heard = [];
+    const mark = this.heard.length;
+    this.depth++;
     try {
       const out = this.db.tx(fn);
-      for (const notice of this.heard) this.announce(notice);
+      if (this.depth === 1) {
+        const notices = this.heard;
+        this.heard = [];
+        for (const notice of notices) {
+          try {
+            this.announce(notice);
+          } catch (err) {
+            console.error("Announcing a change failed:", err);
+          }
+        }
+      }
       return out;
+    } catch (err) {
+      // This transaction's changes were rolled back; an outer one's stay.
+      this.heard.length = mark;
+      throw err;
     } finally {
-      this.heard = [];
+      this.depth--;
     }
   }
 
@@ -391,6 +412,11 @@ export class Files {
     });
   }
 
+  /** The highest revision ever given, even once its changes are gone (as after a reset): 0 before any. */
+  lastRevision(): Revision {
+    return this.db.all<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'changes'")[0]?.seq ?? 0;
+  }
+
   /** A random secret by name, made the first time it's asked for and kept from then on. */
   secret(name: string): string {
     return this.db.tx(() => {
@@ -463,7 +489,7 @@ export class Files {
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
     if (current && next === currentText && !deleting) return { status, file: current };
-    const diff = JSON.stringify(diffPatch(lines(currentText), lines(next)));
+    const diff = JSON.stringify(linePatch(lines(currentText), lines(next)));
     this.db.run(
       "INSERT INTO changes(path, author, base, diff, time, undoes, deletes) VALUES (?, ?, ?, ?, ?, ?, ?)",
       path, JSON.stringify(author), base, diff, this.now(), undoes ?? null, deleting ? 1 : 0,
@@ -500,7 +526,5 @@ export class Files {
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {
-  const regions = diff3Merge(lines(mine), lines(base), lines(theirs), { excludeFalseConflicts: true });
-  if (regions.some((r) => r.conflict)) return null;
-  return regions.flatMap((r) => r.ok ?? []).join("\n");
+  return lineMerge(lines(mine), lines(base), lines(theirs))?.join("\n") ?? null;
 }
