@@ -1,0 +1,282 @@
+// This device: what the browser the app is open in has, live (its width class, pointer, touch and
+// whether it has a keyboard), and its file, .common-ink/users/<you>/devices/<id>/device.json, with
+// what was seen here and your overrides (worker/src/devices.ts). A keyboard is assumed on a desktop,
+// found elsewhere the first time a key a touch screen's keyboard doesn't send arrives, and kept once
+// found. The `device` lever stands in for a phone, a tablet or a laptop, and frames the page to its size.
+import { deviceName, devicePath, deviceText, parseDeviceFile, widthClassOf, atLeast, type DeviceFile, type Facts, type KeyboardChoice, type Override, type WidthClass } from "../../worker/src/devices.ts";
+import type { FilePath, Revision, WriteResult } from "../../worker/src/files.ts";
+
+export type Preset = "phone" | "tablet" | "laptop";
+
+/** What the `device` lever stands in for: a size to frame the page to, and what such a device has. */
+export const PRESETS: Readonly<Record<Preset, { width: number; height: number; touch: boolean; pointer: "fine" | "coarse"; keyboard: boolean }>> = {
+  phone: { width: 375, height: 812, touch: true, pointer: "coarse", keyboard: false },
+  tablet: { width: 820, height: 1180, touch: true, pointer: "coarse", keyboard: false },
+  laptop: { width: 1440, height: 900, touch: false, pointer: "fine", keyboard: true },
+};
+
+/** What `ctx.device` answers about. */
+export type Capability = "keyboard" | "width" | "pointer" | "touch";
+
+export interface DeviceIo {
+  read(path: FilePath): Promise<{ text: string; revision: Revision }>;
+  write(path: FilePath, text: string, base: Revision): Promise<WriteResult>;
+}
+
+const ID_KEY = "common-ink.device";
+
+/** This browser's device id, made the first time and kept; null where nothing can be kept, so there's no file to write. */
+function deviceId(preset: Preset | null): string | null {
+  // A stand-in device keeps a file of its own, so a laptop pretending to be a phone doesn't change the laptop's.
+  if (preset) return `lever-${preset}`;
+  try {
+    let id = localStorage.getItem(ID_KEY);
+    if (!id) {
+      id = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+      localStorage.setItem(ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+const mq = (query: string) => typeof matchMedia === "function" && matchMedia(query).matches;
+
+/** Whether a key press came from a keyboard a touch screen doesn't have. */
+export function fromHardware(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "isComposing">, inText: boolean): boolean {
+  if (e.isComposing || e.key === "Unidentified" || e.key === "Process" || !e.key) return false;
+  // Outside a text field no keyboard is on screen, so any key is a real one.
+  if (!inText) return true;
+  // In one, only what an on-screen keyboard never sends.
+  if (/^(Escape|Tab|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F\d+)$/.test(e.key)) return true;
+  return (e.ctrlKey || e.metaKey) && !/^(Control|Meta|Shift|Alt)$/.test(e.key);
+}
+
+const inTextField = (target: EventTarget | null) => target instanceof HTMLElement && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable);
+
+/** Minutes, local time, as the file says when it was last seen: "2026-10-05T09:12". */
+const minute = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+/** What the extension runtime reads of the device. */
+export type DeviceReader = Pick<Device, "facts" | "override" | "has" | "atLeast" | "why" | "onChange" | "describe">;
+
+export class Device {
+  readonly id: string | null;
+  readonly path: FilePath | null;
+  readonly preset: Preset | null;
+  /** The file as this browser has it: kept in step with device.json, and written when it changes. */
+  file: DeviceFile;
+  facts: Facts;
+  /** A key a touch screen doesn't send was pressed in this page. */
+  private found = false;
+  private revision: Revision = 0;
+  private listeners: Array<(device: Device, was: Facts) => void> = [];
+  private writing: Promise<void> = Promise.resolve();
+  private io: DeviceIo | null = null;
+
+  constructor(o: { me: string | undefined; preset: Preset | null; root?: HTMLElement }) {
+    this.preset = o.preset;
+    this.id = deviceId(o.preset);
+    this.path = o.me && this.id ? devicePath(o.me, this.id) : null;
+    const root = o.root ?? document.documentElement;
+    if (o.preset) {
+      root.dataset.deviceFrame = o.preset;
+      root.style.setProperty("--frame-width", `${PRESETS[o.preset].width}px`);
+      root.style.setProperty("--frame-height", `${PRESETS[o.preset].height}px`);
+    }
+    const width = this.measure();
+    this.file = {
+      name: o.preset ? `Stand-in ${o.preset} (the device lever)` : deviceName(navigator.userAgent),
+      lastSeen: minute(new Date()),
+      seen: { width: widthClassOf(width), pointer: this.pointerNow(), touch: this.touchNow(), keyboard: false },
+      keyboard: "auto",
+      extensions: {},
+    };
+    this.facts = this.compute(width);
+    this.mark(root);
+    const update = () => this.refresh();
+    new ResizeObserver(update).observe(document.body);
+    for (const q of ["(any-pointer: fine)", "(any-pointer: coarse)"]) matchMedia(q).addEventListener?.("change", update);
+    addEventListener(
+      "keydown",
+      (e) => {
+        if (this.found || !fromHardware(e, inTextField(e.target))) return;
+        this.found = true;
+        if (!this.file.seen.keyboard) {
+          this.file.seen.keyboard = true;
+          void this.save();
+        }
+        this.refresh();
+      },
+      { capture: true },
+    );
+  }
+
+  /** The page's width: the frame's, under the lever. */
+  private measure(): number {
+    return Math.round(document.body?.getBoundingClientRect().width || innerWidth);
+  }
+
+  private pointerNow(): "fine" | "coarse" {
+    return this.preset ? PRESETS[this.preset].pointer : mq("(any-pointer: fine)") ? "fine" : "coarse";
+  }
+
+  private touchNow(): boolean {
+    return this.preset ? PRESETS[this.preset].touch : mq("(any-pointer: coarse)");
+  }
+
+  /** A desktop: a pointer that's fine and hovers. Taken to have a keyboard until you say otherwise. */
+  private looksLikeDesktop(): boolean {
+    return this.preset ? PRESETS[this.preset].keyboard : mq("(pointer: fine) and (hover: hover)");
+  }
+
+  private compute(px: number): Facts {
+    const choice = this.file.keyboard;
+    const keyboard = choice === "yes" || (choice === "auto" && (this.found || this.file.seen.keyboard || this.looksLikeDesktop()));
+    return { px, width: widthClassOf(px), pointer: this.pointerNow(), touch: this.touchNow(), keyboard };
+  }
+
+  /** What CSS goes by: html[data-width="compact"], [data-keyboard], [data-touch]. */
+  private mark(root = document.documentElement) {
+    root.dataset.width = this.facts.width;
+    root.dataset.pointer = this.facts.pointer;
+    root.toggleAttribute("data-touch", this.facts.touch);
+    root.toggleAttribute("data-keyboard", this.facts.keyboard);
+  }
+
+  /** Work the facts out again, and tell listeners if any changed (unless this is the start, where nothing changed for anyone yet). */
+  private refresh(quiet = false) {
+    const was = this.facts;
+    const now = this.compute(this.measure());
+    this.facts = now;
+    if (now.width === was.width && now.pointer === was.pointer && now.touch === was.touch && now.keyboard === was.keyboard) return;
+    this.mark();
+    if (!quiet) for (const fn of this.listeners) fn(this, was);
+  }
+
+  has(capability: "keyboard" | "touch"): boolean {
+    return capability === "keyboard" ? this.facts.keyboard : this.facts.touch;
+  }
+
+  atLeast(min: WidthClass): boolean {
+    return atLeast(this.facts.width, min);
+  }
+
+  /** After the width class, the pointer, touch or the keyboard changes. */
+  onChange(fn: (device: Device, was: Facts) => void): () => void {
+    this.listeners.push(fn);
+    return () => (this.listeners = this.listeners.filter((x) => x !== fn));
+  }
+
+  /** Why the app thinks what it does about one capability, in words. */
+  why(capability: Capability): string {
+    const lever = "the device lever stands in for a " + this.preset;
+    if (capability === "width") return `the window is ${this.facts.px}px wide`;
+    if (capability === "pointer") return this.preset ? lever : this.facts.pointer === "fine" ? "a mouse or trackpad is there" : "there's no mouse or trackpad";
+    if (capability === "touch") return this.preset ? lever : this.facts.touch ? "it has a touch screen" : "it has no touch screen";
+    if (this.file.keyboard !== "auto") return "you said so in Settings › This device";
+    if (this.found) return "a key was pressed that a touch screen's keyboard doesn't send";
+    if (this.file.seen.keyboard) return "a keyboard was used here before";
+    if (this.looksLikeDesktop()) return this.preset ? lever : "it has a mouse or trackpad that hovers, as a desktop does";
+    return this.preset ? lever : "no key has been pressed yet";
+  }
+
+  /** Your override for an extension here, if any. */
+  override(id: string): Override | undefined {
+    return this.file.extensions[id];
+  }
+
+  async setOverride(id: string, value: Override | undefined): Promise<void> {
+    const { [id]: _was, ...rest } = this.file.extensions;
+    this.file.extensions = value ? { ...rest, [id]: value } : rest;
+    for (const fn of this.listeners) fn(this, this.facts);
+    await this.save();
+  }
+
+  async setKeyboard(choice: KeyboardChoice): Promise<void> {
+    this.file.keyboard = choice;
+    this.refresh();
+    await this.save();
+  }
+
+  /** Read this device's file, take what it says, and write it if it's new, out of date, or wasn't written today. */
+  async load(io: DeviceIo): Promise<void> {
+    this.io = io;
+    if (!this.path) return;
+    const saved = await io.read(this.path).catch(() => null);
+    if (!saved) return;
+    this.revision = saved.revision;
+    const kept = parseDeviceFile(saved.text);
+    const seenBefore = kept.seen;
+    this.take(kept);
+    const seen = { width: this.facts.width, pointer: this.facts.pointer, touch: this.facts.touch, keyboard: this.found || !!seenBefore?.keyboard };
+    const today = this.file.lastSeen.slice(0, 10);
+    const stale = !seenBefore || JSON.stringify(seenBefore) !== JSON.stringify(seen) || kept.lastSeen?.slice(0, 10) !== today;
+    this.file.seen = seen;
+    this.refresh(true);
+    if (stale) await this.save();
+  }
+
+  /** The file changed elsewhere (you edited it, or another tab wrote it): take what it says now. */
+  async absorb(): Promise<void> {
+    if (!this.io || !this.path) return;
+    const saved = await this.io.read(this.path).catch(() => null);
+    if (!saved || saved.revision <= this.revision) return;
+    this.revision = saved.revision;
+    this.take(parseDeviceFile(saved.text));
+    this.refresh();
+    for (const fn of this.listeners) fn(this, this.facts);
+  }
+
+  private take(kept: Partial<DeviceFile>) {
+    // The name and the time are this browser's; what you chose is the file's.
+    this.file = {
+      ...this.file,
+      ...(kept.name ? { name: kept.name } : {}),
+      seen: { ...this.file.seen, keyboard: this.file.seen.keyboard || !!kept.seen?.keyboard },
+      keyboard: kept.keyboard ?? "auto",
+      extensions: kept.extensions ?? {},
+    };
+  }
+
+  /**
+   * Write the file as this browser has it, one write at a time. One that can't be sent (offline) isn't
+   * held: what you chose applies here for now, and goes with the next write.
+   */
+  private save(): Promise<void> {
+    this.writing = this.writing.then(() => this.send()).catch(() => {});
+    return this.writing;
+  }
+
+  private async send(): Promise<void> {
+    const io = this.io;
+    if (!io || !this.path) return;
+    this.file.lastSeen = minute(new Date());
+    for (let tries = 0; tries < 3; tries++) {
+      const result = await io.write(this.path, deviceText(this.file), this.revision);
+      if (result.status !== "conflict") {
+        this.revision = result.file.revision;
+        return;
+      }
+      // Changed elsewhere since: what it says now, with this browser's changes on top.
+      const saved = await io.read(this.path);
+      this.revision = saved.revision;
+    }
+  }
+
+  /** As the inspector and Settings › This device show it. */
+  describe() {
+    return {
+      id: this.id,
+      path: this.path,
+      preset: this.preset,
+      facts: this.facts,
+      why: { keyboard: this.why("keyboard"), width: this.why("width"), pointer: this.why("pointer"), touch: this.why("touch") },
+      file: this.file,
+    };
+  }
+}
