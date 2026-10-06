@@ -209,7 +209,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
     if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
-  if (!result.ok) return json({ error: result.error }, 400);
+  if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
   if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
