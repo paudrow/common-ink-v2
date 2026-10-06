@@ -10,7 +10,7 @@ import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import { diffPatch } from "node-diff3";
+import { linePatch } from "./line-diff.ts";
 import type { Settings } from "../../worker/src/settings.ts";
 import type { FilePath } from "../../worker/src/files.ts";
 import { directiveSyntax } from "./directives.ts";
@@ -126,7 +126,7 @@ export function replaceText(view: EditorView, text: string, flash = false) {
   const old = linesOf(view.state.doc.toString());
   const starts = [0];
   for (const line of old) starts.push(starts.at(-1)! + line.length);
-  const patch = diffPatch(old, linesOf(text));
+  const patch = linePatch(old, linesOf(text));
   const changes = patch.map(({ buffer1, buffer2 }) => ({
     from: starts[buffer1.offset],
     to: starts[buffer1.offset + buffer1.length],
