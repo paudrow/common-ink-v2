@@ -20,7 +20,8 @@
     "view.ts",
     "quickadd.ts",
     "input.ts",
-    "bar.ts"
+    "bar.ts",
+    "search.ts"
   ],
   "activationEvents": [
     "onStartup"
@@ -43,6 +44,9 @@
     }
   },
   "contributes": {
+    "search": {
+      "types": [{ "type": "task", "title": "Tasks" }]
+    },
     "commands": [
       {
         "command": "tasks.toggle",

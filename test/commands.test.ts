@@ -91,3 +91,19 @@ test("a command run for a key can decline it, and the key does what it would hav
   assert.equal(commands.runForKey("later"), true, "an answer that comes later is too late to give the key back");
   assert.equal(commands.runForKey("nowhere"), false);
 });
+
+test("a binding the typed character matches wins over one matched by where the key sits", async () => {
+  const { learnLayout } = await import("../web/src/keys.ts");
+  // Dvorak: QWERTY's E key types a dot. A key event that says "E" on that key is still ⌘⇧E.
+  await learnLayout({ getLayoutMap: async () => new Map([["KeyE", "."]]) });
+  try {
+    const bindings = [
+      { key: "Mod-Shift-e", command: "archive.toggle" },
+      { key: "Mod-Shift-.", command: "tasks.quickAdd" },
+    ];
+    assert.equal(commandForKey(key("E", { meta: true, shift: true }, "KeyE"), bindings, true), "archive.toggle");
+    assert.equal(commandForKey(key("π", { meta: true, shift: true }, "KeyE"), bindings, true), "tasks.quickAdd", "a symbol typed: the key's place decides");
+  } finally {
+    await learnLayout({ getLayoutMap: async () => new Map() });
+  }
+});

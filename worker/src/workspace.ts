@@ -4,12 +4,17 @@
 // connections.
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
-import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
+import { restoreFromTrash } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
+import { completeTaskIn, type TaskArgs } from "./complete-task.ts";
+import { deleteNote } from "./archive.ts";
 import { RESET_CLOSE } from "./levers.ts";
+import type { Query } from "./query.ts";
+import type { SearchIndex, SearchOptions } from "./search.ts";
 
 export interface WorkspaceEnv {
   GOOGLE_CLIENT_ID?: string;
@@ -21,6 +26,8 @@ export interface WorkspaceEnv {
   /** "1" in a browser test's Worker, with LEVERS: Google Calendar is a fake Google (fake-google.ts), connected. Never in production. */
   FAKE_GOOGLE?: string;
   LEVERS?: string;
+  /** Seals Google's refresh tokens at rest, as well as signing sessions. */
+  SESSION_SECRET?: string;
 }
 
 /** How often a connected Google Calendar syncs on its own. */
@@ -40,6 +47,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   private fake: FakeGoogle | null = null;
   private files: Files;
   private sources: DataSources;
+  private index: SearchIndex;
 
   constructor(ctx: DurableObjectState, env: WorkspaceEnv) {
     super(ctx, env);
@@ -49,11 +57,11 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       run: (query, ...params) => void sql.exec(query, ...params),
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
-    [this.files, this.sources] = this.open();
+    [this.files, this.sources, this.index] = this.open();
   }
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
-  private open(): [Files, DataSources] {
+  private open(): [Files, DataSources, SearchIndex] {
     const announce = (notice: ChangeNotice) => {
       const message = JSON.stringify({ type: "change", ...notice });
       for (const ws of this.ctx.getWebSockets()) {
@@ -65,19 +73,22 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, (input, init) => this.fake!.fetch(input, init));
-      this.fake ??= this.sampleFake();
-      if (!sources.syncs) sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
-      return [files, sources];
+      // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
+      const { files, sources, search } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.sampleFake().fetch(input, init));
+      if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
+      return [files, sources, search];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
-    const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google }, announce);
-    return [files, sources];
+    const { files, sources, search } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google, tokenKey: this.env.SESSION_SECRET }, announce);
+    return [files, sources, search];
   }
 
-  /** The fake Google's week, around the day the workspace's scenario starts on, or today where its calendars are. */
+  /**
+   * The fake Google, made the first time it's used, so after a seed has said the workspace's scenario:
+   * its week is around the day that scenario starts on, or today where its calendars are.
+   */
   private sampleFake(): FakeGoogle {
-    return sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10));
+    return (this.fake ??= sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10)));
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -91,8 +102,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   // Pages only listen; anything they send is ignored.
   webSocketMessage() {}
 
-  webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code === 1005 ? 1000 : code, "closing");
+  // A page that went without a close frame comes as 1006, which can't be sent back, so the reply is always 1000.
+  webSocketClose(ws: WebSocket) {
+    ws.close(1000, "closing");
   }
 
   list() {
@@ -124,6 +136,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.versionAt(path, revision);
   }
 
+  editApplied(path: FilePath, id: string) {
+    return this.files.editApplied(path, id);
+  }
+
   /** Put a file back as it was; a record goes back through its data source. */
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author) {
     return restoreFile(this.files, this.sources, path, at, author);
@@ -132,6 +148,27 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** The key that signs sandbox code tokens: made once, kept in the workspace's database, never shown. */
   sandboxKey(): string {
     return this.files.secret("sandbox-key");
+  }
+
+  deleted(since: number) {
+    return this.files.deleted(since);
+  }
+
+  restoreDeleted(d: Deleted, author: Author) {
+    return restoreFromTrash(this.files, d, author);
+  }
+
+  search(query: Query, options: SearchOptions) {
+    return this.index.search(query, options);
+  }
+
+  deleteNote(w: Write) {
+    return deleteNote(this.files, w);
+  }
+
+  /** Tick a task and log its completion, in one step (complete-task.ts). */
+  completeTask(args: TaskArgs, author: Author) {
+    return completeTaskIn(this.files, args, author);
   }
 
   /** Keep an uploaded file's bytes in R2 and record it in the uploads file, as a change by `author`. */
@@ -167,20 +204,20 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * load again. Running it twice ends the same way.
    */
   reset(seed: Seed, pinned: boolean) {
-    const [{ last }] = this.db.all<{ last: number | null }>("SELECT max(revision) AS last FROM changes");
+    const last = this.files.lastRevision();
     this.db.tx(() => {
-      for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
-        this.db.run(`DROP TABLE "${name}"`);
-      }
+      // Virtual tables first: dropping one drops its own tables (the search index's), which are then gone.
+      const tables = this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY sql NOT LIKE 'CREATE VIRTUAL%'");
+      for (const { name } of tables) this.db.run(`DROP TABLE IF EXISTS "${name}"`);
     });
-    [this.files, this.sources] = this.open();
+    [this.files, this.sources, this.index] = this.open();
     if (last) {
       this.db.run("DELETE FROM sqlite_sequence WHERE name = 'changes'");
       this.db.run("INSERT INTO sqlite_sequence(name, seq) VALUES ('changes', ?)", last);
     }
     this.files.seed(seed);
     this.keepScenario(seed, pinned);
-    if (this.fake) this.fake = this.sampleFake();
+    this.fake = null;
     for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
@@ -189,21 +226,22 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * give it again, as reconnecting does.
    */
   async fakeGoogle(change: { revoked: boolean }) {
-    if (!this.fake) return null;
-    this.fake.revoked = change.revoked;
+    if (this.env.FAKE_GOOGLE !== "1" || this.env.LEVERS !== "1") return null;
+    this.sampleFake().revoked = change.revoked;
     if (!change.revoked) await this.connectGoogle({ email: "tester@localhost", refreshToken: "fake-2", scopes: DATA_SCOPES });
-    return { revoked: this.fake.revoked };
+    return { revoked: this.sampleFake().revoked };
   }
 
   /** Keep Google's grant, then send what waited for it and sync, soon, without holding up sign-in. */
   async connectGoogle(granted: Granted) {
-    const ok = this.sources.connect(granted);
+    const ok = await this.sources.connect(granted);
     if (ok) await this.ctx.storage.setAlarm(Date.now() + 1000);
     return ok;
   }
 
   /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
   async alarm() {
+    await this.sources.sealTokens();
     await this.sources.sync();
     await this.scheduleSync();
   }
@@ -223,7 +261,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   }
 
   disconnectGoogle(email: string) {
-    this.sources.disconnect(email);
+    return this.sources.disconnect(email);
   }
 
   sourceStatus(email: string) {

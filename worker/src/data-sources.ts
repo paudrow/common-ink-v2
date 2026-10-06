@@ -4,13 +4,16 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
+import { SearchIndex } from "./search.ts";
+import { ARCHIVE_PATH, archiveAgain, deleteNote, mergeArchive } from "./archive.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
+import { Conflict, Gone, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
+import { isSealed, seal, unseal } from "./token-seal.ts";
 
 /** A note that links to an event; `series` when it links to the event's series rather than this occurrence. */
 export interface LinkingNote {
@@ -48,6 +51,8 @@ export interface SourceSettings {
   /** Previews and local development: the Sample calendar and recorded contacts stand in for Google. */
   fixtures: boolean;
   google: GoogleConfig | null;
+  /** The secret refresh tokens are sealed under at rest (token-seal.ts). Without one they're kept as Google gave them. */
+  tokenKey?: string;
 }
 
 /** The Sample calendar: nothing behind it, so every push is taken as it is. */
@@ -78,6 +83,18 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** An etag that matches no version, so a PATCH sent with it meets the source's version first. */
+const UNKNOWN_ETAG = '"common-ink:unknown"';
+
+/**
+ * Kept as a record's etag once our own delete of it went: the version the source holds is the one that
+ * delete made, whose etag it didn't say. Never sent; the echo of that delete a sync brings isn't a change.
+ */
+const DELETED_HERE = '"common-ink:deleted-here"';
+
+/** How long an edit waits for the source to say how its record is, before it's refused. */
+const UNREADABLE_FOR = 30 * 60_000;
+
 /** Who a source's sync is, as the author of what it brings in. */
 const SYNC_AUTHOR: Record<SourceId, Extract<Author, { kind: "sync" }>> = { google: { kind: "sync", source: "google-calendar" }, sample: { kind: "sync", source: "sample-calendar" } };
 
@@ -89,6 +106,8 @@ interface StateRow {
   conflict?: string;
   /** Sync tokens, by calendar. */
   tokens?: Record<string, string>;
+  /** Events a sync left as they were here, by calendar, for the next sync to read again. */
+  recheck?: Record<string, string[]>;
 }
 
 export class DataSources {
@@ -98,8 +117,12 @@ export class DataSources {
   /** The sync running now, and the one after it: syncs take turns, so an older page can't land after a newer one. */
   private syncing: Promise<SourceState> | null = null;
   private again: Promise<SourceState> | null = null;
-  /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
+  /** The outbox seqs whose edit is waiting on the flush to say how they went. */
+  private awaited = new Set<number>();
+  /** Why the source refused queued edits, by outbox seq, kept only while their edit waits to read it. */
   private refusals = new Map<number, string>();
+  /** The record whose edit is being pushed now, if any. */
+  private pushing: string | null = null;
 
   constructor(
     private db: Db,
@@ -112,9 +135,11 @@ export class DataSources {
   ) {
     // `base` is the record as it was before the edit, for merging if the source changed it meanwhile.
     db.run("CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, path TEXT NOT NULL, op TEXT NOT NULL, author TEXT NOT NULL, time INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, base TEXT)");
+    // `unreadable`: since when the source has kept refusing to say how the edit's record is, if it has.
+    if (!/[(,\s]unreadable\s/.test(db.all<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outbox'")[0]?.sql ?? "")) db.run("ALTER TABLE outbox ADD COLUMN unreadable INTEGER");
     db.run("CREATE TABLE IF NOT EXISTS etags(path TEXT PRIMARY KEY, etag TEXT NOT NULL)");
     db.run("CREATE TABLE IF NOT EXISTS source_state(source TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    const google = settings.google ? [new GoogleCalendar(settings.google, () => this.connectedToken(), fetcher, now)] : [];
+    const google = settings.google ? [new GoogleCalendar(settings.google, () => this.opened(this.connectedToken()), fetcher, now)] : [];
     this.adapters = Object.fromEntries([sample, ...google, ...adapters].map((a) => [a.source, a]));
   }
 
@@ -125,13 +150,14 @@ export class DataSources {
 
   // ---------------------------------------------------------------- connections
 
-  /** Keep the refresh token Google gave when this person connected their calendar and contacts. */
-  connect(granted: Granted): boolean {
+  /** Keep the refresh token Google gave when this person connected their calendar and contacts, sealed if there's a key. */
+  async connect(granted: Granted): Promise<boolean> {
     if (!granted.refreshToken || !DATA_SCOPES.every((s) => granted.scopes.includes(s))) return false;
+    const kept = this.settings.tokenKey ? await seal(this.settings.tokenKey, granted.refreshToken) : granted.refreshToken;
     this.db.run(
       "INSERT INTO connections(email, provider, refresh_token, scopes, time) VALUES (?, 'google', ?, ?, ?) ON CONFLICT(email, provider) DO UPDATE SET refresh_token = excluded.refresh_token, scopes = excluded.scopes, time = excluded.time",
       granted.email,
-      granted.refreshToken,
+      kept,
       granted.scopes.join(" "),
       this.now(),
     );
@@ -139,8 +165,29 @@ export class DataSources {
     return true;
   }
 
-  disconnect(email: string): void {
+  /** Forget this person's connection, after telling Google to end the grant (if it can't be reached, the grant still goes from here). */
+  async disconnect(email: string): Promise<void> {
+    const token = await this.opened(this.token(email));
+    if (token && this.settings.google) {
+      const signal = AbortSignal.timeout(3000);
+      await this.fetcher("https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }), signal }).catch(() => {});
+    }
     this.db.run("DELETE FROM connections WHERE email = ? AND provider = 'google'", email);
+  }
+
+  /** Seal any refresh token kept before tokens were sealed. Safe to run again. */
+  async sealTokens(): Promise<void> {
+    const key = this.settings.tokenKey;
+    if (!key) return;
+    for (const { email, refresh_token } of this.db.all<{ email: string; refresh_token: string }>("SELECT email, refresh_token FROM connections")) {
+      if (isSealed(refresh_token)) continue;
+      this.db.run("UPDATE connections SET refresh_token = ? WHERE email = ? AND refresh_token = ?", await seal(key, refresh_token), email, refresh_token);
+    }
+  }
+
+  /** A kept refresh token, opened; null if there's none, or it was sealed under another key. */
+  private async opened(kept: string | null): Promise<string | null> {
+    return kept === null ? null : unseal(this.settings.tokenKey, kept);
   }
 
   status(email: string): SourceStatus {
@@ -189,7 +236,7 @@ export class DataSources {
   }
 
   private async access(email: string): Promise<string> {
-    const refresh = this.token(email);
+    const refresh = await this.opened(this.token(email));
     if (!refresh || !this.settings.google) throw new Error("Google isn't connected. Run Connect Google calendar and contacts.");
     return accessToken(this.settings.google, refresh, this.fetcher);
   }
@@ -321,9 +368,18 @@ export class DataSources {
         }
       },
     );
-    const error = await this.flush(source);
-    const refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
-    for (const seq of queued) this.refusals.delete(seq);
+    for (const seq of queued) this.awaited.add(seq);
+    let error: string | null;
+    let refusal: string | undefined;
+    try {
+      error = await this.flush(source);
+    } finally {
+      refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
+      for (const seq of queued) {
+        this.awaited.delete(seq);
+        this.refusals.delete(seq);
+      }
+    }
     if (refusal) return { status: "refused", error: refusal };
     return {
       status: error ? "queued" : "saved",
@@ -349,31 +405,50 @@ export class DataSources {
 
   private async flushQueued(source: SourceId): Promise<string | null> {
     const adapter = this.adapters[source];
+    const conflicts = new Map<number, number>();
     for (;;) {
-      const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
+      const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; unreadable: number | null }>("SELECT seq, path, op, base, unreadable FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
-      const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const etag = known === DELETED_HERE ? null : known;
       try {
-        const pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
+        this.pushing = row.path;
+        let pushed: Pushed;
+        try {
+          pushed = await adapter.push(op, etag, this.calendars(source).find((c) => c.id === op.event.calendar));
+        } finally {
+          // In the same step as the row goes below, so no sync sees the row while nothing is pushing it.
+          this.pushing = null;
+        }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
-          if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
+          if (op.op === "delete") this.setEtag(row.path, DELETED_HERE);
           else if (pushed.etag) this.setEtag(row.path, pushed.etag);
         });
         this.setState(source, { error: undefined });
       } catch (err) {
-        if (err instanceof Conflict && row.attempts < 3) {
+        if (err instanceof Conflict) {
+          // Merged onto Google's version either way, so the next try has its etag. Three in one flush and it waits for the next.
+          const tries = (conflicts.get(row.seq) ?? 0) + 1;
+          conflicts.set(row.seq, tries);
           this.resolve(source, row, op, err);
-          continue;
+          if (tries < 3) continue;
+          this.db.run("UPDATE outbox SET error = ? WHERE seq = ?", err.message, row.seq);
+          this.setState(source, { error: err.message });
+          return err.message;
         }
-        if (err instanceof Refusal) {
-          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
+        // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
+        const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
+        if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
+          for (const [seq, reason] of this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone)) {
+            if (this.awaited.has(seq)) this.refusals.set(seq, reason);
+          }
           continue;
         }
         const message = (err as Error).message;
-        this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ? WHERE seq = ?", message, row.seq);
+        this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ?, unreadable = ? WHERE seq = ?", message, unreadable, row.seq);
         this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: message });
         return message;
       }
@@ -388,11 +463,12 @@ export class DataSources {
    */
   private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
     const bookkeeping = () => {
-      this.db.run("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", row.seq);
+      this.db.run("UPDATE outbox SET attempts = attempts + 1, unreadable = NULL WHERE seq = ?", row.seq);
       if (conflict.etag) this.setEtag(row.path, conflict.etag);
       else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
     };
     if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
+    let named = "";
     const queued = this.db.all<{ seq: number; op: string; base: string | null }>("SELECT seq, op, base FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", row.path, row.seq);
     let theirs = conflict.remote;
     const lost = new Set<string>();
@@ -401,8 +477,13 @@ export class DataSources {
       const o = JSON.parse(r.op) as RecordOp;
       // A delete waiting after them wins, whatever they merge to.
       if (o.op === "delete") break;
-      const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
-      for (const field of merged.lost) lost.add(field);
+      // An occurrence's first edit started from the occurrence as its series makes it.
+      const merged = mergeEvents(r.base ? readEvent(r.base) : o.event.series !== undefined ? this.asSeriesMakes(source, o.event) : null, o.event, theirs);
+      // Cancelled isn't a field an edit makes, so it's never among what's lost: say so when it beat one.
+      // A cancellation comes without the occurrence's fields, so they aren't counted against it.
+      if (theirs.status === "cancelled" && o.event.status !== "cancelled") lost.add("cancellation");
+      else for (const field of merged.lost) lost.add(field);
+      named ||= o.event.title;
       rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
       theirs = merged.event;
     }
@@ -413,23 +494,46 @@ export class DataSources {
       bookkeeping();
       for (const r of rebased) this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify(r.op), r.base, r.seq);
     });
-    if (lost.size) this.setState(source, { conflict: `${theirs.title || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
+    if (lost.size) this.setState(source, { conflict: `${theirs.title || named || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
   }
 
   /**
    * The source won't take an edit. Drop it and the record's edits queued after it (they build on it,
    * and are sent whole), and put the record back as it was before them, as the sync's change: what the
-   * source has. History keeps the edits. Returns why, in words.
+   * source has. History keeps the edits. Returns why, in words, for each edit dropped, by outbox seq.
    */
-  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string): string {
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): Map<number, string> {
     const path = row.path as FilePath;
     const current = this.files.read(path);
     const author = SYNC_AUTHOR[source];
-    const restore: Write[] = row.base === null ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    // Deleted in the source, it goes here too: put back, it would stay, as the sync already passed the deletion by while the edit waited.
+    const restore: Write[] =
+      row.base === null || gone ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    const dropped = this.db.all<{ seq: number; op: string }>("SELECT seq, op FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", path, row.seq);
     this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
-    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. It's back as it was, and the change is in its history.`;
-    this.setState(source, { conflict: message, error: undefined });
-    return message;
+    const named = (o: RecordOp) => o.event.title || "an event";
+    const why = reason.replace(/\.$/, "");
+    const after = gone ? "It's gone here too" : "It's back as it was";
+    const later = dropped.length - 1;
+    this.setState(source, {
+      conflict: later
+        ? `${title} refused the change to ${named(op)} and the ${later} after it: ${why}. ${after}, and the changes are in its history.`
+        : `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`,
+      error: undefined,
+    });
+    return new Map(
+      dropped.map(({ seq, op: queued }) =>
+        seq === row.seq
+          ? [seq, `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`]
+          : [seq, `${title} refused the change to ${named(op)}, which ${named(JSON.parse(queued) as RecordOp)} built on: ${why}. ${after}, and the changes are in its history.`],
+      ),
+    );
+  }
+
+  /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
+  private asSeriesMakes(source: SourceId, e: CalendarEvent): CalendarEvent | null {
+    const found = findTarget(this.family(source, e.calendar, e.id).filter((o) => o.id !== e.id), e.id);
+    return found?.kind === "occurrence" ? found.occurrence : null;
   }
 
   private setEtag(path: string, etag: string) {
@@ -462,7 +566,9 @@ export class DataSources {
     try {
       const [{ since }] = this.db.all<{ since: number | null }>("SELECT max(revision) AS since FROM changes");
       await adapter.sync(this.syncIO(source, since ?? 0));
-      this.setState(source, { lastSync: this.now(), error: undefined, reconnect: false });
+      // Edits still waiting keep saying why, so the source doesn't look fine while they wait.
+      const waiting = this.db.all<{ error: string | null }>("SELECT error FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source)[0];
+      this.setState(source, { lastSync: this.now(), error: waiting?.error ?? undefined, reconnect: false });
     } catch (err) {
       this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: (err as Error).message });
     }
@@ -488,22 +594,29 @@ export class DataSources {
 
   /**
    * What a sync writes through. A record with an edit waiting to go out is left as it is: pushing the
-   * edit merges it with Google's version. One changed here since the sync began is left too, since the
-   * page it came on may be older than the change; its calendar's sync token then stays where it was,
-   * so the next sync reads it again.
+   * edit merges it with Google's version. One changed here since the sync began, or whose edit is
+   * being pushed now, is left too, since its page may be older or newer than that change; the next
+   * sync reads it again by id.
    */
   private syncIO(source: SourceId, since: Revision): SyncIO {
     const author = SYNC_AUTHOR[source];
-    const held = new Set<string>();
+    const left = new Map<string, Set<string>>();
+    const leave = (path: FilePath) => {
+      const key = keyOfPath(path);
+      if (key) left.set(key.collection, (left.get(key.collection) ?? new Set()).add(key.id));
+    };
     const pending = (path: FilePath) => {
-      if (this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length) return true;
+      if (this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length) {
+        if (path === this.pushing) leave(path);
+        return true;
+      }
       const changed = this.db.all(
         "SELECT 1 FROM changes WHERE path = ? AND revision > ? AND NOT (json_extract(author, '$.kind') = 'sync' AND json_extract(author, '$.source') = ?) LIMIT 1",
         path,
         since,
         author.source,
       ).length;
-      if (changed) held.add(keyOfPath(path)?.collection ?? "");
+      if (changed) leave(path);
       return changed > 0;
     };
     const write = (path: FilePath, text: string | null) => {
@@ -517,6 +630,29 @@ export class DataSources {
     const dropEvent = (path: FilePath) => {
       if (!pending(path)) write(path, null);
     };
+    const put = (event: CalendarEvent, etag: string | null) => {
+      const path = eventPath(event.calendar, event.id);
+      if (pending(path)) {
+        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+        const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", path)[0]?.etag;
+        // Our own delete, heard back: that version is ours, so the edit waiting goes on from it.
+        if (etag && waiting && known === DELETED_HERE && event.status === "cancelled") this.setEtag(path, etag);
+        // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
+        // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
+        else if (etag && waiting && (!known || known === DELETED_HERE)) this.setEtag(path, UNKNOWN_ETAG);
+        return;
+      }
+      write(path, recordText(event));
+      if (etag) this.setEtag(path, etag);
+    };
+    // A cancelled occurrence its series doesn't have cancels nothing, as Google keeps one for an
+    // occurrence moved off its start. Kept, it would block undoing that move, and cancel the
+    // occurrence once the series came back to it. What's here at its id goes, as Google ended it.
+    const cancelled: Array<{ event: CalendarEvent; etag: string | null }> = [];
+    const cancels = (e: CalendarEvent) => {
+      const series = readEvent(this.files.read(eventPath(e.calendar, e.series ?? ""))?.text ?? "");
+      return !series?.recurrence || findTarget([series], e.id)?.kind === "occurrence";
+    };
     return {
       calendars: (list) => {
         const keep = new Set(list.map((c) => c.id));
@@ -527,17 +663,23 @@ export class DataSources {
           for (const p of this.records.inCalendar(source, id)) dropEvent(p);
           write(path, null);
           this.setToken(source, id, null);
+          this.setRecheck(source, id, []);
         }
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
-        if (!held.has(calendar)) this.setToken(source, calendar, token);
+        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) {
+          if (cancels(event)) put(event, etag);
+          else dropEvent(eventPath(event.calendar, event.id));
+        }
+        this.setToken(source, calendar, token);
+        this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
+      recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
-        const path = eventPath(event.calendar, event.id);
-        if (pending(path)) return;
-        write(path, recordText(event));
-        if (etag) this.setEtag(path, etag);
+        // Judged once the calendar's changes are all in, against its series as they leave it.
+        if (event.series !== undefined && event.status === "cancelled") return void cancelled.push({ event, etag });
+        put(event, etag);
       },
       remove: (calendar, id) => {
         dropEvent(eventPath(calendar, id));
@@ -547,6 +689,13 @@ export class DataSources {
         for (const p of this.records.inCalendar(source, calendar)) if (!keep.has(keyOfPath(p)?.id ?? "")) dropEvent(p);
       },
     };
+  }
+
+  private setRecheck(source: SourceId, calendar: string, ids: string[]) {
+    const recheck = { ...this.state(source).recheck };
+    if (ids.length) recheck[calendar] = ids;
+    else delete recheck[calendar];
+    this.setState(source, { recheck });
   }
 
   private setToken(source: SourceId, calendar: string, token: string | null) {
@@ -589,11 +738,30 @@ export class DataSources {
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
-export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = [], now: () => number = Date.now): { files: Files; sources: DataSources } {
+export function openWorkspace(
+  db: Db,
+  settings: SourceSettings,
+  announce?: (notice: ChangeNotice) => void,
+  fetcher?: typeof fetch,
+  adapters: Adapter[] = [],
+  now: () => number = Date.now,
+): { files: Files; sources: DataSources; search: SearchIndex } {
   const records = new Records(db);
-  const files = new Files(db, Date.now, announce, (path, text) => records.observe(path, text));
+  const search = new SearchIndex(db);
+  const files = new Files(
+    db,
+    Date.now,
+    announce,
+    (path, text, revision) => {
+      records.observe(path, text);
+      search.observe(path, text, revision);
+    },
+    (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
+  );
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters) };
+  // Workspaces from before search, or from before its index's shape, get their index here, once.
+  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
+  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
 }
 
 /** A record file's calendar, or null if its text isn't one. */
@@ -623,14 +791,35 @@ export function readCalendar(text: string): Calendar | null {
 export async function undoChanges(files: Files, sources: DataSources, revisions: Revision[], author: Author): Promise<UndoResult[]> {
   const change = (r: Revision) => files.recent({ before: r + 1, limit: 1 }).find((c) => c.revision === r);
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
-  const plain = revisions.filter((r) => !isRecord(r));
-  const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
+  const plain = [...new Set(revisions.filter((r) => !isRecord(r)))];
+  // A restore (a change that undid a delete) undone while its note is as it left it deletes the note
+  // again, back to Trash, rather than leave it empty. A note's delete undone brings back its archiving
+  // too. All in one transaction.
+  const restoreOf = (r: Revision) => {
+    const c = change(r);
+    return c?.undoes && change(c.undoes)?.deleted && files.read(c.path)?.revision === r ? c : null;
+  };
+  const out: UndoResult[] = plain.length
+    ? files.atomically(() => {
+        const again = plain.flatMap((r): UndoResult[] => {
+          const c = restoreOf(r);
+          if (!c) return [];
+          const result = deleteNote(files, { path: c.path, text: "", base: r, author, undoes: r });
+          return [{ revision: r, status: result.status === "conflict" ? "conflict" : "undone", ...(result.file ? { file: result.file } : {}) }];
+        });
+        const done = new Set(again.map((u) => u.revision));
+        const results = [...again, ...files.undo(plain.filter((r) => !done.has(r)), author)].sort((a, b) => b.revision - a.revision);
+        archiveAgain(files, results.flatMap((u) => (u.status === "undone" && change(u.revision)?.deleted ? [{ path: change(u.revision)!.path, deleted: u.revision }] : [])), author);
+        return results;
+      })
+    : [];
+  const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (files.recent({ path, limit: 1 })[0]?.revision !== r) return { r, path, text: null };
+      if (changedSince(files, path, r, chosen)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -646,6 +835,25 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
   return out;
+}
+
+/**
+ * Whether a record changed after one of its revisions, but for changes being undone with it
+ * (`undoing`). The source filling in its own address for the record (`link`), as a sync does after
+ * an edit goes out, isn't a change. Each sync change is judged by what it changed itself, since the
+ * record now also has the later edits being undone.
+ */
+function changedSince(files: Files, path: FilePath, revision: Revision, undoing: ReadonlySet<Revision>): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision && !undoing.has(c.revision));
+  return later.some((c) => c.author.kind !== "sync" || !onlyLinked(files, path, c.revision));
+}
+
+/** Whether a change to a record only filled in its `link`. */
+function onlyLinked(files: Files, path: FilePath, revision: Revision): boolean {
+  const before = files.recent({ path, before: revision, limit: 1 })[0];
+  const was = readEvent(before ? (files.versionAt(path, before.revision) ?? "") : "");
+  const now = readEvent(files.versionAt(path, revision) ?? "");
+  return !!was && !!now && recordText({ ...was, link: undefined }) === recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */

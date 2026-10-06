@@ -7,9 +7,11 @@ import { EditorView, ViewPlugin } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
+import { insertUndo, modeChanged } from "./undo.ts";
 
 type ExParams = { argString?: string; input?: string };
 type CM = NonNullable<ReturnType<typeof getCM>>;
+type Pos = { line: number; ch: number };
 
 const theme = EditorView.theme({
   ".cm-vim-panel": { padding: "0.25rem 1rem", fontFamily: "var(--mono)" },
@@ -35,6 +37,7 @@ export default {
     const modeWatch = ViewPlugin.define((view) => {
       const watch = (cm: CM) =>
         cm.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
+          modeChanged(view, e.mode);
           if (view === ctx.editor.focused()) showMode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
         });
       const cm = getCM(view);
@@ -43,7 +46,7 @@ export default {
       return {};
     });
     // Before every other keymap, so Vim sees keys first.
-    ctx.editor.extend(Prec.highest([vim(), modeWatch, theme]), { everywhere: true });
+    ctx.editor.extend(Prec.highest([insertUndo, vim(), modeWatch, theme]), { everywhere: true });
 
     // A different editor took focus: it starts in normal mode, with its own jumps.
     let shown: EditorView | null = null;
@@ -75,6 +78,9 @@ export default {
       else if (!arg.replace(/^!\s*/, "") && (force || !ctx.workbench.hasUnsavedChanges())) ctx.commands.run("note.reload");
     });
     Vim.defineEx("quit", "q", run("tab.close"));
+    Vim.defineEx("archive", "archive", run("archive.archive"));
+    Vim.defineEx("unarchive", "unarchive", run("archive.unarchive"));
+    Vim.defineEx("trash", "trash", run("trash.note"));
     Vim.defineEx("close", "clo", run("window.close"));
     Vim.defineEx("only", "on", run("window.only"));
     exOpen("split", "sp", (p) => ctx.workbench.split("down", p), run("window.splitDown"));
@@ -100,9 +106,15 @@ export default {
       if (operator) {
         // In place of Vim's own operator: Vim selects what the motion covers (>> a line, >ip a
         // paragraph, or the visual selection), the command acts on the selection, and the cursor stays.
-        Vim.defineOperator(name, (cm: CM) => {
+        Vim.defineOperator(name, (cm: CM, _args: unknown, ranges: ReadonlyArray<{ anchor: Pos; head: Pos }>) => {
+          const doc = cm.cm6.state.doc;
           ctx.commands.run(command);
-          return cm.getCursor();
+          // A command that put the cursor somewhere (a list item moved by the outline's rules) keeps it there.
+          if (cm.cm6.state.doc !== doc && cm.cm6.state.selection.main.empty) return cm.getCursor();
+          // Nothing changed (the outline's rules refused), or the motion's range is still selected (a
+          // plain shift): where Vim leaves a shift, the first line's first non-blank, not past the range.
+          const line = Math.min(...ranges.map((r) => Math.min(r.anchor.line, r.head.line)));
+          return { line, ch: cm.getLine(line).search(/\S|$/) };
         });
         Vim.mapCommand(keys, "operator", name, {}, {});
         continue;

@@ -1,0 +1,7 @@
+{
+  "pr": 87,
+  "title": "Uploads: HEAD answers like GET",
+  "steps": [
+    "In the console: fetch(\"/uploads/<an upload's name>\", { method: \"HEAD\" }).then(r => r.headers.get(\"Content-Type\")) says the upload's type, not text/html."
+  ]
+}

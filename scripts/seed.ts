@@ -14,7 +14,7 @@ export interface Section {
   title: string;
   steps: string[];
   /** Later versions of the section's notes, by named agents, so history has something to show. */
-  edits: Array<{ path: string; text: string; agent: string; label?: string }>;
+  edits: Array<{ path: string; text: string; agent: string; label?: string; delete?: true }>;
   notes: Array<{ path: string; text: string }>;
 }
 
@@ -44,10 +44,10 @@ export function readSections(dir: string, catalog = path.join(dir, "../../web/pu
         throw new Error(`${file}: "install" must be a list of the Catalog's extension ids`);
       const valid = Number.isInteger(pr) && typeof title === "string" && Array.isArray(steps) && steps.every((s) => typeof s === "string");
       if (!valid) throw new Error(`${file} must look like {"pr": 1, "title": "...", "steps": ["..."]}`);
-      const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
-      if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}`);
+      const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && (typeof e.text === "string" || e.delete === true) && typeof e.agent === "string");
+      if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}, or {"agent": "...", "path": "...", "delete": true}`);
       const notes = folderFiles(path.join(dir, slug));
-      return { slug, pr, title, steps, notes: [...notes, ...catalogFiles(catalog, install as string[])], edits };
+      return { slug, pr, title, steps, notes: [...notes, ...catalogFiles(catalog, install as string[])], edits: (edits as Section["edits"]).map((e) => (e.delete ? { ...e, text: "" } : e)) };
     });
 }
 
@@ -101,7 +101,10 @@ export function fillDates(text: string, today: string): string {
   });
 }
 
-export function buildSeed(sections: Section[], pr: PullRequest, today = new Date().toISOString().slice(0, 10)): Seed {
+/** Today here, as the page has it: in CI that's UTC's; on your machine, your own. */
+const localToday = () => new Date().toLocaleDateString("en-CA");
+
+export function buildSeed(sections: Section[], pr: PullRequest, today = localToday()): Seed {
   const notes = [
     // Kept as you edit them, unless the PR changes them (Files.seed tells).
     ...sections.flatMap((s) => s.notes.map((n) => ({ ...n, path: fillDates(n.path, today), text: fillDates(n.text, today), replace: false }))),
@@ -150,7 +153,7 @@ export function readScenarios(dir: string, catalog = path.join(dir, "../../web/p
 }
 
 /** A scenario's seed: its sections' notes and its own, dated from its clock, opening on its note. */
-export function scenarioSeed(scenario: Scenario, sections: Section[], today = new Date().toISOString().slice(0, 10)): Seed {
+export function scenarioSeed(scenario: Scenario, sections: Section[], today = localToday()): Seed {
   const picked = scenario.sections.map((slug) => {
     const section = sections.find((s) => s.slug === slug);
     if (!section) throw new Error(`Scenario ${scenario.name}: no examples/preview/${slug}.json`);

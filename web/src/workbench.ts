@@ -6,11 +6,12 @@
 // window says) is drawn by an extension, the default Workbench extension, through setChrome.
 import { Compartment, EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
-import type { Offline } from "./offline.ts";
+import { isExtensionScript, isNote, merge, type FilePath, type Revision, type WriteResult } from "../../worker/src/files.ts";
+import type { Offline, Unsent } from "./offline.ts";
+import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
-import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
+import { createState, forgetHistory, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
 import { layoutProblems } from "./layout-problems.ts";
@@ -28,8 +29,15 @@ interface OpenFile {
   timer: number;
   /** Whether the server has it yet. A file opened by name starts out unsaved. */
   exists: boolean;
-  /** What the editor starts with: the file, or this browser's unsent edit to it. */
+  /**
+   * The file's text while no editor shows it: at first the file, or this browser's unsent edit to it;
+   * then what its last editor showed when it went, for a save still to come or the next editor.
+   */
   startText: string;
+  /** When the edit it opened with was kept, if that edit clashed: one that never reached the server. */
+  keptAt?: number;
+  /** An edit held offline that it opened with, before the server could say whether it has it. */
+  unchecked?: Unsent;
 }
 
 /** Something an extension draws in a window's tab, such as History. */
@@ -87,6 +95,12 @@ const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(i
 const extensionSlot = new Compartment();
 const label = docLabel;
 
+/** The compact width class (phones), where a notice is a bar at the bottom that goes by itself. */
+const COMPACT = "(max-width: 599.98px)";
+/** How long a notice stays on a phone: a little longer when it has a button, such as Undo. */
+const NOTICE_MS = 4000;
+const NOTICE_WITH_ACTIONS_MS = 6000;
+
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
   private files = new Map<FilePath, OpenFile>();
@@ -117,6 +131,13 @@ export class Workbench {
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
   private chrome: WorkbenchChrome | null = null;
+  /** Where this device's layout is kept (devices/<id>/layout.json), or the workspace's where there's no device file. */
+  layoutPath: FilePath = L.LAYOUT_PATH;
+  /** The layout a device starts from when it has none of its own yet. */
+  firstLayout: () => Promise<L.Layout | null> = async () => null;
+  /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
+  parts: () => Parts = () => ({ tabs: true, splits: true });
+  private shown: Parts = { tabs: true, splits: true };
 
   constructor(
     private host: HTMLElement,
@@ -134,9 +155,9 @@ export class Workbench {
    * it comes back as `missing`, for the app to say so.
    */
   async start(first?: FilePath | null): Promise<{ missing?: FilePath }> {
-    const saved = await this.net.read(L.LAYOUT_PATH);
+    const saved = await this.net.read(this.layoutPath);
     this.layoutRevision = saved.revision;
-    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
+    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || (saved.revision === 0 && (await this.firstLayout())) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
     let missing: FilePath | undefined;
     if (first) {
@@ -162,7 +183,11 @@ export class Workbench {
     if (this.started) this.render();
   }
 
-  /** A message in the focused window, with buttons, until its tabs change. */
+  /**
+   * A message in the focused window, with buttons, until its tabs change. On a phone it's a bar at the
+   * bottom that goes after a few seconds, unless you're reaching for it (a finger or the pointer on it,
+   * or focus in it).
+   */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
     // Before there's a window to show it in (an extension starting with the app, say): show it once there is.
@@ -184,6 +209,24 @@ export class Workbench {
     }
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
+    // On a phone it goes by itself; on a wider screen it stays, until the window narrows to a phone's.
+    const compact = matchMedia(COMPACT);
+    let held = false;
+    box.addEventListener("pointerdown", () => (held = true));
+    box.addEventListener("pointerleave", () => (held = false));
+    const linger = () => held || box.matches(":hover") || box.contains(document.activeElement);
+    const go = () => {
+      if (!box.isConnected) return;
+      if (linger()) window.setTimeout(go, 1500);
+      else box.remove();
+    };
+    const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
+    if (compact.matches) return void start();
+    const narrowed = (e: MediaQueryListEvent) => {
+      if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
+      if (box.isConnected && e.matches) start();
+    };
+    compact.addEventListener("change", narrowed);
   }
 
   get focusedGroup(): L.Group {
@@ -208,15 +251,20 @@ export class Workbench {
     return this.files.has(path);
   }
 
-  /** Every file that isn't saved, for the page closing. */
+  /** When a note's clashing edit was kept, if it's one it opened with that never reached the server. */
+  keptAt(path: FilePath): number | undefined {
+    return this.files.get(path)?.keptAt;
+  }
+
+  /** Every file that isn't saved, for the page closing to send. Not one that clashes: it's held, to settle. */
   unsaved() {
-    return [...this.files.values()].map((d) => d.session.unsaved).filter((u) => u !== null);
+    return [...this.files.values()].flatMap((d) => (d.session.status === "conflict" || !d.session.unsaved ? [] : [d.session.unsaved]));
   }
 
   /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
   pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
     const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
-    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: this.layoutPath, status: "waiting" }] : files;
   }
 
   /**
@@ -239,6 +287,27 @@ export class Workbench {
     }
     // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
+  }
+
+  /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
+  reveal(view: EditorView, pos: number | null): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    if (!at) return;
+    const [id, item] = at.split("\n");
+    const group = L.groups(this.layout).find((g) => g.id === id);
+    const index = group?.tabs.findIndex((t) => L.openableKey(t) === item) ?? -1;
+    if (!group || index < 0) return;
+    this.change((l) => L.selectTab(l, group.id, index));
+    view.focus();
+    // Once its tab shows: scrolled while hidden, the editor would keep the scroll for later, and do it on the next scroll of yours.
+    if (pos !== null) requestAnimationFrame(() => view.dispatch({ effects: EditorView.scrollIntoView(Math.min(pos, view.state.doc.length), { y: "center" }) }));
+  }
+
+  /** Focus the window this editor is in, as focus coming into it does (an embed's box is outside it, in the layer). */
+  focusView(view: EditorView): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    const id = at?.split("\n")[0];
+    if (id && this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
   }
 
   /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
@@ -340,7 +409,7 @@ export class Workbench {
     const file = path && this.files.get(path);
     if (!file) return;
     file.session.reload(await this.net.read(file.path));
-    await this.net.release(file.path);
+    await this.net.letGoOwn(file.path);
   }
 
   /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
@@ -359,9 +428,9 @@ export class Workbench {
    * whether the file is open here.
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
-    if (path === L.LAYOUT_PATH) {
+    if (path === this.layoutPath) {
       if (!this.started || revision <= this.layoutRevision || this.layoutSaving) return false;
-      const saved = await this.net.read(L.LAYOUT_PATH);
+      const saved = await this.net.read(this.layoutPath);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;
       if (layout) this.setLayout(layout, { save: false });
@@ -437,10 +506,12 @@ export class Workbench {
     const open = this.files.get(path);
     if (open) return open;
     const fetched = await this.net.read(path);
-    // An edit this browser couldn't send before: it picks up where it left off, on its old base.
-    const held = await this.net.unsentFor(path);
+    // An edit kept in this browser that the server doesn't have: it picks up where it left off, on its
+    // old base, or shows as a clash when the note has moved on since.
+    const kept = await this.net.keptEdit(fetched);
     const again = this.files.get(path);
     if (again) return again;
+    const held = kept?.edit;
     const startText = held?.text ?? fetched.text;
     const file: OpenFile = {
       path,
@@ -451,27 +522,63 @@ export class Workbench {
       session: new Session(
         held ? { ...fetched, revision: held.base } : fetched,
         {
-          text: () => this.primary(file)?.state.doc.toString() ?? startText,
+          text: () => this.primary(file)?.state.doc.toString() ?? file.startText,
           replace: (text, remote) => {
             const view = this.primary(file);
             if (view) replaceText(view, text, remote);
+            else file.startText = text;
           },
         },
-        (path, text, base) => this.net.write(path, text, base),
+        (path, text, base, edit) => (file.unchecked ? this.firstSend(file, file.unchecked, path, text, base, edit) : this.net.write(path, text, base, edit)),
         (status) => this.statusChanged(file, status),
+        kept?.clash ? "conflict" : "saved",
+        held?.edit ? { id: held.edit, text: held.text } : null,
       ),
     };
     this.files.set(path, file);
-    if (held && !held.conflict) file.timer = window.setTimeout(() => void file.session.save(), 0);
-    if (held?.conflict) this.on.status("conflict", `${label(path)} has an unsent edit that clashes with the server's. :w tries again; :e! loads the server's version.`);
+    if (held && !kept.clash) file.timer = window.setTimeout(() => void file.session.save(), 0);
+    if (kept?.clash) file.keptAt = held?.time ?? Date.now();
+    if (kept && !kept.checked) file.unchecked = kept.edit;
+    if (path === this.focusedPath) this.on.status(file.session.status, this.saying(file));
     return file;
+  }
+
+  /**
+   * The first save of a note opened offline with a held edit, once the server can be asked, goes by
+   * keptEdit's rule: on the server's latest revision, it's sent; there already, what's been typed
+   * since goes onto the note as it is now; and a note that's moved on without it is a clash.
+   */
+  private async firstSend(file: OpenFile, held: Unsent, path: FilePath, text: string, base: Revision, edit: string): Promise<WriteResult> {
+    const latest = await this.net.latest(path);
+    const verdict = await this.net.verdict(held, latest, true);
+    file.unchecked = undefined;
+    if (verdict === "send") return this.net.write(path, text, base, edit);
+    if (verdict === "clash") {
+      file.keptAt = held.time ?? Date.now();
+      return { status: "conflict", file: latest };
+    }
+    const typed = text === held.text ? latest.text : merge(text, held.text, latest.text);
+    if (typed === null) return { status: "conflict", file: latest };
+    return typed === latest.text ? { status: "saved", file: latest } : this.net.write(path, typed, latest.revision);
+  }
+
+  /** What the status bar says of a file's save, when it isn't the usual: an edit it opened with that never got there. */
+  private saying(file: OpenFile): string | undefined {
+    if (file.session.status === "conflict" && file.keptAt !== undefined) return `Unsaved edit from ${keptWhen(file.keptAt)}: the note changed since. Restore or discard it.`;
   }
 
   private primary(file: OpenFile): EditorView | undefined {
     return file.views.values().next().value;
   }
 
+  /** Keep an edit that clashes with the server's in this browser, as it is now, so a reload doesn't lose it. */
+  private holdClash(file: OpenFile) {
+    const unsent = file.session.unsaved;
+    if (unsent) void this.net.hold({ ...unsent, conflict: true });
+  }
+
   private statusChanged(file: OpenFile, status: SaveStatus) {
+    if (status === "conflict") this.holdClash(file);
     if (status === "offline") {
       clearTimeout(file.timer);
       file.timer = window.setTimeout(() => void file.session.save(), RETRY_MS);
@@ -479,14 +586,15 @@ export class Workbench {
       const unsent = file.session.unsaved;
       if (unsent) void this.net.hold(unsent);
     }
-    if (status === "saved" && !file.session.dirty) void this.net.release(file.path);
+    if (status === "saved") file.keptAt = undefined;
+    if (status === "saved" && !file.session.dirty) void this.net.letGoOwn(file.path);
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
     }
     if (status === "saved") this.on.saved(file.path);
     this.renderTabs();
-    if (file.path === this.focusedPath) this.on.status(status);
+    if (file.path === this.focusedPath) this.on.status(status, this.saying(file));
   }
 
   private viewUpdate(file: OpenFile, view: EditorView, u: ViewUpdate) {
@@ -502,7 +610,26 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
+    const clashed = file.session.status === "conflict";
     file.session.edited();
+    if (file.session.status === "conflict") this.holdClash(file);
+    const draft = file.session.unsaved;
+    // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
+    // offline, is no edit now.
+    if (draft) void this.net.keepDraft(draft);
+    else void this.net.letGoOwn(file.path);
+    // A clash undone: the note takes in the server's latest, which it held off while it clashed.
+    if (clashed && file.session.status !== "conflict") {
+      // Its undo and redo steps are of text theirs has replaced: they'd land in the wrong places.
+      queueMicrotask(() => file.views.forEach(forgetHistory));
+      const takeTheirs = (): void =>
+        void this.net.latest(file.path).then(
+          (latest) => file.session.absorb(latest),
+          // Offline: theirs is taken in once the page is back online.
+          () => addEventListener("online", takeTheirs, { once: true }),
+        );
+      takeTheirs();
+    }
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
@@ -535,7 +662,8 @@ export class Workbench {
 
   private dropView(k: string, view: EditorView) {
     this.views.delete(k);
-    for (const file of this.files.values()) file.views.delete(view);
+    // A save can still come once it's gone (its blur saves): it sends what this showed, not the text the file opened with.
+    for (const file of this.files.values()) if (file.views.delete(view) && !file.views.size) file.startText = view.state.doc.toString();
     view.destroy();
   }
 
@@ -558,8 +686,8 @@ export class Workbench {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {
-      let result = await this.net.write(L.LAYOUT_PATH, text, this.layoutRevision);
-      if (result.status === "conflict" && result.file) result = await this.net.write(L.LAYOUT_PATH, text, result.file.revision);
+      let result = await this.net.write(this.layoutPath, text, this.layoutRevision);
+      if (result.status === "conflict" && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
@@ -568,7 +696,29 @@ export class Workbench {
     }
   }
 
+  /**
+   * The device changed: show or put away tabs and windows side by side, as it now has room for. The
+   * layout itself doesn't change, and isn't saved: what's put away comes back when there's room.
+   */
+  refreshParts(): void {
+    const parts = this.parts();
+    if (parts.tabs === this.shown.tabs && parts.splits === this.shown.splits) return;
+    if (this.started) this.render();
+  }
+
+  /** What this device's layout keeps that doesn't show: windows, when they can't be side by side, and tabs, when there's no room for them. */
+  kept(): { windows: number; tabs: number } {
+    const groups = L.groups(this.layout);
+    const windows = this.shown.splits ? 0 : groups.length - 1;
+    const tabs = this.shown.tabs ? 0 : (this.shown.splits ? groups : [this.focusedGroup]).reduce((n, g) => n + Math.max(0, g.tabs.length - 1), 0);
+    return { windows, tabs };
+  }
+
   private render() {
+    this.shown = this.parts();
+    // What doesn't fit is hidden, not taken out (style.css): its editors and frames keep running.
+    this.host.toggleAttribute("data-no-tabs", !this.shown.tabs);
+    this.host.toggleAttribute("data-no-splits", !this.shown.splits);
     const wanted = new Set<string>();
     for (const g of L.groups(this.layout)) for (const t of g.tabs) wanted.add(key(g.id, t));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
@@ -633,9 +783,11 @@ export class Workbench {
     // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
-    const wanted = [...empty, ...boxes, ...chrome];
-    const same = wanted.length === editors.children.length && wanted.every((n, i) => editors.children[i] === n);
-    if (!same) editors.replaceChildren(...wanted);
+    // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
+    // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
+    const wanted = new Set<Node>([...empty, ...boxes]);
+    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }
 
@@ -765,11 +917,17 @@ export class Workbench {
   private afterFocus() {
     const view = this.focusedView;
     this.on.focus(this.focusedPath);
-    this.on.status(this.focusedSession?.status ?? null);
+    const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
+    this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
+}
+
+export interface Parts {
+  tabs: boolean;
+  splits: boolean;
 }
 
 /** The arrangement of splits and windows, without sizes or tabs. */

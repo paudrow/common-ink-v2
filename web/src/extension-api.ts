@@ -13,12 +13,26 @@ import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResul
 import type { Contact } from "../../worker/src/sources.ts";
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
+import type { SearchProvider, SearchSection } from "./search.ts";
 import type { Embed } from "./embeds.ts";
+import type { MediaHandle, MediaKind, MediaSpec } from "./media.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { WorkbenchChrome } from "./workbench.ts";
+import type { WidthClass } from "../../worker/src/devices.ts";
 
 export type { Embed, Item, Provider };
+export type { MediaHandle, MediaSpec };
+
+/** A session as the controls see it: what it is, whether it plays, and the note it's in. */
+export interface MediaInfo {
+  id: number;
+  title: string;
+  kind: MediaKind;
+  playing: boolean;
+  /** The note it plays in, if it's in one. */
+  note: FilePath | null;
+}
 
 /** How a trusted extension draws a view straight into the page. Called when it shows, and again when it's refreshed. */
 export interface ViewRenderer {
@@ -77,9 +91,29 @@ export interface EventInput {
   recurrence?: string | string[] | null;
 }
 
+/**
+ * The device the app is open in, for code that adapts to it (what a manifest's `requires` can't say):
+ * Calendar draws an agenda on a phone, a board drags by long-press on touch.
+ */
+export interface DeviceApi {
+  /** Whether it has a keyboard (assumed on a desktop, found elsewhere, and kept once found), or a touch screen. */
+  has(capability: "keyboard" | "touch"): boolean;
+  /** The window's width class: compact under 600px, medium, expanded from 840, large from 1200. Changes live. */
+  readonly width: WidthClass;
+  atLeast(min: WidthClass): boolean;
+  /** "fine" with a mouse or trackpad, "coarse" with touch alone. */
+  readonly pointer: "fine" | "coarse";
+  readonly touch: boolean;
+  /** Why the app thinks what it does about one: "a key was pressed that a touch screen's keyboard doesn't send". */
+  why(capability: "keyboard" | "width" | "pointer" | "touch"): string;
+  /** After the width class, the pointer, touch or the keyboard changes. */
+  onChange(fn: (device: DeviceApi) => void): void;
+}
+
 export interface ExtensionContext {
   /** This extension, as its manifest says. */
   extension: ExtensionManifest;
+  device: DeviceApi;
   /** The signed-in person's email, if a person is signed in. */
   me: string | undefined;
   settings: {
@@ -90,8 +124,8 @@ export interface ExtensionContext {
     /** What a command the manifest declares does. */
     register(id: string, run: () => unknown): void;
     run(id: string): boolean;
-    /** Every command, with its title. */
-    all(): Array<{ id: string; title: string }>;
+    /** Every command, with its title, and why it's off on this device if it is ("Off on this device · needs a keyboard"). */
+    all(): Array<{ id: string; title: string; off?: string }>;
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
@@ -127,6 +161,25 @@ export interface ExtensionContext {
   commandBar: {
     provide(provider: Provider): void;
     open(text?: string): void;
+  };
+  /** Search (docs/queries.md): one query across notes and the kinds of result extensions add. */
+  search: {
+    /**
+     * Answer a kind of result the manifest declares in contributes.search.types, given the query read
+     * with `common-ink/query`. Given `within`, answer only with results in files whose paths match one
+     * of those globs (`inGlobs` from `common-ink/query`), before the limit: what's outside is taken out anyway.
+     */
+    provide(type: string, provider: SearchProvider): void;
+    /**
+     * What a query finds, a section per kind of result, as the search screen shows it; `progress` hears
+     * the sections found so far as each comes. A section with `more` stopped before it read every note it
+     * might find. A sandboxed extension searches only what it could read itself, as if nothing else were
+     * there: notes and tasks in the files:read scopes it's allowed, events with data:calendar:read, and
+     * its own kinds.
+     */
+    find(text: string, limit?: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]>;
+    /** The filter keys extensions add (`due`), for `parse(text, keys)`. */
+    filterKeys(): string[];
   };
   views: {
     /** How a view the manifest declares draws: as a webview (`resolve`), or, for trusted extensions, in the page (`render`). */
@@ -197,6 +250,25 @@ export interface ExtensionContext {
   notifications: {
     show(title: string, body?: string): Promise<void>;
   };
+  /**
+   * What plays (a video, a track, background sound), with the media permission. The mini player, the
+   * status bar and the keyboard's media keys control the one played last; a video playing in an embed
+   * floats while its note is out of sight ("media.whenHidden").
+   */
+  media: {
+    /** Something that plays. `el` is where it's drawn, if it's in a note's embed. */
+    session(spec: MediaSpec): MediaHandle;
+    /** What the controls act on: the one played last, while it plays (or keeps its place, like noise). */
+    current(): MediaInfo | null;
+    /** Call `fn` when anything starts, stops, or changes. */
+    onChange(fn: () => void): void;
+    /** Play, pause, or stop a session by id. */
+    play(id: number): void;
+    pause(id: number): void;
+    stop(id: number): void;
+    /** Show the note a session plays in, scrolled to it. */
+    reveal(id: number): void;
+  };
   /** The network, through the Worker: only hosts the manifest declares and you've allowed. */
   net: {
     fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<FetchResponse>;
@@ -259,7 +331,7 @@ export interface ExtensionContext {
     /** The items that fuzzily match `query`, best first. */
     fuzzyFilter<T>(query: string, items: readonly T[], text: (item: T) => string): T[];
     /** The note a name like "Projects/Plan" means, or null if it can't be one. */
-    notePathFor(name: string): FilePath | null;
+    notePathFor(name: string, from?: FilePath): FilePath | null;
     /** A file's name as people see it: "Projects/Plan", "User settings". */
     label(path: FilePath): string;
   };
@@ -276,6 +348,8 @@ export interface ExtensionContext {
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
+    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file or undid another change. Trusted extensions only. */
+    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number }) => void): void;
   };
 }
 

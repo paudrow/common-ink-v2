@@ -1,0 +1,8 @@
+{
+  "pr": 92,
+  "title": "Sandboxed frames: sizes and a share per moment",
+  "steps": [
+    "Boards, Word count and the html-app samples work as before.",
+    "test/browser/sandbox-escape.browser.ts covers a call's size, a frame's share per moment and oversized answers."
+  ]
+}

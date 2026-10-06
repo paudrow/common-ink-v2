@@ -3,6 +3,7 @@
 // extension code runs, and starts an extension's code only when one of its activation events happens.
 // Built-ins ship with the same files. A workspace extension is a folder of files in the workspace,
 // .common-ink/extensions/<id>/, edited and kept in history like any note.
+import { WIDTH_CLASSES, type Requires, type WidthClass } from "./devices.ts";
 import type { FilePath } from "./files.ts";
 
 export const EXTENSIONS_DIR = ".common-ink/extensions/";
@@ -85,6 +86,8 @@ const HOST = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 export interface CommandContribution {
   command: string;
   title: string;
+  /** What it needs from the device; off there, it's listed greyed, with why. */
+  requires?: Requires;
 }
 
 /** A default shortcut for a command: a key ("Mod-Enter") or a Vim normal-mode sequence ("gx"). Settings can rebind it. */
@@ -128,6 +131,7 @@ export interface ViewContainerContribution {
 export interface ViewContribution {
   id: string;
   name: string;
+  requires?: Requires;
 }
 
 export interface StatusBarItemContribution {
@@ -171,6 +175,7 @@ export interface EmbedContribution {
   arguments: Record<string, EmbedArgument>;
   /** What the block's body holds, if anything: a container's markdown, or a fence's code. */
   body?: string;
+  requires?: Requires;
 }
 
 const ARGUMENT_TYPES = ["string", "number", "duration", "boolean"];
@@ -198,6 +203,31 @@ export interface DataSourceContribution {
   description?: string;
 }
 
+/**
+ * What an extension adds to search (docs/queries.md): kinds of result it answers for (`type:event`), in
+ * their own section, and filters for them (`due:`), offered and completed before its code runs.
+ */
+export interface SearchContribution {
+  types: Array<{ type: string; title: string }>;
+  filters: Array<{ filter: string; description: string; values: string[] }>;
+}
+
+/**
+ * Filter keys an extension can't take: the ones every note has (query.ts), and words that come before a
+ * colon in ordinary text, which would stop being searched for as words.
+ */
+const CORE_FILTERS = ["is", "in", "from", "type", "edited", "has", "sort", "http", "https", "www", "ftp", "mailto", "file", "note"];
+
+/**
+ * A part of the windows' layout an extension draws, and what it needs from the device: the Workbench's
+ * "tabs" and "splits". Where it isn't met, the part is put away (the layout keeps it), and it's back when it is.
+ */
+export interface LayoutContribution {
+  id: string;
+  title: string;
+  requires?: Requires;
+}
+
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -210,6 +240,8 @@ export interface Contributions {
   embeds: EmbedContribution[];
   urlEmbeds: UrlEmbedContribution[];
   dataSources: DataSourceContribution[];
+  search: SearchContribution;
+  layout: LayoutContribution[];
 }
 
 export interface ExtensionManifest {
@@ -225,6 +257,8 @@ export interface ExtensionManifest {
   files: string[];
   activationEvents: ActivationEvent[];
   permissions: Permissions;
+  /** What it needs from the device to start there (devices.ts). Off on a device that hasn't it, unless you turn it on there. */
+  requires?: Requires;
   contributes: Contributions;
 }
 
@@ -260,12 +294,44 @@ const relativeFile = (v: unknown, what: string, typescript = false) => {
   return file;
 };
 
+/** What something needs from a device: `{ "keyboard": true, "width": "medium", "pointer": "fine" }`, any of them. */
+function requires(v: unknown, at: string): { requires?: Requires } {
+  if (v === undefined) return {};
+  const o = object(v, at);
+  const out: Requires = {};
+  for (const [k, value] of Object.entries(o)) {
+    if (k === "keyboard" && value === true) out.keyboard = true;
+    else if (k === "width" && WIDTH_CLASSES.includes(value as WidthClass)) out.width = value as WidthClass;
+    else if (k === "pointer" && value === "fine") out.pointer = "fine";
+    else throw new ManifestError(`${at}.${k} isn't something a device has: "keyboard": true, "width": one of ${WIDTH_CLASSES.join(", ")}, or "pointer": "fine"`);
+  }
+  return Object.keys(out).length ? { requires: out } : {};
+}
+
 const SETTING_TYPES = new Set(["boolean", "integer", "number", "string", "array", "object"]);
 
 function setting(v: unknown, at: string): SettingSchema {
   const s = object(v, at);
   if (!SETTING_TYPES.has(s.type as string)) throw new ManifestError(`${at}.type must be one of ${[...SETTING_TYPES].join(", ")}`);
   return s as unknown as SettingSchema;
+}
+
+function searchContribution(v: unknown): SearchContribution {
+  const o = v === undefined ? {} : object(v, "contributes.search");
+  return {
+    types: list(o.types, "contributes.search.types", (item, at) => {
+      const t = object(item, at);
+      const type = text(t.type, `${at}.type`);
+      if (!/^[a-z][a-z-]*$/.test(type) || type === "note") throw new ManifestError(`${at}.type must be lowercase letters and dashes, and not "note"`);
+      return { type, title: text(t.title, `${at}.title`) };
+    }),
+    filters: list(o.filters, "contributes.search.filters", (item, at) => {
+      const f = object(item, at);
+      const filter = text(f.filter, `${at}.filter`).replace(/:$/, "").toLowerCase();
+      if (!/^[a-z][a-z-]*$/.test(filter) || CORE_FILTERS.includes(filter)) throw new ManifestError(`${at}.filter must be a word like "due:", and not one of ${CORE_FILTERS.join(", ")}`);
+      return { filter, description: text(f.description, `${at}.description`, true), values: list(f.values, `${at}.values`, (x, w) => text(x, w)) };
+    }),
+  };
 }
 
 function contributions(v: unknown, id: string): Contributions {
@@ -295,13 +361,13 @@ function contributions(v: unknown, id: string): Contributions {
   for (const [container, items] of Object.entries(c.views === undefined ? {} : object(c.views, "contributes.views"))) {
     views[container] = list(items, `contributes.views.${container}`, (item, at) => {
       const o = object(item, at);
-      return { id: text(o.id, `${at}.id`), name: text(o.name, `${at}.name`) };
+      return { id: text(o.id, `${at}.id`), name: text(o.name, `${at}.name`), ...requires(o.requires, `${at}.requires`) };
     });
   }
   return {
     commands: list(c.commands, "contributes.commands", (item, at) => {
       const o = object(item, at);
-      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`) };
+      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`), ...requires(o.requires, `${at}.requires`) };
     }),
     keybindings: list(c.keybindings, "contributes.keybindings", (item, at) => {
       const o = object(item, at);
@@ -325,6 +391,11 @@ function contributions(v: unknown, id: string): Contributions {
         priority: typeof o.priority === "number" ? o.priority : 0,
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
+    }),
+    search: searchContribution(c.search),
+    layout: list(c.layout, "contributes.layout", (item, at) => {
+      const o = object(item, at);
+      return { id: text(o.id, `${at}.id`), title: text(o.title, `${at}.title`), ...requires(o.requires, `${at}.requires`) };
     }),
     dataSources: list(c.dataSources, "contributes.dataSources", (item, at) => {
       const o = object(item, at);
@@ -353,7 +424,7 @@ function contributions(v: unknown, id: string): Contributions {
           ...(a.hidden === true ? { hidden: true } : {}),
         };
       }
-      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), syntax, arguments: args, ...(body !== undefined ? { body } : {}) };
+      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), syntax, arguments: args, ...(body !== undefined ? { body } : {}), ...requires(o.requires, `${at}.requires`) };
     }),
     urlEmbeds: list(c.urlEmbeds, "contributes.urlEmbeds", (item, at) => {
       const o = object(item, at);
@@ -416,6 +487,8 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       if (kind === "files:read" || kind === "files:write") {
         out.paths = strings("paths");
         if (!out.paths.length) throw new ManifestError(`${at}.paths must name the files it may touch, like "Journal/**"`);
+        const bad = out.paths.find((p) => p.startsWith("!"));
+        if (bad) throw new ManifestError(`${at}.paths are the files it may touch, so none starts with "!": "${bad}" does`);
       }
       if (kind === "settings:write") {
         out.keys = strings("keys");
@@ -434,6 +507,7 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       files: files.includes(main) ? files : [main, ...files],
       activationEvents: activationEvents.length ? activationEvents : ["onStartup"],
       permissions,
+      ...requires(m.requires, '"requires"'),
       contributes: contributions(m.contributes, folderId),
     };
   } catch (err) {

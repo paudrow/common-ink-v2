@@ -2,7 +2,7 @@
 // Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
@@ -10,7 +10,7 @@ import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import { diffPatch } from "node-diff3";
+import { linePatch } from "./line-diff.ts";
 import type { Settings } from "../../worker/src/settings.ts";
 import type { FilePath } from "../../worker/src/files.ts";
 import { directiveSyntax } from "./directives.ts";
@@ -102,10 +102,15 @@ export function createState(
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
       slots.livePreview.of(s.livePreview),
-      history(),
+      lastEdit,
+      historySlot.of(noteHistory),
       drawSelection(),
+      // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
+      // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
+      EditorState.allowMultipleSelections.of(true),
+      EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
-      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
+      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
@@ -121,17 +126,61 @@ export function createState(
   });
 }
 
-/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
-export function replaceText(view: EditorView, text: string, flash = false) {
+/** The changes that turn the editor's text into `text`, line by line, so the cursor stays put. */
+function lineChanges(view: EditorView, text: string) {
   const old = linesOf(view.state.doc.toString());
   const starts = [0];
   for (const line of old) starts.push(starts.at(-1)! + line.length);
-  const patch = diffPatch(old, linesOf(text));
+  const patch = linePatch(old, linesOf(text));
   const changes = patch.map(({ buffer1, buffer2 }) => ({
     from: starts[buffer1.offset],
     to: starts[buffer1.offset + buffer1.length],
     insert: buffer2.chunk.join(""),
   }));
+  return { patch, changes };
+}
+
+/** Change the editor's text to `text` as an edit of yours, line by line: `u` takes it back. */
+export function editText(view: EditorView, text: string) {
+  view.dispatch({ changes: lineChanges(view, text).changes, userEvent: "input.replace" });
+}
+
+/** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
+const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
+
+/** How close in time two edits side by side are to be one undo step: CodeMirror's history's default. */
+const JOIN_MS = 500;
+const timeOf = (tr: Transaction) => tr.annotation(Transaction.time) ?? Date.now();
+/**
+ * When the last edit the history keeps was made. An undo or redo isn't one to join onto (none, as
+ * CodeMirror's history has it): what's typed next is a step of its own.
+ */
+const lastEdit = StateField.define<number>({
+  create: () => 0,
+  update: (time, tr) => (tr.isUserEvent("undo") || tr.isUserEvent("redo") ? 0 : tr.docChanged && tr.annotation(Transaction.addToHistory) !== false ? timeOf(tr) : time),
+});
+
+/** The editor's undo history, in a slot of its own so it can be started afresh (see forgetHistory). */
+const historySlot = new Compartment();
+// Two quick edits side by side are one undo step, as CodeMirror's history has it by default. Its own
+// time limit is lifted so an extension can join edits further apart (Vim's insert, typed slowly).
+const noteHistory = history({ newGroupDelay: Number.MAX_SAFE_INTEGER, joinToEvent: (tr, adjacent) => adjacent && timeOf(tr) - tr.startState.field(lastEdit) < JOIN_MS });
+
+/** An undo history with nothing in it, to start one afresh from. */
+const emptyHistory = () => EditorState.create({ extensions: history() }).field(historyField);
+
+/**
+ * Start the undo history afresh: the text it would undo and redo has been replaced under it (theirs
+ * taken in where yours clashed), so its steps would land in the wrong places. The one history field
+ * every history config shares (an extension may add its own) starts again empty. Not during an update.
+ */
+export function forgetHistory(view: EditorView): void {
+  view.dispatch({ effects: historySlot.reconfigure([noteHistory, historyField.init(emptyHistory)]) });
+}
+
+/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
+export function replaceText(view: EditorView, text: string, flash = false) {
+  const { patch, changes } = lineChanges(view, text);
   view.dispatch({ changes, annotations: [fromServer.of(true), Transaction.addToHistory.of(false)] });
   if (!flash) return;
   // Someone else's lines, highlighted for a moment, so you see what changed under you.
