@@ -5,11 +5,22 @@
 import { completeTask, parseTask, withDone, type LogMode } from "../../web/src/extensions/tasks/tasks.ts";
 import { dailyPath, initialText } from "../../web/src/extensions/daily/daily.ts";
 import { userSettingsPath, WORKSPACE_SETTINGS } from "./settings.ts";
-import type { Author, FilePath, WriteResult } from "./files.ts";
+import type { Author, FilePath, Files as History, WriteResult } from "./files.ts";
 
 interface Files {
   read(path: FilePath): Promise<{ text: string; revision: number } | null> | { text: string; revision: number } | null;
   write(w: { path: FilePath; text: string; base: number; author: Author }): Promise<WriteResult> | WriteResult;
+  logDone(path: FilePath, entry: string, day: string, author: Author): Promise<WriteResult> | WriteResult;
+}
+
+/**
+ * Log a completion under ## Done in a daily note (made if it's missing), as a change by `author`.
+ * The Durable Object reads and writes it with nothing in between, so completions logged at once
+ * can't clash.
+ */
+export function logDone(files: Pick<History, "read" | "write">, path: FilePath, entry: string, day: string, author: Author): WriteResult {
+  const daily = files.read(path);
+  return files.write({ path, text: withDone(daily?.text || initialText(day), entry), base: daily?.revision ?? 0, author });
 }
 
 /** The settings that say how a completion is recorded: the workspace's, then the person's own over them. */
@@ -51,12 +62,10 @@ export async function completeTaskIn(store: Files, args: { path: FilePath; line:
   const result: { note: WriteResult; daily?: WriteResult; logged?: string } = { note: await store.write({ path: args.path, text: lines.join("\n"), base: file.revision, author }) };
   if (result.note.status === "conflict") throw new TaskError(`${args.path} changed on line ${args.line} meanwhile, so it wasn't ticked. Read it and try again.`);
   if (!done.log) return result;
-  // The task is ticked already, so a log that clashes with one written meanwhile is read again and retried, not lost.
-  const path = dailyPath(how.folder, day) as FilePath;
-  for (let tries = 0; tries < 3; tries++) {
-    const daily = await store.read(path);
-    result.daily = await store.write({ path, text: withDone(daily?.text || initialText(day), done.log), base: daily?.revision ?? 0, author });
-    if (result.daily.status !== "conflict") break;
+  try {
+    result.daily = await store.logDone(dailyPath(how.folder, day) as FilePath, done.log, day, author);
+  } catch {
+    throw new TaskError(`${args.path} is ticked, but its log entry wasn't written. Add it under ## Done in ${dailyPath(how.folder, day)}: ${done.log}`);
   }
   result.logged = done.log;
   return result;

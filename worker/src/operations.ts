@@ -30,6 +30,7 @@ export interface Store {
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
+  logDone(path: FilePath, entry: string, day: string, author: Author): Promise<WriteResult> | WriteResult;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -505,7 +506,7 @@ export const OPERATIONS = {
       const line = count(a.line);
       if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
       if (!line) return fail('"line" must be the task\'s line number, from 1');
-      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s day, like 2026-10-05: the tick writes it as done: and last:');
+      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:');
       return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
