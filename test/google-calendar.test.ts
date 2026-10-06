@@ -949,3 +949,14 @@ test("undoing a series move puts back the occurrence the move cancelled, even wh
     assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, `${why}: nothing blamed on Google`);
   }
 });
+
+test("edits Google refuses after their edit has answered leave nothing kept for them", async () => {
+  let answer = 503;
+  const { store } = await googleWith((_url, method) => (method === "PATCH" ? Response.json({ error: { code: answer, message: answer === 400 ? "Invalid value" : "Unavailable" } }, { status: answer }) : undefined));
+  await op(store, "sync_calendar", {});
+  for (const title of ["One", "Two", "Three"]) assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title })) as { status: string }).status, "queued");
+  answer = 400;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(store.sources.outbox("google"), [], "all refused");
+  assert.equal(store.sources["refusals"].size, 0, "no reason kept for an edit nobody waits on");
+});
