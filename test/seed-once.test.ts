@@ -32,3 +32,21 @@ test("a seeding that fails doesn't fail the request, and the next request tries 
     console.error = log;
   }
 });
+
+test("a seeding that never settles stops holding requests after a while, and the next request tries again", async () => {
+  const run: SeedRun = { done: false, running: null };
+  const log = console.error;
+  const logged: unknown[] = [];
+  console.error = (...args: unknown[]) => void logged.push(args);
+  try {
+    const started = Date.now();
+    await seedOnce(run, async () => seed, () => new Promise(() => {}), 50);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(logged.length, 1);
+    let seeded = 0;
+    await seedOnce(run, async () => seed, async () => void seeded++, 50);
+    assert.equal(seeded, 1);
+  } finally {
+    console.error = log;
+  }
+});
