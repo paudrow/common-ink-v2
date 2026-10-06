@@ -118,6 +118,32 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "an indent the outline refuses leaves the cursor where Vim leaves a shift, not past the lines it covered", { scenario: "empty" }, async (app) => {
+  const L = "# L\n\n- one\n- two\n- three\n\nend\n";
+  const CB = "# C\n\n```\ncode one\ncode two\n```\n\nend\n";
+  // The text, where the cursor starts, the keys, and where Vim puts the cursor: the first line's first non-blank.
+  const cases: Array<[string, number, string, number, number]> = [
+    [L, 3, ">>", 3, 1],
+    [L, 3, ">ip", 3, 1],
+    [L, 3, "Vj>", 3, 1],
+    // The first >> nests two under one; the . would nest it deeper than that, and is refused.
+    [L, 4, ">>.", 4, 3],
+    // A plain shift, in a code block: Vim's own.
+    [CB, 4, ">ip", 3, 3],
+    [CB, 4, ">>", 4, 3],
+  ];
+  for (const [i, [text, line, keys, toLine, toColumn]] of cases.entries()) {
+    await app.writeFile(`R${i}.md`, text);
+    await app.open(`R${i}`);
+    await app.idle();
+    await app.call("cursor", line, 1);
+    await app.keys(`<Esc>${keys}`);
+    await app.idle();
+    const at = await where(app);
+    assert.deepEqual([at.line, at.column, at.mode], [toLine, toColumn, "normal"], `${keys} from line ${line}`);
+  }
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";
