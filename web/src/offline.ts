@@ -60,7 +60,10 @@ export class Offline {
   constructor(
     private kv: KV,
     private net: Network,
-  ) {}
+  ) {
+    // The browser says its connection went: offline now, rather than at the next request.
+    if (typeof addEventListener !== "undefined") addEventListener("offline", () => this.reached(false));
+  }
 
   /** Be told when unsent changes or reachability change. */
   onChange(fn: () => void): void {
