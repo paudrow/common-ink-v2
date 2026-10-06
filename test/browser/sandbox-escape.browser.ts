@@ -138,3 +138,40 @@ browserTest(h, "a sandboxed extension's call is refused past a size, and writing
   ]);
   assert.equal(await app.readFile("Big.md"), "");
 });
+
+const FLOOD = {
+  name: "Flood",
+  activationEvents: ["onCommand:flood.run"],
+  permissions: { "files:write": { paths: ["Flood/**"], why: "Write a lot" } },
+  contributes: { commands: [{ command: "flood.run", title: "Run Flood" }] },
+};
+
+const FLOODING = `export default { activate(ctx) {
+  ctx.commandBar.provide({ prefix: "flood ", placeholder: "", items: async () => [{ label: "x".repeat(3000000), run() {} }, { label: "small", run() {} }] });
+  ctx.commands.register("flood.run", async () => {
+    const r = {};
+    try { await ctx.state.set(new Array(3000000).fill(7)); r.numbers = "kept"; } catch (e) { r.numbers = e.message; }
+    let written = 0, refused = "";
+    for (let i = 0; i < 25; i++) { try { await ctx.files.write("Flood/" + i + ".md", "m".repeat(990000), 0); written++; } catch (e) { refused = e.message; } }
+    r.written = written;
+    r.refused = refused;
+    await ctx.workbench.notice("FLOOD " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension can't get past the size of a call with numbers, or send more than its share in a moment, or answer with too much", { scenario: "empty", levers: { permissions: "allow" }, allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/flood/extension.json", JSON.stringify(FLOOD));
+  await app.writeFile(".common-ink/extensions/flood/index.js", FLOODING);
+  await app.reload();
+  await app.command("Run Flood");
+  const said = (await app.page.locator(".notice p", { hasText: "FLOOD" }).textContent({ timeout: 60000 }))!;
+  const r = JSON.parse(said.slice(said.indexOf("{"))) as { numbers: string; written: number; refused: string };
+  assert.equal(r.numbers, "Flood sent more than 2,000,000 characters' worth in one call");
+  assert.ok(r.written >= 5 && r.written < 25, `wrote ${r.written} of 25`);
+  assert.equal(r.refused, "Flood is sending too much at once: it can send 10,000,000 characters' worth every 10 seconds");
+  await app.page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+P" : "Control+Shift+P");
+  await app.page.locator("#command-bar input").fill("flood ");
+  await app.page.waitForTimeout(1500);
+  const items = await app.page.locator("#command-bar li").allTextContents();
+  assert.ok(!items.some((t) => t.length > 1000), "the oversized answer wasn't shown");
+});
