@@ -555,3 +555,21 @@ test("a series moved, synced, undone, synced and moved again by hand ends where 
   await op(store, "sync_calendar", { force: true });
   assert.deepEqual(await shown(), moved);
 });
+
+test("after a sync brings back Google's copy of an edit, the edit can still be undone and redone, and a made event undone", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  const renamed = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [renamed] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  const undo = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [undo] })) as Array<{ status: string }>).map((u) => u.status), ["undone"], "redo");
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.summary, "Kickoff");
+  const made = (await op(store, "create_event", { title: "Lunch", start: "2026-10-07T12:00", timeZone: LA })) as { address: string };
+  const created = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [created] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  assert.equal(fake.event("ada@example.com", made.address.split("/").at(-1)!)?.status, "cancelled");
+});
