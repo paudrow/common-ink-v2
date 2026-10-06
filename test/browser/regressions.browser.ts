@@ -118,6 +118,23 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "Vim's visual block inserts, appends and deletes on every line it covers, lists too", { scenario: "empty" }, async (app) => {
+  await app.writeFile("V.md", "# V\n\nabc\ndef\nghi\n\n- one\n- two\n- three\n");
+  await app.goto({}, "V");
+  await app.idle();
+  await app.call("cursor", 3, 3);
+  await app.keys("<C-v>jjIx <Esc>");
+  await app.call("cursor", 3, 1);
+  await app.keys("<C-v>jj$A!<Esc>");
+  await app.call("cursor", 7, 3);
+  await app.keys("<C-v>jjI* <Esc>");
+  await app.call("cursor", 3, 1);
+  await app.keys("<C-v>jjd");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("V.md")).includes("bx c!"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("V.md"), "# V\n\nbx c!\nex f!\nhx i!\n\n- * one\n- * two\n- * three\n");
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
