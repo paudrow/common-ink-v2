@@ -50,16 +50,34 @@ test("an edit held offline is sent on reconnect when the note hasn't changed mea
   assert.equal((await offline.read(PLAN)).text, "one\ntwo\nthree\n");
 });
 
-test("an edit held offline, on a note someone changed meanwhile, is held as a clash to restore, not merged unseen", async () => {
+test("an edit held offline is merged on reconnect with what changed meanwhile, since the server never had it", async () => {
   const { store, offline, setUp } = setup();
   store.files.write({ path: PLAN, text: "one\ntwo\n", base: 0, author: you });
   setUp(false);
   await offline.hold({ path: PLAN, text: "one\ntwo\nthree\n", base: 1, edit: "o" });
   store.files.write({ path: PLAN, text: "ONE\ntwo\n", base: 1, author: { kind: "agent", name: "Helper" } });
   setUp(true);
+  assert.deepEqual(await offline.flush(), { sent: [PLAN], conflicts: [] });
+  assert.equal(store.files.read(PLAN)?.text, "ONE\ntwo\nthree\n");
+  assert.deepEqual(await offline.unsent(), []);
+});
+
+test("an edit held longer than the server keeps ids, on a note changed since, is a clash: it may have landed and been forgotten", async () => {
+  const { store, offline } = setup();
+  store.files.write({ path: PLAN, text: "one\ntwo\n", base: 0, author: you });
+  await offline.hold({ path: PLAN, text: "one\ntwo\nthree\n", base: 1, edit: "o", time: Date.now() - 31 * 86_400_000 });
+  store.files.write({ path: PLAN, text: "ONE\ntwo\n", base: 1, author: { kind: "agent", name: "Helper" } });
   assert.deepEqual(await offline.flush(), { sent: [], conflicts: [PLAN] });
   assert.equal(store.files.read(PLAN)?.text, "ONE\ntwo\n");
-  assert.equal((await offline.unsentFor(PLAN))?.conflict, true);
+});
+
+test("an edit held again as its sends keep failing keeps the time it was first held", async () => {
+  const { offline } = setup();
+  await offline.hold({ path: PLAN, text: "a\n", base: 1, edit: "o", time: 5 });
+  await offline.hold({ path: PLAN, text: "a\n", base: 1, edit: "o" });
+  assert.equal((await offline.unsentFor(PLAN))?.time, 5);
+  await offline.hold({ path: PLAN, text: "ab\n", base: 1, edit: "p" });
+  assert.notEqual((await offline.unsentFor(PLAN))?.time, 5, "a new edit, a new time");
 });
 
 test("an unsent edit that clashes with the server's stays, marked, and isn't sent again", async () => {

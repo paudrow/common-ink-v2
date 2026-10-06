@@ -515,7 +515,7 @@ export class Workbench {
    */
   private async firstSend(file: OpenFile, held: Unsent, path: FilePath, text: string, base: Revision, edit: string): Promise<WriteResult> {
     const latest = await this.net.latest(path);
-    const verdict = await this.net.verdict(held, latest);
+    const verdict = await this.net.verdict(held, latest, true);
     file.unchecked = undefined;
     if (verdict === "send") return this.net.write(path, text, base, edit);
     if (verdict === "clash") {

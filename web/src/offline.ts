@@ -56,6 +56,9 @@ export const unreachable = (err: unknown) => err instanceof TypeError || (err as
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 
+/** How long the server is sure to know an edit's id: a day short of the 30 it keeps them, for clocks. */
+const KNOWN_DAYS = 29;
+
 /** What a kept edit is, against the server's latest: there already, to send, or a clash to show. */
 type Verdict = "landed" | "send" | "clash";
 
@@ -152,7 +155,10 @@ export class Offline {
 
   /** Keep an edit that couldn't be sent, so it survives a reload. */
   async hold(unsent: Unsent): Promise<void> {
-    await this.kv.set("unsent", unsent.path, { ...unsent, time: unsent.time ?? Date.now() });
+    // When it was first held: held again as its sends keep failing, it's still the edit from then.
+    const before = unsent.time === undefined ? await this.unsentFor(unsent.path) : undefined;
+    const time = unsent.time ?? (before && before.edit === unsent.edit ? before.time : undefined) ?? Date.now();
+    await this.kv.set("unsent", unsent.path, { ...unsent, time });
     this.changed();
   }
 
@@ -277,7 +283,7 @@ export class Offline {
     if (!this.online) return unknown;
     let verdict: Verdict;
     try {
-      verdict = await this.verdict(edit, latest);
+      verdict = await this.verdict(edit, latest, !!held);
     } catch {
       return unknown;
     }
@@ -292,12 +298,18 @@ export class Offline {
   /**
    * A kept edit against the server's latest: "landed" if the server has it (its text, or its id
    * applied), "send" if nothing has changed since its base, and otherwise "clash". Throws offline.
+   *
+   * A held edit (made offline, ADR 0001) whose id the server doesn't know, from within the time the
+   * server keeps ids, never landed: it's sent, to be merged there. One older than that might have
+   * landed and been forgotten, so it's a clash. A draft that never landed is a clash too: the page
+   * went before it was saved, so it's shown before it's merged.
    */
-  async verdict(edit: Unsent, latest: WorkspaceFile): Promise<Verdict> {
+  async verdict(edit: Unsent, latest: WorkspaceFile, held: boolean): Promise<Verdict> {
     if (edit.text === latest.text) return "landed";
     if (edit.base === latest.revision) return "send";
     if (edit.edit && (await this.net.editApplied(latest.path, edit.edit))) return "landed";
-    return "clash";
+    const known = edit.edit !== undefined && edit.time !== undefined && Date.now() - edit.time < KNOWN_DAYS * 86_400_000;
+    return held && known ? "send" : "clash";
   }
 
   /** A file as the server has it now. Not reaching the server throws, as fetch does. */
@@ -353,7 +365,7 @@ export class Offline {
       let result: WriteResult;
       try {
         const latest = await this.latest(u.path);
-        const verdict = await this.verdict(u, latest);
+        const verdict = await this.verdict(u, latest, true);
         result = verdict === "send" ? await this.write(u.path, u.text, u.base, u.edit) : verdict === "landed" ? { status: "saved", file: latest } : { status: "conflict", file: latest };
       } catch (err) {
         if (unreachable(err)) break;
