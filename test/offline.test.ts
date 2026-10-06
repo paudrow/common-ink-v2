@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author, FilePath } from "../worker/src/files.ts";
 import { ServerAnswer } from "../web/src/api.ts";
-import { memoryKV, Offline, type HeldOp, type Network } from "../web/src/offline.ts";
+import { idbKV, memoryKV, Offline, type HeldOp, type Network } from "../web/src/offline.ts";
 import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -114,4 +114,28 @@ test("held edits of records go once each, however often sending starts, and wait
   await Promise.all([offline.flushOps(send), offline.flushOps(send)]);
   assert.deepEqual(sent, ["Add Lunch"]);
   assert.deepEqual(await offline.ops(), []);
+});
+
+test("IndexedDB that won't open (storage blocked) leaves a store in memory, so the app still works", async () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  for (const open of [
+    () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    },
+    () => {
+      const req = { error: new DOMException("Blocked", "UnknownError") } as { error: DOMException; onerror?: () => void };
+      setTimeout(() => req.onerror?.());
+      return req;
+    },
+  ]) {
+    Object.defineProperty(globalThis, "indexedDB", { value: { open }, configurable: true });
+    const kv = idbKV("blocked");
+    await kv.set("files", "Plan.md", { text: "a" });
+    assert.deepEqual(await kv.get("files", "Plan.md"), { text: "a" });
+    assert.deepEqual(await kv.all("files"), [{ text: "a" }]);
+    await kv.del("files", "Plan.md");
+    assert.equal(await kv.get("files", "Plan.md"), undefined);
+  }
+  if (had) Object.defineProperty(globalThis, "indexedDB", had);
+  else delete (globalThis as { indexedDB?: unknown }).indexedDB;
 });
