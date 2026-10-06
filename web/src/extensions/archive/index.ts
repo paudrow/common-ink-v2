@@ -20,7 +20,10 @@ function archivedIn(text: string): string[] {
 }
 
 async function post<T>(route: string, body: unknown): Promise<T> {
-  const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  // Archiving is the workspace's to record, so it waits for the server: say so plainly when it can't be reached.
+  const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => {
+    throw new Error(navigator.onLine ? "the server can't be reached; try again" : "you're offline; try again once you're back");
+  });
   const answer = await res.json().catch(() => null);
   if (!res.ok) throw new Error((answer as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
   return answer as T;
@@ -47,9 +50,19 @@ const extension: ExtensionModule = {
         ctx.views.refresh("archive");
         if (done.revision === null) return;
         const revision = done.revision;
-        ctx.workbench.notice(`${archive ? "Archived" : "Unarchived"} ${name}`, [{ label: "Undo", run: () => post("/api/undo", { revisions: [revision] }).then(load) }]);
+        ctx.workbench.notice(`${archive ? "Archived" : "Unarchived"} ${name}`, [{ label: "Undo", run: () => undo(revision, name, archive) }]);
       } catch (err) {
         ctx.workbench.notice(`Couldn't ${archive ? "archive" : "unarchive"} ${name}: ${(err as Error).message}`);
+      }
+    };
+    /** Take back an archive or unarchive, saying so if it couldn't be. */
+    const undo = async (revision: number, name: string, archive: boolean) => {
+      try {
+        const [result] = await post<Array<{ status: string }>>("/api/undo", { revisions: [revision] });
+        await load();
+        if (result?.status !== "undone" && result?.status !== "unchanged") throw new Error(result?.status === "missing" ? "that change isn't in history any more" : "the archive changed in a way it can't be taken back from");
+      } catch (err) {
+        ctx.workbench.notice(`Couldn't undo ${archive ? "archiving" : "unarchiving"} ${name}: ${(err as Error).message}`);
       }
     };
     const onFocused = (archive: boolean | "toggle") => {

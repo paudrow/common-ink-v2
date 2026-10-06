@@ -11,9 +11,9 @@ import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
 import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
-import { ARCHIVE_PATH, archiveText, parseArchive, withArchived } from "./archive.ts";
+import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
 import { present, type SearchOptions, type SearchResults } from "./search.ts";
-import { parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { isNote, parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -35,6 +35,8 @@ export interface Store {
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
   completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
+  /** Delete a note, and take it out of the archive with it (archive.ts). */
+  deleteNote(w: Write): Promise<WriteResult> | WriteResult;
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
   /** Files deleted since a time and not there now, newest first: what's in Trash. */
   deleted(since: number): Promise<Deleted[]> | Deleted[];
@@ -214,7 +216,7 @@ export const OPERATIONS = {
       if (!base) return fail('"base" must be the revision you read');
       return ok({ path, base });
     },
-    run: async (store, { path, base }, author) => store.write({ path, text: "", base, author, delete: true }),
+    run: async (store, { path, base }, author) => (isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true })),
   }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
@@ -650,17 +652,16 @@ async function archivedIn(store: Store): Promise<Set<string>> {
   return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
 }
 
-/** Archive or unarchive notes: one change to the archive file, read again and retried if someone else wrote it meanwhile. */
+/** Archive or unarchive notes: one change to the archive file. A write that meets another's is merged as a set (archive.ts). */
 async function setArchived(store: Store, paths: FilePath[], archived: boolean, author: Author): Promise<{ revision: Revision | null; archived: FilePath[] }> {
-  for (let tries = 0; tries < 3; tries++) {
-    const file = await store.read(ARCHIVE_PATH);
-    const current = parseArchive(file?.text ?? "");
-    const next = withArchived(current, paths, archived);
-    if (next.join("\n") === current.join("\n")) return { revision: null, archived: next };
-    const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
-    if (result.status !== "conflict") return { revision: result.file.revision, archived: next };
-  }
-  throw new OperationError("The archive kept changing; try again");
+  const file = await store.read(ARCHIVE_PATH);
+  const current = readArchive(file?.text ?? "");
+  if (!current) throw new OperationError(`${ARCHIVE_PATH} isn't valid JSON with an "archived" list, so it wasn't changed. Fix it, or put back an earlier version from History.`);
+  const next = withArchived(current, paths, archived);
+  if (next.archived.join("\n") === current.archived.join("\n")) return { revision: null, archived: next.archived };
+  const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
+  if (result.status === "conflict") throw new OperationError("The archive changed meanwhile and couldn't be merged; try again");
+  return { revision: result.file.revision, archived: parseArchive(result.file.text) };
 }
 
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */

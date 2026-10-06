@@ -54,3 +54,52 @@ test("only notes that are there can be archived", async () => {
   assert.deepEqual(await run(store, "archive", { paths: ["Nowhere.md"] }), { error: "There's no note at Nowhere.md" });
   assert.deepEqual(await run(store, "archive", { paths: [".common-ink/layout.json"] }), { error: '"paths" must be a list of notes\' paths, ending in .md' });
 });
+
+const archivedNow = async (store: ReturnType<typeof memoryStore>) => (await run(store, "list_files", {})).filter((f) => f.archived).map((f) => f.path);
+const archiveFile = (store: ReturnType<typeof memoryStore>) => store.files.read(".common-ink/archive.json" as FilePath)?.text;
+
+test("undoing one archive never clashes with another note's archive or unarchive", async () => {
+  const store = workspace();
+  const first = await run(store, "archive", { paths: ["Launch plan.md"] });
+  await run(store, "archive", { paths: ["Old launch.md"] }, claude);
+  const [undone] = (await run(store, "undo", { revisions: [first.revision] })) as unknown as Array<{ status: string }>;
+  assert.equal(undone.status, "undone");
+  assert.deepEqual(await archivedNow(store), ["Old launch.md"]);
+  const second = await run(store, "archive", { paths: ["Groceries.md"] });
+  await run(store, "unarchive", { paths: ["Old launch.md"] });
+  const [again] = (await run(store, "undo", { revisions: [second.revision] })) as unknown as Array<{ status: string }>;
+  assert.equal(again.status, "undone");
+  assert.deepEqual(await archivedNow(store), []);
+});
+
+test("two tabs writing the archive from the same version both count", () => {
+  const store = workspace();
+  const path = ".common-ink/archive.json" as FilePath;
+  const start = store.files.write({ path, text: '{\n  "archived": [\n    "Groceries.md"\n  ]\n}\n', base: 0, author: ada });
+  store.files.write({ path, text: '{\n  "archived": [\n    "Groceries.md",\n    "Launch plan.md"\n  ]\n}\n', base: start.file!.revision, author: ada });
+  const stale = store.files.write({ path, text: '{\n  "archived": []\n}\n', base: start.file!.revision, author: claude });
+  assert.equal(stale.status, "merged");
+  assert.equal(archiveFile(store), '{\n  "archived": [\n    "Launch plan.md"\n  ]\n}\n');
+});
+
+test("deleting a note takes it out of the archive, so a new note at its path isn't archived", async () => {
+  const store = workspace();
+  await run(store, "archive", { paths: ["Groceries.md", "Old launch.md"] });
+  const note = store.files.read("Groceries.md" as FilePath)!;
+  await run(store, "delete_file", { path: "Groceries.md", base: note.revision });
+  assert.deepEqual(await archivedNow(store), ["Old launch.md"]);
+  store.files.write({ path: "Groceries.md" as FilePath, text: "# Groceries\nnew list", base: 0, author: ada });
+  assert.deepEqual(await archivedNow(store), ["Old launch.md"]);
+});
+
+test("a hand-edited archive keeps its other keys, and one that isn't valid JSON is never written over", async () => {
+  const store = workspace();
+  const path = ".common-ink/archive.json" as FilePath;
+  store.files.write({ path, text: '{"why": "my notes", "archived": ["Groceries.md", "Folder/"]}\n', base: 0, author: ada });
+  await run(store, "archive", { paths: ["Old launch.md"] });
+  assert.equal(archiveFile(store), '{\n  "why": "my notes",\n  "archived": [\n    "Groceries.md",\n    "Old launch.md",\n    "Folder/"\n  ]\n}\n');
+  const broken = '{ broken, "Groceries.md"\n';
+  store.files.write({ path, text: broken, base: store.files.read(path)!.revision, author: ada });
+  assert.deepEqual(await run(store, "archive", { paths: ["Launch plan.md"] }), { error: ".common-ink/archive.json isn't valid JSON with an \"archived\" list, so it wasn't changed. Fix it, or put back an earlier version from History." });
+  assert.equal(archiveFile(store), broken);
+});
