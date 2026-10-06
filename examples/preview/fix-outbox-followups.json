@@ -1,0 +1,7 @@
+{
+  "pr": 102,
+  "title": "Edits waiting for Google stay visible, and aren't dropped when Google can't say",
+  "steps": [
+    "Nothing changes on a Preview's Sample calendar. With `npm run dev -- --fake-google`, end the fake Google's grant, change an event, give the grant back and sync: Show data sources says the edit waited until it went."
+  ]
+}

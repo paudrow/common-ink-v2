@@ -1,0 +1,8 @@
+{
+  "pr": 116,
+  "title": "Every upload address answers under the upload's policy",
+  "steps": [
+    "Nothing should look different: drop an image into a note and it uploads and shows.",
+    "Open /uploads/no-such-file.png in the address bar: it says Not found, as before."
+  ]
+}

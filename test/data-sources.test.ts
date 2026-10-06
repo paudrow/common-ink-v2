@@ -119,14 +119,14 @@ test("an edit the source can't take yet is kept, says why, and goes once the sou
     },
   };
   const store = sampleWorkspace([google], false);
-  store.sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
   const queued = (await op(store, "update_event", { address: "event:google/work/standup", title: "Standup (offline)" })) as { status: string; error: string };
   assert.deepEqual([queued.status, queued.error], ["queued", "Google wants you to sign in again"]);
   assert.equal(store.sources.status("ada@example.com").sources[0].state, "needs-reconnect");
   assert.equal(store.sources.status("ada@example.com").sources[0].pending, 1);
   assert.equal(JSON.parse(store.files.read(recordPath({ source: "google", kind: "event", collection: "work", id: "standup" }))!.text).title, "Standup (offline)", "the edit is kept here meanwhile");
   down = null;
-  store.sources.connect({ email: "ada@example.com", refreshToken: "r2", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
+  await store.sources.connect({ email: "ada@example.com", refreshToken: "r2", scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/contacts.readonly"] });
   assert.equal(await store.sources.flush("google"), null);
   assert.deepEqual(pushed, ["put standup"]);
   assert.deepEqual([store.sources.status("ada@example.com").sources[0].state, store.sources.status("ada@example.com").sources[0].pending], ["ok", 0]);
@@ -166,4 +166,16 @@ test("an event lists the notes that link to it, and to its series", async () => 
   assert.equal(linked.link, "[Fall break](event:sample/holidays/fall)");
   assert.equal(store.files.read("Trips.md" as FilePath)?.text, "# Fall break\n\n[Fall break](event:sample/holidays/fall)\n");
   assert.deepEqual(((await op(store, "read_event", { address: "event:sample/holidays/fall" })) as { notes: Array<{ path: string }> }).notes.map((n) => n.path), ["Other.md", "Trips.md"]);
+});
+
+test("update_event writes each field it's given as given, so a client sends only the fields it changed", async () => {
+  const store = sampleWorkspace();
+  const made = (await op(store, "create_event", { title: "Dentist", start: "2026-10-06T14:30", calendar: "work" })) as { address: string };
+  await op(store, "update_event", { address: made.address, title: "Dentist (Dr Lee)" }, claude);
+  await op(store, "update_event", { address: made.address, location: "14 High Street" });
+  const kept = (await op(store, "read_event", { address: made.address })) as { event: { title: string; location?: string } };
+  assert.deepEqual([kept.event.title, kept.event.location], ["Dentist (Dr Lee)", "14 High Street"], "a field left out is left as it is");
+  await op(store, "update_event", { address: made.address, title: "Dentist", location: "15 High Street" });
+  const sent = (await op(store, "read_event", { address: made.address })) as { event: { title: string } };
+  assert.equal(sent.event.title, "Dentist", "a field sent as it was when the client read it undoes a change made since");
 });
