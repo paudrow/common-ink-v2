@@ -132,7 +132,7 @@ test("sign-in's cookies are __Host- cookies, so another subdomain such as v1's c
 test("signing out from the app ends the session and clears what the browser kept; another site, or a picture in a note, only gets the button", async () => {
   const url = new URL(`${ORIGIN}/auth/sign-out`);
   const signOut = (init: RequestInit) => signInRoute(new Request(url, init), url, config, async () => true).then((r) => r!);
-  const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
+  const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax", "ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
   const fromApp: RequestInit[] = [
     { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } },
     { headers: { "Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate" } },
@@ -175,7 +175,7 @@ test("declining at Google says so, with a way to try again", async () => {
   const url = new URL(`${ORIGIN}/auth/google/callback?error=access_denied&state=${state}`);
   const res = await signInRoute(new Request(url, { headers: { Cookie: start!.headers.get("Set-Cookie")!.split(";")[0] } }), url, config, async () => true);
   assert.equal(res!.status, 400);
-  assert.match(await res!.text(), /<h1[^>]*>You didn't allow sign-in · Common Ink<\/h1>|<title>You didn't allow sign-in · Common Ink<\/title>.*<a href="\/auth\/google">Try again<\/a>/s);
+  assert.match(await res!.text(), /<title>You didn't allow sign-in · Common Ink<\/title>.*<a href="\/auth\/google">Try again<\/a>/s);
 });
 
 test("signing out also expires the cookies v1 left on this address", async () => {
