@@ -149,11 +149,15 @@ browserTest(h, "around a table or math block at a note's start or end, G, gg, co
     await app.writeFile("End.md", ["top", "", ...block].join("\n"));
     await app.goto({}, "End");
     await app.idle();
-    assert.deepEqual([await line("G", 1), await line("G", 2), await line("3j", 1), await line("5j", 1), await line("j", 2)], [5, 5, 5, 5, 3], `${kind} at the end: G, G, 3j, 5j, j`);
+    assert.deepEqual([await line("G", 1), await line("G", 2), await line("3j", 1), await line("5j", 1), await line("2j", 2), await line("3j", 2), await line("j", 2)], [5, 5, 5, 5, 5, 5, 3], `${kind} at the end: G, G, 3j, 5j, 2j, 3j, j`);
+    // A mark named j: 'j goes to its line, not one step.
+    await app.call("cursor", 5, 1);
+    await app.keys("mj");
+    assert.equal(await line("'j", 2), 5, `${kind} at the end: 'j`);
     await app.writeFile("Start.md", [...block, "", "end"].join("\n"));
     await app.goto({}, "Start");
     await app.idle();
-    assert.deepEqual([await line("gg", 5), await line("gg", 4), await line("2k", 5), await line("3k", 5), await line("5k", 5), await line("k", 4)], [1, 1, 1, 1, 1, 3], `${kind} at the start: gg, gg, 2k, 3k, 5k, k`);
+    assert.deepEqual([await line("gg", 5), await line("gg", 4), await line("2k", 5), await line("3k", 5), await line("5k", 5), await line("2k", 4), await line("3k", 4), await line("k", 4)], [1, 1, 1, 1, 1, 1, 1, 3], `${kind} at the start: gg, gg, 2k, 3k, 5k, 2k, 3k, k`);
     // A click on the drawn block puts the cursor where it was clicked: in the block, which shows its markdown.
     await app.call("cursor", 5, 1);
     await app.page.locator(kind === "table" ? ".tab-editor:not([hidden]) .cm-content td" : ".tab-editor:not([hidden]) .cm-content .katex").first().click();
