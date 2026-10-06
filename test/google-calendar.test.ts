@@ -339,6 +339,72 @@ test("after renaming one occurrence and deleting another, undoing a move of thei
   assert.deepEqual(run.synced, run.before);
 });
 
+test("a sync that was already under way when an edit went out leaves the edit as it is here", async () => {
+  const { fake } = google();
+  let held: Promise<void> | null = null;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    const answer = await fake.fetch(input, init);
+    if (held && String(input).includes("/calendars/primary/events?")) await held;
+    return answer;
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  let release!: () => void;
+  held = new Promise<void>((r) => (release = r));
+  const syncing = op(store, "sync_calendar", { force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  const editing = op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await new Promise((r) => setTimeout(r, 10));
+  release();
+  held = null;
+  await Promise.all([syncing, editing]);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event;
+  assert.equal(here.title, "Dentist (Dr Lee)", "the page Google sent before the edit doesn't put the old title back");
+  await op(store, "update_event", { address: "event:google/primary/dentist", description: "Bring forms" });
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location, g.description], ["Dentist (Dr Lee)", "14 High Street", "Bring forms"]);
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, undefined, "the next edit went with the etag Google gave ours, not the page's older one");
+});
+
+test("syncs asked for while one runs share one more after it, so they take turns and see what changed meanwhile", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  const before = fake.calls.length;
+  const first = store.sources.sync();
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, summary: "Dentist (moved)" });
+  const [, b, c] = await Promise.all([first, store.sources.sync(), store.sources.sync()]);
+  assert.deepEqual(c, b);
+  const lists = fake.calls.slice(before).map((call, i) => [call, i] as const).filter(([call]) => call.startsWith("GET /calendar/v3/users/me/calendarList"));
+  assert.equal(lists.length, 2);
+  const events = fake.calls.slice(before).map((call, i) => [call, i] as const).filter(([call]) => call.includes("/events?"));
+  assert.ok(events.filter(([, i]) => i < lists[1][1]).length >= 2, "the second began after the first had read every calendar");
+  assert.equal(((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string } }).event.title, "Dentist (moved)");
+});
+
+test("an event Google changed after an edit made during a sync comes in on a later sync", async () => {
+  const { fake } = google();
+  let gate: Promise<void> | null = null;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if (gate && String(input).includes("/calendars/primary/events?")) await gate;
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  let open!: () => void;
+  gate = new Promise<void>((r) => (open = r));
+  const syncing = op(store, "sync_calendar", { force: true });
+  await new Promise((r) => setTimeout(r, 10));
+  await op(store, "update_event", { address: "event:google/primary/dentist", location: "Room 1" });
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "Room 9" });
+  gate = null;
+  open();
+  await syncing;
+  await op(store, "sync_calendar", { force: true });
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { location?: string } }).event;
+  assert.equal(here.location, "Room 9");
+});
+
 test("the sample fake Google's week is around the day it's given, in New York, whatever the clock says", async () => {
   const fake = sampleGoogle("2026-10-05");
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
