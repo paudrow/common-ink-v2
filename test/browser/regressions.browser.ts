@@ -138,6 +138,30 @@ browserTest(h, "j and k go a line at a time through blocks side by side, at the 
   assert.deepEqual(lines, [...numbers, ...numbers.reverse().slice(1)]);
 });
 
+browserTest(h, "around a table or math block at a note's start or end, G, gg, counts and clicks go where they're sent", { scenario: "empty", viewport: { width: 1200, height: 1000 } }, async (app) => {
+  const line = async (keys: string, from: number) => {
+    await app.call("cursor", from, 1);
+    await app.keys(keys);
+    await app.page.waitForTimeout(100);
+    return (await where(app)).line;
+  };
+  for (const [kind, block] of [["table", ["| a | b |", "|--|--|", "| 1 | 2 |"]], ["math", ["$$", "x^2", "$$"]]] as const) {
+    await app.writeFile("End.md", ["top", "", ...block].join("\n"));
+    await app.goto({}, "End");
+    await app.idle();
+    assert.deepEqual([await line("G", 1), await line("G", 2), await line("3j", 1), await line("5j", 1), await line("j", 2)], [5, 5, 5, 5, 3], `${kind} at the end: G, G, 3j, 5j, j`);
+    await app.writeFile("Start.md", [...block, "", "end"].join("\n"));
+    await app.goto({}, "Start");
+    await app.idle();
+    assert.deepEqual([await line("gg", 5), await line("gg", 4), await line("2k", 5), await line("3k", 5), await line("5k", 5), await line("k", 4)], [1, 1, 1, 1, 1, 3], `${kind} at the start: gg, gg, 2k, 3k, 5k, k`);
+    // A click on the drawn block puts the cursor where it was clicked: in the block, which shows its markdown.
+    await app.call("cursor", 5, 1);
+    await app.page.locator(kind === "table" ? ".tab-editor:not([hidden]) .cm-content td" : ".tab-editor:not([hidden]) .cm-content .katex").first().click();
+    await app.page.waitForTimeout(100);
+    assert.equal((await where(app)).line, 1, `a click on the ${kind}`);
+  }
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
