@@ -119,7 +119,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
-    if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
+    if (url.pathname.startsWith("/uploads/") && (req.method === "GET" || req.method === "HEAD")) return serveUpload(req, url, env, workspace as unknown as Store);
     const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
@@ -213,7 +213,7 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
     if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
-  if (!result.ok) return json({ error: result.error }, 400);
+  if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
   if (result.value === null && name === "read_event") return json(null);
   if (result.value === null) return json({ error: `Nothing at ${args.path}` }, 404);
@@ -250,7 +250,7 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(blob.body, {
+    new Response(req.method === "HEAD" ? null : blob.body, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
