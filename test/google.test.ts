@@ -189,12 +189,12 @@ test("with Google connected, contacts come from Google, and its formats stay out
   await assert.rejects(sources.contacts("ada@example.com", ""), /isn't connected/);
   assert.equal(sources.status("ada@example.com").using, "none");
   assert.equal(sources.status("ada@example.com").sources[0].state, "not-connected");
-  assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["openid"] }), false, "without the data scopes it isn't connected");
-  assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: DATA_SCOPES }), true);
+  assert.equal(await sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["openid"] }), false, "without the data scopes it isn't connected");
+  assert.equal(await sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: DATA_SCOPES }), true);
   assert.equal(sources.status("ada@example.com").using, "google");
   assert.deepEqual(await sources.contacts("ada@example.com", "sam"), [{ id: "people/1", name: "Sam", emails: ["sam@example.com"], phones: [], organization: undefined }]);
   assert.ok(seen.some((s) => s.startsWith("GET https://people.googleapis.com") && s.endsWith("Bearer access-1")));
-  sources.disconnect("ada@example.com");
+  await sources.disconnect("ada@example.com");
   assert.equal(sources.status("ada@example.com").using, "none");
 });
 

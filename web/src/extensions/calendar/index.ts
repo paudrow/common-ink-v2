@@ -5,7 +5,8 @@ import type { Occurrence } from "../../../../worker/src/calendar.ts";
 import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import type { EventFound } from "../../../../worker/src/operations.ts";
-import { EventLinks, dayOfEvent, linkTo } from "./links.ts";
+import { EventLinks, dayOfEvent, dayOfOccurrence, linkTo } from "./links.ts";
+import { dayOf } from "./model.ts";
 import { notesSection } from "./notes.ts";
 import type { CalendarPage, Embedded, PageState } from "./page.ts";
 import type { Embed } from "../../extension-api.ts";
@@ -68,7 +69,7 @@ const calendar: ExtensionModule = {
           const { CalendarPage } = await import("./page.ts");
           const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState, reveal);
           reveal = undefined;
-          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : dayOfOccurrence(o));
           pages.add(page);
           root.replaceChildren(page.root);
           page.root.focus({ preventScroll: true });
@@ -126,7 +127,7 @@ const calendar: ExtensionModule = {
     });
     // Links to events in notes are chips; a click shows the event in a Calendar tab, open on it.
     const links = new EventLinks(ctx, (address, found: EventFound | null) => {
-      reveal = { address, day: found ? dayOfEvent(found) : new Date().toISOString().slice(0, 10) };
+      reveal = { address, day: found ? dayOfEvent(found) : dayOf(new Date()) };
       ctx.views.open("calendar", { newTab: true });
     });
     ctx.editor.extend(links.extension());
@@ -175,7 +176,7 @@ const calendar: ExtensionModule = {
         if (!page) {
           const { CalendarPage } = await import("./page.ts");
           page = new CalendarPage(ctx, {}, undefined, argsOf(embed));
-          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : dayOfOccurrence(o));
           page.openWhole = () => ctx.views.open("calendar", { newTab: true });
           embedded.set(embed.key, page);
           pages.add(page);
