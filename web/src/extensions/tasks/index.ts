@@ -121,8 +121,8 @@ const extension: ExtensionModule = {
     });
     ctx.views.register("tasks", { render: (root) => view.render(root) });
     ctx.search.provide("task", {
-      search: async (query, limit) =>
-        findTasks(await store.all(), query)
+      search: async (query, limit, within) =>
+        findTasks(await store.all(), query, within)
           .slice(0, limit)
           .map((t) => ({
             title: t.summary || t.text,

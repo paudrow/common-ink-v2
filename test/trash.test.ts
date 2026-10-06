@@ -220,3 +220,13 @@ test("each day, notes in Trash longer than trash.retentionDays are purged by Tra
   assert.deepEqual((await run(store, "trash")).map((t) => t.path), ["Recent.md"]);
   assert.deepEqual(purgeExpired(store.files, Date.now()), [], "a second run that day has nothing to do");
 });
+
+test("a search within some paths finds only the notes in Trash there", async () => {
+  const { store, write, remove } = workspace();
+  write("Public/Gone.md", "# Gone\nzebra");
+  write("Secret/Plan.md", "# Plan\nzebra");
+  remove("Public/Gone.md");
+  remove("Secret/Plan.md");
+  const found = await run(store, "search", { query: "zebra is:trashed", within: ["Public/**"] });
+  assert.deepEqual([(found.results as Array<{ path: string }>).map((r) => r.path), found.total], [["Public/Gone.md"], 1]);
+});

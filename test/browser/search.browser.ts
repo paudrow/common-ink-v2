@@ -103,6 +103,34 @@ browserTest(h, "a sandboxed extension with no permissions can't read notes, task
   assert.deepEqual(leaked, [], "search.find must not hand it what files.read and data.calendar refuse");
 });
 
+const ORACLE = `export default { activate(ctx) {
+  ctx.commands.register("oracle.run", async () => {
+    const ask = async (q, n) => (await ctx.search.find(q, n)).flatMap((s) => s.results.map((r) => r.path || r.title));
+    const out = {};
+    for (const [q, n] of [["zebra", 1], ["zebra", 20], ["zebra sort:title", 1], ["zebra sort:title", 20], ["-giraffe sort:title", 1], ["-giraffe sort:title", 20]]) out[q + " @" + n] = await ask(q, n);
+    await ctx.workbench.notice("ORACLE " + JSON.stringify(out));
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension that may read only Public/ can't tell from the limit whether other notes match", { scenario: "empty", levers: { permissions: "deny" } }, async ({ page }) => {
+  await writeFile(page, "Public/Decoy.md", "# Decoy\nzebra stripes\n");
+  await writeFile(page, "Secret/Plan.md", "# Zebra acquisition\nconfidential\n");
+  await writeFile(page, ".common-ink/settings.json", JSON.stringify({ "extensions.permissions": { oracle: { "files:read:Public/**": "allow" } } }));
+  await install(page, "oracle", {
+    "extension.json": JSON.stringify({ name: "Oracle", activationEvents: ["onCommand:oracle.run"], permissions: { "files:read": { paths: ["Public/**"], why: "read public notes" } }, contributes: { commands: [{ command: "oracle.run", title: "Run oracle" }] } }),
+    "index.js": ORACLE,
+  });
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __commonInk?: unknown }).__commonInk);
+  await runCommand(page, "Run oracle");
+  const said = await notice(page, "ORACLE");
+  const got = JSON.parse(said.slice(said.indexOf("{"))) as Record<string, string[]>;
+  for (const q of ["zebra", "zebra sort:title", "-giraffe sort:title"]) {
+    assert.deepEqual(got[`${q} @1`], got[`${q} @20`].slice(0, 1), q);
+    assert.deepEqual(got[`${q} @20`], ["Public/Decoy.md"], q);
+  }
+});
+
 const SLOW = `export default { activate(ctx) {
   ctx.search.provide("slow", { search: () => new Promise(() => {}) });
 } };`;

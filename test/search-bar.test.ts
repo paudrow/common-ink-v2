@@ -36,7 +36,7 @@ test("search asks each kind of result, and type: picks which", async () => {
   const asked: string[] = [];
   const search = new Search({
     manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [{ filter: "due", description: "", values: [] }] })],
-    notes: { search: (q) => (asked.push(`notes: ${JSON.stringify(q.terms)}`), [{ title: "Launch plan", run() {} }]) },
+    notes: { search: (q) => (asked.push(`notes: ${JSON.stringify(q.terms)}`), { results: [{ title: "Launch plan", run() {} }] }) },
   });
   search.provide("task", { search: (q) => (asked.push(`tasks: ${q.terms.length}`), [{ title: "Record the demo", run() {} }]) }, "tasks");
   const titles = async (text: string) => (await search.find(text, 5)).map((s) => `${s.title}: ${s.results.map((r) => r.title).join(", ")}`);
@@ -76,13 +76,13 @@ test("events match their title and place, a series once at its next time, coming
 });
 
 test("one kind of result has one provider: the first extension to declare it", async () => {
-  const search = new Search({ manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }), manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }, "hijack")], notes: { search: () => [] } });
+  const search = new Search({ manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }), manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }, "hijack")], notes: { search: () => ({ results: [] }) } });
   assert.throws(() => search.provide("task", { search: () => [] }, "hijack"), /belongs to tasks, not hijack/);
   assert.deepEqual(search.types().map((t) => t.type), ["note", "task"]);
 });
 
 test("a provider that never answers is left out after a moment, and notes come first", async () => {
-  const search = new Search({ manifests: () => [manifest({ types: [{ type: "slow", title: "Slow" }], filters: [] }, "slowpoke")], notes: { search: () => [{ title: "Garden plan", run() {} }] } });
+  const search = new Search({ manifests: () => [manifest({ types: [{ type: "slow", title: "Slow" }], filters: [] }, "slowpoke")], notes: { search: () => ({ results: [{ title: "Garden plan", run() {} }] }) } });
   search.provide("slow", { search: () => new Promise(() => {}) }, "slowpoke");
   const seen: string[][] = [];
   const start = Date.now();
@@ -100,4 +100,30 @@ test("-type: leaves a kind out, and notes that can't be searched say why", async
 test("Tab completes a quoted value, spaces and all", () => {
   assert.deepEqual(complete('hello in:"My F', 14, FILTERS), { text: 'hello in:"My Folder/"', caret: 21 });
   assert.deepEqual(complete('in:"my', 6, FILTERS), { text: 'in:"My Folder/"', caret: 15 });
+});
+
+test("a find within some paths asks each kind for only what's there, before its limit, and leaves out kinds it may not see", async () => {
+  const asked: string[] = [];
+  const search = new Search({
+    manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }), manifest({ types: [{ type: "event", title: "Events" }], filters: [] }, "calendar")],
+    notes: { search: (_q, _limit, within) => (asked.push(`notes ${JSON.stringify(within)}`), { results: [{ title: "Decoy", path: "Public/Decoy.md", run() {} }], more: true }) },
+  });
+  // A provider that ignores `within` still has what's outside it taken out before the limit is applied.
+  search.provide("task", { search: (_q, _limit, within) => (asked.push(`tasks ${JSON.stringify(within)}`), [{ title: "Secret task", path: "Secret/Plan.md", run() {} }, { title: "Public task", path: "Public/Decoy.md", run() {} }, { title: "No file", run() {} }]) }, "tasks");
+  search.provide("event", { search: () => (asked.push("events"), [{ title: "Dentist", run() {} }]) }, "calendar");
+  const found = await search.find("zebra", 1, undefined, (type) => (type === "event" ? [] : ["Public/**"]));
+  assert.deepEqual(
+    found.map((s) => [s.title, s.results.map((r) => r.title), s.more ?? false]),
+    [
+      ["Notes", ["Decoy"], true],
+      ["Tasks", ["Public task"], false],
+    ],
+  );
+  assert.deepEqual(asked, ['notes ["Public/**"]', 'tasks ["Public/**"]']);
+  // Unscoped, a kind's results are as its provider gives them.
+  assert.deepEqual((await search.find("zebra", 5)).map((s) => s.results.length), [1, 3, 1]);
+});
+
+test("Tab after a closed quoted value moves on to the next value", () => {
+  assert.deepEqual(complete('in:"My Folder/"', 15, FILTERS), { text: "in:Projects/", caret: 12 });
 });

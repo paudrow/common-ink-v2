@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Files, type Author, type FilePath } from "../../worker/src/files.ts";
-import { format, parse, select, titleOf, type Query, type Term } from "../../worker/src/query.ts";
+import { format, inGlobs, parse, select, titleOf, type Query, type Term } from "../../worker/src/query.ts";
 import { SearchIndex } from "../../worker/src/search.ts";
 import { memoryDb } from "../sqlite.ts";
 import { forAll, type Rng } from "./gen.ts";
@@ -20,14 +20,22 @@ const note = (r: Rng) => ({
   author: r.pick(AUTHORS),
 });
 const term = (r: Rng): Term =>
-  r.bool(0.75)
+  r.bool(0.7)
     ? { kind: "words", text: r.array(1, r.bool(0.3) ? 3 : 1, () => r.pick(WORDS).slice(0, r.int(1, 8))).join(" "), negated: r.bool(0.2) }
-    : { kind: "filter", key: r.pick(["in", "from", "has"]), value: r.pick(["Projects", "agent", "me", "task", "embed"]), negated: r.bool(0.3) };
+    : r.bool(0.8)
+      ? { kind: "filter", key: r.pick(["in", "from", "has"]), value: r.pick(["Projects", "agent", "me", "task", "embed"]), negated: r.bool(0.3) }
+      : { kind: "filter", key: "sort", value: r.pick(["title", "edited", "relevance"]), negated: r.bool(0.2) };
 
-test("searching through the index finds exactly what the matcher finds over every note, in the same order", () => {
+test("searching through the index finds exactly what the matcher finds over every note, in the same order, within some paths too", () => {
   forAll(
-    (r) => ({ notes: r.array(0, 12, note), deletes: r.array(0, 3, () => r.int(0, 11)), query: { terms: r.array(1, 3, term) } as Query }),
-    ({ notes, deletes, query }) => {
+    (r) => ({
+      notes: r.array(0, 12, note),
+      deletes: r.array(0, 3, () => r.int(0, 11)),
+      query: { terms: r.array(1, 3, term) } as Query,
+      within: r.bool(0.3) ? r.array(0, 2, () => r.pick(["Projects/**", "Journal/*", "*.md", "**/l*", "Projects/plan?.md"])) : undefined,
+      limit: r.pick([1, 3, 100]),
+    }),
+    ({ notes, deletes, query, within, limit }) => {
       let clock = 1_000;
       const db = memoryDb();
       const index = new SearchIndex(db);
@@ -45,8 +53,11 @@ test("searching through the index finds exactly what the matcher finds over ever
         .all<{ path: string; text: string; author: string; time: number }>("SELECT f.path, f.text, c.author, c.time FROM files f JOIN changes c ON c.revision = f.revision")
         .map((f) => ({ path: f.path, title: titleOf(f.path, f.text), text: f.text, edited: f.time, author: JSON.parse(f.author) as Author }));
       const q = format(query);
-      const expected = select(parse(q), every, ctx).map((n) => n.path);
-      assert.deepEqual(index.search(parse(q), { ctx, limit: 100 }).results.map((r) => r.path), expected, q);
+      const inside = within ? inGlobs(within) : () => true;
+      const expected = select(parse(q), every.filter((n) => inside(n.path)), ctx).map((n) => n.path);
+      const found = index.search(parse(q), { ctx, limit, within });
+      assert.deepEqual(found.results.map((r) => r.path), expected.slice(0, limit), q);
+      assert.equal(found.total, expected.length, q);
     },
     { runs: 1500 },
   );

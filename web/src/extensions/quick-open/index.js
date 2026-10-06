@@ -34,6 +34,8 @@ export default {
           const items = sections.flatMap((s) => [
             ...(s.note ? [{ label: s.note, dim: true, section: s.title, run: () => {} }] : []),
             ...s.results.map((r) => ({ label: r.title, detail: r.detail, aside: r.aside, dim: r.dim, section: s.title, run: () => r.run() })),
+            // Search stopped before it read every note it might find: say so, and how to narrow it.
+            ...(s.more ? [{ label: "More results…", detail: "add words or filters to find them", dim: true, section: s.title, run: () => ctx.commandBar.open(query) }] : []),
           ]);
           if (!query || !plain) return items;
           const shown = new Set(sections.flatMap((s) => s.results.map((r) => r.path)));
