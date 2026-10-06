@@ -134,14 +134,14 @@ export class GoogleCalendar implements Adapter {
   constructor(
     private config: GoogleConfig,
     /** The connected person's refresh token, or null if nobody's connected. */
-    private refreshToken: () => string | null,
+    private refreshToken: () => Promise<string | null>,
     private fetcher: typeof fetch = fetch,
     private now: () => number = Date.now,
   ) {}
 
   private async access(fresh = false): Promise<string> {
     if (!fresh && this.token && this.token.until > this.now() + 60_000) return this.token.value;
-    const refresh = this.refreshToken();
+    const refresh = await this.refreshToken();
     if (!refresh) throw new ReconnectNeeded("Google Calendar isn't connected");
     const res = await this.fetcher("https://oauth2.googleapis.com/token", {
       method: "POST",

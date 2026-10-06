@@ -19,14 +19,19 @@ export interface GoogleConfig {
   clientSecret: string;
 }
 
-/** Where to send the browser to sign in, and to connect calendar and contacts when `data` is set. */
-export function authorizeUrl(config: GoogleConfig, redirectUri: string, state: string, data: boolean): string {
+/**
+ * Where to send the browser to sign in, and to connect calendar and contacts when `data` is set.
+ * `challenge` is the PKCE challenge (S256) for the verifier that `exchange` sends back.
+ */
+export function authorizeUrl(config: GoogleConfig, redirectUri: string, state: string, data: boolean, challenge: string): string {
   const params = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: redirectUri,
     response_type: "code",
     scope: [...SIGN_IN_SCOPES, ...(data ? DATA_SCOPES : [])].join(" "),
     state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
     // Only connecting data needs a refresh token, and Google gives one only with consent.
     ...(data ? { access_type: "offline", prompt: "consent", include_granted_scopes: "true" } : { prompt: "select_account" }),
   });
@@ -44,11 +49,11 @@ export interface Granted {
  * over TLS in answer to our client secret, so OpenID Connect lets us read it without checking its
  * signature; its audience, issuer and email are still checked.
  */
-export async function exchange(config: GoogleConfig, code: string, redirectUri: string, fetcher: typeof fetch = fetch): Promise<Granted> {
+export async function exchange(config: GoogleConfig, code: string, redirectUri: string, verifier: string, fetcher: typeof fetch = fetch): Promise<Granted> {
   const res = await fetcher("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code" }),
+    body: new URLSearchParams({ code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code", code_verifier: verifier }),
   });
   if (!res.ok) throw new Error(`Google sign-in failed (${res.status})`);
   const token = (await res.json()) as { id_token?: string; refresh_token?: string; scope?: string };
