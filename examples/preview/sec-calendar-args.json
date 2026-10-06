@@ -1,0 +1,8 @@
+{
+  "pr": 85,
+  "title": "Sandboxed calendar edits parsed where they come in",
+  "steps": [
+    "The calendar, its editor and ::calendar embeds work as before: add an event, move it, delete it.",
+    "test/browser/extension-calendar.browser.ts covers what a sandboxed extension's edits send."
+  ]
+}

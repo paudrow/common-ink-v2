@@ -52,3 +52,14 @@ browserTest(h, "Insert event link puts a link to the event you pick where the cu
   for (let i = 0; i < 20 && !(await app.readFile("Plan.md")).includes("event:"); i++) await app.page.waitForTimeout(250);
   assert.equal(await app.readFile("Plan.md"), "# Plan\n\nDiscuss at [Quarterly planning](event:sample/work/planning)\n");
 });
+
+browserTest(h, "a click on a chip whose event is gone opens the calendar on today where you are, not today in UTC", { scenario: "calendar", open: "Calendar tour", timezone: "America/Chicago", levers: { now: "2026-10-11T21:00" } }, async (app) => {
+  // 9 PM on Sunday Oct 11 in Chicago is 2 AM on Monday Oct 12 in UTC: a week later.
+  await app.writeFile("Old plans.md", "# Old plans\n\nWas: [Retro](event:sample/work/gone).\n");
+  await app.open("Old plans");
+  const chip = app.page.locator(".cm-event-chip.is-missing", { hasText: "Retro" });
+  await chip.waitFor();
+  await chip.click();
+  await app.page.locator(".cal-page").waitFor();
+  assert.equal(await app.page.locator(".cal-title-text").innerText(), "Oct 5 – 11, 2026");
+});
