@@ -576,7 +576,7 @@ export const OPERATIONS = {
   }),
   trash: op<Record<string, never>>({
     description:
-      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged. Restore one with restore, its path and its revision as `deleted`.",
+      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first, whatever is at their path now. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged; `byHand` ones, from history before notes had ids, are kept until a person deletes them forever. Restore one with restore, its path and its revision as `deleted`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
     run: async (store) => {

@@ -27,8 +27,8 @@ export function retentionOf(files: Files): number {
   return set;
 }
 
-/** Notes in Trash: deleted within the last `days`. Other files deleted are in history, not Trash. */
-export const inTrash = (deleted: readonly Deleted[], days: number, now: number) => deleted.filter((d) => isNote(d.path) && d.time >= now - days * DAY);
+/** Notes in Trash: deleted within the last `days`, or kept until purged by hand. Other files deleted are in history, not Trash. */
+export const inTrash = (deleted: readonly Deleted[], days: number, now: number) => deleted.filter((d) => isNote(d.path) && (d.time >= now - days * DAY || d.byHand));
 
 /** How many "(restored N)" names Restore tries beside a taken path before it says there's no free name. */
 const MAX_RESTORED = 100;
@@ -85,7 +85,7 @@ export function restoreFromTrash(files: Files, d: Deleted, author: Author): { pa
 }
 
 /** Notes deleted longer ago than `days`: what the daily purge takes. Only revisions and times are read. */
-export const expired = (files: Files, days: number, now: number): Revision[] => files.deleted(0, now - days * DAY).filter((d) => isNote(d.path)).map((d) => d.revision);
+export const expired = (files: Files, days: number, now: number): Revision[] => files.deleted(0, now - days * DAY).filter((d) => isNote(d.path) && !d.byHand).map((d) => d.revision);
 
 /** Purge the notes that have been in Trash longer than trash.retentionDays, as changes by Trash retention. */
 export function purgeExpired(files: Files, now: number) {

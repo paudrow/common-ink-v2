@@ -157,6 +157,9 @@ test("purging a deleted note, at any point, leaves every other note's history re
       // Trash has what the twin's has, but for what was deleted forever: no purge brings a delete back.
       const inTrash = (files: Files, gone: ReadonlySet<Revision>) => files.deleted(0).flatMap((d) => (gone.has(d.revision) ? [] : [[d.path, files.versionAt(d.path, d.before)]]));
       assert.deepEqual(inTrash(purging.files, purging.gone), inTrash(twin.files, twin.gone), "Trash");
+      // One row per note: no two deletes in Trash share a change.
+      const rows = purging.files.deleted(0).map((d) => purging.files.lifetime(d.revision));
+      assert.equal(new Set(rows.flat()).size, rows.flat().length, "a note is in Trash once");
       for (const path of PATHS) {
         assert.deepEqual(story(purging.files, path, purging.gone), story(twin.files, path, twin.gone), `${path}'s history`);
         assert.deepEqual(purging.files.read(path)?.text ?? null, twin.files.read(path)?.text ?? null, `${path} as it is now`);

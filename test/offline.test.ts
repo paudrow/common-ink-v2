@@ -372,3 +372,20 @@ test("files the list never has, as the default settings the server makes up, sta
   const offline = new Offline(kv, { list: down, read: down, write: down, editApplied: down });
   assert.equal((await offline.read(defaults)).text, '{ "editor.fontSize": 16 }');
 });
+
+test("a note deleted forever at a path another note has now takes the edits kept for it, not those for the note there now", async () => {
+  const { store, offline } = setup();
+  const old = store.files.write({ path: PLAN, text: "# Plan\nsecret", base: 0, author: you }).file!.revision;
+  await offline.keepDraft({ path: PLAN, text: "# Plan\nsecret, more", base: old, edit: "d1" });
+  await offline.hold({ path: PLAN, text: "# Plan\nsecret, held", base: old, edit: "h1" });
+  const d = store.files.write({ path: PLAN, text: "", base: old, author: you, delete: true }).file!.revision;
+  const now = store.files.write({ path: PLAN, text: "# Plan\nnew", base: 0, author: you }).file!.revision;
+  store.files.purge([d], you);
+  const gone = async (r: number) => store.files.versionAt(PLAN, r) === null;
+  await offline.forgetPurged(PLAN, gone);
+  assert.deepEqual([await offline.unsent(), await offline.keptEdit(store.files.read(PLAN)!)], [[], undefined]);
+  // An edit for the note there now stays.
+  await offline.hold({ path: PLAN, text: "# Plan\nnew, held", base: now, edit: "h2" });
+  await offline.forgetPurged(PLAN, gone);
+  assert.deepEqual((await offline.unsent()).map((u) => u.edit), ["h2"]);
+});

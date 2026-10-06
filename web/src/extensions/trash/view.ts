@@ -17,6 +17,8 @@ export interface Trashed {
   author: Author;
   time: number;
   daysLeft: number;
+  /** Kept until you delete it forever, never purged by Trash retention: from history before notes had ids, where which note it was is a guess. */
+  byHand?: true;
 }
 
 export interface TrashEnv {
@@ -126,12 +128,17 @@ export class TrashView {
     });
     const left = document.createElement("span");
     left.className = "trash-left";
-    left.classList.toggle("soon", item.daysLeft <= 3);
-    const bar = document.createElement("span");
-    bar.className = "trash-bar";
-    bar.style.setProperty("--left", String(Math.min(1, item.daysLeft / this.env.retentionDays())));
-    left.append(bar, `${item.daysLeft} ${item.daysLeft === 1 ? "day" : "days"}`);
-    left.title = `Purged in ${item.daysLeft} ${item.daysLeft === 1 ? "day" : "days"}: its text leaves history`;
+    if (item.byHand) {
+      left.append("Kept");
+      left.title = "Kept until you delete it forever: it was deleted before Common Ink knew which note each change was, so Trash doesn't purge it on its own";
+    } else {
+      left.classList.toggle("soon", item.daysLeft <= 3);
+      const bar = document.createElement("span");
+      bar.className = "trash-bar";
+      bar.style.setProperty("--left", String(Math.min(1, item.daysLeft / this.env.retentionDays())));
+      left.append(bar, `${item.daysLeft} ${item.daysLeft === 1 ? "day" : "days"}`);
+      left.title = `Purged in ${item.daysLeft} ${item.daysLeft === 1 ? "day" : "days"}: its text leaves history`;
+    }
     const restore = document.createElement("button");
     restore.type = "button";
     restore.className = "trash-restore";

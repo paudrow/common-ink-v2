@@ -904,6 +904,8 @@ connectLive({
       heardChange(notice.path);
       return;
     }
+    // A note deleted forever where another note is now: what this browser kept for the purged one goes.
+    if (notice.purged) await offline.forgetPurged(notice.path, async (r) => (await api.version(notice.path, r).catch(() => "")) === null);
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
     // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.

@@ -184,6 +184,17 @@ export class Offline {
     this.changed();
   }
 
+  /**
+   * A note was deleted forever at a path another note has now: the held edit and the draft kept for
+   * it, made on a revision that's `gone`, go too. Those for the note there now stay.
+   */
+  async forgetPurged(path: FilePath, gone: (revision: Revision) => Promise<boolean>): Promise<void> {
+    const held = await this.unsentFor(path);
+    if (held && held.base > 0 && (await gone(held.base))) await this.release(path);
+    const draft = await this.draftFor(path);
+    if (draft && draft.base > 0 && (await gone(draft.base))) await this.dropDraft(path);
+  }
+
   /** The edit reached the server: let it go. */
   async release(path: FilePath): Promise<void> {
     if (!(await this.kv.get("unsent", path))) return;
