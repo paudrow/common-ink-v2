@@ -140,7 +140,7 @@ const SORTS = ["relevance", "edited", "title"] as const;
 
 /** What `has:` looks for in a note's text. */
 const HAS_TESTS: Record<(typeof HAS)[number], RegExp> = {
-  task: /^\s*[-*+] \[[ xX]\]/m,
+  task: /^[ \t]*[-*+] \[[ xX]\]/m,
   embed: /^:{2,3}[a-zA-Z][\w-]*/m,
   event: /\]\(event:/,
 };

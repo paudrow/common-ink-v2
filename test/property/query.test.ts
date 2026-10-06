@@ -122,7 +122,7 @@ function reference(q: Query, n: NoteFacts, ctx: MatchContext): boolean {
     if (key === "from") return from(v);
     if (key === "type") return lower === "note";
     if (key === "edited") return edited(v);
-    if (key === "has") return lower === "task" ? n.text.split("\n").some((l) => /^\s*[-*+] \[[ xX]\]/.test(l)) : lower === "embed" ? n.text.split("\n").some((l) => /^:{2,3}[a-zA-Z]/.test(l)) : lower === "event" ? n.text.includes("](event:") : false;
+    if (key === "has") return lower === "task" ? n.text.split("\n").some((l) => /^[ \t]*[-*+] \[[ xX]\]/.test(l)) : lower === "embed" ? n.text.split("\n").some((l) => /^:{2,3}[a-zA-Z]/.test(l)) : lower === "event" ? n.text.includes("](event:") : false;
     if (key === "sort") return true;
     return "never";
   };

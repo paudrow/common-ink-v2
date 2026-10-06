@@ -154,3 +154,9 @@ test("a negated sort: is a problem, and doesn't empty the list", () => {
   assert.equal(matches(parse("-sort:edited"), note({}), ctx), true);
   assert.deepEqual(problems(parse("-sort:edited")), ["sort: can't be negated"]);
 });
+
+test("has:task reads a note of many blank lines in linear time", () => {
+  const start = performance.now();
+  assert.equal(matches(parse("has:task"), note({ text: `${"\n".repeat(50_000)}x` }), ctx), false);
+  assert.ok(performance.now() - start < 50, `took ${Math.round(performance.now() - start)} ms`);
+});
