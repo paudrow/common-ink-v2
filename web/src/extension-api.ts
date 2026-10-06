@@ -135,6 +135,8 @@ export interface ExtensionContext {
   statusBar: {
     /** Show `text` in one of them, or hide it with "". */
     set(id: string, text: string, tooltip?: string): void;
+    /** Be told whether the status bar shows, now and each time that changes: a phone has none. In the page only. */
+    onShown(fn: (shown: boolean) => void): void;
   };
   commandBar: {
     provide(provider: Provider): void;
@@ -301,6 +303,8 @@ export interface ExtensionContext {
      * started. Undefined if it's off, sandboxed, failed or not there: the caller does without.
      */
     api<T>(id: string): Promise<T | undefined>;
+    /** Whether an extension is installed and on, whether or not it has started. */
+    on(id: string): boolean;
   };
   events: {
     /** After a file's text on the server changes, from here or anywhere else. */

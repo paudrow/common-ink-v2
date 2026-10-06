@@ -631,7 +631,7 @@ export class ExtensionRuntime {
           app.workbench.setChrome({ window: safe("window"), tabs: safe("tabs"), divider: safe("divider"), empty: safe("empty") });
         },
       },
-      statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
+      statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip), onShown: (fn) => app.statusItems.onShown(guard(fn)) },
       commandBar: {
         provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
         open: (text) => app.bar.open(text),
@@ -789,6 +789,7 @@ export class ExtensionRuntime {
       util: { fuzzyFilter, notePathFor: (name) => notePathFor(name), label: docLabel },
       extensions: {
         api: async <T,>(id: string) => (await this.host.api(id)) as T | undefined,
+        on: (id) => this.host.on().some((x) => x.id === id),
       },
       events: {
         onSaved: (fn) => void app.onSaved.push(guard(fn)),
