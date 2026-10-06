@@ -2,12 +2,13 @@
   "id": "link-embeds",
   "name": "Link embeds",
   "version": "1.0.0",
-  "description": "A link alone on its own line, drawn as what it links to: a YouTube video (from youtube-nocookie.com), a post on X or Bluesky, a Spotify track, album or playlist, or, for any other page, a card with its title, description and picture, fetched by the Worker without your cookies. The line the cursor is on shows the link. Off, links are links, and the page frames nothing from these sites.",
+  "description": "A link alone on its own line, drawn as what it links to: a YouTube video (from youtube-nocookie.com), a post on X or Bluesky, a Spotify track, album or playlist, or, for any other page, a card with its title, description and picture, fetched by the Worker without your cookies. The line the cursor is on shows the link. A playing video floats in a small window while its note is out of sight, and the mini player and media keys pause videos and tracks. Off, links are links, and the page frames nothing from these sites.",
   "main": "index.ts",
   "files": ["index.ts"],
   "activationEvents": ["onUrlEmbed:youtube", "onUrlEmbed:x", "onUrlEmbed:bluesky", "onUrlEmbed:spotify", "onUrlEmbed:link-card"],
   "permissions": {
     "editor": { "why": "Draw links as embeds in notes" },
+    "media": { "why": "Let the mini player and media keys pause a video or track, and float a playing video while its note is out of sight" },
     "network": { "hosts": ["*"], "why": "Fetch a page for its link card, and look up a Bluesky handle: through the Worker, with no cookies" }
   },
   "contributes": {

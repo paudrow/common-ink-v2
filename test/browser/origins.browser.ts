@@ -2,6 +2,8 @@
 // (as on this machine): nothing that changes the workspace or listens to it is answered. The CLI and
 // agents send no Origin, and the app's own page sends its own.
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { harness } from "./harness.ts";
 
@@ -37,4 +39,19 @@ function opens(origin: string): Promise<boolean> {
 test("another site can't open the live socket that hears of every change", async () => {
   assert.equal(await opens(EVIL), false);
   assert.equal(await opens(h.base), true);
+});
+
+test("a page on another site, in a real browser, can't write through MCP with a no-cors POST", async () => {
+  const elsewhere = createServer((_, res) => res.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html><title>elsewhere</title>"));
+  await new Promise<void>((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
+  const context = await h.browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/`);
+  await page.evaluate(async (base) => {
+    const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "write_file", arguments: { path: "From a page elsewhere.md", text: "x", base: 0 } } };
+    await fetch(`${base}/mcp`, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(call) });
+  }, h.base);
+  await context.close();
+  elsewhere.close();
+  assert.equal(await exists("From a page elsewhere.md"), false);
 });

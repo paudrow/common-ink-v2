@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
+import { Conflict, Gone, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -419,7 +419,7 @@ export class DataSources {
         // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
         const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
         if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
-          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, (err as Error).message));
+          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone));
           continue;
         }
         const message = (err as Error).message;
@@ -453,6 +453,8 @@ export class DataSources {
       if (o.op === "delete") break;
       const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
       for (const field of merged.lost) lost.add(field);
+      // Cancelled isn't a field an edit makes, so it's never among what's lost: say so when it beat one.
+      if (theirs.status === "cancelled" && o.event.status !== "cancelled") lost.add("cancellation");
       rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
       theirs = merged.event;
     }
@@ -471,13 +473,15 @@ export class DataSources {
    * and are sent whole), and put the record back as it was before them, as the sync's change: what the
    * source has. History keeps the edits. Returns why, in words.
    */
-  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string): string {
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): string {
     const path = row.path as FilePath;
     const current = this.files.read(path);
     const author = SYNC_AUTHOR[source];
-    const restore: Write[] = row.base === null ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    // Deleted in the source, it goes here too: put back, it would stay, as the sync already passed the deletion by while the edit waited.
+    const restore: Write[] =
+      row.base === null || gone ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
     this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
-    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. It's back as it was, and the change is in its history.`;
+    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
     this.setState(source, { conflict: message, error: undefined });
     return message;
   }
@@ -576,6 +580,20 @@ export class DataSources {
     const dropEvent = (path: FilePath) => {
       if (!pending(path)) write(path, null);
     };
+    const put = (event: CalendarEvent, etag: string | null) => {
+      const path = eventPath(event.calendar, event.id);
+      if (pending(path)) return;
+      write(path, recordText(event));
+      if (etag) this.setEtag(path, etag);
+    };
+    // A cancelled occurrence its series doesn't have cancels nothing, as Google keeps one for an
+    // occurrence moved off its start. Kept, it would block undoing that move, and cancel the
+    // occurrence once the series came back to it. What's here at its id goes, as Google ended it.
+    const cancelled: Array<{ event: CalendarEvent; etag: string | null }> = [];
+    const cancels = (e: CalendarEvent) => {
+      const series = readEvent(this.files.read(eventPath(e.calendar, e.series ?? ""))?.text ?? "");
+      return !series?.recurrence || findTarget([series], e.id)?.kind === "occurrence";
+    };
     return {
       calendars: (list) => {
         const keep = new Set(list.map((c) => c.id));
@@ -591,15 +609,18 @@ export class DataSources {
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
+        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) {
+          if (cancels(event)) put(event, etag);
+          else dropEvent(eventPath(event.calendar, event.id));
+        }
         this.setToken(source, calendar, token);
         this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
       recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
-        const path = eventPath(event.calendar, event.id);
-        if (pending(path)) return;
-        write(path, recordText(event));
-        if (etag) this.setEtag(path, etag);
+        // Judged once the calendar's changes are all in, against its series as they leave it.
+        if (event.series !== undefined && event.status === "cancelled") return void cancelled.push({ event, etag });
+        put(event, etag);
       },
       remove: (calendar, id) => {
         dropEvent(eventPath(calendar, id));
@@ -699,7 +720,7 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (files.recent({ path, limit: 1 })[0]?.revision !== r) return { r, path, text: null };
+      if (changedSince(files, path, r)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -715,6 +736,19 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
   return out;
+}
+
+/**
+ * Whether a record changed after one of its revisions. The source filling in its own address for
+ * the record (`link`), as a sync does after an edit goes out, isn't a change.
+ */
+function changedSince(files: Files, path: FilePath, revision: Revision): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision);
+  if (!later.length) return false;
+  if (!later.every((c) => c.author.kind === "sync")) return true;
+  const was = readEvent(files.versionAt(path, revision) ?? "");
+  const now = readEvent(files.read(path)?.text ?? "");
+  return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */
