@@ -38,6 +38,22 @@ test("a link's card is what its page says about itself, its picture fetched too"
   await assert.rejects(linkCard("http://127.0.0.1/admin", { fetcher }), /Private and local addresses/);
 });
 
+test("a card's picture comes only from a host the caller allows, like its page", async () => {
+  const asked: string[] = [];
+  const fetcher = (async (url: string) => {
+    asked.push(url);
+    if (url === "https://blog.example/post") return new Response('<head><title>Post</title><meta property="og:image" content="https://tracker.example/pixel.png"></head>', { headers: { "content-type": "text/html" } });
+    return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
+  }) as typeof fetch;
+  const card = await linkCard("https://blog.example/post", { fetcher, resolve: async () => ["93.184.216.34"], allowHost: (h) => h === "blog.example" });
+  assert.equal(card.image, null);
+  assert.deepEqual(asked, ["https://blog.example/post"]);
+});
+
+test("a card from a page with a character reference past Unicode is still a card", () => {
+  assert.equal(cardFromHtml("<title>Big &#99999999; numbers &#65;</title>", "https://odd.example/").title, "Big \uFFFD numbers A");
+});
+
 test("the page may frame only the hosts of link embeds that are on, and drawn in the page", async () => {
   assert.match(appCsp("https://app.example", ["www.youtube-nocookie.com", "evil.example; script-src *"]), /frame-src https:\/\/app\.example\/sandbox\/ https:\/\/www\.youtube-nocookie\.com;/);
   const s = memoryStore();
