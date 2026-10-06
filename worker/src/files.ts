@@ -366,6 +366,11 @@ export class Files {
     });
   }
 
+  /** The highest revision ever given, even once its changes are gone (as after a reset): 0 before any. */
+  lastRevision(): Revision {
+    return this.db.all<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'changes'")[0]?.seq ?? 0;
+  }
+
   /** A random secret by name, made the first time it's asked for and kept from then on. */
   secret(name: string): string {
     return this.db.tx(() => {
