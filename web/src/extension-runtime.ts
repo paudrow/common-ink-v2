@@ -12,6 +12,8 @@ import { drawSafely, showDrawError } from "./boundary.ts";
 import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
+import type { Search, SearchResult } from "./search.ts";
+import type { Query } from "../../worker/src/query.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
@@ -37,6 +39,7 @@ export interface RuntimeApp {
   me: string | undefined;
   commands: Commands;
   bar: CommandBar;
+  search: Search;
   panels: Panels;
   workbench: Workbench;
   offline: Offline;
@@ -636,6 +639,14 @@ export class ExtensionRuntime {
         provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
         open: (text) => app.bar.open(text),
       },
+      search: {
+        provide: (type, p) => {
+          if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+          app.search.provide(type, { search: guard((q: Query, limit: number) => p.search(q, limit), []) });
+        },
+        find: (text, limit = 20) => app.search.find(text, limit),
+        filterKeys: () => app.search.extraKeys(),
+      },
       views: {
         register: (id, renderer) => {
           if (!declaresView(id)) throw new Error(`View "${id}" isn't declared in ${m.id}'s contributes.views`);
@@ -860,6 +871,21 @@ export class ExtensionRuntime {
             return;
           case "commandBar.open":
             return app.bar.open(a);
+          case "search.provide": {
+            const type = String(a);
+            if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+            app.search.provide(type, {
+              search: async (query, limit) => {
+                const results = (await host.invoke(`search:${type}`, query, limit).catch(() => [])) as Array<Omit<SearchResult, "run"> & { run: string }>;
+                return results.map((r) => ({ title: String(r.title), path: r.path, detail: r.detail, aside: r.aside, dim: r.dim === true, run: () => host.invoke(`item:${r.run}`).catch(failed) }));
+              },
+            });
+            return;
+          }
+          case "search.find":
+            return app.search.find(String(a), typeof b === "number" ? b : 20).then((sections) => sections.map((s) => ({ ...s, results: s.results.map(({ run: _run, ...r }) => r) })));
+          case "search.filterKeys":
+            return app.search.extraKeys();
           case "views.register":
             if (!declaresView(a)) throw new Error(`View "${a}" isn't declared in ${m.id}'s contributes.views`);
             this.renderers.set(a, {

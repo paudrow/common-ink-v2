@@ -21,6 +21,7 @@ import { taskInputPrefs } from "./input.ts";
 import { describeTaskEdit, parseLogLine, parseTask } from "./tasks.ts";
 import { toast } from "./toasts.ts";
 import { TasksView } from "./view.ts";
+import { findTasks } from "./search.ts";
 import { chipsChanged, openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
 
 const extension: ExtensionModule = {
@@ -119,6 +120,19 @@ const extension: ExtensionModule = {
       });
     });
     ctx.views.register("tasks", { render: (root) => view.render(root) });
+    ctx.search.provide("task", {
+      search: async (query, limit) =>
+        findTasks(await store.all(), query)
+          .slice(0, limit)
+          .map((t) => ({
+            title: t.summary || t.text,
+            path: t.path,
+            detail: t.title,
+            aside: t.done ? "done" : t.meta.due ? `due ${t.meta.due}` : undefined,
+            dim: t.done,
+            run: () => open(ctx, t.path as FilePath, t.line),
+          })),
+    });
     ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);
     await dailyReady;

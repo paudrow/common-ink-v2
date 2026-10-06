@@ -10,6 +10,8 @@ import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
+import { format, parse, problems, type Query } from "./query.ts";
+import type { SearchOptions, SearchResults } from "./search.ts";
 import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
@@ -32,6 +34,7 @@ export interface Store {
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
   completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
+  search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -492,6 +495,25 @@ export const OPERATIONS = {
         if (result.status !== "conflict") return { name, path, revision: at };
       }
       throw new OperationError("The labels file kept changing; try again");
+    },
+  }),
+  search: op<{ query: string; limit: number; zone: string }>({
+    description:
+      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. Events are list_events\'.',
+    input: {
+      type: "object",
+      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE },
+      required: ["query"],
+    },
+    parse: (a) => {
+      if (typeof a.query !== "string" || a.query.length > 1000) return fail('"query" is the query, like launch in:Projects/ -is:archived');
+      const zone = zoneOf(a.zone);
+      if (!zone) return fail('"zone" is a time zone, like America/New_York');
+      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), zone });
+    },
+    run: async (store, { query, limit, zone }) => {
+      const q = parse(query);
+      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit })) };
     },
   }),
   list_embeds: op<Record<string, never>>({

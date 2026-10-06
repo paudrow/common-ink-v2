@@ -12,7 +12,9 @@ import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSet
 import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { commandForKey, Commands, keyFor } from "./commands.ts";
-import { describeAuthor, docLabel } from "./describe.ts";
+import { ago, describeAuthor, docLabel } from "./describe.ts";
+import { Search } from "./search.ts";
+import { format } from "../../worker/src/query.ts";
 import { connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
@@ -458,7 +460,7 @@ function pick(how: typeof openHow) {
 
 const commands = new Commands();
 commands.register(
-  { id: "quickOpen", title: "Open note…", run: () => pick("here") },
+  { id: "quickOpen", title: "Search…", run: () => pick("here") },
   {
     id: "commandBar",
     title: "Show all commands",
@@ -496,7 +498,24 @@ commands.register(
   { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
 );
 
-const bar = new CommandBar();
+/** Folders that hold notes, for completing `in:`. */
+const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.startsWith(".")).flatMap((f) => f.path.split("/").slice(0, -1).map((_, i, parts) => `${parts.slice(0, i + 1).join("/")}/`)))].sort();
+const search = new Search({
+  manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
+  notes: {
+    search: async (query, limit) =>
+      (await api.search(format(query), limit)).results.map((r) => ({
+        title: r.title,
+        path: r.path,
+        detail: r.line?.text ?? r.path,
+        aside: `${r.archived ? "archived · " : ""}${ago(r.edited)}`,
+        dim: r.archived === true,
+        run: () => openFromBar(r.path as FilePath),
+      })),
+  },
+  values: (key) => (key === "in" ? folders() : []),
+});
+const bar = new CommandBar({ all: () => search.filters(), extraKeys: () => search.extraKeys() });
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
@@ -504,6 +523,7 @@ const extensions = new ExtensionRuntime({
   me,
   commands,
   bar,
+  search,
   statusItems: new StatusItems($("#status-left"), $("#status-right"), (command) => commands.run(command)),
   panels,
   workbench,

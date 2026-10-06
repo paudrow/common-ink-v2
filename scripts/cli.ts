@@ -5,6 +5,8 @@
 //   common-ink write <path> [--base N] save stdin as a file's text (based on the revision read now, by default)
 //   common-ink rm <path> [--base N]    delete a file (undo brings it back)
 //   common-ink upload <file> [--name N] upload a file; prints the link to put in a note
+//   common-ink search <query...> [--limit N]
+//                                      notes the query finds (docs/queries.md), best first
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
@@ -28,6 +30,9 @@ import { ago, describeAuthor, diffLines, diffStat } from "../web/src/describe.ts
 import type { Calendar, Occurrence } from "../worker/src/calendar.ts";
 import type { EditResult } from "../worker/src/data-sources.ts";
 import type { EventFound } from "../worker/src/operations.ts";
+import type { SearchResults } from "../worker/src/search.ts";
+
+type SearchAnswer = SearchResults & { query: string; problems: string[] };
 
 const base = (process.env.COMMON_INK_URL ?? "http://localhost:8787").replace(/\/+$/, "");
 const args = process.argv.slice(2);
@@ -125,6 +130,17 @@ const commands: Record<string, () => Promise<void>> = {
     const { name: saved, type } = data.upload;
     print(data, () => `${data.status} ${saved}\n${type.startsWith("image/") ? `![${saved.replace(/\.[^.]+$/, "")}](${data.url})` : `[${saved}](${data.url})`}`);
   },
+  async search() {
+    const limit = take("--limit", true);
+    const { data } = await api<SearchAnswer>("GET", `/api/search${q({ query: positional().join(" "), limit: limit as string | undefined, zone })}`);
+    print(data, () =>
+      [
+        ...data.problems.map((p) => `! ${p}`),
+        ...data.results.map((r) => `${ago(r.edited).padEnd(11)} ${r.path}${r.archived ? "  (archived)" : ""}${r.line ? `\n${String(r.line.number).padStart(15)}: ${r.line.text}` : ""}`),
+        `${data.total} found${data.total > data.results.length ? `, ${data.results.length} shown` : ""}  ${data.query}`,
+      ].join("\n"),
+    );
+  },
   async history() {
     const author = take("--author", true);
     const limit = take("--limit", true);
@@ -195,7 +211,7 @@ const commands: Record<string, () => Promise<void>> = {
 const run = commands[command ?? ""];
 if (!run) {
   console.error(
-    "Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | calendars | events [--from T] [--to T] [--days N] | event <address> | event add <title> --start T | event set <address> [--start T] [--scope S] | event rm <address> [--scope S] | event link <address> <note> | reset [scenario]  [--json] [--zone Z]",
+    "Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | search <query...> [--limit N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | calendars | events [--from T] [--to T] [--days N] | event <address> | event add <title> --start T | event set <address> [--start T] [--scope S] | event rm <address> [--scope S] | event link <address> <note> | reset [scenario]  [--json] [--zone Z]",
   );
   process.exit(2);
 }

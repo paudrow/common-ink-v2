@@ -1,6 +1,8 @@
 # Queries
 
-Every list of notes is a query: plain text you can read, edit and save. Search, the Feed and saved searches read it the same way, in the app, over MCP and in the CLI. The parser and matcher are `common-ink/query` (`worker/src/query.ts`), which extensions import too.
+Every list of notes is a query: plain text you can read, edit and save. Search, the Feed and saved searches read it the same way, in the app, over MCP (`search`) and in the CLI (`common-ink search`). The parser and matcher are `common-ink/query` (`worker/src/query.ts`), which extensions import too.
+
+In the app, ⌘K or ⌘P (Ctrl off a Mac) opens search: notes first, then tasks, events and commands, each in a section. Tab completes a filter (`is:a` becomes `is:archived`) and, on a value, moves on to the next one. On a phone it fills the screen, and chips under the field (Agents, Mine, This week, Events, Tasks) write their filter into the query, or take it out.
 
 ```text
 launch "beta date" -draft in:Projects/ -is:archived sort:edited

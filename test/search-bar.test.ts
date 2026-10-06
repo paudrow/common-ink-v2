@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parse } from "../worker/src/query.ts";
+import { complete, hasFilter, Search, toggleFilter, type FilterInfo } from "../web/src/search.ts";
+import { findTasks } from "../web/src/extensions/tasks/search.ts";
+import { tasksIn } from "../web/src/extensions/tasks/tasks.ts";
+import { findEvents } from "../web/src/extensions/calendar/search.ts";
+import type { Occurrence } from "../worker/src/calendar.ts";
+import type { ExtensionManifest } from "../worker/src/extensions.ts";
+
+const FILTERS: FilterInfo[] = [
+  { key: "is", description: "", values: ["archived", "pinned", "trashed"] },
+  { key: "in", description: "", values: ["Projects/", "My Folder/"] },
+];
+
+test("a chip writes its filter into the query, and a second tap takes it out", () => {
+  assert.equal(toggleFilter("launch", "from:agent"), "launch from:agent ");
+  assert.equal(toggleFilter("launch  from:agent beta", "from:agent"), "launch beta ");
+  assert.equal(toggleFilter("", "type:event"), "type:event ");
+  assert.equal(toggleFilter("from:agent", "from:agent"), "");
+  assert.deepEqual([hasFilter("x FROM:Agent", "from:agent"), hasFilter("x -from:agent", "from:agent")], [true, false]);
+});
+
+test("Tab completes a filter's key, then its value, then moves on to the next value", () => {
+  assert.deepEqual(complete("launch i", 8, FILTERS), { text: "launch is:", caret: 10 });
+  assert.deepEqual(complete("launch is:ar", 12, FILTERS), { text: "launch is:archived", caret: 18 });
+  assert.deepEqual(complete("is:archived", 11, FILTERS), { text: "is:pinned", caret: 9 });
+  assert.deepEqual(complete("-in:my x", 6, FILTERS), { text: '-in:"My Folder/" x', caret: 16 });
+  assert.equal(complete("launch", 6, FILTERS), null);
+  assert.equal(complete("due:to", 6, FILTERS), null);
+});
+
+const manifest = (search: ExtensionManifest["contributes"]["search"]) => ({ contributes: { search } }) as ExtensionManifest;
+
+test("search asks each kind of result, and type: picks which", async () => {
+  const asked: string[] = [];
+  const search = new Search({
+    manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [{ filter: "due", description: "", values: [] }] })],
+    notes: { search: (q) => (asked.push(`notes: ${JSON.stringify(q.terms)}`), [{ title: "Launch plan", run() {} }]) },
+  });
+  search.provide("task", { search: (q) => (asked.push(`tasks: ${q.terms.length}`), [{ title: "Record the demo", run() {} }]) });
+  const titles = async (text: string) => (await search.find(text, 5)).map((s) => `${s.title}: ${s.results.map((r) => r.title).join(", ")}`);
+  assert.deepEqual(await titles("launch"), ["Notes: Launch plan", "Tasks: Record the demo"]);
+  assert.deepEqual(await titles("launch type:task"), ["Tasks: Record the demo"]);
+  assert.deepEqual(await titles("demo due:today"), ["Tasks: Record the demo"]);
+  assert.deepEqual(await titles(""), ["Recent: Launch plan"]);
+  assert.equal(asked.at(-1), 'notes: [{"kind":"filter","key":"is","value":"archived","negated":true},{"kind":"filter","key":"sort","value":"edited","negated":false}]');
+});
+
+test("tasks match their words, is:open and is:done, and their note's folder", () => {
+  const tasks = [
+    ...tasksIn("Projects/Launch.md", "- [ ] Record the demo due:2026-10-07\n- [x] Freeze the copy\n- [ ] Draft changelog due:2026-10-06", "Launch"),
+    ...tasksIn("Journal/2026-10-05.md", "- [ ] Call the dentist", "2026-10-05"),
+  ];
+  const found = (q: string) => findTasks(tasks, parse(q)).map((t) => t.summary);
+  assert.deepEqual(found("the"), ["Record the demo", "Call the dentist", "Freeze the copy"]);
+  assert.deepEqual(found("is:open in:projects"), ["Draft changelog", "Record the demo"]);
+  assert.deepEqual(found("is:done"), ["Freeze the copy"]);
+  assert.deepEqual(found("-in:Projects"), ["Call the dentist"]);
+  assert.deepEqual(found("demo from:agent"), []);
+});
+
+test("events match their title and place, a series once at its next time, coming ones first", () => {
+  const at = (id: string, title: string, start: string, more: Partial<Occurrence> = {}): Occurrence => ({ address: `event:sample/work/${id}`, id, calendar: "work", title, status: "confirmed", allDay: false, start, end: start.replace("T09", "T10"), ...more });
+  const now = Date.parse("2026-10-05T12:00:00Z");
+  const events = [
+    at("s1", "Standup", "2026-10-02T09:00:00Z", { series: "s" }),
+    at("s2", "Standup", "2026-10-06T09:00:00Z", { series: "s" }),
+    at("s3", "Standup", "2026-10-07T09:00:00Z", { series: "s" }),
+    at("d", "Dentist", "2026-10-09T09:00:00Z", { location: "Main St" }),
+    at("r", "Retro", "2026-09-30T09:00:00Z"),
+  ];
+  assert.deepEqual(findEvents(events, parse(""), now).map((o) => o.id), ["s2", "d", "r"]);
+  assert.deepEqual(findEvents(events, parse("main"), now).map((o) => o.id), ["d"]);
+  assert.deepEqual(findEvents(events, parse("standup is:archived"), now), []);
+});

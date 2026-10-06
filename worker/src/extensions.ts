@@ -198,6 +198,18 @@ export interface DataSourceContribution {
   description?: string;
 }
 
+/**
+ * What an extension adds to search (docs/queries.md): kinds of result it answers for (`type:event`), in
+ * their own section, and filters for them (`due:`), offered and completed before its code runs.
+ */
+export interface SearchContribution {
+  types: Array<{ type: string; title: string }>;
+  filters: Array<{ filter: string; description: string; values: string[] }>;
+}
+
+/** The filters every note has (query.ts), which an extension's can't take the place of. */
+const CORE_FILTERS = ["is", "in", "from", "type", "edited", "has", "sort"];
+
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -210,6 +222,7 @@ export interface Contributions {
   embeds: EmbedContribution[];
   urlEmbeds: UrlEmbedContribution[];
   dataSources: DataSourceContribution[];
+  search: SearchContribution;
 }
 
 export interface ExtensionManifest {
@@ -266,6 +279,24 @@ function setting(v: unknown, at: string): SettingSchema {
   const s = object(v, at);
   if (!SETTING_TYPES.has(s.type as string)) throw new ManifestError(`${at}.type must be one of ${[...SETTING_TYPES].join(", ")}`);
   return s as unknown as SettingSchema;
+}
+
+function searchContribution(v: unknown): SearchContribution {
+  const o = v === undefined ? {} : object(v, "contributes.search");
+  return {
+    types: list(o.types, "contributes.search.types", (item, at) => {
+      const t = object(item, at);
+      const type = text(t.type, `${at}.type`);
+      if (!/^[a-z][a-z-]*$/.test(type) || type === "note") throw new ManifestError(`${at}.type must be lowercase letters and dashes, and not "note"`);
+      return { type, title: text(t.title, `${at}.title`) };
+    }),
+    filters: list(o.filters, "contributes.search.filters", (item, at) => {
+      const f = object(item, at);
+      const filter = text(f.filter, `${at}.filter`).replace(/:$/, "").toLowerCase();
+      if (!/^[a-z][a-z-]*$/.test(filter) || CORE_FILTERS.includes(filter)) throw new ManifestError(`${at}.filter must be a word like "due:", and not one of ${CORE_FILTERS.join(", ")}`);
+      return { filter, description: text(f.description, `${at}.description`, true), values: list(f.values, `${at}.values`, (x, w) => text(x, w)) };
+    }),
+  };
 }
 
 function contributions(v: unknown, id: string): Contributions {
@@ -326,6 +357,7 @@ function contributions(v: unknown, id: string): Contributions {
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
     }),
+    search: searchContribution(c.search),
     dataSources: list(c.dataSources, "contributes.dataSources", (item, at) => {
       const o = object(item, at);
       if (o.kind !== "calendar" && o.kind !== "contacts") throw new ManifestError(`${at}.kind must be calendar or contacts`);
