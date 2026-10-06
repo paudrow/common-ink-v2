@@ -46,7 +46,21 @@ export default {
       return {};
     });
     // Before every other keymap, so Vim sees keys first.
-    ctx.editor.extend(Prec.highest([insertUndo, vim(), modeWatch, theme]), { everywhere: true });
+    // Outside insert mode, Tab is Vim's Ctrl-I (jump forward), and Shift-Tab is the keyboard's way out of
+    // the note, to what's before it, as the browser does: Vim has no use for it. Both are settled before the
+    // editor sees the key, in capture, through CodeMirror's tab focus mode: Escape doesn't make the next Tab
+    // leave (its escape hatch, which in Vim would take Ctrl-I away after every Escape), and Shift-Tab does.
+    const tabKeys = ViewPlugin.define((view) => {
+      const keydown = (e: KeyboardEvent) => {
+        if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey) return;
+        const vimState = (getCM(view) as unknown as { state?: { vim?: { insertMode?: boolean } } } | null)?.state?.vim;
+        if (!vimState || vimState.insertMode) return;
+        view.setTabFocusMode(e.shiftKey ? 1000 : false);
+      };
+      view.dom.addEventListener("keydown", keydown, true);
+      return { destroy: () => view.dom.removeEventListener("keydown", keydown, true) };
+    });
+    ctx.editor.extend(Prec.highest([tabKeys, insertUndo, vim(), modeWatch, theme]), { everywhere: true });
 
     // A different editor took focus: it starts in normal mode, with its own jumps.
     let shown: EditorView | null = null;
