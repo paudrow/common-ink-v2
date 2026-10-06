@@ -166,6 +166,33 @@ test("installing says so when it took back trust, and refuses while a settings f
   );
 });
 
+test("installing checks a merged settings change for trust it didn't take out, and takes it out again", async () => {
+  const s = store();
+  write(s, ".common-ink/settings.json", '{ "extensions.trusted": ["weather"] }\n');
+  // Someone trusts it again as the install writes, and the change that comes back, merged, still has it.
+  const realWrite = s.write.bind(s);
+  let raced = false;
+  s.write = async (w) => {
+    if (raced || w.path !== ".common-ink/settings.json") return realWrite(w);
+    raced = true;
+    await realWrite(w);
+    write(s, ".common-ink/settings.json", '{ "extensions.trusted": ["weather"], "editor.fontSize": 15 }\n');
+    return { status: "merged", file: s.files.read(w.path)! };
+  };
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+      assert.equal(res!.status, 200);
+    },
+  );
+  assert.deepEqual(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text), { "extensions.trusted": [], "editor.fontSize": 15 });
+});
+
 test("the app's policy frames only the sandbox route and connects only to itself", () => {
   const csp = appCsp("https://app.example");
   assert.match(csp, /frame-src https:\/\/app\.example\/sandbox\//);
