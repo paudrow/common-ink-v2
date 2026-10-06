@@ -44,13 +44,6 @@ browserTest(h, "a real YouTube video plays on through typing, a new tab, a split
   await app.writeFile("Video.md", NOTE);
   await app.goto({}, "Video");
   await app.page.locator(FRAME).first().waitFor();
-  // The IFrame API, on: its address with enablejsapi=1, once, before anything is counted.
-  await app.page.evaluate((sel) => {
-    const f = document.querySelector<HTMLIFrameElement>(sel)!;
-    const url = new URL(f.src);
-    url.searchParams.set("enablejsapi", "1");
-    f.src = url.toString();
-  }, FRAME);
   await app.page.waitForTimeout(3000);
   await app.page.evaluate(WATCH);
   await command(app, "mute");
@@ -72,7 +65,8 @@ browserTest(h, "a real YouTube video plays on through typing, a new tab, a split
   await app.page.locator("#notes a", { hasText: "Welcome" }).click({ modifiers: ["ControlOrMeta"] });
   await app.page.waitForTimeout(800);
   await app.page.locator(".tab", { hasText: "Video" }).first().click();
-  await stillPlaying(app, "⌘-click opening another note in a new tab, and switching back");
+  await app.page.locator(".cm-url-embed:not(.is-floating)").waitFor();
+  await stillPlaying(app, "⌘-click opening another note in a new tab (it floats meanwhile), and switching back");
   await app.command("Split right");
   await stillPlaying(app, "splitting the window");
   // A wheel over the video scrolls the note.
