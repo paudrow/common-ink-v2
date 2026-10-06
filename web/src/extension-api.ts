@@ -323,6 +323,8 @@ export interface ExtensionContext {
     refreshFromServer(paths: FilePath[]): Promise<void>;
     /** A short message over the focused window, with buttons. */
     notice(message: string, actions?: Array<{ label: string; run(): unknown }>): void;
+    /** Ask before something that can't be undone: true if the person said `yes`. Trusted extensions only. */
+    confirm(title: string, text: string, yes: string, how?: { danger?: boolean }): Promise<boolean>;
     /** Whether there's a place to go back (-1) or forward (1) to: what Go back and Go forward would do. */
     canGo(by: -1 | 1): boolean;
   };
@@ -348,8 +350,8 @@ export interface ExtensionContext {
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
-    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file or undid another change. Trusted extensions only. */
-    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number }) => void): void;
+    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file, undid another change, or purged a note there. Trusted extensions only. */
+    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number; purged?: true }) => void): void;
   };
 }
 
