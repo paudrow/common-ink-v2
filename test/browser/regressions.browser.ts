@@ -527,6 +527,35 @@ browserTest(h, "a drag from outside the page opens a note at most: crafted drops
   assert.equal(await app.readFile("Welcome.md"), before);
 });
 
+browserTest(h, "a tab dragged from one window of the app to another opens its note there", { scenario: "tasks", open: "Welcome" }, async (app) => {
+  await app.open("Shopping");
+  await app.idle();
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto({}, "Chores");
+  await other.idle();
+  const before = await tabFiles(other);
+  // The drag as the browser makes it from the first window's tab, caught before it leaves (CDP).
+  const from = await app.page.context().newCDPSession(app.page);
+  await from.send("Input.setInterceptDrags", { enabled: true });
+  const caught = new Promise<{ data: unknown }>((done) => from.once("Input.dragIntercepted", done as never));
+  const tab = (await app.page.locator(".group .tabs .tab", { hasText: "Shopping" }).boundingBox())!;
+  const [x, y] = [tab.x + tab.width / 2, tab.y + tab.height / 2];
+  await from.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1, buttons: 1 });
+  for (let i = 1; i <= 5; i++) await from.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + i * 8, y: y + i * 6, button: "left", buttons: 1 });
+  const { data } = await caught;
+  await from.send("Input.setInterceptDrags", { enabled: false });
+  await from.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  // Dropped on the other window's tab bar.
+  const to = await other.page.context().newCDPSession(other.page);
+  const bar = (await other.page.locator(".group .tabs").first().boundingBox())!;
+  for (const type of ["dragEnter", "dragOver", "dragOver", "drop"] as const) await to.send("Input.dispatchDragEvent", { type, x: bar.x + bar.width - 20, y: bar.y + bar.height / 2, data: data as never });
+  await other.page.waitForTimeout(300);
+  await other.idle();
+  // It shows there (the windows share their tabs, so it may have been one already).
+  assert.equal((await other.call<{ path: string } | null>("where"))?.path, "Shopping.md", `tabs before: ${before.join(", ")}`);
+  await other.page.close();
+});
+
 browserTest(h, "a tab dropped on another window's editor opens there, and its name isn't typed into the note", { scenario: "tasks", open: "Welcome" }, async (app) => {
   await app.keys(":vs Chores<CR>");
   await app.idle();
