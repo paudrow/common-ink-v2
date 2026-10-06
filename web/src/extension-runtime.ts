@@ -4,13 +4,13 @@
 // object; sandboxed ones run in a host frame and call the same services over messages. Either way,
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
-import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
-import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
 import { PermissionBroker } from "./broker.ts";
-import type { Trigger } from "./permission-words.ts";
+import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
@@ -144,6 +144,13 @@ interface WebviewHooks {
 const settle = (el: HTMLElement) => {
   if (!el.querySelector(".cm-embed-frame.is-pending")) delete el.dataset.pending;
 };
+
+/** A path a sandboxed extension passed, parsed here at the frame's edge: anything that isn't one is refused before it's checked or used. */
+function filePath(value: unknown): FilePath {
+  const path = parseFilePath(value);
+  if (!path) throw new Error(`${typeof value === "string" ? value : "That"} isn't a file path`);
+  return path;
+}
 
 /** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
 function address(value: unknown): string {
@@ -809,9 +816,15 @@ export class ExtensionRuntime {
           case "files.list":
             return services.list();
           case "files.read":
-            return services.read(a as FilePath);
-          case "files.write":
-            return services.write(a as FilePath, String(b), Number(c));
+            return services.read(filePath(a));
+          case "files.write": {
+            const path = filePath(a);
+            if (decidesTrust(path)) {
+              this.broker.record(m.id, { kind: "files:write", target: path }, "denied");
+              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: it runs sandboxed, and that decides what extensions may do`);
+            }
+            return services.write(path, String(b), Number(c));
+          }
           case "net.fetch":
             return services.fetch(address(a), fetchOptions(b));
           case "net.card":
