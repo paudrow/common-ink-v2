@@ -474,6 +474,12 @@ html[data-device-frame] body {
   line-height: 1.25;
   color: var(--warn-ink);
 }
+/* Over anything but a note (a view, a panel, Trash, the calendar), whose top is its controls: at the
+   bottom, above a notice's bar, anything along the bottom (--not-saved-bottom) and the keyboard. */
+#not-saved[data-at="bottom"] {
+  top: auto;
+  bottom: calc(var(--not-saved-bottom, 0px) + var(--keyboard, 0px) + env(safe-area-inset-bottom) + 4rem);
+}
 #not-saved[data-state="conflict"] {
   color: var(--bad);
   cursor: pointer;
@@ -481,10 +487,6 @@ html[data-device-frame] body {
 /* Compact width (device.ts), and the media query for the moment before the app runs. */
 html[data-width="compact"] #status {
   display: none;
-}
-/* A notice at the top of a window starts below the pill. */
-html[data-width="compact"]:has(#not-saved:not([hidden])) .notice {
-  top: 2.5rem;
 }
 html[data-width="compact"] #not-saved:not([hidden]) {
   display: block;

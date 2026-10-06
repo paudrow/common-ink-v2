@@ -152,6 +152,44 @@ browserTest(h, "on a phone, Search covers the not-saved pill, and its Cancel tak
   await app.page.unroute("**/api/file**");
 });
 
+for (const width of [320, 375])
+  browserTest(h, `at ${width}px, over the Extensions panel, Trash and the calendar the pill floats at the bottom, off their headers' controls`, { scenario: "calendar", viewport: { width, height: 700 }, ...OFFLINE }, async (app) => {
+    await app.writeFile("N.md", "# N\nsome words\n");
+    await app.goto({}, "N");
+    await app.idle();
+    await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+    await app.keys("Gox<Esc>");
+    const pill = app.page.locator("#not-saved", { hasText: "can't reach the server" });
+    await pill.waitFor();
+    assert.equal(await pill.getAttribute("data-at"), "top", "over a note, at the top");
+    for (const command of ["Open trash", "Open calendar", "Show extensions"]) {
+      await app.command(command);
+      await app.page.waitForFunction(() => document.querySelector<HTMLElement>("#not-saved")?.dataset.at === "bottom");
+      const under = await app.page.evaluate(() => {
+        const p = document.querySelector("#not-saved")!.getBoundingClientRect();
+        return [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, [role=tab], .tab")]
+          .filter((e) => e.id !== "not-saved" && e.checkVisibility() && e.getBoundingClientRect().top < 140)
+          .filter((e) => { const r = e.getBoundingClientRect(); return r.left < p.right && p.left < r.right && r.top < p.bottom && p.top < r.bottom; })
+          .map((e) => e.getAttribute("aria-label") || e.textContent?.trim());
+      });
+      assert.deepEqual(under, [], `${command}: no control near the top is under the pill`);
+    }
+    await app.page.unroute("**/api/file**");
+  });
+
+browserTest(h, "a phone's notice stays a bar at the bottom while an edit isn't saved", { scenario: "empty", viewport: { width: 375, height: 700 }, ...OFFLINE }, async (app) => {
+  await app.writeFile("A.md", "alpha body\n");
+  await app.goto({}, "A");
+  await app.idle();
+  await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+  await app.keys("Gox<Esc>");
+  await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor();
+  await app.command("Split down").catch(() => {});
+  const box = (await app.page.locator(".notice").first().boundingBox())!;
+  assert.ok(box.height < 120, `the notice is ${Math.round(box.height)}px tall, from y ${Math.round(box.y)}`);
+  await app.page.unroute("**/api/file**");
+});
+
 browserTest(h, "on a laptop the status line counts the focused note's words as you type, and says nothing about the server while it's reached", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip to Rome\n\n- [ ] Book the train\n\n```js\nconst left = 3;\n```\n::timer{duration=25m}\n<b>Pack</b>\n");
   await app.writeFile("Other.md", "# Other\n");

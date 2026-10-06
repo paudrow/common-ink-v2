@@ -377,15 +377,29 @@ async function openClash() {
   await resolveConflict();
 }
 unsentLine.addEventListener("click", () => void openClash());
-/** The pill sits just inside the top of the top right window's editors, whatever is above them: a tab row, or nothing. */
+/**
+ * Where the pill floats. Over a note, just inside the top of the top right window's editors, whatever
+ * is above them, where a note has an empty margin. Over anything else (a view, a panel, Trash, the
+ * calendar), whose top is its controls, at the bottom, above the on-screen keyboard.
+ */
 function placeNotSaved() {
   if (notSavedLine.hidden) return;
   const tops = [...$("#workbench").querySelectorAll<HTMLElement>(".editors")].flatMap((e) => (e.getClientRects().length ? [e.getBoundingClientRect()] : []));
-  const top = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0]?.top ?? 0;
+  const box = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0];
+  const top = box?.top ?? 0;
   notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
+  // What's there, under where the pill would sit at the top: a note's editor, or something else.
+  const under = box ? document.elementsFromPoint(box.right - 24, top + 16).find((e) => e !== notSavedLine) : null;
+  notSavedLine.dataset.at = under?.closest(".editors .cm-editor") ? "top" : "bottom";
+  const viewport = window.visualViewport;
+  notSavedLine.style.setProperty("--keyboard", `${viewport ? Math.max(0, Math.round(innerHeight - viewport.offsetTop - viewport.height)) : 0}px`);
 }
-// Placed again when the windows move: the page resizing, or a bar above them coming or going.
+// Placed again when the windows move (the page resizing, a bar above them coming or going), the
+// keyboard comes or goes, focus moves, or a panel opens or closes.
 new ResizeObserver(placeNotSaved).observe($("#workbench"));
+window.visualViewport?.addEventListener("resize", placeNotSaved);
+focusListeners.push(() => requestAnimationFrame(placeNotSaved));
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#panel"), { attributes: true, attributeFilter: ["hidden", "class"] });
 floatsOverEditors(notSavedLine);
 notSavedLine.addEventListener("click", () => void openClash());
 notSavedLine.addEventListener("keydown", (e) => {
@@ -764,6 +778,26 @@ async function customize(b: BuiltIn) {
 }
 
 /** Delete a workspace extension's files, as changes that undo can take back. */
+/**
+ * Clear away a retired Catalog extension's copy (Word count): its files and your answers to its
+ * permissions, each a change in History that undo can take back. Done once: then there's nothing left.
+ */
+async function clearRetired(found: readonly { id: string; files: FilePath[] }[]) {
+  for (const w of found) {
+    workbench.forget(w.files);
+    for (const path of w.files) {
+      const file = await api.read(path).catch(() => null);
+      if (file?.revision) await api.delete(path, file.revision);
+    }
+    const { [w.id]: had, ...others } = parseGrants(settings["extensions.permissions"]);
+    if (had) await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+  }
+  if (found.length) {
+    await loadSettings();
+    await refreshList();
+  }
+}
+
 async function removeExtension(r: ExtensionRecord) {
   if (!r.workspace) return;
   const paths = [...r.workspace.files];
@@ -1105,6 +1139,7 @@ try {
   // This device's file first: what it has and your overrides decide which extensions are on here.
   await device.load({ read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) });
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
+  void clearRetired(extensions.host.retired);
   catalog = extensions.catalog();
   extensions.declare();
   // Embeds draw in notes for the languages extensions that are on declare.

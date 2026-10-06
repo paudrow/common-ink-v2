@@ -160,7 +160,9 @@ browserTest(h, "a sandboxed extension starts with the app, asking before it read
   assert.equal(await page.$(".dialog"), null, "not asked again");
 });
 
-browserTest(h, "Word count installed from the Catalog before it left: the app starts without it, and without errors", { scenario: "empty" }, async (app) => {
+browserTest(h, "Word count installed from the Catalog before it left: the app starts without it, without errors, and clears its files and your answer to it away, as changes undo can take back", { scenario: "empty" }, async (app) => {
+  const settingsPath = ".common-ink/users/tester@localhost/settings.json";
+  await app.writeFile(settingsPath, JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "allow" }, boards: { "files:read:**/*.md": "allow" } } }));
   await app.writeFile("Note.md", "# Note\n\nSome words.\n");
   await app.writeFile(".common-ink/extensions/word-count/extension.json", JSON.stringify({ id: "word-count", name: "Word count", version: "1.0.0", main: "index.js", activationEvents: ["onStartup"], permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" } }, contributes: { statusBarItems: [{ id: "wordCount.status", alignment: "left", priority: 10 }] } }));
   await app.writeFile(".common-ink/extensions/word-count/index.js", 'export default { activate(ctx) { ctx.statusBar.set("wordCount.status", "counted"); } };\n');
@@ -172,4 +174,10 @@ browserTest(h, "Word count installed from the Catalog before it left: the app st
   assert.equal(await app.page.locator('.extension-row[data-extension="word-count"]').count(), 0);
   assert.equal(await app.page.locator('[data-item="wordCount.status"]').count(), 0);
   assert.equal(await app.page.locator(".dialog").count(), 0, "nothing asks to read a note");
+  for (const f of ["extension.json", "index.js", "installed.json"]) await app.page.waitForFunction(async (p) => (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).status === 404, `.common-ink/extensions/word-count/${f}`);
+  await app.page.waitForFunction(async (p) => !(await (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).json()).text.includes("word-count"), settingsPath);
+  assert.deepEqual(JSON.parse(await app.readFile(settingsPath))["extensions.permissions"], { boards: { "files:read:**/*.md": "allow" } }, "others' answers stay");
+  // Each file written by the test, then cleared away: two changes in History for each.
+  const changes = (await app.state()).history.filter((c) => c.path.includes("word-count") || c.path === settingsPath).map((c) => c.path).sort();
+  assert.deepEqual(changes, [settingsPath, settingsPath, ...[".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"].flatMap((p) => [p, p])].sort());
 });

@@ -133,6 +133,8 @@ export interface HostOptions {
 /** Every extension, and starting them as their activation events happen. */
 export class ExtensionHost {
   records: ExtensionRecord[] = [];
+  /** Copies of retired Catalog extensions found at the last load, for the app to clear away. */
+  retired: WorkspaceExtension[] = [];
   private modules = new Map<string, () => Promise<ExtensionModule>>();
   private activations = new Map<string, Promise<void>>();
 
@@ -148,6 +150,7 @@ export class ExtensionHost {
     trusted: readonly string[] = [],
   ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
+    this.retired = [];
     const records: ExtensionRecord[] = [];
     for (const b of builtIns) {
       const copy = workspace.get(b.manifest.id);
@@ -158,7 +161,10 @@ export class ExtensionHost {
     }
     for (const w of workspace.values()) {
       const from = w.files.includes(installedPath(w.id)) ? installedFrom((await read(installedPath(w.id))).text) : {};
-      if (retired(w.id, from)) continue;
+      if (retired(w.id, from)) {
+        this.retired.push(w);
+        continue;
+      }
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
       if (safe && builtIn) continue;
       // extension.json is only data, so it's read even in safe mode, for the extension's name.
