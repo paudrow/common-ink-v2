@@ -15,6 +15,8 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 /** A strip of panels, one per period, scrolling sideways and snapping to each. */
 abstract class Strip implements CalendarView {
   readonly root: HTMLElement;
+  /** Its listeners, let go of when it goes. */
+  private listening = new AbortController();
   protected scroller: HTMLElement;
   protected track: HTMLElement;
   protected first: Day;
@@ -34,7 +36,7 @@ abstract class Strip implements CalendarView {
     this.track = el("div", { class: "cal-track" });
     this.scroller = el("div", { class: "cal-strip", tabindex: "-1" }, this.track);
     this.root = el("div", { class: `cal-panels ${className}` }, this.scroller);
-    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true });
+    this.scroller.addEventListener("scroll", () => this.scrolled(), { passive: true, signal: this.listening.signal });
     this.resize = new ResizeObserver(() => this.layout());
     this.resize.observe(this.root);
     requestAnimationFrame(() => this.layout());
@@ -140,6 +142,7 @@ abstract class Strip implements CalendarView {
   }
 
   destroy() {
+    this.listening.abort();
     this.resize.disconnect();
     clearTimeout(this.settle);
     this.root.remove();
