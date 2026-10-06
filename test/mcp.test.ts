@@ -75,3 +75,20 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
   assert.equal(stale.ok, false);
 });
+
+test("an operation that fails unexpectedly says so in a sentence, logs why, and leaks no stack", async () => {
+  const files = memoryStore();
+  const broken = { ...files, read: () => { throw new Error("SQLITE_IOERR: disk I/O error at /var/do/123"); } };
+  const logged: unknown[] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => void logged.push(args);
+  try {
+    assert.deepEqual(await runOperation("read_file", { path: "Plan.md" }, broken, agent), { ok: false, internal: true, error: "Something went wrong running read_file. It's been logged; try again." });
+    const { body } = await call(broken, "tools/call", { name: "read_file", arguments: { path: "Plan.md" } });
+    assert.deepEqual(body.result, { content: [{ type: "text", text: "Something went wrong running read_file. It's been logged; try again." }], isError: true });
+    assert.equal(logged.length, 2);
+    assert.match(String((logged[0] as unknown[])[1]), /read_file/);
+  } finally {
+    console.error = log;
+  }
+});
