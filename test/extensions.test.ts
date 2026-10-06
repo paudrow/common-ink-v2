@@ -83,6 +83,7 @@ test("a manifest that's wrong says what's wrong with it", () => {
   assert.equal(wrong({ permissions: { network: { why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any');
   assert.equal(wrong({ permissions: { network: { hosts: ["http://evil.example"], why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any; "http://evil.example" isn\'t one');
   assert.equal(wrong({ permissions: { "files:read": { paths: ["**"] } } }), 'permissions["files:read"].why must be text');
+  assert.equal(wrong({ permissions: { "files:read": { paths: ["!Secret/**"], why: "x" } } }), 'permissions["files:read"].paths are the files it may touch, so none starts with "!": "!Secret/**" does');
   assert.equal(wrong({ contributes: { configuration: { properties: { "other.thing": { type: "boolean" } } } } }), 'Setting "other.thing" must start with "x."');
   assert.equal(wrong({ main: "../escape.js" }), '"main" must be a file in the extension\'s folder, like "index.js"');
   assert.equal(wrong({ main: "index.ts" }), '"main" must be a file in the extension\'s folder, like "index.js"', "only built-ins are compiled");

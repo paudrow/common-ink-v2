@@ -5,7 +5,8 @@
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
-import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { inGlobs } from "../../worker/src/globs.ts";
+import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
@@ -107,6 +108,12 @@ interface Services {
   write(path: FilePath, text: string, base: number): ReturnType<typeof api.writeAs>;
   /** Files it may read, of all there are. Asks for each declared scope it needs, once. */
   list(): Promise<FileSummary[]>;
+  /**
+   * What it may read, as globs for search's `within`: its declared files:read scopes in order, those
+   * not allowed as "!scope", since the first scope that covers a path decides (coveringKey). None if
+   * it may read nothing.
+   */
+  readable(): Promise<string[]>;
   fetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string }): Promise<ExtensionResponse>;
   card(url: string): ReturnType<typeof api.extensionCard>;
   check(ask: Ask): Promise<void>;
@@ -505,6 +512,12 @@ export class ExtensionRuntime {
   private services(m: ExtensionManifest): Services {
     const app = this.app;
     const check = (ask: Ask) => this.broker.check(m, ask);
+    // Each declared scope is asked about as a whole, all at once, so they're one prompt.
+    const readable = async () => {
+      const scopes = m.permissions["files:read"]?.paths ?? [];
+      const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
+      return answers.some((a) => a.status === "fulfilled") ? scopes.map((scope, i) => (answers[i].status === "fulfilled" ? scope : `!${scope}`)) : [];
+    };
     return {
       check,
       read: async (path) => {
@@ -516,12 +529,11 @@ export class ExtensionRuntime {
         // In history, the change is the extension's, acting for you.
         return api.writeAs(m.id, path, text, base);
       },
+      readable,
+      // The files `readable` admits, as files.read decides each.
       list: async () => {
-        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
-        const scopes = m.permissions["files:read"]?.paths ?? [];
-        const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
-        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
-        return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
+        const may = inGlobs(await readable());
+        return app.files().filter((f) => may(f.path));
       },
       fetch: async (url, init) => {
         const host = hostOf(url);
@@ -899,9 +911,7 @@ export class ExtensionRuntime {
             // about as a whole, as files.list does), events with data:calendar:read, contacts with
             // data:contacts:read, and its own kinds; of other kinds, results in files it may read.
             const may = (ask: Ask) => services.check(ask).then(() => true, () => false);
-            const scopes = m.permissions["files:read"]?.paths ?? [];
-            const allowed = await Promise.all(scopes.map((scope) => may({ kind: "files:read", scope })));
-            const readable = scopes.filter((_, i) => allowed[i]);
+            const readable = await services.readable();
             const [calendar, contacts] = await Promise.all([m.permissions["data:calendar:read"] ? may({ kind: "data:calendar:read" }) : false, m.permissions["data:contacts:read"] ? may({ kind: "data:contacts:read" }) : false]);
             const whole = (type: string) => app.search.ownerOf(type) === m.id || (type === "event" && calendar) || (type === "contact" && contacts);
             const sections = await app.search.find(String(a), typeof b === "number" ? Math.min(b, 100) : 20, undefined, (type) => (whole(type) ? null : readable));

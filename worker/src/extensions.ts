@@ -451,6 +451,8 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       if (kind === "files:read" || kind === "files:write") {
         out.paths = strings("paths");
         if (!out.paths.length) throw new ManifestError(`${at}.paths must name the files it may touch, like "Journal/**"`);
+        const bad = out.paths.find((p) => p.startsWith("!"));
+        if (bad) throw new ManifestError(`${at}.paths are the files it may touch, so none starts with "!": "${bad}" does`);
       }
       if (kind === "settings:write") {
         out.keys = strings("keys");
