@@ -11,6 +11,7 @@ import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from ".
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
+import { isSealed, seal, unseal } from "./token-seal.ts";
 
 /** A note that links to an event; `series` when it links to the event's series rather than this occurrence. */
 export interface LinkingNote {
@@ -48,6 +49,8 @@ export interface SourceSettings {
   /** Previews and local development: the Sample calendar and recorded contacts stand in for Google. */
   fixtures: boolean;
   google: GoogleConfig | null;
+  /** The secret refresh tokens are sealed under at rest (token-seal.ts). Without one they're kept as Google gave them. */
+  tokenKey?: string;
 }
 
 /** The Sample calendar: nothing behind it, so every push is taken as it is. */
@@ -111,7 +114,7 @@ export class DataSources {
     db.run("CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, path TEXT NOT NULL, op TEXT NOT NULL, author TEXT NOT NULL, time INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, base TEXT)");
     db.run("CREATE TABLE IF NOT EXISTS etags(path TEXT PRIMARY KEY, etag TEXT NOT NULL)");
     db.run("CREATE TABLE IF NOT EXISTS source_state(source TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    const google = settings.google ? [new GoogleCalendar(settings.google, () => this.connectedToken(), fetcher, now)] : [];
+    const google = settings.google ? [new GoogleCalendar(settings.google, () => this.opened(this.connectedToken()), fetcher, now)] : [];
     this.adapters = Object.fromEntries([sample, ...google, ...adapters].map((a) => [a.source, a]));
   }
 
@@ -122,13 +125,14 @@ export class DataSources {
 
   // ---------------------------------------------------------------- connections
 
-  /** Keep the refresh token Google gave when this person connected their calendar and contacts. */
-  connect(granted: Granted): boolean {
+  /** Keep the refresh token Google gave when this person connected their calendar and contacts, sealed if there's a key. */
+  async connect(granted: Granted): Promise<boolean> {
     if (!granted.refreshToken || !DATA_SCOPES.every((s) => granted.scopes.includes(s))) return false;
+    const kept = this.settings.tokenKey ? await seal(this.settings.tokenKey, granted.refreshToken) : granted.refreshToken;
     this.db.run(
       "INSERT INTO connections(email, provider, refresh_token, scopes, time) VALUES (?, 'google', ?, ?, ?) ON CONFLICT(email, provider) DO UPDATE SET refresh_token = excluded.refresh_token, scopes = excluded.scopes, time = excluded.time",
       granted.email,
-      granted.refreshToken,
+      kept,
       granted.scopes.join(" "),
       this.now(),
     );
@@ -136,8 +140,28 @@ export class DataSources {
     return true;
   }
 
-  disconnect(email: string): void {
+  /** Forget this person's connection, after telling Google to end the grant (if it can't be reached, the grant still goes from here). */
+  async disconnect(email: string): Promise<void> {
+    const token = await this.opened(this.token(email));
+    if (token && this.settings.google) {
+      await this.fetcher("https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) }).catch(() => {});
+    }
     this.db.run("DELETE FROM connections WHERE email = ? AND provider = 'google'", email);
+  }
+
+  /** Seal any refresh token kept before tokens were sealed. Safe to run again. */
+  async sealTokens(): Promise<void> {
+    const key = this.settings.tokenKey;
+    if (!key) return;
+    for (const { email, refresh_token } of this.db.all<{ email: string; refresh_token: string }>("SELECT email, refresh_token FROM connections")) {
+      if (isSealed(refresh_token)) continue;
+      this.db.run("UPDATE connections SET refresh_token = ? WHERE email = ? AND refresh_token = ?", await seal(key, refresh_token), email, refresh_token);
+    }
+  }
+
+  /** A kept refresh token, opened; null if there's none, or it was sealed under another key. */
+  private async opened(kept: string | null): Promise<string | null> {
+    return kept === null ? null : unseal(this.settings.tokenKey, kept);
   }
 
   status(email: string): SourceStatus {
@@ -186,7 +210,7 @@ export class DataSources {
   }
 
   private async access(email: string): Promise<string> {
-    const refresh = this.token(email);
+    const refresh = await this.opened(this.token(email));
     if (!refresh || !this.settings.google) throw new Error("Google isn't connected. Run Connect Google calendar and contacts.");
     return accessToken(this.settings.google, refresh, this.fetcher);
   }
