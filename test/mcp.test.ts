@@ -72,38 +72,26 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   await run("complete_task", { path: "Chores.md", line: 3, today: "2026-10-08" });
   assert.match(files.files.read("Chores.md" as never)!.text, /- \[x\] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08\n- \[ \] Water the plants due:2026-10-11 rec:3d last:2026-10-05 #home/);
   // A line that isn't that task any more isn't ticked.
-  const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
-  assert.equal(stale.ok, false);
+  const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else", today: "2026-10-08" });
+  assert.deepEqual(stale, { ok: false, error: 'Line 3 of Chores.md isn\'t that task any more: it\'s "- [x] Water the plants due:2026-10-08 rec:3d last:2026-10-05 #home done:2026-10-08"' });
 });
 
 test("complete_task needs the person's day, since UTC's is tomorrow on a US evening; without it nothing changes", async () => {
   const files = memoryStore();
   await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Call mum\n", base: 0 }, files, agent);
   const result = await runOperation("complete_task", { path: "Chores.md", line: 3 }, files, agent);
-  assert.deepEqual(result, { ok: false, error: '"today" must be the person\'s day, like 2026-10-05: the tick writes it as done: and last:' });
+  assert.deepEqual(result, { ok: false, error: '"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:' });
   assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Call mum\n");
 });
 
-test("a completion logged while someone else logs one in the same daily note goes in after theirs", async () => {
+test("eight tasks ticked at once each get their line in the daily note", async () => {
   const files = memoryStore();
-  const daily = "Journal/2026-10-05.md" as never;
-  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d\n", base: 0 }, files, agent);
-  await runOperation("write_file", { path: daily, text: "# 2026-10-05\n\n## Done\n\n- [x] Pay rent done:2026-10-05\n", base: 0 }, files, agent);
-  let raced = false;
-  const store = {
-    ...files,
-    write: (w: Parameters<typeof files.write>[0]) => {
-      if (w.path === daily && !raced) {
-        raced = true;
-        const d = files.files.read(daily)!;
-        files.files.write({ path: daily, text: `${d.text}- [x] Feed the cat done:2026-10-05\n`, base: d.revision, author: { kind: "user", email: "ada@example.com" } });
-      }
-      return files.write(w);
-    },
-  };
-  const result = await runOperation("complete_task", { path: "Chores.md", line: 3, today: "2026-10-05" }, store, agent);
-  assert.equal(result.ok, true);
-  assert.equal(files.files.read(daily)?.text, "# 2026-10-05\n\n## Done\n\n- [x] Pay rent done:2026-10-05\n- [x] Feed the cat done:2026-10-05\n- [x] Water the plants done:2026-10-05 ([[Chores]])\n");
+  const chores = ["Water the plants", "Feed the cat", "Pay rent", "Call mum", "Take out the bins", "Book the dentist", "Clean the oven", "Fix the bike"];
+  for (const [i, chore] of chores.entries()) await runOperation("write_file", { path: `Chores ${i}.md`, text: `# Chores\n\n- [ ] ${chore} due:2026-10-05 rec:1w\n`, base: 0 }, files, agent);
+  const results = await Promise.all(chores.map((_, i) => runOperation("complete_task", { path: `Chores ${i}.md`, line: 3, today: "2026-10-05" }, files, agent)));
+  assert.deepEqual(results.map((r) => r.ok), chores.map(() => true));
+  const logged = files.files.read("Journal/2026-10-05.md" as never)!.text;
+  assert.deepEqual(chores.filter((chore) => !logged.includes(`- [x] ${chore} done:2026-10-05`)), []);
 });
 
 test("a tick that clashes with an edit of the same line is an error, and nothing is logged", async () => {
