@@ -94,8 +94,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   // Pages only listen; anything they send is ignored.
   webSocketMessage() {}
 
-  webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code === 1005 ? 1000 : code, "closing");
+  // A page that went without a close frame comes as 1006, which can't be sent back, so the reply is always 1000.
+  webSocketClose(ws: WebSocket) {
+    ws.close(1000, "closing");
   }
 
   list() {

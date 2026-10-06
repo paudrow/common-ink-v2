@@ -71,3 +71,25 @@ browserTest(h, "a sandboxed extension's event edit with a scope or field it can'
   });
   assert.equal(sent.length, 1);
 });
+
+const WRITER = `export default { activate(ctx) {
+  ctx.commands.register("planner.run", async () => {
+    const r = {};
+    const edit = await ctx.data.calendar.update("event:sample/work/standup", { title: "Moved" }, "this");
+    r.edit = edit;
+    try { r.status = await ctx.data.status(); } catch (e) { r.status = "refused"; }
+    await ctx.workbench.notice("WRITER " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "an extension that may only change events learns nothing about them from its edits or the source's status", { scenario: "calendar", levers: { permissions: "allow" }, allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/planner/extension.json", JSON.stringify(PLANNER));
+  await app.writeFile(".common-ink/extensions/planner/index.js", WRITER);
+  await app.page.route(/\/api\/event$/, (route) =>
+    route.fulfill({ json: { status: "saved", address: "event:sample/work/standup", written: [{ id: "standup", title: "Board meeting about layoffs" }], deleted: ["event:sample/work/x"] } }),
+  );
+  await app.reload();
+  await app.command("Run Planner");
+  const said = (await app.page.locator(".notice p", { hasText: "WRITER" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), { edit: { status: "saved", address: "event:sample/work/standup" }, status: "refused" });
+});
