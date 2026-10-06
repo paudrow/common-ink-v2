@@ -74,7 +74,9 @@ for (const width of [320, 375]) {
         const line = [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-line")].find((l) => l.textContent === text)!.getBoundingClientRect();
         return line.top < pill.bottom && pill.top < line.bottom;
       }, (await app.state()).cursor!.text);
-    await app.keys("100Gzt");
+    await app.keys("100G");
+    await app.page.waitForTimeout(200);
+    await app.keys("zt");
     // zt puts the line at the top while nothing floats over it.
     await app.page.waitForFunction(() => {
       const scroller = document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!.getBoundingClientRect();
@@ -114,6 +116,40 @@ browserTest(h, "on a phone, a clash's pill is a button: Enter on it compares the
   await pill.focus();
   await app.page.keyboard.press("Enter");
   await app.page.locator(".clash").waitFor();
+});
+
+for (const viewport of [{ width: 1200, height: 800 }, PHONE])
+  browserTest(h, `at ${viewport.width}px, a save failing leaves the scroll where you put it when the line you edited is out of sight`, { scenario: "empty", viewport, ...OFFLINE }, async (app) => {
+    await app.writeFile("Long.md", Array.from({ length: 200 }, (_, i) => `Line ${i + 1} with words`).join("\n") + "\n");
+    await app.goto({}, "Long");
+    await app.idle();
+    await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+    await app.keys("150Gix<Esc>");
+    await app.page.waitForTimeout(200);
+    await app.page.evaluate(() => (document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!.scrollTop = 0));
+    await app.page.locator("#unsent", { hasText: "1 unsent change" }).waitFor({ state: "attached" });
+    if (viewport.width < 600) await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor();
+    await app.page.waitForTimeout(300);
+    assert.equal(await app.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!.scrollTop), 0);
+    await app.page.unroute("**/api/file**");
+  });
+
+browserTest(h, "on a phone, Search covers the not-saved pill, and its Cancel takes a tap", { scenario: "empty", viewport: PHONE, ...OFFLINE }, async (app) => {
+  await app.writeFile("A.md", "alpha body\n");
+  await app.goto({}, "A");
+  await app.idle();
+  await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+  await app.keys("Gox<Esc>");
+  await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor();
+  await app.command("Search…");
+  const cancel = app.page.locator("#command-bar .cancel");
+  await cancel.waitFor();
+  const box = (await cancel.boundingBox())!;
+  assert.equal(await app.page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest("#command-bar .cancel"), [box.x + box.width / 2, box.y + box.height / 2]), true, "nothing is over Cancel");
+  await app.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.locator("#command-bar").waitFor({ state: "hidden" });
+  assert.equal(await app.page.locator("#not-saved").isVisible(), true, "the pill is there again");
+  await app.page.unroute("**/api/file**");
 });
 
 browserTest(h, "on a laptop the status line counts the focused note's words as you type, and says nothing about the server while it's reached", { scenario: "empty" }, async (app) => {

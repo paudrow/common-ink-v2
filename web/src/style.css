@@ -458,7 +458,8 @@ html[data-device-frame] body {
 
 #not-saved:not([hidden]) {
   position: fixed;
-  z-index: 15;
+  /* Under the command bar (Search, Quick open), menus and dialogs, which cover it while they're open. */
+  z-index: 9;
   top: max(calc(var(--not-saved-at, 0px) + 0.25rem), calc(env(safe-area-inset-top) + 0.25rem));
   right: calc(env(safe-area-inset-right) + 0.5rem);
   max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right));
@@ -480,6 +481,10 @@ html[data-device-frame] body {
 /* Compact width (device.ts), and the media query for the moment before the app runs. */
 html[data-width="compact"] #status {
   display: none;
+}
+/* A notice at the top of a window starts below the pill. */
+html[data-width="compact"]:has(#not-saved:not([hidden])) .notice {
+  top: 2.5rem;
 }
 html[data-width="compact"] #not-saved:not([hidden]) {
   display: block;

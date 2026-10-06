@@ -353,9 +353,13 @@ async function renderUnsent() {
     requestAnimationFrame(() => {
       placeNotSaved();
       notSavedLine.textContent = notSaying;
-      // The cursor, if it's where the pill now is, moves out from under it.
+      // The line being edited, if the pill now covers it, moves out from under it; otherwise the
+      // scroll stays where you left it. A laptop has no pill (the CSS hides it), so nothing moves there.
       const view = workbench.focusedView;
-      view?.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
+      if (!view || !notSavedLine.getClientRects().length) return;
+      const pill = notSavedLine.getBoundingClientRect();
+      const cursor = view.coordsAtPos(view.state.selection.main.head);
+      if (cursor && cursor.top < pill.bottom && pill.top < cursor.bottom) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
     });
 }
 let wasOnline = offline.online;
@@ -379,7 +383,8 @@ function placeNotSaved() {
   const top = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0]?.top ?? 0;
   notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
 }
-addEventListener("resize", placeNotSaved);
+// Placed again when the windows move: the page resizing, or a bar above them coming or going.
+new ResizeObserver(placeNotSaved).observe($("#workbench"));
 floatsOverEditors(notSavedLine);
 notSavedLine.addEventListener("click", () => void openClash());
 notSavedLine.addEventListener("keydown", (e) => {
