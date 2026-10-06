@@ -432,6 +432,23 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+  await button.waitFor();
+  const pressed = await button.elementHandle();
+  const box = (await button.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  // A file changes while the button is held: the panel would be drawn again under the pointer.
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForTimeout(800);
+  const same = await pressed!.evaluate((b) => b.isConnected);
+  await app.page.mouse.up();
+  await app.page.getByText("Install an extension from a URL").waitFor({ timeout: 3000 });
+  assert.ok(same, "the button held is still the one on the page");
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";

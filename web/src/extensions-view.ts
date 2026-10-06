@@ -106,6 +106,27 @@ function keepingPlace(root: HTMLElement, draw: () => void) {
   if (back) back.focus({ preventScroll: true });
 }
 
+/**
+ * A press in the panel, while the pointer is down. Drawn again under it, a button's down and up would
+ * land on different elements and its click would be lost: the drawing waits until the press is over.
+ */
+let pressed: Element | null = null;
+let afterPress: (() => void) | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener("pointerdown", (e) => (pressed = e.target instanceof Element ? e.target : null), true);
+  const released = () => {
+    // After the click the press makes, which comes after pointerup.
+    setTimeout(() => {
+      pressed = null;
+      const draw = afterPress;
+      afterPress = null;
+      draw?.();
+    });
+  };
+  document.addEventListener("pointerup", released, true);
+  document.addEventListener("pointercancel", released, true);
+}
+
 export function extensionsView(deps: ExtensionsViewDeps) {
   let query = "";
   /** The extension whose details are showing, and their modal. */
@@ -116,6 +137,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     title: "Extensions",
     render(root: HTMLElement) {
       root.classList.add("extensions-view");
+      if (pressed && root.contains(pressed)) return void (afterPress = () => view.render(root));
       keepingPlace(root, () => draw(root));
       drawDetails();
     },
