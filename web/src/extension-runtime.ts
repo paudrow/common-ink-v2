@@ -4,17 +4,19 @@
 // object; sandboxed ones run in a host frame and call the same services over messages. Either way,
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
-import type { Change, FilePath, FileSummary } from "../../worker/src/files.ts";
-import { decide, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
-import { PermissionBroker } from "./broker.ts";
-import type { Trigger } from "./permission-words.ts";
+import { PermissionBroker, PermissionDenied } from "./broker.ts";
+import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
+import { noteOfMedia, revealMedia, stopMedia } from "./lives.ts";
+import { currentMedia, mediaSession, onMedia, startMedia, type MediaSession } from "./media.ts";
 import type { Embed, EmbedHost } from "./embeds.ts";
 import type { EventInput, ExtensionContext, ViewRenderer, WebviewHandle } from "./extension-api.ts";
 import { newEventId, type Scope } from "../../worker/src/calendar.ts";
@@ -85,7 +87,7 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined,
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
       // The id is made here, so an edit held offline and sent twice makes one event.
-      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
+      create: (event) => send("POST", { ...event, id: newEventId() }, `Add ${event.title}`),
       update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
       remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },
@@ -144,6 +146,59 @@ interface WebviewHooks {
 const settle = (el: HTMLElement) => {
   if (!el.querySelector(".cm-embed-frame.is-pending")) delete el.dataset.pending;
 };
+
+/** A path a sandboxed extension passed, parsed here at the frame's edge: anything that isn't one is refused before it's checked or used. */
+function filePath(value: unknown): FilePath {
+  const path = parseFilePath(value);
+  if (!path) throw new Error(`${typeof value === "string" ? value : "That"} isn't a file path`);
+  return path;
+}
+
+/**
+ * An event's fields, as a sandboxed extension passed them: each one an event has, of its type. Fields
+ * an event doesn't have are left out; one of the wrong type is refused, not guessed at.
+ */
+function eventInput(value: unknown): EventInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("An event's fields have to be an object");
+  const o = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const take = (k: string, ok: (v: unknown) => boolean, what: string) => {
+    if (!(k in o) || o[k] === undefined) return;
+    if (!ok(o[k])) throw new Error(`An event's ${k} has to be ${what}`);
+    out[k] = o[k];
+  };
+  const text = (v: unknown) => typeof v === "string";
+  const textOrNull = (v: unknown) => typeof v === "string" || v === null;
+  for (const k of ["title", "start", "end", "calendar"]) take(k, text, "text");
+  for (const k of ["timeZone", "location", "description"]) take(k, textOrNull, "text or null");
+  take("allDay", (v) => typeof v === "boolean", "true or false");
+  take("recurrence", (v) => textOrNull(v) || (Array.isArray(v) && v.every(text)), "a rule, a list of rules, or null");
+  return out as EventInput;
+}
+
+/** Which occurrences of a series an edit is for, or none (the Worker's default); anything else is refused. */
+function scopeOf(value: unknown): Scope | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "this" || value === "following" || value === "all") return value;
+  throw new Error('A scope is "this", "following" or "all"');
+}
+
+/** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
+function address(value: unknown): string {
+  if (typeof value !== "string") throw new Error("An address has to be text");
+  return value;
+}
+
+/** The options of a sandboxed extension's fetch: a method, headers and a body, each as text, and nothing else it sent. */
+function fetchOptions(value: unknown): { method?: string; headers?: Record<string, string>; body?: string } {
+  const o = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const headers = o.headers && typeof o.headers === "object" && !Array.isArray(o.headers) ? Object.entries(o.headers as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string") : [];
+  return {
+    ...(typeof o.method === "string" ? { method: o.method } : {}),
+    ...(headers.length ? { headers: Object.fromEntries(headers) } : {}),
+    ...(typeof o.body === "string" ? { body: o.body } : {}),
+  };
+}
 
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
@@ -407,8 +462,17 @@ export class ExtensionRuntime {
     }
   }
 
+  /** Each extension's state writes, one after another, in the order asked: two at once would clash. */
+  private stateWrites = new Map<string, Promise<void>>();
+
   /** Keep an extension's state, as a change by it in history. Its own state file needs no permission. */
-  private async writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+  private writeState(m: ExtensionManifest, value: unknown): Promise<void> {
+    const write = (this.stateWrites.get(m.id) ?? Promise.resolve()).catch(() => {}).then(() => this.sendState(m, value));
+    this.stateWrites.set(m.id, write);
+    return write;
+  }
+
+  private async sendState(m: ExtensionManifest, value: unknown): Promise<void> {
     const path = statePath(m.id);
     const text = `${JSON.stringify(value, null, 2)}\n`;
     for (let tries = 0; tries < 3; tries++) {
@@ -611,6 +675,36 @@ export class ExtensionRuntime {
           );
         },
       },
+      media: (() => {
+        // Every part of it needs the media permission, as the manifest says.
+        const may = () => {
+          if (!m.permissions.media) throw new Error(`${m.id} needs the "media" permission in its extension.json to play or control media`);
+        };
+        const of = (id: number) => (may(), mediaSession(id));
+        return {
+          session: (spec) => {
+            may();
+            return startMedia({ ...spec, play: guard(() => spec.play()), pause: guard(() => spec.pause()), stop: spec.stop && guard(() => spec.stop!()) });
+          },
+          current: () => {
+            may();
+            const s = currentMedia();
+            return s && mediaInfo(s);
+          },
+          onChange: (fn) => (may(), void onMedia(guard(fn))),
+          play: (id) => of(id)?.play(),
+          pause: (id) => of(id)?.pause(),
+          stop: (id) => {
+            const s = of(id);
+            if (s) stopMedia(s);
+          },
+          reveal: (id) => {
+            const s = of(id);
+            if (s?.el) revealMedia(s);
+            else if (s?.note) void app.workbench.open(s.note);
+          },
+        };
+      })(),
       urlEmbeds: {
         register: (id, provider) => {
           if (!m.contributes.urlEmbeds.some((e) => e.id === id)) throw new Error(`URL embed "${id}" isn't declared in ${m.id}'s contributes.urlEmbeds`);
@@ -710,8 +804,28 @@ export class ExtensionRuntime {
     const services = this.services(m);
     const data = dataApi(services.check, record.builtIn && !record.workspace ? undefined : m.id, app.offline);
     const webviews = new Map<string, Webview>();
+    /** A new webview, kept by id for its extension's messages; ones whose frame has gone (a closed window's embed) go then. */
+    const keep = (view: Webview) => {
+      for (const [id, v] of webviews) if (!v.frame.isConnected) webviews.delete(id);
+      webviews.set(view.id, view);
+    };
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    // An edit's answer names the events it wrote: only for an extension that may read them already.
+    const readAsk: Ask = { kind: "data:calendar:read" };
+    // Its words, a refusal's included, can name the event: they go as they are only to one that may read it.
+    const canRead = () => decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk);
+    const mayRead = async (edit: Promise<EditResult>): Promise<Partial<EditResult>> => {
+      let r: EditResult;
+      try {
+        r = await edit;
+      } catch (err) {
+        if (canRead() || err instanceof PermissionDenied) throw err;
+        throw new Error(`The calendar refused ${m.name}'s change to the event`);
+      }
+      if (canRead()) return r;
+      return { status: r.status, address: r.address, ...(r.error ? { error: `The calendar doesn't have ${m.name}'s change yet` } : {}) };
+    };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -753,7 +867,7 @@ export class ExtensionRuntime {
                 // A webview keeps running between redraws; only a missing one is made again.
                 if (el.querySelector(`iframe.webview[data-view="${CSS.escape(a)}"]`)) return;
                 const view = this.webview(m, a, el, (message) => host.event("webview.message", view.id, message));
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`view:${a}`, view.id).catch((err) => (failed(err), showDrawError(el, `${m.name}'s view`, err)));
               },
             });
@@ -765,7 +879,7 @@ export class ExtensionRuntime {
             this.embedDrawers.set(a, (el, embed, tools) =>
               this.framed(el, m, embed, tools, (box, hooks, first) => {
                 const view = this.webview(m, `embed:${a}`, box, (message) => host.event("webview.message", view.id, message), hooks);
-                webviews.set(view.id, view);
+                keep(view);
                 void host.invoke(`embed:${a}`, view.id, first).catch((err) => (failed(err), showDrawError(box, `${m.name}'s ${a} embed`, err)));
                 return updates ? (next) => (void host.invoke(`embedUpdate:${a}`, view.id, next).catch(failed), true) : null;
               }),
@@ -792,13 +906,20 @@ export class ExtensionRuntime {
           case "files.list":
             return services.list();
           case "files.read":
-            return services.read(a as FilePath);
-          case "files.write":
-            return services.write(a as FilePath, String(b), Number(c));
+            return services.read(filePath(a));
+          case "files.write": {
+            const path = filePath(a);
+            if (decidesTrust(path)) {
+              this.broker.record(m.id, { kind: "files:write", target: path }, "denied");
+              if (path === statePath(m.id)) throw new Error(`${m.name} can't change its own state.json as a file: use ctx.state`);
+              throw new Error(`${m.name} can't change ${plain(fileWords(path))}: sandboxed extensions never change settings or extensions' files`);
+            }
+            return services.write(path, String(b), Number(c));
+          }
           case "net.fetch":
-            return services.fetch(a, (b ?? {}) as { method?: string; headers?: Record<string, string>; body?: string });
+            return services.fetch(address(a), fetchOptions(b));
           case "net.card":
-            return services.card(a);
+            return services.card(address(a));
           case "clipboard.read":
             await services.check({ kind: "clipboard:read" });
             return navigator.clipboard.readText();
@@ -808,6 +929,7 @@ export class ExtensionRuntime {
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
+            await services.check({ kind: "data:calendar:read" });
             return data.status();
           case "data.sync":
             return data.sync(a === "force");
@@ -818,11 +940,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(b as Parameters<DataApi["calendar"]["create"]>[0]);
+            return mayRead(data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return data.calendar.update(a, b as EventInput, (c ?? undefined) as Scope | undefined);
+            return mayRead(data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return data.calendar.remove(a, (b ?? undefined) as Scope | undefined);
+            return mayRead(data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
@@ -850,3 +972,5 @@ export class ExtensionRuntime {
   }
 }
 
+/** A session as extensions see it. */
+const mediaInfo = (s: MediaSession) => ({ id: s.id, title: s.title, kind: s.kind, playing: s.playing, note: noteOfMedia(s) ?? s.note ?? null });

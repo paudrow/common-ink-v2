@@ -13,6 +13,8 @@ export interface SafeFetchOptions {
   maxRedirects?: number;
   /** Keep the body's bytes too (`bytes`), for a picture. */
   binary?: boolean;
+  /** Whether a host may be reached: the first address's, and each redirect's to another origin (an extension's declared hosts, say). */
+  allowHost?: (host: string) => boolean;
   /** For tests: the fetch and DNS lookup to use. */
   fetcher?: typeof fetch;
   resolve?: (host: string) => Promise<string[]>;
@@ -37,7 +39,7 @@ const DEFAULTS = { maxBytes: 1_000_000, timeoutMs: 8_000, maxRedirects: 3 };
 export function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true;
-  const [a, b] = parts;
+  const [a, b, c] = parts;
   return (
     a === 0 ||
     a === 10 ||
@@ -45,21 +47,55 @@ export function isPrivateIPv4(ip: string): boolean {
     (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 0) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
     a >= 224
   );
 }
 
-/** Whether an IPv6 address is loopback, unspecified, private (fc00::/7), link-local, multicast, or an IPv4 one that is. */
+/** An IPv6 address's eight 16-bit groups, a trailing dotted IPv4 part included, or null if it isn't one. */
+function ipv6Groups(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number);
+    if ([a, b, c, d].some((n) => n > 255)) return null;
+    s = `${s.slice(0, dotted.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const gap = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (gap < 0 || (halves.length === 2 && gap === 0)) return null;
+  const groups = [...head, ...Array<string>(gap).fill("0"), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+/**
+ * Whether an IPv6 address is one the public internet doesn't route, or carries an IPv4 address that
+ * is: loopback, unspecified, private (fc00::/7), link-local, site-local, multicast, discard,
+ * documentation and Teredo, and IPv4 inside it (mapped, compatible, NAT64, 6to4). Anything that
+ * doesn't parse counts as private.
+ */
 export function isPrivateIPv6(ip: string): boolean {
-  const s = ip.toLowerCase().replace(/^\[|\]$/g, "");
-  if (s === "::" || s === "::1") return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-  if (mapped) return isPrivateIPv4(mapped[1]);
-  const first = parseInt(s.split(":")[0] || "0", 16);
-  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00;
+  const g = ipv6Groups(ip);
+  if (!g) return true;
+  const inside = (hi: number, lo: number) => isPrivateIPv4(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+  const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  if (zero(0, 6)) return inside(g[6], g[7]);
+  if (zero(0, 5) && g[5] === 0xffff) return inside(g[6], g[7]);
+  if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return inside(g[6], g[7]);
+  if (g[0] === 0x64 && g[1] === 0xff9b) return !zero(2, 6) || inside(g[6], g[7]);
+  if (g[0] === 0x2002) return inside(g[1], g[2]);
+  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true;
+  if (g[0] === 0x100 && zero(1, 4)) return true;
+  return (g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xffc0) === 0xfec0 || (g[0] & 0xff00) === 0xff00;
 }
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
@@ -74,7 +110,7 @@ export function refuseUrl(raw: string): string | null {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return "Only http and https addresses can be fetched";
   if (url.username || url.password) return "Addresses with a user name or password can't be fetched";
-  const host = url.hostname.toLowerCase();
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
   if (IPV4.test(host)) return isPrivateIPv4(host) ? "Private and local addresses can't be fetched" : null;
   if (host.startsWith("[")) return isPrivateIPv6(host) ? "Private and local addresses can't be fetched" : null;
   if (!host.includes(".") || /(^|\.)(localhost|local|internal|intranet|home|lan|corp)$/.test(host)) return "Local names can't be fetched";
@@ -129,6 +165,9 @@ async function readCapped(res: Response, max: number): Promise<{ body: string; b
   return { body: new TextDecoder().decode(all), bytes: all, truncated };
 }
 
+/** Headers a browser would send to any site: the only ones of the caller's that follow a redirect to another origin. */
+const SAFE_HEADERS = /^(accept|accept-language|content-language|content-type|user-agent)$/i;
+
 /** Fetch a URL with every check. Throws FetchRefused for a URL it won't fetch, and on time running out. */
 export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<SafeResponse> {
   const fetcher = o.fetcher ?? fetch;
@@ -138,12 +177,13 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
   let url = raw;
   let method = (o.method ?? "GET").toUpperCase();
   let body = o.body;
+  // No cookies, no credentials, no referrer: the request carries only what the caller sent.
+  let headers = Object.fromEntries(Object.entries(o.headers ?? {}).filter(([k]) => !/^(cookie|authorization|proxy-|host$|referer$)/i.test(k)));
   for (let hop = 0; ; hop++) {
     const refused = refuseUrl(url);
     if (refused) throw new FetchRefused(refused);
+    if (hop === 0 && o.allowHost && !o.allowHost(new URL(url).hostname)) throw new FetchRefused(`${new URL(url).hostname} isn't a host it may reach`);
     await checkResolved(new URL(url).hostname.toLowerCase(), resolve);
-    // No cookies, no credentials, no referrer: the request carries only what the caller sent.
-    const headers = Object.fromEntries(Object.entries(o.headers ?? {}).filter(([k]) => !/^(cookie|authorization|proxy-|host$|referer$)/i.test(k)));
     let res: Response;
     try {
       res = await fetcher(url, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body, redirect: "manual", signal });
@@ -154,11 +194,27 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location) {
       if (hop >= maxRedirects) throw new FetchRefused("Too many redirects");
-      url = new URL(location, url).toString();
+      const next = new URL(location, url);
       if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) [method, body] = ["GET", undefined];
+      const notWeb = refuseUrl(next.toString());
+      if (notWeb) throw new FetchRefused(notWeb);
+      if (next.origin !== new URL(url).origin) {
+        if (o.allowHost && !o.allowHost(next.hostname)) throw new FetchRefused(`It was sent on to ${next.hostname}, which it may not reach`);
+        // A body and a key meant for one site aren't handed to the next.
+        if (body !== undefined && method !== "GET" && method !== "HEAD") throw new FetchRefused(`It was sent on to ${next.hostname} with its body, which only a request to the same site may be`);
+        headers = Object.fromEntries(Object.entries(headers).filter(([k]) => SAFE_HEADERS.test(k)));
+      }
+      url = next.toString();
       continue;
     }
-    const { body: text, bytes, truncated } = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    let read: Awaited<ReturnType<typeof readCapped>>;
+    try {
+      read = await readCapped(res, o.maxBytes ?? DEFAULTS.maxBytes);
+    } catch (err) {
+      if ((err as Error).name === "TimeoutError" || signal.aborted) throw new FetchRefused("It took too long");
+      throw new FetchRefused(`${new URL(url).host} stopped answering: ${(err as Error).message}`);
+    }
+    const { body: text, bytes, truncated } = read;
     return { url, status: res.status, headers: Object.fromEntries(res.headers), body: text, truncated, ...(o.binary ? { bytes } : {}) };
   }
 }

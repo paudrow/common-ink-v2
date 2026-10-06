@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { DATA_SCOPES, exchange } from "../worker/src/google.ts";
+import { accessToken, contacts, DATA_SCOPES, exchange } from "../worker/src/google.ts";
 import { runOperation } from "../worker/src/operations.ts";
-import { sign, verify } from "../worker/src/session.ts";
+import { cookie, sign, verify } from "../worker/src/session.ts";
 import { allowedEmails, sessionEmail, signInRoute, type SignInConfig } from "../worker/src/sign-in.ts";
 import { fixtures } from "../worker/src/sources.ts";
 import { memoryStore } from "./store.ts";
@@ -34,24 +35,32 @@ test("signed values come back as they were, and forged or expired ones don't", a
   assert.equal(await verify("nonsense", SECRET), null);
 });
 
-async function signIn(claims: Record<string, unknown>, data = false, token: Record<string, unknown> = {}) {
-  const start = await signInRoute(new Request(`${ORIGIN}/auth/google?next=/?note=Plan.md${data ? "&data=1" : ""}`), new URL(`${ORIGIN}/auth/google?next=/?note=Plan.md${data ? "&data=1" : ""}`), config, async () => true);
+async function signIn(claims: Record<string, unknown>, data = false, token: Record<string, unknown> = {}, next = "/?note=Plan.md") {
+  const startUrl = new URL(`${ORIGIN}/auth/google?next=${encodeURIComponent(next)}${data ? "&data=1" : ""}`);
+  const start = await signInRoute(new Request(startUrl), startUrl, config, async () => true);
   const location = new URL(start!.headers.get("Location")!);
-  const stateCookie = start!.headers.get("Set-Cookie")!.split(";")[0];
+  const stateSetCookie = start!.headers.get("Set-Cookie")!;
   const connected: unknown[] = [];
+  const sent: string[] = [];
   const callback = new URL(`${ORIGIN}/auth/google/callback?code=abc&state=${location.searchParams.get("state")}`);
+  const answer = fakeGoogle({ "https://oauth2.googleapis.com/token": { id_token: idToken(claims), ...token } });
   const res = await signInRoute(
-    new Request(callback, { headers: { Cookie: stateCookie } }),
+    new Request(callback, { headers: { Cookie: stateSetCookie.split(";")[0] } }),
     callback,
     config,
     async (granted) => {
       connected.push(granted);
       return true;
     },
-    fakeGoogle({ "https://oauth2.googleapis.com/token": { id_token: idToken(claims), ...token } }),
+    (async (input: RequestInfo | URL, init?: RequestInit) => (sent.push(String(init?.body ?? "")), answer(input, init))) as typeof fetch,
   );
-  return { location, res: res!, connected };
+  return { location, res: res!, connected, stateSetCookie, sent };
 }
+
+const ada = { aud: "client-1", iss: "https://accounts.google.com", email: "ada@example.com", email_verified: true };
+
+/** The session cookie a response sets, as a Cookie header would send it back. */
+const sessionCookieOf = (res: Response) => res.headers.getSetCookie().find((c) => c.startsWith("__Host-ci_session="))!.split(";")[0];
 
 test("signing in sends you to Google and back with a session for an allowed address", async () => {
   const { location, res } = await signIn({ aud: "client-1", iss: "https://accounts.google.com", email: "Ada@Example.com", email_verified: true });
@@ -61,14 +70,13 @@ test("signing in sends you to Google and back with a session for an allowed addr
   assert.equal(location.searchParams.get("scope"), "openid email profile");
   assert.equal(res.status, 302);
   assert.equal(res.headers.get("Location"), "/?note=Plan.md");
-  const session = res.headers.getSetCookie().find((c) => c.startsWith("ci_session="))!.split(";")[0];
-  assert.equal(await sessionEmail(new Request(ORIGIN, { headers: { Cookie: session } }), SECRET), "ada@example.com");
+  assert.equal(await sessionEmail(new Request(ORIGIN, { headers: { Cookie: sessionCookieOf(res) } }), config), "ada@example.com");
 });
 
 test("an address that isn't allowed, or Google's answer for another app, gets no session", async () => {
   const stranger = await signIn({ aud: "client-1", iss: "accounts.google.com", email: "eve@example.com", email_verified: true });
   assert.equal(stranger.res.status, 403);
-  assert.equal(stranger.res.headers.getSetCookie().some((c) => c.startsWith("ci_session=") && !c.startsWith("ci_session=;")), false);
+  assert.equal(stranger.res.headers.getSetCookie().some((c) => c.startsWith("__Host-ci_session=") && !c.startsWith("__Host-ci_session=;")), false);
   const otherApp = await signIn({ aud: "someone-else", iss: "accounts.google.com", email: "ada@example.com", email_verified: true });
   assert.equal(otherApp.res.status, 400);
   const unverified = await signIn({ aud: "client-1", iss: "accounts.google.com", email: "ada@example.com", email_verified: false });
@@ -79,6 +87,118 @@ test("a callback without the state this browser started with is refused", async 
   const url = new URL(`${ORIGIN}/auth/google/callback?code=abc&state=guess`);
   const res = await signInRoute(new Request(url), url, config, async () => true);
   assert.equal(res?.status, 400);
+});
+
+test("after sign-in, next= leads only to a page on this site, however the browser would read it", async () => {
+  const landings: Array<[string, string]> = [
+    ["/?note=Plan.md", "/?note=Plan.md"],
+    ["/Journal/2026-10-05.md#Log", "/Journal/2026-10-05.md#Log"],
+    ["/\\evil.example", "/"],
+    ["/\t/evil.example", "/"],
+    ["/\n/evil.example/", "/"],
+    ["//evil.example", "/"],
+    ["/a/..//evil.example", "/"],
+    ["https://evil.example/", "/"],
+  ];
+  for (const [next, landing] of landings) {
+    const { res } = await signIn(ada, false, {}, next);
+    assert.equal(res.headers.get("Location"), landing, JSON.stringify(next));
+  }
+});
+
+test("a session ends as soon as its address leaves ALLOWED_EMAILS", async () => {
+  const { res } = await signIn(ada);
+  const req = new Request(ORIGIN, { headers: { Cookie: sessionCookieOf(res) } });
+  assert.equal(await sessionEmail(req, config), "ada@example.com");
+  assert.equal(await sessionEmail(req, { ...config, allowed: allowedEmails("sam@example.com") }), null);
+  assert.equal(await sessionEmail(req, null), null);
+});
+
+test("sign-in proves to Google that it finishes the flow it started (PKCE, S256)", async () => {
+  const { location, sent } = await signIn(ada);
+  const verifier = new URLSearchParams(sent[0]).get("code_verifier") ?? "";
+  assert.match(verifier, /^[A-Za-z0-9_-]{43,128}$/);
+  assert.equal(location.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(location.searchParams.get("code_challenge"), createHash("sha256").update(verifier).digest("base64url"));
+});
+
+test("sign-in's cookies are __Host- cookies, so another subdomain such as v1's can't set or replace them", async () => {
+  const { res, stateSetCookie } = await signIn(ada);
+  assert.match(stateSetCookie, /^__Host-ci_google=[\w.%-]+; Path=\/; Max-Age=600; HttpOnly; Secure; SameSite=Lax$/);
+  const session = res.headers.getSetCookie().find((c) => c.startsWith("__Host-ci_session="));
+  assert.match(session ?? "", /^__Host-ci_session=[\w.%-]+; Path=\/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax$/);
+});
+
+test("signing out from the app ends the session and clears what the browser kept; another site, or a picture in a note, only gets the button", async () => {
+  const url = new URL(`${ORIGIN}/auth/sign-out`);
+  const signOut = (init: RequestInit) => signInRoute(new Request(url, init), url, config, async () => true).then((r) => r!);
+  const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax", "ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
+  const fromApp: RequestInit[] = [
+    { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } },
+    { headers: { "Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate" } },
+    { method: "POST", headers: { Origin: ORIGIN } },
+  ];
+  for (const init of fromApp) {
+    const res = await signOut(init);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.headers.getSetCookie(), cleared, JSON.stringify(init));
+    assert.equal(res.headers.get("Clear-Site-Data"), '"cache", "storage"');
+  }
+  const fromElsewhere: RequestInit[] = [
+    { headers: { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate" } },
+    { headers: { "Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate" } },
+    // A note's ![](/auth/sign-out), drawn as a picture: same-origin, but not you going there.
+    { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image" } },
+    {},
+  ];
+  for (const init of fromElsewhere) {
+    const res = await signOut(init);
+    assert.deepEqual(res.headers.getSetCookie(), [], JSON.stringify(init));
+    assert.equal(res.headers.get("Clear-Site-Data"), null);
+    assert.match(await res.text(), /<form method="post" action="\/auth\/sign-out">/);
+  }
+  const forged = await signOut({ method: "POST", headers: { Origin: "https://v1.commonink.app" } });
+  assert.equal(forged.status, 403);
+  assert.deepEqual(forged.headers.getSetCookie(), []);
+});
+
+test("a next= too long for the sign-in cookie still signs you in, landing on the app", async () => {
+  const { res } = await signIn(ada, false, {}, `/?note=${"x".repeat(5000)}`);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("Location"), "/");
+});
+
+test("a next= that only grows long once it's percent-encoded still signs you in, landing on the app", async () => {
+  for (const next of [`/${"é".repeat(1999)}`, `/${"😀".repeat(999)}`, `/?q=${'"'.repeat(1996)}`]) {
+    const { res, stateSetCookie } = await signIn(ada, false, {}, next);
+    assert.ok(stateSetCookie.length < 4096, `the sign-in cookie is ${stateSetCookie.length} characters`);
+    assert.equal(res.headers.get("Location"), "/");
+  }
+});
+
+test("declining at Google says so, with a way to try again", async () => {
+  const startUrl = new URL(`${ORIGIN}/auth/google`);
+  const start = await signInRoute(new Request(startUrl), startUrl, config, async () => true);
+  const state = new URL(start!.headers.get("Location")!).searchParams.get("state");
+  const url = new URL(`${ORIGIN}/auth/google/callback?error=access_denied&state=${state}`);
+  const res = await signInRoute(new Request(url, { headers: { Cookie: start!.headers.get("Set-Cookie")!.split(";")[0] } }), url, config, async () => true);
+  assert.equal(res!.status, 400);
+  assert.match(await res!.text(), /<title>You didn't allow sign-in · Common Ink<\/title>.*<a href="\/auth\/google">Try again<\/a>/s);
+});
+
+test("signing out also expires the cookies v1 left on this address", async () => {
+  const url = new URL(`${ORIGIN}/auth/sign-out`);
+  const res = await signInRoute(new Request(url, { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } }), url, config, async () => true);
+  assert.deepEqual(res!.headers.getSetCookie(), [
+    "__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+    "ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+  ]);
+});
+
+test("a cookie that isn't validly encoded is no cookie, not an error", async () => {
+  const req = new Request(ORIGIN, { headers: { Cookie: "__Host-ci_session=%zz; constructor=1; __proto__=2" } });
+  assert.equal(await sessionEmail(req, config), null);
+  assert.equal(cookie(new Request(ORIGIN, { headers: { Cookie: "a=1; a=2; toString=3" } }), "toString"), "3");
 });
 
 test("connecting data asks for calendar and contacts offline, and keeps Google's refresh token", async () => {
@@ -108,12 +228,12 @@ test("with Google connected, contacts come from Google, and its formats stay out
   await assert.rejects(sources.contacts("ada@example.com", ""), /isn't connected/);
   assert.equal(sources.status("ada@example.com").using, "none");
   assert.equal(sources.status("ada@example.com").sources[0].state, "not-connected");
-  assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["openid"] }), false, "without the data scopes it isn't connected");
-  assert.equal(sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: DATA_SCOPES }), true);
+  assert.equal(await sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: ["openid"] }), false, "without the data scopes it isn't connected");
+  assert.equal(await sources.connect({ email: "ada@example.com", refreshToken: "r", scopes: DATA_SCOPES }), true);
   assert.equal(sources.status("ada@example.com").using, "google");
   assert.deepEqual(await sources.contacts("ada@example.com", "sam"), [{ id: "people/1", name: "Sam", emails: ["sam@example.com"], phones: [], organization: undefined }]);
   assert.ok(seen.some((s) => s.startsWith("GET https://people.googleapis.com") && s.endsWith("Bearer access-1")));
-  sources.disconnect("ada@example.com");
+  await sources.disconnect("ada@example.com");
   assert.equal(sources.status("ada@example.com").using, "none");
 });
 
@@ -137,6 +257,23 @@ test("contacts answer for the person, or the person an agent works for", async (
 
 test("Google's ID token is checked for this app and a confirmed email", async () => {
   const answer = (claims: Record<string, unknown>) => fakeGoogle({ "https://oauth2.googleapis.com/token": { id_token: idToken(claims) } });
-  await assert.rejects(exchange(google, "c", "r", answer({ aud: "client-1", iss: "https://evil.example", email: "a@b.c", email_verified: true })), /wasn't for this app/);
-  assert.equal((await exchange(google, "c", "r", answer({ aud: "client-1", iss: "accounts.google.com", email: "A@B.C", email_verified: true }))).email, "a@b.c");
+  await assert.rejects(exchange(google, "c", "r", "v", answer({ aud: "client-1", iss: "https://evil.example", email: "a@b.c", email_verified: true })), /wasn't for this app/);
+  assert.equal((await exchange(google, "c", "r", "v", answer({ aud: "client-1", iss: "accounts.google.com", email: "A@B.C", email_verified: true }))).email, "a@b.c");
+});
+
+test("sign-in, a fresh access token and contacts each give up on a Google that doesn't answer, and say so", { timeout: 5000 }, async () => {
+  // Google, hanging: it answers only by failing once the request is given up.
+  const hanging: typeof fetch = (_input, init) =>
+    new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+  // AbortSignal.timeout's timer doesn't keep Node waiting, so something else has to.
+  const waiting = setInterval(() => {}, 1000);
+  try {
+    const config = { clientId: "c", clientSecret: "s" };
+    const said = "Google didn't answer within 0.05 seconds";
+    await assert.rejects(exchange(config, "code", "https://example.com/auth/google/callback", "verifier", hanging, 50), { message: said });
+    await assert.rejects(accessToken(config, "refresh", hanging, 50), { message: said });
+    await assert.rejects(contacts("token", hanging, 50), { message: said });
+  } finally {
+    clearInterval(waiting);
+  }
 });

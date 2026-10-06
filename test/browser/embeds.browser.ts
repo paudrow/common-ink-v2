@@ -25,7 +25,7 @@ test("a timer runs from its note, shows in the status bar, and keeps going acros
   assert.equal((history.changes ?? history)[0].author.kind, "extension", "its state is the Timers extension's change");
   await page.locator(".noise-embed button").click();
   await page.waitForSelector(".mini-player:not([hidden])");
-  assert.equal(await statusItem(page, "media.playing"), "♪ Brown noise");
+  assert.equal(await statusItem(page, "media.playing"), "♪ Brown noise · Embeds tour", "what plays, and the note it's from");
   await page.locator(".mini-player button[aria-label='Stop']").click();
   await page.waitForSelector(".mini-player[hidden]", { state: "attached" });
   assert.deepEqual(errors, []);

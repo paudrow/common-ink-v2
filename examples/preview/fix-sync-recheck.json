@@ -1,0 +1,7 @@
+{
+  "pr": 75,
+  "title": "A sync reads again the events it left for an edit made meanwhile",
+  "steps": [
+    "Nothing changes on a Preview's Sample calendar, which doesn't sync. With `npm run dev -- --fake-google`, edit an event while the calendar syncs: your edit stays, and a change made to it in Google afterwards shows after the next sync."
+  ]
+}

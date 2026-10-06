@@ -1,0 +1,9 @@
+{
+  "pr": 42,
+  "title": "Sign-in and sessions, hardened",
+  "steps": [
+    "This Preview signs you in as a dev user, so Google sign-in itself is tested in test/google.test.ts. What you can try here is signing out.",
+    "Run Sign out from the command bar (⌘⇧P). You get \"Signed out\", and in DevTools > Application the IndexedDB database, Cache Storage and the service worker are gone. Loading the app again signs you back in as the dev user.",
+    "Open <this Preview>/auth/sign-out from a link on another site: you get a Sign out button instead, and nothing is cleared until you press it."
+  ]
+}

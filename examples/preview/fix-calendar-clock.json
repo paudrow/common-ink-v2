@@ -1,0 +1,7 @@
+{
+  "pr": 51,
+  "title": "The fake Google's week follows the scenario's clock",
+  "steps": [
+    "Nothing changes on a Preview, which has the Sample calendar. Locally, `npm run dev -- --fake-google --scenario google --fresh` and ⌘⇧P, Show calendar: the week of Oct 5, 2026 has the Standup each weekday and the Dentist on Tuesday, whatever today is."
+  ]
+}
