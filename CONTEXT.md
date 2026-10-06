@@ -112,5 +112,5 @@ A state a note can be in: kept, out of the Feed, shown last in search, still in 
 _Avoid_: Hide, move to archive
 
 **Trash**:
-The notes deleted in the last `trash.retentionDays` days (30 by default). It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history.
+The notes deleted in the last `trash.retentionDays` days (30 by default), whatever is at their paths now. It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history, or beside the note that has its path now.
 _Avoid_: Bin, recycle
