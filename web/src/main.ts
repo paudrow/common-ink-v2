@@ -1,5 +1,6 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { embedHooks } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
 import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
@@ -177,6 +178,8 @@ const workbench = new Workbench(
   offline,
   new Navigation(savedNavigation()),
 );
+// Focus in an embed's box (in the layer, outside every window) focuses the window its note is in.
+embedHooks.focused = (view) => workbench.focusView(view);
 // After a reload, the entry the browser is on is where you are.
 if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
 

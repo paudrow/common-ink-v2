@@ -241,6 +241,13 @@ export class Workbench {
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
   }
 
+  /** Focus the window this editor is in, as focus coming into it does (an embed's box is outside it, in the layer). */
+  focusView(view: EditorView): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    const id = at?.split("\n")[0];
+    if (id && this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
+  }
+
   /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
   openView(id: string, how: { newTab?: boolean } = {}): void {
     const item = { view: id };
