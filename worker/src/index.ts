@@ -60,13 +60,23 @@ function secure(res: Response, frameHosts: readonly string[] = []): Response {
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+/** Where a page sends its last save with navigator.sendBeacon. */
+const BEACON = "/api/file/beacon";
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const elsewhere = redirectFor(url);
-    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
+    if (elsewhere) return new Response(null, { status: elsewhere.status, headers: { Location: elsewhere.location, "Strict-Transport-Security": HEADERS["Strict-Transport-Security"] } });
     const res = await handle(req, env, url);
-    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    // A WebSocket's answer can't be rewrapped; everything else asks for HTTPS, the sandbox route's included.
+    if (res.status === 101) return res;
+    if (res.headers.get("Content-Security-Policy") !== "{app}") {
+      if (res.headers.has("Strict-Transport-Security")) return res;
+      const out = new Response(res.body, res);
+      out.headers.set("Strict-Transport-Security", HEADERS["Strict-Transport-Security"]);
+      return out;
+    }
     const out = new Response(res.body, res);
     out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
@@ -108,6 +118,11 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     const changes = (req.method !== "GET" && req.method !== "HEAD") || req.headers.get("Upgrade")?.toLowerCase() === "websocket";
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
+    }
+    // A save sent with sendBeacon is a simple request, with no preflight, so it has to show it's from
+    // this site rather than only not say otherwise. Browsers always say where a beacon came from.
+    if (url.pathname === BEACON && origin !== url.origin && req.headers.get("Sec-Fetch-Site") !== "same-origin") {
+      return secure(page("Not from here", "<p>That request didn't say it came from this site.</p>", 403));
     }
     // A trusted workspace extension's code, from its files, so the page can import it under
     // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
@@ -174,6 +189,8 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
+  // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.
+  "POST /api/file/beacon": "write_file",
   "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
@@ -227,30 +244,44 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
  * plain text downloads instead of opening.
  */
 async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  // Every answer under /uploads/ carries the upload's policy, a 404 or 503 too: what the browser shows at
+  // an upload's address is never a page of this site.
+  const underPolicy = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    return out;
+  };
+  const notFound = () => underPolicy(new Response("Not found\n", { status: 404 }));
   let name: string;
   try {
     name = decodeURIComponent(url.pathname.slice("/uploads/".length));
   } catch {
-    return secure(new Response("Not found\n", { status: 404 }));
+    return notFound();
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
-  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
+  if (!upload) return notFound();
   // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
   // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
   const sandboxed = (res: Response) => {
-    const out = secure(res);
-    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    const out = underPolicy(res);
     out.headers.set("ETag", `"${upload.hash}"`);
     // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
     out.headers.set("Cache-Control", "private, no-cache");
     return out;
   };
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash));
-  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  // A HEAD asks only whether the bytes are there; it doesn't read them.
+  const key = blobKey(upload.hash);
+  const read: Promise<R2Object | R2ObjectBody | null> = req.method === "HEAD" ? env.UPLOADS.head(key) : env.UPLOADS.get(key);
+  const blob = await read.catch((err) => {
+    console.error("Reading an upload's bytes failed:", err);
+    return undefined;
+  });
+  if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
+  if (!blob) return notFound();
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(req.method === "HEAD" ? null : blob.body, {
+    new Response("body" in blob ? blob.body : null, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
