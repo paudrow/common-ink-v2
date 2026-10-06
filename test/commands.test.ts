@@ -107,3 +107,14 @@ test("a binding the typed character matches wins over one matched by where the k
     await learnLayout({ getLayoutMap: async () => new Map() });
   }
 });
+
+test("an app-only command runs for the app, and a sandboxed extension's run of it is refused", () => {
+  let ran = 0;
+  const commands = new Commands();
+  commands.register({ id: "device.keyboardYes", title: "Keyboard", appOnly: true, run: () => ran++ }, { id: "note.save", title: "Save", run: () => ran++ });
+  assert.equal(commands.run("device.keyboardYes"), true);
+  assert.throws(() => commands.run("device.keyboardYes", "sandbox"), /Only the app runs "device.keyboardYes"/);
+  assert.equal(ran, 1);
+  assert.equal(commands.run("note.save", "sandbox"), true);
+  assert.equal(ran, 2);
+});

@@ -969,7 +969,7 @@ export class ExtensionRuntime {
             this.handlers.set(a, () => host.invoke(`command:${a}`).catch(failed));
             return;
           case "commands.run":
-            return app.commands.run(a);
+            return app.commands.run(a, "sandbox");
           case "commands.all":
             return this.allCommands();
           case "commands.shortcut":

@@ -8,6 +8,8 @@ export interface Command {
   run(): unknown;
   /** Why it's off on this device, if it is ("Off on this device · needs a screen 840px wide"): listed greyed, and running it says so instead. */
   off?(): string | null;
+  /** Only the app runs it, from a key, a menu or the command bar: a sandboxed extension's commands.run is refused. */
+  appOnly?: boolean;
 }
 
 export type { Keybinding } from "../../worker/src/settings.ts";
@@ -27,10 +29,11 @@ export class Commands {
     return [...this.byId.values()].sort((a, b) => a.title.localeCompare(b.title));
   }
 
-  /** Run a command by id. False if there's no such command. */
-  run(id: string): boolean {
+  /** Run a command by id. False if there's no such command. A sandboxed extension can't run an app-only one: that throws. */
+  run(id: string, by: "app" | "sandbox" = "app"): boolean {
     const command = this.byId.get(id);
     if (!command) return false;
+    if (command.appOnly && by === "sandbox") throw new Error(`Only the app runs "${id}"`);
     const off = command.off?.();
     if (off) this.refused(command.title, off);
     else void command.run();

@@ -63,7 +63,7 @@ Each browser you use Common Ink in is a device, with a file of its own: `.common
 
 A keyboard is assumed on a device with a mouse or trackpad that hovers (a desktop). Elsewhere it's found the first time a key arrives that a touch screen's keyboard doesn't send (any key outside a text field, or Escape, Tab, an arrow, or a ⌘ or Ctrl chord in one), and kept from then on.
 
-The command bar has the same switches, for a phone or tablet with a keyboard the app didn't find: "Keyboard: this device has a keyboard" (and "has no keyboard", and Auto), and "Vim: turn on for this device" (and turn off, and Auto). Turning something off here applies after a reload, and the app offers it.
+The command bar has the same switches, for a phone or tablet with a keyboard the app didn't find: "Keyboard: this device has a keyboard" (and "has no keyboard", and Auto), and "Vim: turn on for this device" (and turn off, and Auto). Each says what it did and where Vim now stands; turning something off here applies after a reload, and the app offers it. Only you run these: an extension can't.
 
 Whether an extension is on, on a device:
 
@@ -82,7 +82,7 @@ An extension whose requirements aren't met doesn't start, and the Extensions vie
 
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
-- `ctx.commands.register(id, run)`, `run(id)`, `all()` (each with `off`, why it's off on this device, if it is), `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
+- `ctx.commands.register(id, run)`, `run(id)` (a sandboxed extension can't run the app's app-only commands, such as the device switches below: the run throws), `all()` (each with `off`, why it's off on this device, if it is), `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
 - **A sandboxed extension's calls have limits.** Each carries at most 2,000,000 characters' worth (as JSON), and together at most 10,000,000 characters' worth and 2,000 calls every 10 seconds. Past that a call is refused with the reason, so an extension reading many notes at once (more than about 1,700 in 10 seconds) has to wait and try again. A webview's message to its extension is held to the same size; one that's too big is dropped, with the reason in the webview's console.
 - `ctx.device` is the device, for code that adapts to it rather than requiring something: `has("keyboard")` and `has("touch")`, `width` (its width class) and `atLeast("expanded")`, `pointer` (`"fine"` or `"coarse"`), `touch`, `why("keyboard")` (what the app went by, in words) and `onChange(fn)`, which runs when the width class, the pointer, touch or the keyboard changes. Sandboxed extensions get it too.
 - `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
