@@ -38,12 +38,16 @@ export interface BrowserTestOptions {
   open?: string;
   viewport?: { width: number; height: number };
   dark?: boolean;
+  /** The browser's time zone, such as "America/Chicago": the machine's otherwise. */
+  timezone?: string;
   /** Browser permissions, such as clipboard-read. */
   grant?: string[];
   /** Errors the page may log without failing the test. */
   allowErrors?: RegExp[];
   /** Requests to other sites get an empty page ("stub", the default), or reach the internet ("live"). */
   internet?: "stub" | "live";
+  /** Pages to serve in place of other sites' (by host, like "www.youtube-nocookie.com"), stubbed or not: a fake player, say. */
+  sites?: Record<string, string>;
   /** Known to fail, and why: the pull request that fixes it. The test runs, and its failure is reported but doesn't fail the run. */
   todo?: string;
 }
@@ -54,11 +58,12 @@ const tracing = !!(process.env.CI || process.env.TRACE);
 /** One browser test, in its own context, as a person would meet the app: see BrowserTestOptions. */
 export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
   test(name, o.todo ? { todo: o.todo } : {}, async (t) => {
-    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light" });
+    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light", ...(o.timezone ? { timezoneId: o.timezone } : {}) });
     // TypeScript run by the test runner names functions with a helper that pages passed them don't have.
     await context.addInitScript("window.__name = (f) => f");
     if (o.grant) await context.grantPermissions(o.grant, { origin: h.base });
     if ((o.internet ?? "stub") === "stub") await context.route((url) => !url.href.startsWith(h.base) && url.protocol.startsWith("http"), (route) => route.fulfill({ contentType: "text/html", body: "" }));
+    for (const [host, body] of Object.entries(o.sites ?? {})) await context.route((url) => url.host === host, (route) => route.fulfill({ contentType: "text/html", body }));
     if (tracing) await context.tracing.start({ screenshots: true, snapshots: true });
     const page = await context.newPage();
     const errors: string[] = [];

@@ -10,7 +10,7 @@ import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import { diffPatch } from "node-diff3";
+import { linePatch } from "./line-diff.ts";
 import type { Settings } from "../../worker/src/settings.ts";
 import type { FilePath } from "../../worker/src/files.ts";
 import { directiveSyntax } from "./directives.ts";
@@ -104,8 +104,12 @@ export function createState(
       slots.livePreview.of(s.livePreview),
       history(),
       drawSelection(),
+      // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
+      // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
+      EditorState.allowMultipleSelections.of(true),
+      EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
-      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
+      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
@@ -121,17 +125,31 @@ export function createState(
   });
 }
 
-/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
-export function replaceText(view: EditorView, text: string, flash = false) {
+/** The changes that turn the editor's text into `text`, line by line, so the cursor stays put. */
+function lineChanges(view: EditorView, text: string) {
   const old = linesOf(view.state.doc.toString());
   const starts = [0];
   for (const line of old) starts.push(starts.at(-1)! + line.length);
-  const patch = diffPatch(old, linesOf(text));
+  const patch = linePatch(old, linesOf(text));
   const changes = patch.map(({ buffer1, buffer2 }) => ({
     from: starts[buffer1.offset],
     to: starts[buffer1.offset + buffer1.length],
     insert: buffer2.chunk.join(""),
   }));
+  return { patch, changes };
+}
+
+/** Change the editor's text to `text` as an edit of yours, line by line: `u` takes it back. */
+export function editText(view: EditorView, text: string) {
+  view.dispatch({ changes: lineChanges(view, text).changes, userEvent: "input.replace" });
+}
+
+/** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
+const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
+
+/** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
+export function replaceText(view: EditorView, text: string, flash = false) {
+  const { patch, changes } = lineChanges(view, text);
   view.dispatch({ changes, annotations: [fromServer.of(true), Transaction.addToHistory.of(false)] });
   if (!flash) return;
   // Someone else's lines, highlighted for a moment, so you see what changed under you.

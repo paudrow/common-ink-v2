@@ -79,7 +79,8 @@ test("dates stay dates across a daylight-saving change, whatever the machine's t
     assert.deepEqual(three("weekly", "2026-10-25"), ["2026-11-01", "2026-11-08", "2026-11-15"], tz);
     assert.deepEqual(three("sun", "2026-03-28"), ["2026-03-29", "2026-04-05", "2026-04-12"], tz);
   }
-  process.env.TZ = was;
+  if (was === undefined) delete process.env.TZ;
+  else process.env.TZ = was;
 });
 
 test("a rule says what it does, short for a chip and long for the editor", () => {
