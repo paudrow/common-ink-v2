@@ -596,3 +596,21 @@ test("an edit whose event Google keeps refusing to read is refused after a few t
   assert.deepEqual(store.sources.outbox("google"), []);
   assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to Dentist (Dr Lee): Google Calendar answered 400 reading Dentist (Dr Lee). It's back as it was, and the change is in its history.");
 });
+
+test("an event Google deleted while an edit of it waited goes here too, with the edit in its history", async () => {
+  let down = false;
+  const { fake, store } = googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  await op(store, "sync_calendar", {});
+  down = true;
+  assert.equal(((await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string }).status, "queued");
+  fake.remove("ada@example.com", "dentist");
+  await op(store, "sync_calendar", { force: true });
+  down = false;
+  await store.sources.flush("google");
+  assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null, "gone here at once");
+  await op(store, "sync_calendar", { force: true });
+  assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null, "and after a sync");
+  const path = recordPath({ source: "google", kind: "event", collection: "primary", id: "dentist" });
+  assert.ok(store.files.recent({ path }).some((c) => store.files.versionAt(path, c.revision)?.includes("Dentist (Dr Lee)")), "the edit is in its history");
+  assert.match(store.sources.status("ada@example.com").sources[0].conflict ?? "", /It was deleted in Google\. It's gone here too/);
+});
