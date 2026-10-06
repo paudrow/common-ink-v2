@@ -592,7 +592,7 @@ test("an edit whose event Google keeps refusing to read is refused after half an
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
   await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
   for (let i = 0; i < 5; i++) await store.sources.flush("google");
-  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Standup", "quick tries don't use up its time");
+  assert.equal(store.sources.outbox("google").length, 2, "quick tries don't use up its time");
   clock += 31 * 60_000;
   await store.sources.flush("google");
   assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff", "the edit behind it went");
