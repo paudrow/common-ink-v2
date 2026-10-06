@@ -32,10 +32,14 @@ export function appCsp(origin: string, frameHosts: readonly string[] = []): stri
   ].join("; ");
 }
 
-/** The policy for a sandbox page. Sources are named by full origin and path, narrower than 'self'. */
+/**
+ * The policy for a sandbox page. Sources are named by full origin and path, narrower than 'self'. The
+ * page is sandboxed by its own policy too, so it has an opaque origin wherever it loads (opened by
+ * itself, say), not only in the app's sandboxed frames; and only the app's pages may frame it.
+ */
 export function sandboxCsp(origin: string, kind: "host" | "webview"): string {
   const here = `${origin}${SANDBOX_PREFIX}`;
-  const common = `default-src 'none'; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; worker-src 'none'`;
+  const common = `sandbox allow-scripts; frame-ancestors ${origin}; default-src 'none'; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; worker-src 'none'`;
   if (kind === "host") return `${common}; script-src ${here}; img-src 'none'; media-src 'none'`;
   // A webview runs whatever HTML its extension gives it, inline scripts included: it's untrusted as a
   // whole, so what matters is that nothing in it can reach out.

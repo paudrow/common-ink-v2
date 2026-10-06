@@ -63,6 +63,10 @@ export class FakeGoogle {
     const url = new URL(String(input));
     const method = init.method ?? "GET";
     this.calls.push(`${method} ${url.pathname}${url.search}`);
+    if (url.href === "https://oauth2.googleapis.com/revoke") {
+      this.revoked = true;
+      return new Response(null, { status: 200 });
+    }
     if (url.href === "https://oauth2.googleapis.com/token") {
       if (this.revoked) return json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, 400);
       return json({ access_token: "fake-access", expires_in: 3599, token_type: "Bearer" });
@@ -103,7 +107,8 @@ export class FakeGoogle {
       const { recurrence: _, ...fields } = series;
       current = { ...fields, id, recurringEventId: series.id, originalStartTime: original, start: original, end: original };
     }
-    if (method === "GET") return current.status === "cancelled" ? error(410, "Resource has been deleted", "deleted") : json(current);
+    // Google's get answers a deleted event too, cancelled.
+    if (method === "GET") return json(current);
     if (ifMatch && current.etag && ifMatch !== current.etag) return error(412, "Precondition Failed", "conditionNotMet");
     if (method === "PATCH" && body) return json(this.put(calendarId, { ...current, ...body, id }));
     if (method === "DELETE") {
@@ -136,13 +141,15 @@ export class FakeGoogle {
 }
 
 /**
- * A fake Google with a week of events around `now`, for the browser tests' Workers (FAKE_GOOGLE):
- * a primary calendar in New York with a weekday standup (one occurrence moved), a dentist visit, and
- * a team calendar you can only read.
+ * A fake Google with a week of events around `today`, a day in its calendars' zone (New York), for
+ * the browser tests' Workers (FAKE_GOOGLE): a primary calendar with a weekday standup and a dentist
+ * visit, and a team calendar you can only read.
  */
-export function sampleGoogle(now: number): FakeGoogle {
-  const day = (n: number) => new Date(now + n * 86_400_000).toISOString().slice(0, 10);
-  const NY = "America/New_York";
+export const SAMPLE_ZONE = "America/New_York";
+
+export function sampleGoogle(today: string): FakeGoogle {
+  const NY = SAMPLE_ZONE;
+  const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   const fake = new FakeGoogle();
   fake.addCalendar({ id: "tester@localhost", summary: "Tester", primary: true, accessRole: "owner", backgroundColor: "#4f6bd8", timeZone: NY });
   fake.addCalendar({ id: "team@group.calendar.google.com", summary: "Team", accessRole: "reader", backgroundColor: "#2f9e44", timeZone: NY });

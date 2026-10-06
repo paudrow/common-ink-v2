@@ -83,3 +83,21 @@ test("agents upload through the operations with base64, and list uploads with th
   const bad = await runOperation("upload_file", { name: "x.txt", data: "" }, store, agent);
   assert.deepEqual(bad, { ok: false, error: "x.txt is empty" });
 });
+
+test("an upload's bytes are read only up to the limit, however the body comes", async () => {
+  const { bytesUpTo } = await import("../worker/src/body.ts");
+  let pulled = 0;
+  const body = (chunks: number, size: number) =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled++ >= chunks) return controller.close();
+        controller.enqueue(new Uint8Array(size).fill(7));
+      },
+    });
+  const small = await bytesUpTo(body(3, 4), 100);
+  assert.deepEqual(small && [...new Uint8Array(small)], Array(12).fill(7));
+  pulled = 0;
+  assert.equal(await bytesUpTo(body(1000, 40), 100), null);
+  assert.ok(pulled < 10, `it stopped reading at the limit, after ${pulled} chunks`);
+  assert.equal((await bytesUpTo(null, 100))?.byteLength, 0);
+});

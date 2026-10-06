@@ -78,3 +78,14 @@ browserTest(h, "a click on an event's chip opens its editor beside it, even when
   const box = (await editor.boundingBox())!;
   assert.equal(Math.round(box.x), Math.round(event.x + event.width + 8), "just right of the event");
 });
+
+browserTest(h, "a click on a chip whose event is gone opens the calendar on today where you are, not today in UTC", { scenario: "calendar", open: "Calendar tour", timezone: "America/Chicago", levers: { now: "2026-10-11T21:00" } }, async (app) => {
+  // 9 PM on Sunday Oct 11 in Chicago is 2 AM on Monday Oct 12 in UTC: a week later.
+  await app.writeFile("Old plans.md", "# Old plans\n\nWas: [Retro](event:sample/work/gone).\n");
+  await app.open("Old plans");
+  const chip = app.page.locator(".cm-event-chip.is-missing", { hasText: "Retro" });
+  await chip.waitFor();
+  await chip.click();
+  await app.page.locator(".cal-page").waitFor();
+  assert.equal(await app.page.locator(".cal-title-text").innerText(), "Oct 5 – 11, 2026");
+});
