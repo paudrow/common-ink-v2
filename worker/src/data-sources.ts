@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, Unreadable, type Adapter, type Pushed, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -81,6 +81,9 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** How long an edit waits for the source to say how its record is, before it's refused. */
+const UNREADABLE_FOR = 30 * 60_000;
+
 /** Who a source's sync is, as the author of what it brings in. */
 const SYNC_AUTHOR: Record<SourceId, Extract<Author, { kind: "sync" }>> = { google: { kind: "sync", source: "google-calendar" }, sample: { kind: "sync", source: "sample-calendar" } };
 
@@ -119,6 +122,8 @@ export class DataSources {
   ) {
     // `base` is the record as it was before the edit, for merging if the source changed it meanwhile.
     db.run("CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, path TEXT NOT NULL, op TEXT NOT NULL, author TEXT NOT NULL, time INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, base TEXT)");
+    // `unreadable`: since when the source has kept refusing to say how the edit's record is, if it has.
+    if (!/[(,\s]unreadable\s/.test(db.all<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outbox'")[0]?.sql ?? "")) db.run("ALTER TABLE outbox ADD COLUMN unreadable INTEGER");
     db.run("CREATE TABLE IF NOT EXISTS etags(path TEXT PRIMARY KEY, etag TEXT NOT NULL)");
     db.run("CREATE TABLE IF NOT EXISTS source_state(source TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const google = settings.google ? [new GoogleCalendar(settings.google, () => this.opened(this.connectedToken()), fetcher, now)] : [];
@@ -380,7 +385,7 @@ export class DataSources {
     const adapter = this.adapters[source];
     const conflicts = new Map<number, number>();
     for (;;) {
-      const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; attempts: number }>("SELECT seq, path, op, base, attempts FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
+      const [row] = this.db.all<{ seq: number; path: string; op: string; base: string | null; unreadable: number | null }>("SELECT seq, path, op, base, unreadable FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source);
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
@@ -411,12 +416,14 @@ export class DataSources {
           this.setState(source, { error: err.message });
           return err.message;
         }
-        if (err instanceof Refusal) {
-          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
+        // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
+        const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
+        if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
+          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, (err as Error).message));
           continue;
         }
         const message = (err as Error).message;
-        this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ? WHERE seq = ?", message, row.seq);
+        this.db.run("UPDATE outbox SET attempts = attempts + 1, error = ?, unreadable = ? WHERE seq = ?", message, unreadable, row.seq);
         this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: message });
         return message;
       }
@@ -505,7 +512,9 @@ export class DataSources {
     try {
       const [{ since }] = this.db.all<{ since: number | null }>("SELECT max(revision) AS since FROM changes");
       await adapter.sync(this.syncIO(source, since ?? 0));
-      this.setState(source, { lastSync: this.now(), error: undefined, reconnect: false });
+      // Edits still waiting keep saying why, so the source doesn't look fine while they wait.
+      const waiting = this.db.all<{ error: string | null }>("SELECT error FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source)[0];
+      this.setState(source, { lastSync: this.now(), error: waiting?.error ?? undefined, reconnect: false });
     } catch (err) {
       this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: (err as Error).message });
     }
