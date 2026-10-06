@@ -752,15 +752,15 @@ export function openWorkspace(
     db,
     Date.now,
     announce,
-    (path, text) => {
+    (path, text, revision) => {
       records.observe(path, text);
-      search.observe(path, text);
+      search.observe(path, text, revision);
     },
     (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
   );
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  // Workspaces from before search get their index here, once.
-  if (!search.complete()) search.rebuild(files.under(""));
+  // Workspaces from before search, or from before its index's shape, get their index here, once.
+  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
   return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
 }
 

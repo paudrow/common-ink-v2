@@ -54,3 +54,27 @@ test("a workspace from before search is indexed when it opens", () => {
   const { search } = openWorkspace(db, { fixtures: false, google: null });
   assert.deepEqual(search.search({ terms: [{ kind: "words", text: "remembered", negated: false }] }, { ctx: { now: 0, zone: "UTC" }, limit: 5 }).results.map((r) => r.path), ["Old note.md"]);
 });
+
+test("search finds a note by its own words, in any script", async () => {
+  const store = memoryStore();
+  const notes: Array<[string, string, string]> = [
+    ["Korean.md", "# 여행\n한국 여행 계획", "한국"],
+    ["Russian.md", "# План\nмой план", "мой"],
+    ["Greek.md", "# Άλφα\nάλφα βήτα", "βήτα"],
+    ["Japanese.md", "# 学校\nがっこう", "がっこう"],
+    ["Hebrew.md", "# שלום\nשָׁלוֹם", "שלום"],
+    ["Hindi.md", "# हिन्दी\nहिन्दी पाठ", "पाठ"],
+    ["Arabic.md", "# كتاب\nكَتَبَ", "كتب"],
+  ];
+  for (const [path, text] of notes) store.files.write({ path: path as FilePath, text, base: 0, author: ada });
+  for (const [path, , query] of notes) assert.deepEqual((await search(store, query)).results.map((r) => r.path), [path], `searching ${query}`);
+  assert.deepEqual((await search(store, "पठ")).results, [], "a vowel sign makes another word");
+});
+
+test("a search of filters alone counts every note; one with words reads at most a thousand, and says there were more", async () => {
+  const store = memoryStore();
+  for (let i = 0; i < 1003; i++) store.files.write({ path: `N/${i}.md` as FilePath, text: `# ${i}\nalpha`, base: 0, author: ada });
+  const all = await search(store, "-is:archived");
+  const words = (await runOperation("search", { query: "alpha", zone: "UTC" }, store, ada)) as { ok: true; value: { total: number; more?: true } };
+  assert.deepEqual([all.total, words.value.total, words.value.more], [1003, 1000, true]);
+});

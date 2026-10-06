@@ -207,8 +207,11 @@ export interface SearchContribution {
   filters: Array<{ filter: string; description: string; values: string[] }>;
 }
 
-/** The filters every note has (query.ts), which an extension's can't take the place of. */
-const CORE_FILTERS = ["is", "in", "from", "type", "edited", "has", "sort"];
+/**
+ * Filter keys an extension can't take: the ones every note has (query.ts), and words that come before a
+ * colon in ordinary text, which would stop being searched for as words.
+ */
+const CORE_FILTERS = ["is", "in", "from", "type", "edited", "has", "sort", "http", "https", "www", "ftp", "mailto", "file", "note"];
 
 export interface Contributions {
   commands: CommandContribution[];

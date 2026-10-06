@@ -823,8 +823,9 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
-    // A modal has the keys while it's up: its own, and Tab and Escape.
-    if (modalOpen()) return;
+    // A modal has the keys while it's up: its own, and Tab and Escape. So does the command bar while
+    // it has focus: off a Mac, its Ctrl-k and Ctrl-p move through what it lists, not open it again.
+    if (modalOpen() || bar.hasFocus) return;
     const id = commandForKey(e, settings.keybindings);
     // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
     if (!id || !commands.runForKey(id)) return;
