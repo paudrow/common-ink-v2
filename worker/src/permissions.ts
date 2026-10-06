@@ -3,6 +3,7 @@
 // extension. Answers are kept in settings under "extensions.permissions": per extension, per declared
 // scope, "allow" or "deny". Built-ins ship with their declared permissions allowed; you can deny any.
 import { needsScope, type ExtensionManifest, type PermissionKind } from "./extensions.ts";
+import type { FilePath } from "./files.ts";
 
 export type Answer = "allow" | "deny";
 
@@ -64,7 +65,7 @@ export function coveringKey(m: ExtensionManifest, ask: Ask): string | null {
  * trusted, your answers to their asks) and every extension's own files. A sandboxed extension never
  * changes them, whatever it was allowed to write, or it could let itself out.
  */
-export const decidesTrust = (path: string) =>
+export const decidesTrust = (path: FilePath) =>
   path === ".common-ink/settings.json" || /^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path) || path.startsWith(".common-ink/extensions/");
 
 export type Decision = { outcome: "allow" | "deny" | "ask"; key: string } | { outcome: "undeclared" };

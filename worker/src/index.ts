@@ -11,7 +11,9 @@ import type { Workspace, WorkspaceEnv } from "./workspace.ts";
 import { blobKey, findUpload, MAX_UPLOAD_BYTES, showsInline, UPLOADS_PATH } from "./uploads.ts";
 import { extensionApi, pointAtLibraries, sandboxRoute, type SandboxStore } from "./extension-routes.ts";
 import { appCsp, SANDBOX_PREFIX } from "./sandbox.ts";
-import { embedFrameHosts } from "./embed-list.ts";
+import { embedFrameHosts, idsIn } from "./embed-list.ts";
+import { statePath } from "./extensions.ts";
+import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
@@ -179,6 +181,9 @@ const ROUTES: Record<string, OperationName> = {
   "POST /api/labels": "add_label",
 };
 
+/** Operations that change a file named by `path`. */
+const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
+
 async function api(req: Request, url: URL, who: Identity, store: Store): Promise<Response> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/me") return json(who);
@@ -186,6 +191,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   if (!name) return json({ error: `No route for ${route}` }, 404);
   const body = req.method === "GET" ? {} : ((await req.json().catch(() => ({}))) as Record<string, unknown>);
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
+  // A second gate behind the app's: a change in an extension's name to the files that decide trust,
+  // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  const extension = req.headers.get("X-Common-Ink-Extension");
+  const path = parseFilePath(args.path);
+  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+    const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+  }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, 400);
   // An event that isn't there is an answer (a note's link can outlive its event), not a missing route.
