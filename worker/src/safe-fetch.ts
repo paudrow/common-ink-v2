@@ -48,6 +48,9 @@ export function isPrivateIPv4(ip: string): boolean {
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
     a >= 224
@@ -193,6 +196,8 @@ export async function safeFetch(raw: string, o: SafeFetchOptions = {}): Promise<
       if (hop >= maxRedirects) throw new FetchRefused("Too many redirects");
       const next = new URL(location, url);
       if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) [method, body] = ["GET", undefined];
+      const notWeb = refuseUrl(next.toString());
+      if (notWeb) throw new FetchRefused(notWeb);
       if (next.origin !== new URL(url).origin) {
         if (o.allowHost && !o.allowHost(next.hostname)) throw new FetchRefused(`It was sent on to ${next.hostname}, which it may not reach`);
         // A body and a key meant for one site aren't handed to the next.

@@ -593,6 +593,26 @@ export class DataSources {
     const dropEvent = (path: FilePath) => {
       if (!pending(path)) write(path, null);
     };
+    const put = (event: CalendarEvent, etag: string | null) => {
+      const path = eventPath(event.calendar, event.id);
+      if (pending(path)) {
+        // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
+        // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
+        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+        if (etag && waiting && !this.db.all("SELECT 1 FROM etags WHERE path = ?", path).length) this.setEtag(path, UNKNOWN_ETAG);
+        return;
+      }
+      write(path, recordText(event));
+      if (etag) this.setEtag(path, etag);
+    };
+    // A cancelled occurrence its series doesn't have cancels nothing, as Google keeps one for an
+    // occurrence moved off its start. Kept, it would block undoing that move, and cancel the
+    // occurrence once the series came back to it. What's here at its id goes, as Google ended it.
+    const cancelled: Array<{ event: CalendarEvent; etag: string | null }> = [];
+    const cancels = (e: CalendarEvent) => {
+      const series = readEvent(this.files.read(eventPath(e.calendar, e.series ?? ""))?.text ?? "");
+      return !series?.recurrence || findTarget([series], e.id)?.kind === "occurrence";
+    };
     return {
       calendars: (list) => {
         const keep = new Set(list.map((c) => c.id));
@@ -608,21 +628,18 @@ export class DataSources {
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
+        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) {
+          if (cancels(event)) put(event, etag);
+          else dropEvent(eventPath(event.calendar, event.id));
+        }
         this.setToken(source, calendar, token);
         this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
       recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
-        const path = eventPath(event.calendar, event.id);
-        if (pending(path)) {
-          // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
-          // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
-          const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
-          if (etag && waiting && !this.db.all("SELECT 1 FROM etags WHERE path = ?", path).length) this.setEtag(path, UNKNOWN_ETAG);
-          return;
-        }
-        write(path, recordText(event));
-        if (etag) this.setEtag(path, etag);
+        // Judged once the calendar's changes are all in, against its series as they leave it.
+        if (event.series !== undefined && event.status === "cancelled") return void cancelled.push({ event, etag });
+        put(event, etag);
       },
       remove: (calendar, id) => {
         dropEvent(eventPath(calendar, id));
@@ -722,7 +739,7 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (files.recent({ path, limit: 1 })[0]?.revision !== r) return { r, path, text: null };
+      if (changedSince(files, path, r)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -738,6 +755,19 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
   return out;
+}
+
+/**
+ * Whether a record changed after one of its revisions. The source filling in its own address for
+ * the record (`link`), as a sync does after an edit goes out, isn't a change.
+ */
+function changedSince(files: Files, path: FilePath, revision: Revision): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision);
+  if (!later.length) return false;
+  if (!later.every((c) => c.author.kind === "sync")) return true;
+  const was = readEvent(files.versionAt(path, revision) ?? "");
+  const now = readEvent(files.read(path)?.text ?? "");
+  return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */

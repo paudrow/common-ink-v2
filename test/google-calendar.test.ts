@@ -645,6 +645,89 @@ for (const [how, answer] of [
   });
 }
 
+test("a series moved, synced, undone, synced and moved again by hand ends where its first move did, here and in Google", async () => {
+  const fake = new FakeGoogle();
+  fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
+  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  const month = { from: "2026-10-01T00:00:00-07:00", to: "2026-11-01T00:00:00-07:00", zone: LA };
+  const shown = async () => ((await op(store, "list_events", month)) as Occurrence[]).map((o) => `${o.start.slice(0, 16)} ${o.title}`);
+  const move = { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA };
+  await op(store, "sync_calendar", {});
+  const before = await shown();
+  const since = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  const moved = await shown();
+  const mine = store.files.recent({ limit: 100 }).filter((c) => c.revision > since && c.author.kind === "user").map((c) => c.revision);
+  const undone = (await op(store, "undo", { revisions: mine })) as Array<{ status: string }>;
+  assert.deepEqual(undone.filter((u) => u.status !== "undone"), []);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), before, "the undo, synced, is the series as it was");
+  await op(store, "update_event", move);
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(await shown(), moved);
+});
+
+test("after a sync brings back Google's copy of an edit, the edit can still be undone and redone, and a made event undone", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  await op(store, "update_event", { address: "event:google/primary/standup_20261009T160000Z", title: "Kickoff", scope: "this" });
+  const renamed = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [renamed] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  const undo = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [undo] })) as Array<{ status: string }>).map((u) => u.status), ["undone"], "redo");
+  assert.equal(fake.event("ada@example.com", "standup_20261009T160000Z")?.summary, "Kickoff");
+  const made = (await op(store, "create_event", { title: "Lunch", start: "2026-10-07T12:00", timeZone: LA })) as { address: string };
+  const created = store.files.recent({ limit: 1 })[0].revision;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "undo", { revisions: [created] })) as Array<{ status: string }>).map((u) => u.status), ["undone"]);
+  assert.equal(fake.event("ada@example.com", made.address.split("/").at(-1)!)?.status, "cancelled");
+});
+
+/** A daily series of six with changed occurrences on the 8th and 9th, synced, then cut in Google by `cut`, synced again. */
+async function cutInGoogle(cut: (fake: FakeGoogle) => void, expire = false) {
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  const fake = new FakeGoogle();
+  fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+  fake.put("ada@example.com", { id: "d_20261009T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("09", "09:00"), start: at("09", "13:00"), end: at("09", "13:15") });
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  cut(fake);
+  for (const id of ["d_20261008T160000Z", "d_20261009T160000Z"]) fake.put("ada@example.com", { ...fake.event("ada@example.com", id)!, status: "cancelled" });
+  if (expire) fake.expireSyncTokens();
+  await op(store, "sync_calendar", { force: true });
+  const month = { from: "2026-10-01T00:00:00-07:00", to: "2026-11-01T00:00:00-07:00", zone: LA };
+  return ((await op(store, "list_events", month)) as Occurrence[]).map((o) => `${o.start.slice(5, 16)} ${o.title}`);
+}
+
+const ending = (fake: FakeGoogle, rule: string) => fake.put("ada@example.com", { ...fake.event("ada@example.com", "d")!, recurrence: [rule] });
+
+test("a series Google ends early takes its changed occurrences past the end with it: by UNTIL, by COUNT, and on a full sync", async () => {
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z")), ["10-05T16:00 Daily", "10-06T16:00 Daily"]);
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;COUNT=3")), ["10-05T16:00 Daily", "10-06T16:00 Daily", "10-07T16:00 Daily"]);
+  assert.deepEqual(await cutInGoogle((fake) => ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z"), true), ["10-05T16:00 Daily", "10-06T16:00 Daily"]);
+});
+
+test("a series Google splits this and following leaves no copy of the changed occurrences it moved", async () => {
+  const at = (day: string, time: string) => ({ dateTime: `2026-10-${day}T${time}:00`, timeZone: LA });
+  const shown = await cutInGoogle((fake) => {
+    ending(fake, "RRULE:FREQ=DAILY;UNTIL=20261006T235959Z");
+    fake.put("ada@example.com", { id: "d_R20261007", summary: "Daily", start: at("07", "09:00"), end: at("07", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=4"] });
+  });
+  assert.deepEqual(shown, ["10-05T16:00 Daily", "10-06T16:00 Daily", "10-07T16:00 Daily", "10-08T16:00 Daily", "10-09T16:00 Daily", "10-10T16:00 Daily"]);
+});
+
 /** Ada's Google, with every call to it passing through `answer` first: a Response to send instead, or nothing to let it through. */
 async function googleWith(answer: (url: string, method: string) => Response | undefined, now?: () => number) {
   const { fake } = await google();
