@@ -745,3 +745,20 @@ test("when Google cancelled an occurrence an edit of it waited for, the source s
   assert.equal(fake.event("ada@example.com", "standup_20261006T160000Z")?.status, "cancelled");
   assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Late standup: Google's cancellation replaced yours, which is still in its history");
 });
+
+test("an occurrence Google cancelled while its first edit here waited stays cancelled, and the source says so", async () => {
+  let down = false;
+  const id = "standup_20261009T160000Z";
+  const { fake, store } = googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  await op(store, "sync_calendar", {});
+  down = true;
+  await op(store, "update_event", { address: `event:google/primary/${id}`, title: "Standup with Lee", scope: "this" });
+  fake.put("ada@example.com", { id, status: "cancelled", recurringEventId: "standup", originalStartTime: { dateTime: "2026-10-09T09:00:00-07:00", timeZone: LA } });
+  await op(store, "sync_calendar", { force: true });
+  down = false;
+  await store.sources.flush("google");
+  assert.equal(fake.event("ada@example.com", id)?.status, "cancelled", "not revived in Google");
+  assert.match(store.sources.status("ada@example.com").sources[0].conflict ?? "", /Google's .*cancellation replaced yours/);
+  await op(store, "sync_calendar", { force: true });
+  assert.ok(!(await listed(store)).some((l) => l.startsWith("2026-10-09T16:00")), "and not shown here");
+});
