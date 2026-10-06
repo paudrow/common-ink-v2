@@ -391,3 +391,16 @@ test("history filtered by author finds its changes far back in a long history, n
   assert.deepEqual(files.recent({ author: "agent:Claude:ada@example.com", before: 1800 }).map((c) => c.revision), [900]);
   assert.deepEqual(files.recent({ path: "Log.md" as FilePath, limit: 3, before: 1001 }).map((c) => c.revision), [1000, 999, 998]);
 });
+
+test("history and diffs of more than a hundred changes at once work within a Durable Object's 100-parameter limit", () => {
+  const files = new Files(memoryDb());
+  const revisions: number[] = [];
+  for (let i = 1; i <= 150; i++) {
+    const result = files.write({ path: "Log.md" as FilePath, text: `${i}\n`, base: files.read("Log.md" as FilePath)?.revision ?? 0, author: ada });
+    if (result.status !== "conflict") revisions.push(result.file.revision);
+  }
+  assert.deepEqual(files.recent({ limit: 120 }).map((c) => c.revision), revisions.slice(-120).reverse());
+  assert.deepEqual(files.recent({ path: "Log.md" as FilePath, author: "user:ada@example.com", limit: 101 }).length, 101);
+  const [diff] = files.combined(revisions);
+  assert.deepEqual([diff.path, diff.runs.length, diff.runs[0].before, diff.runs[0].after], ["Log.md", 1, "", "150\n"]);
+});
