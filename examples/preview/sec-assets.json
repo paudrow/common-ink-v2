@@ -1,0 +1,8 @@
+{
+  "pr": 126,
+  "title": "Headers for /assets/ and every answer under /uploads/",
+  "steps": [
+    "Open <this Preview>/assets/not-there.js: DevTools > Network shows Content-Security-Policy default-src 'none'; frame-ancestors 'none', and Strict-Transport-Security.",
+    "The app loads and works as before: its scripts and styles come from /assets/ too."
+  ]
+}

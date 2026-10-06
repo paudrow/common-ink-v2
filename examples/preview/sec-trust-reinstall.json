@@ -1,0 +1,8 @@
+{
+  "pr": 55,
+  "title": "Installing from a URL clears trust left for the same id",
+  "steps": [
+    "In Extensions, Install from URL with <this Preview>/catalog/word-count/. Open its details and Trust it.",
+    "Uninstall it, then install it from the same URL again. It comes back sandboxed: its details offer Trust again, and your user settings no longer list word-count under extensions.trusted."
+  ]
+}
