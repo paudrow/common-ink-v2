@@ -20,7 +20,8 @@ export interface DirectiveLine {
 }
 
 const NAME = "([a-z][\\w-]*)";
-const BRACES = "(?:\\{([^}\\n]*)\\})?";
+/** What's in a directive's braces, to the last brace on the line: a quoted value may hold a brace. */
+const BRACES = "(?:\\{([^\\n]*)\\})?";
 /** `::name{…}` alone on its line. */
 export const LEAF = new RegExp(`^::${NAME}${BRACES}\\s*$`, "i");
 /** `:::name{…}` opening a container. */
