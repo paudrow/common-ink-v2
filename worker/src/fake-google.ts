@@ -103,7 +103,8 @@ export class FakeGoogle {
       const { recurrence: _, ...fields } = series;
       current = { ...fields, id, recurringEventId: series.id, originalStartTime: original, start: original, end: original };
     }
-    if (method === "GET") return current.status === "cancelled" ? error(410, "Resource has been deleted", "deleted") : json(current);
+    // Google's get answers a deleted event too, cancelled.
+    if (method === "GET") return json(current);
     if (ifMatch && current.etag && ifMatch !== current.etag) return error(412, "Precondition Failed", "conditionNotMet");
     if (method === "PATCH" && body) return json(this.put(calendarId, { ...current, ...body, id }));
     if (method === "DELETE") {

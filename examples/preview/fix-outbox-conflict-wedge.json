@@ -1,0 +1,7 @@
+{
+  "pr": 49,
+  "title": "An edit that keeps meeting Google's newer versions no longer stops the edits behind it",
+  "steps": [
+    "Nothing changes on a Preview's Sample calendar, which never conflicts. With `npm run dev -- --fake-google`, edits still go to Google and Show data sources says none are waiting."
+  ]
+}
