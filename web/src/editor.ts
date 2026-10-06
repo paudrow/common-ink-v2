@@ -70,6 +70,22 @@ export function addMarkdownSyntax(extension: MarkdownExtension): void {
 /** The markdown language notes are parsed with now, with what extensions have added. */
 export const markdownLanguageSupport = (): LanguageSupport => markdownSupport;
 
+/** Boxes that float over the editors, such as the phone's not-saved pill: the cursor isn't scrolled under them. */
+const floating: HTMLElement[] = [];
+export function floatsOverEditors(el: HTMLElement): void {
+  floating.push(el);
+}
+const clearOfFloating = EditorView.scrollMargins.of((view) => {
+  const scroller = view.scrollDOM.getBoundingClientRect();
+  let top = 0;
+  for (const el of floating) {
+    if (!el.getClientRects().length) continue;
+    const box = el.getBoundingClientRect();
+    if (box.left < scroller.right && scroller.left < box.right && box.top < scroller.top + scroller.height / 2) top = Math.max(top, box.bottom + 8 - scroller.top);
+  }
+  return top > 0 ? { top } : null;
+});
+
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
 const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment(), markdown: new Compartment() };
 
@@ -112,6 +128,7 @@ export function createState(
       EditorState.allowMultipleSelections.of(true),
       EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
+      clearOfFloating,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.

@@ -58,6 +58,15 @@ export default {
       showMode("NORMAL");
     });
 
+    // zt, zz and zb scroll as CodeMirror does, so they keep the editor's scroll margins (clear of the
+    // phone's not-saved pill, say); Vim's own set the scroll position, under whatever floats on top.
+    Vim.defineAction("scrollToCursor", (cm, args) => {
+      const view = cm.cm6;
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const [pos, y] = args.position === "top" ? [line.from, "start" as const] : args.position === "bottom" ? [line.to, "end" as const] : [line.from, "center" as const];
+      view.dispatch({ effects: EditorView.scrollIntoView(pos, { y, yMargin: 0 }) });
+    });
+
     // Ex commands, each the app's command or the workbench's call.
     const exArg = (params: ExParams) => (params.argString ?? "").trim();
     const run = (command: string) => () => void ctx.commands.run(command);

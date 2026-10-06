@@ -26,7 +26,7 @@ import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } 
 import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
-import { createState, editText } from "./editor.ts";
+import { createState, editText, floatsOverEditors } from "./editor.ts";
 import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
@@ -78,6 +78,8 @@ let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
 /** Back online with edits still held: they go at their next retry, so until one fails again, they're being sent. */
 let sending = false;
+/** What the phone's not-saved pill says now. */
+let notSaying = "";
 const savedListeners: Array<(path: FilePath) => void> = [];
 const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
@@ -316,9 +318,24 @@ async function renderUnsent() {
   unsentLine.textContent = line.wide;
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = line.state;
-  notSavedLine.textContent = line.phone;
-  notSavedLine.hidden = !line.phone;
+  const clash = line.state === "conflict";
   notSavedLine.dataset.state = line.state;
+  notSavedLine.setAttribute("role", clash ? "button" : "status");
+  if (clash) notSavedLine.tabIndex = 0;
+  else notSavedLine.removeAttribute("tabindex");
+  const showing = !notSavedLine.hidden;
+  notSaying = line.phone;
+  notSavedLine.hidden = !line.phone;
+  if (!line.phone) notSavedLine.textContent = "";
+  else if (showing) notSavedLine.textContent = line.phone;
+  // Shown first and said a frame later, so screen readers hear the live region change.
+  else
+    requestAnimationFrame(() => {
+      notSavedLine.textContent = notSaying;
+      // The cursor, if it's where the pill now is, moves out from under it.
+      const view = workbench.focusedView;
+      view?.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
+    });
 }
 let wasOnline = offline.online;
 offline.onChange(() => {
@@ -334,7 +351,13 @@ async function openClash() {
   await resolveConflict();
 }
 unsentLine.addEventListener("click", () => void openClash());
+floatsOverEditors(notSavedLine);
 notSavedLine.addEventListener("click", () => void openClash());
+notSavedLine.addEventListener("keydown", (e) => {
+  if (notSavedLine.dataset.state !== "conflict" || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault();
+  void openClash();
+});
 // A tap on the pill leaves the note focused, so a phone's keyboard stays up.
 notSavedLine.addEventListener("mousedown", (e) => e.preventDefault());
 resolveButton.addEventListener("click", () => void resolveConflict());

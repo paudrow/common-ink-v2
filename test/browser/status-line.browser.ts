@@ -63,6 +63,59 @@ for (const width of [320, 375]) {
   });
 }
 
+for (const width of [320, 375]) {
+  browserTest(h, `at ${width}px a scrolled note's cursor line never sits under the not-saved pill`, { scenario: "empty", viewport: { width, height: 600 }, ...OFFLINE }, async (app) => {
+    await app.writeFile("Long.md", Array.from({ length: 200 }, (_, i) => `Line ${i + 1} with words`).join("\n") + "\n");
+    await app.goto({}, "Long");
+    await app.idle();
+    const cursorUnderPill = async () =>
+      app.page.evaluate((text) => {
+        const pill = document.querySelector("#not-saved")!.getBoundingClientRect();
+        const line = [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-line")].find((l) => l.textContent === text)!.getBoundingClientRect();
+        return line.top < pill.bottom && pill.top < line.bottom;
+      }, (await app.state()).cursor!.text);
+    await app.keys("100Gzt");
+    // zt puts the line at the top while nothing floats over it.
+    await app.page.waitForFunction(() => {
+      const scroller = document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!.getBoundingClientRect();
+      const line = [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-line")].find((l) => l.textContent === "Line 100 with words")?.getBoundingClientRect();
+      return !!line && Math.abs(line.top - scroller.top) <= 6;
+    });
+    await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+    await app.keys("ix<Esc>");
+    await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor();
+    await app.page.waitForTimeout(100);
+    assert.equal(await cursorUnderPill(), false, "the pill showing moves the cursor line out from under it");
+    await app.keys("G50k");
+    await app.page.waitForTimeout(150);
+    assert.equal(await cursorUnderPill(), false, "after 50k");
+    await app.keys("zt");
+    await app.page.waitForTimeout(150);
+    assert.equal(await cursorUnderPill(), false, "after zt");
+    assert.equal((await app.state()).cursor?.line, 151);
+    await app.page.unroute("**/api/file**");
+  });
+}
+
+browserTest(h, "on a phone, a clash's pill is a button: Enter on it compares the two, and otherwise it's a status", { scenario: "empty", viewport: PHONE }, async (app) => {
+  const note = "# Plan\n\nalpha\nbeta\ngamma\n";
+  await app.writeFile("Plan.md", note);
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number };
+  assert.equal(await app.page.locator("#not-saved").getAttribute("role"), "status");
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  const res = await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: note.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  assert.ok(res.ok(), `${res.status()}`);
+  const pill = app.page.locator("#not-saved", { hasText: /^Not saved: changed elsewhere$/ });
+  await pill.waitFor();
+  assert.deepEqual(await pill.evaluate((e) => [e.getAttribute("role"), e.tabIndex]), ["button", 0]);
+  await pill.focus();
+  await app.page.keyboard.press("Enter");
+  await app.page.locator(".clash").waitFor();
+});
+
 browserTest(h, "on a laptop the status line counts the focused note's words as you type, and says nothing about the server while it's reached", { scenario: "empty" }, async (app) => {
   await app.writeFile("Trip.md", "# Trip to Rome\n\n- [ ] Book the train\n\n```js\nconst left = 3;\n```\n::timer{duration=25m}\n<b>Pack</b>\n");
   await app.writeFile("Other.md", "# Other\n");
