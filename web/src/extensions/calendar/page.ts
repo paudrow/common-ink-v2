@@ -426,7 +426,7 @@ export class CalendarPage {
     draft.recurrence = found?.series?.recurrence ?? found?.event.recurrence ?? [];
     const repeating = !!(o.series ?? found?.event.recurrence);
     const opened = this.fields(draft, zoneFor(o));
-    openEditor(at, draft, {
+    this.editing = openEditor(at, draft, {
       calendars: this.calendars,
       repeating,
       readOnly: !this.writable(o),
@@ -437,6 +437,9 @@ export class CalendarPage {
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
   }
+
+  /** The event editor this page opened last, to close as it goes. */
+  private editing: { close(): void } | null = null;
 
   /** What's added under an event in its editor (the notes that link to it). Nothing by default. */
   extra: (o: Occurrence, found: EventFound | null) => Promise<HTMLElement | undefined> = async () => undefined;
@@ -450,7 +453,7 @@ export class CalendarPage {
     const draft: Draft = slot.allDay
       ? { title: "", allDay: true, startDay: slot.startDay, startTime: "09:00", endDay: addDays(slot.endDay, -1), endTime: "09:30", calendar: calendar.id, location: "", description: "", recurrence: [] }
       : { title: "", allDay: false, startDay: slot.day, startTime: clock(slot.start), endDay: slot.end >= 24 * 60 ? addDays(slot.day, 1) : slot.day, endTime: clock(slot.end % (24 * 60)), calendar: calendar.id, location: "", description: "", recurrence: [] };
-    openEditor(at, draft, {
+    this.editing = openEditor(at, draft, {
       calendars: this.calendars,
       repeating: false,
       readOnly: false,
@@ -536,7 +539,8 @@ export class CalendarPage {
   }
 
   destroy() {
-    closePopover();
+    // Only its own: another page's (a Calendar tab's, say) stays open as this one goes.
+    this.editing?.close();
     this.renderer?.destroy();
   }
 }
