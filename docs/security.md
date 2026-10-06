@@ -4,7 +4,7 @@ How Common Ink v2 is defended: what it protects, from whom, where the trust boun
 
 ## Reporting a problem
 
-Report a vulnerability privately through GitHub: the repository's **Security** tab, then **Report a vulnerability**. Don't open a public issue or pull request for it. Say what an attacker can do and how, with the smallest steps that show it, and test only against `npm run dev` or a Preview, never commonink.app or v1.commonink.app.
+Report a vulnerability privately through GitHub: the repository's **Security** tab, then **Report a vulnerability**. If the Security tab doesn't offer that, open an issue titled "Security contact" with nothing else in it, and the maintainer will reach you privately. Don't put the details in a public issue, pull request or comment. Say what an attacker can do and how, with the smallest steps that show it, and test only against `npm run dev` or a Preview, never commonink.app or v1.commonink.app.
 
 ## What's protected
 
@@ -16,7 +16,7 @@ Report a vulnerability privately through GitHub: the repository's **Security** t
 | Calendar events and contacts | Records under `.common-ink/records/`, contacts fetched live | Other people's names, addresses and meetings. |
 | Sessions | `__Host-ci_session`, HMAC-signed under `SESSION_SECRET` | Whoever holds one is a member of the workspace for 30 days. |
 | Secrets | Worker secrets `SESSION_SECRET` and `GOOGLE_CLIENT_SECRET`; repository secret `CLOUDFLARE_API_TOKEN` | Forge sessions, open sealed tokens, impersonate the OAuth client, deploy anything. |
-| The sandbox key | The workspace's `meta` table (`sandbox-key`) | Signs the code tokens sandboxed extensions load their code with. |
+| The sandbox key | The workspace's `meta` table (`secret:sandbox-key`) | Signs the code tokens sandboxed extensions load their code with. |
 
 ## Who might attack, and how
 
@@ -40,11 +40,11 @@ Out of scope: a member of the workspace. Every address in `ALLOWED_EMAILS`, ever
 - **Cloudflare Access** (`auth.ts`): an Access JWT (RS256, checked issuer and audience) signs in a person by email or an agent by service token, when `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set. Access's own policy decides who gets one.
 - **The dev user** (`DEV_USER`) signs in only on `localhost`, `127.0.0.1`, `[::1]` and `pr-<n>-common-ink-v2.<subdomain>.workers.dev` (`devHost` in `hosts.ts`). Production sets no `DEV_USER`, and `test/levers.test.ts` checks the config says so.
 - **Test levers** (`levers.ts`) need `LEVERS=1`, a dev user and a dev host. Without them the page gets no inspector, `/api/levers/*` answers 404, and the replay cookie does nothing (`levers-off.browser.ts`).
-- **Every route but the public ones** needs an identity. The public ones are `/auth/*`, `/sandbox/*`, `/assets/*` (built scripts and styles), `/schema/settings.json`, and the site's icons and manifest (exact paths in `public-files.ts`).
+- **Every route but the public ones** needs an identity. The public ones are `/auth/*`, `/sandbox/*`, `/assets/*` (built scripts and styles, served by the static assets without the Worker, so their headers come from `web/public/_headers`), `/schema/settings.json`, and the site's icons and manifest (exact paths in `public-files.ts`).
 
 ### 2. Other websites and the workspace: CSRF and framing
 
-- **Origin check** (`index.ts`): any request that changes something (not GET or HEAD) or opens a WebSocket, and comes with an `Origin` that isn't this site's, gets 403, however it's signed in. The dev user is signed in by the address alone, so the cookie isn't what makes this matter. The CLI and agents send no Origin.
+- **Origin check** (`index.ts`): any request that changes something (not GET or HEAD) or opens a WebSocket, and comes with an `Origin` that isn't this site's, gets 403, however it's signed in. The dev user is signed in by the address alone, so the cookie isn't what makes this matter. The CLI and agents send no Origin. A page's last save sent with `navigator.sendBeacon` (`/api/file/beacon`) is held to more: it must say it comes from this site, by its `Origin` or by `Sec-Fetch-Site: same-origin`.
 - **`SameSite=Lax`** keeps the session cookie off other sites' subresource requests and form posts.
 - **`frame-ancestors 'none'`** on the app's pages. The sandbox shells allow only the app's origin.
 - **`Cross-Origin-Opener-Policy: same-origin`** on the app's responses, so a window another site opens can't reach the app's.
@@ -54,7 +54,7 @@ Out of scope: a member of the workspace. Every address in `ALLOWED_EMAILS`, ever
 - **CSP** (`appCsp` in `sandbox.ts`): `script-src 'self'` with no inline script, `connect-src` only to itself, images and media only from itself, `data:` and `blob:`, `frame-src` only for the sandbox route and the hosts of the link embeds that are on (built-ins and trusted extensions only, with hostnames checked), `base-uri 'none'`, and `form-action 'self'`.
 - **No HTML from strings.** The web app builds every element with `createElement` and `textContent`. The only `innerHTML` sets fixed icon SVG. KaTeX runs with `trust: false`. Links open only `http(s):` and `/uploads/`.
 - **What counts as same-origin script** is kept small. Uploads are served as the type their name gives, with `nosniff`, a sandboxing CSP, and `attachment` for anything that isn't a picture, audio, video, PDF or plain text. `/extensions/<id>/*.js` answers only for trusted extensions. JSON from `/api/` is `application/json` with `nosniff`.
-- **HSTS** (`max-age=31536000`) on every answer, redirects and the sandbox route included, without `includeSubDomains` or `preload` while `v1.commonink.app` exists.
+- **HSTS** (`max-age=31536000`) on every answer, redirects and the sandbox route included, without `includeSubDomains` or `preload` while `v1.commonink.app` exists. `/assets/*` gets it, with `nosniff` and a policy that runs nothing, from `web/public/_headers`, since the Worker doesn't see those requests.
 
 ### 4. Sandboxed extensions and the app (ADR 0006)
 
@@ -71,7 +71,7 @@ Out of scope: a member of the workspace. Every address in `ALLOWED_EMAILS`, ever
 Brokered `net.fetch`, link cards, installs from a URL and other catalogs all go through it:
 
 - `http(s)` only, no credentials in the URL, no `Cookie`, `Authorization`, `Proxy-*`, `Host` or `Referer` from the caller.
-- No local names (`localhost`, `*.local`, single labels, with or without a trailing dot), and no private, loopback, link-local, shared, multicast or reserved addresses: IPv4 in any spelling the URL parser accepts, and IPv6 including IPv4 inside it (mapped, compatible, SIIT, NAT64, 6to4), Teredo, site-local, discard and documentation ranges.
+- No local names (`localhost`, `*.local`, single labels, with or without a trailing dot), and no private, loopback, link-local, shared, multicast or reserved addresses: IPv4 in any spelling the URL parser accepts, and IPv6: loopback, unspecified, unique local (`fc00::/7`), link-local, site-local, multicast, discard (`100::/64`), Teredo (`2001::/32`), documentation (`2001:db8::/32`), and any IPv4 address inside one (mapped, compatible, SIIT, NAT64, 6to4), checked as IPv4.
 - The name is resolved over DNS-over-HTTPS first and refused if any address is private.
 - Redirects are followed by hand, at most 3, each checked again, and for an extension each new host is held to its declaration and your answers. Only browser-safe headers follow a redirect to another origin, and a request with a body isn't sent on to one.
 - 8 seconds and 1 MB at most by default (64 KB for a manifest, 256 KB for a catalog, 512 KB for a link card's page, 400 KB for its picture).
@@ -80,7 +80,7 @@ Brokered `net.fetch`, link cards, installs from a URL and other catalogs all go 
 ### 6. Data at rest and secrets
 
 - Refresh tokens are sealed with AES-GCM under an HKDF key from `SESSION_SECRET`. They're opened only to ask Google for an access token, and revoked at Google when you disconnect (giving up after 3 seconds). A sealed value this code can't open, under another secret or another version, reads as needing to reconnect. Access tokens live in memory for their hour.
-- Secrets reach the Worker only from repository secrets at deploy (`--secrets-file`), never from the config. No token is sent to a page or logged: the Worker doesn't log, and errors shown to people name what failed, not the secret.
+- Secrets reach the Worker only from repository secrets at deploy (`--secrets-file`), never from the config. No token is sent to a page or logged. The Worker logs errors (`console.error`, kept by Workers observability): the operation that failed and its error. No error the code raises carries a token, though one can name a file or an event. Errors shown to people name what failed, not the secret.
 - The Google scopes are the least the features need: `openid email profile` to sign in, plus `calendar.events`, `calendar.calendarlist.readonly` and `contacts.readonly` when you connect data.
 
 ### 7. Supply chain and CI
@@ -101,7 +101,6 @@ What's known and not fixed, with why.
 | Low | **DNS rebinding.** The safe fetch resolves a name, then `fetch` resolves it again. A Worker can't pin the address. | Cloudflare's network can't reach private ranges, so this matters only for `npm run dev`. |
 | Low | **Trusted extensions are trusted.** They run in the page, can call `/api/` directly and get around the broker (ADR 0006). Anyone who can write settings (members, agents) can trust one. | By design. The trust prompt says so. |
 | Low | **Exfiltration from the page.** CSP blocks connections and images to other sites, but script running in the page can still carry data out, by navigating, or through the Worker's own fetches for the page. | No CSP stops top-level navigation. This only matters after script injection, which nothing known allows. |
-| Low | **`commands.run`** lets a sandboxed extension run any app command without asking, such as Sign out or Connect Google (which still needs you at Google). | Commands change only the UI, but a permission or an allow-list would make this explicit. |
 | Low | **An open live socket outlives its address's removal** from `ALLOWED_EMAILS` until it reconnects. It hears change notices (path, revision, author), not content: every read is checked again. | Tag each socket with how it signed in and close those whose address has gone. |
 | Low | **Request URLs in logs.** Workers observability keeps request URLs, which include note paths and the user settings path (an email address). | Turn off invocation logs, or keep paths out of query strings. |
 | Low | **Limits that only the platform sets.** JSON bodies, uploads without a `Content-Length`, the number of live sockets, and how often `/api/sync` may run are bounded by Workers' own limits, not the app's. | Only members can reach them. |
