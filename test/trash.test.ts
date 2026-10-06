@@ -230,3 +230,53 @@ test("a search within some paths finds only the notes in Trash there", async () 
   const found = await run(store, "search", { query: "zebra is:trashed", within: ["Public/**"] });
   assert.deepEqual([(found.results as Array<{ path: string }>).map((r) => r.path), found.total], [["Public/Gone.md"], 1]);
 });
+
+test("restoring beside a taken path that's near the length limit shortens the name, and says so when no name is free", { timeout: 5000 }, async () => {
+  const { store, write, remove } = workspace();
+  const long = `Projects/${"x".repeat(283)}.md`;
+  write(long, "# v1");
+  const d = remove(long).file!.revision;
+  write(long, "# v2");
+  const restored = await run(store, "restore", { path: long, deleted: d });
+  assert.equal(restored.status, "restored");
+  const path = restored.path as string;
+  assert.ok(path.length <= 300 && path.startsWith("Projects/xxx") && path.endsWith(" (restored).md"), path);
+  assert.equal(store.files.read(path as FilePath)?.text, "# v1");
+  // A folder so long that no name with "(restored)" fits under it.
+  const deep = `${"f".repeat(288)}/a.md`;
+  write(deep, "# a1");
+  const d2 = remove(deep).file!.revision;
+  write(deep, "# a2");
+  assert.match(String((await run(store, "restore", { path: deep, deleted: d2 })).error), /no free name/);
+});
+
+test("undoing a restore puts the note back in Trash, rather than leaving an empty copy", async () => {
+  const { store, write, remove } = workspace();
+  write("Plan.md", "# Plan\nold");
+  const d = remove("Plan.md").file!.revision;
+  write("Plan.md", "# Plan\nnew");
+  const beside = await run(store, "restore", { path: "Plan.md", deleted: d });
+  await run(store, "undo", { revisions: [beside.revision as number] });
+  assert.equal(store.files.read("Plan (restored).md" as FilePath), null);
+  assert.ok((await run(store, "trash")).some((t) => t.path === "Plan (restored).md" || t.path === "Plan.md"));
+  write("Other.md", "# Other\nhere");
+  const d2 = remove("Other.md").file!.revision;
+  const inPlace = await run(store, "restore", { path: "Other.md", deleted: d2 });
+  await run(store, "undo", { revisions: [inPlace.revision as number] });
+  assert.equal(store.files.read("Other.md" as FilePath), null);
+  assert.ok((await run(store, "trash")).some((t) => t.path === "Other.md"));
+});
+
+test("a restore undone is one note in Trash again, and deleting it forever leaves its text nowhere", async () => {
+  const { store, write, remove } = workspace();
+  write("Plan.md", "# Plan\nthe password is hunter2");
+  const d = remove("Plan.md").file!.revision;
+  write("Plan.md", "# Plan\nnew");
+  const beside = await run(store, "restore", { path: "Plan.md", deleted: d });
+  await run(store, "undo", { revisions: [beside.revision as number] });
+  const trash = await run(store, "trash");
+  assert.deepEqual(trash.map((t) => t.path), ["Plan (restored).md"]);
+  await run(store, "purge", { deleted: [trash[0].revision] });
+  assert.deepEqual(await run(store, "trash"), []);
+  assert.ok(!JSON.stringify(store.db.all("SELECT * FROM changes")).includes("hunter2"));
+});

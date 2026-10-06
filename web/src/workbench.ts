@@ -202,7 +202,8 @@ export class Workbench {
     }
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
-    if (!matchMedia(COMPACT).matches) return;
+    // On a phone it goes by itself; on a wider screen it stays, until the window narrows to a phone's.
+    const compact = matchMedia(COMPACT);
     let held = false;
     box.addEventListener("pointerdown", () => (held = true));
     box.addEventListener("pointerleave", () => (held = false));
@@ -212,7 +213,13 @@ export class Workbench {
       if (linger()) window.setTimeout(go, 1500);
       else box.remove();
     };
-    window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
+    const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
+    if (compact.matches) return void start();
+    const narrowed = (e: MediaQueryListEvent) => {
+      if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
+      if (box.isConnected && e.matches) start();
+    };
+    compact.addEventListener("change", narrowed);
   }
 
   get focusedGroup(): L.Group {

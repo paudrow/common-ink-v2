@@ -110,11 +110,11 @@ const extension: ExtensionModule = {
       if (item) void restore(item);
     } }));
 
-    // Trash changes only by a delete, an undo (a restore is one) or a purge: it listens for those
-    // changes, not every save.
+    // Trash changes only by a delete, an undo (a restore is one) or a purge, and a link's In Trash by a
+    // note made at a path in Trash: it listens for those changes, not every save.
     let timer = 0;
     ctx.events.onChange((change) => {
-      if (!change.deleted && !change.undoes && !change.purged) return;
+      if (!change.deleted && !change.undoes && !change.purged && !gone.has(change.path)) return;
       clearTimeout(timer);
       timer = window.setTimeout(() => void load(), 200);
     });

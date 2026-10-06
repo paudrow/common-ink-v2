@@ -47,8 +47,11 @@ export interface Store {
   /** How long deleted notes stay in Trash: the trash.retentionDays a person last set (trash.ts). */
   retention(): Promise<number> | number;
   /** Bring a note in Trash back (trash.ts). */
-  restoreDeleted(d: Deleted, author: Author): Promise<{ path: FilePath; revision: Revision }> | { path: FilePath; revision: Revision };
+  restoreDeleted(d: Deleted, author: Author): Promise<Restored> | Restored;
 }
+
+/** A note brought back from Trash, or why it couldn't be. */
+export type Restored = { path: FilePath; revision: Revision } | { error: string };
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
 export interface EventFound {
@@ -503,7 +506,9 @@ export const OPERATIONS = {
       if (!("trash" in at)) return store.restore(path, at, author);
       const target = (await notesInTrash(store, Date.now())).find((d) => d.path === path && (at.trash === null || d.revision === at.trash));
       if (!target) throw new OperationError(`${path} isn't in Trash`);
-      return { status: "restored", ...(await store.restoreDeleted(target, author)) };
+      const restored = await store.restoreDeleted(target, author);
+      if ("error" in restored) throw new OperationError(restored.error);
+      return { status: "restored", ...restored };
     },
   }),
   labels: op<{ path?: FilePath }>({

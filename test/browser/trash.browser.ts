@@ -257,3 +257,32 @@ browserTest(h, "on a phone, a swipe left asks, then deletes forever", { scenario
   await page.locator(".trash-empty").waitFor();
   assert.deepEqual(await historyOf(page, "Groceries.md"), ["purged by user"]);
 });
+
+browserTest(h, "a link stops saying In Trash once a new note takes the path", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Untitled 3.md", "# Untitled 3\nscratch");
+  await app.writeFile("Index.md", "# Index\nSee [[Untitled 3]].");
+  await deleteNote(app, "Untitled 3.md");
+  await app.open("Index");
+  await page.locator(".trash-link", { hasText: "In Trash" }).waitFor();
+  await app.writeFile("Untitled 3.md", "# Untitled 3\na new note");
+  await page.locator(".trash-link").waitFor({ state: "detached", timeout: 5000 });
+});
+
+const LISTENER = `export default { activate(ctx) {
+  ctx.commands.register("listener.run", async () => {
+    let said = "no error";
+    try { ctx.events.onChange(() => {}); } catch (err) { said = err.message; }
+    await ctx.workbench.notice("LISTENER " + said);
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension that asks for ctx.events.onChange is told it can't have it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile(".common-ink/extensions/listener/extension.json", JSON.stringify({ name: "Listener", activationEvents: ["onCommand:listener.run"], contributes: { commands: [{ command: "listener.run", title: "Run listener" }] } }));
+  await app.writeFile(".common-ink/extensions/listener/index.js", LISTENER);
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __commonInk?: unknown }).__commonInk);
+  await app.command("Run listener");
+  await page.locator(".notice", { hasText: "LISTENER ctx.events.onChange isn't available to sandboxed extensions" }).waitFor();
+});

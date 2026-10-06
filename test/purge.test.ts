@@ -55,7 +55,7 @@ test("deleting forever a copy restored beside a new note takes the note it was r
   const d1 = remove("Plan.md").file!.revision;
   // A new note takes the name, so Restore puts the old one beside it.
   write("Plan.md", "# Plan\nnew plan");
-  const restored = restoreFromTrash(files, files.deleted(0).find((d) => d.revision === d1)!, ada);
+  const restored = restoreFromTrash(files, files.deleted(0).find((d) => d.revision === d1)!, ada) as { path: FilePath; revision: number };
   assert.equal(restored.path, "Plan (restored).md");
   assert.deepEqual(files.deleted(0), []);
   const d2 = remove("Plan (restored).md").file!.revision;
@@ -72,7 +72,7 @@ test("a restored copy whose restore was undone is the same note: deleting it for
   write("Plan.md", "# Plan\nthe password is hunter2");
   const d1 = remove("Plan.md").file!.revision;
   write("Plan.md", "# Plan\nnew plan");
-  const restored = restoreFromTrash(files, files.deleted(0).find((d) => d.revision === d1)!, ada);
+  const restored = restoreFromTrash(files, files.deleted(0).find((d) => d.revision === d1)!, ada) as { path: FilePath; revision: number };
   // Undoing the restore empties the copy, which is still the note, so the original's delete doesn't come back into Trash.
   files.undo([restored.revision], ada);
   assert.deepEqual([files.deleted(0), files.purge([d1], ada)], [[], []]);
