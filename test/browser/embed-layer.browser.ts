@@ -118,3 +118,24 @@ browserTest(h, "a box takes the text styles of the editor's scroller, where boxe
   });
   assert.deepEqual(styles.box, styles.scroller);
 });
+
+browserTest(h, "the boxes scrolled right after the note scrolled (a wheel over a frame) take the note with them, not back", { scenario: "embeds", open: "Embeds tour.md" }, async (app) => {
+  await app.page.locator(".cm-embed[data-live]").last().waitFor();
+  await app.idle();
+  // The note scrolled, then at once the last embed brought into view (as a wheel over a frame scrolls the boxes).
+  await app.page.evaluate(async () => {
+    const editor = document.querySelector<HTMLElement>(".tab-editor:not([hidden]) .cm-scroller")!;
+    // Once the boxes have followed the note's scroll, and within a tenth of a second of it.
+    await new Promise((done) => {
+      editor.addEventListener("scroll", () => setTimeout(done), { once: true });
+      editor.scrollTop = 40;
+    });
+    const boxes = document.querySelectorAll(".embed-layer .cm-embed[data-live]");
+    boxes[boxes.length - 1].scrollIntoView({ block: "center" });
+  });
+  await app.page.waitForTimeout(600);
+  await app.idle();
+  const [note, boxes] = await app.page.evaluate(() => [document.querySelector<HTMLElement>(".tab-editor:not([hidden]) .cm-scroller")!.scrollTop, document.querySelector<HTMLElement>(".embed-scroller")!.scrollTop]);
+  assert.ok(note > 40, `the note followed the boxes (it's at ${note}, they're at ${boxes})`);
+  assert.equal(note, boxes, "and they're in step");
+});
