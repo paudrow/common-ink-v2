@@ -43,14 +43,37 @@ function deviceId(preset: Preset | null): string | null {
 
 const mq = (query: string) => typeof matchMedia === "function" && matchMedia(query).matches;
 
-/** Whether a key press came from a keyboard a touch screen doesn't have. */
-export function fromHardware(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "isComposing">, inText: boolean): boolean {
-  if (e.isComposing || e.key === "Unidentified" || e.key === "Process" || !e.key) return false;
-  // Outside a text field no keyboard is on screen, so any key is a real one.
-  if (!inText) return true;
-  // In one, only what an on-screen keyboard never sends.
-  if (/^(Escape|Tab|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F\d+)$/.test(e.key)) return true;
-  return (e.ctrlKey || e.metaKey) && !/^(Control|Meta|Shift|Alt)$/.test(e.key);
+/** Keys a phone or tablet sends from its own buttons (volume, media, power), and modifiers pressed alone: no sign of a keyboard. */
+const NOT_A_SIGN = /^(Audio|Media|Volume|Browser|Launch|Brightness|Power|Eject|Sleep|WakeUp|Hibernate|Standby|LogOff|Zoom|Mic|Camera|Channel|Color|TV|AppSwitch|Call|EndCall|GoBack|GoHome|Notification|Settings|Info|Guide|Dimmer|Print|Help|Select|Exit|Shift|Control|Alt|Meta|CapsLock|Fn|NumLock|ScrollLock|Symbol|Hyper|Super|OS$|Dead|Unidentified|Process|Compose)/;
+
+/** Keys some on-screen keyboards send too (Gboard's cursor keys, Samsung's arrows), each a hint only, by its kind. */
+const HINTS: Array<[string, RegExp]> = [
+  ["moving", /^(Tab|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown)$/],
+  ["escape", /^Escape$/],
+  ["function", /^F\d{1,2}$/],
+];
+
+export type KeyLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "isComposing" | "isTrusted">;
+
+/**
+ * The evidence of a keyboard a touch screen doesn't have, a key press at a time. A character typed
+ * outside a text field (no keyboard is on screen there), or a ⌘ or Ctrl chord, proves one. Keys an
+ * on-screen keyboard may also send (arrows, Tab, Escape) are hints, and it takes two kinds of them:
+ * a phone's cursor keys alone are one kind. Presses made by scripts don't count.
+ */
+export class KeyEvidence {
+  private kinds = new Set<string>();
+
+  /** Whether, with this press, there's a keyboard. */
+  note(e: KeyLike, inText: boolean): boolean {
+    if (!e.isTrusted || e.isComposing || !e.key || NOT_A_SIGN.test(e.key)) return false;
+    const typed = [...e.key].length === 1;
+    if (typed && (e.ctrlKey || e.metaKey)) return true;
+    if (typed) return !inText;
+    const hint = HINTS.find(([, keys]) => keys.test(e.key));
+    if (hint) this.kinds.add(hint[0]);
+    return this.kinds.size >= 2;
+  }
 }
 
 const inTextField = (target: EventTarget | null) => target instanceof HTMLElement && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable);
@@ -78,6 +101,11 @@ export class Device {
   private revision: Revision = 0;
   private listeners: Array<(device: Device, was: Facts) => void> = [];
   private writing: Promise<void> = Promise.resolve();
+  /**
+   * What this tab changed and hasn't written yet, by key: a write puts these on the file as it is then,
+   * so two tabs (or you, editing the file) changing different things both keep theirs.
+   */
+  private pending: { keyboard?: KeyboardChoice; extensions: Map<string, Override | null>; seenKeyboard?: true } = { extensions: new Map() };
   private io: DeviceIo | null = null;
 
   constructor(o: { me: string | undefined; preset: Preset | null; root?: HTMLElement }) {
@@ -102,15 +130,17 @@ export class Device {
     this.facts = this.compute(width);
     this.mark(root);
     const update = () => this.refresh();
+    const evidence = new KeyEvidence();
     new ResizeObserver(update).observe(document.body);
     for (const q of ["(any-pointer: fine)", "(any-pointer: coarse)"]) matchMedia(q).addEventListener?.("change", update);
     addEventListener(
       "keydown",
       (e) => {
-        if (this.found || !fromHardware(e, inTextField(e.target))) return;
+        if (this.found || !evidence.note(e, inTextField(e.target))) return;
         this.found = true;
         if (!this.file.seen.keyboard) {
           this.file.seen.keyboard = true;
+          this.pending.seenKeyboard = true;
           void this.save();
         }
         this.refresh();
@@ -194,19 +224,24 @@ export class Device {
   }
 
   async setOverride(id: string, value: Override | undefined): Promise<void> {
-    const { [id]: _was, ...rest } = this.file.extensions;
-    this.file.extensions = value ? { ...rest, [id]: value } : rest;
+    this.pending.extensions.set(id, value ?? null);
+    this.file = this.merged(this.file);
     for (const fn of this.listeners) fn(this, this.facts);
     await this.save();
   }
 
   async setKeyboard(choice: KeyboardChoice): Promise<void> {
-    this.file.keyboard = choice;
+    this.pending.keyboard = choice;
+    this.file = this.merged(this.file);
     this.refresh();
     await this.save();
   }
 
-  /** Read this device's file, take what it says, and write it if it's new, out of date, or wasn't written today. */
+  /**
+   * Read this device's file, take what it says, and write it only if there's something new to say: it
+   * isn't there yet, a keyboard or a wider screen was seen, or it wasn't written today. The width the
+   * window is now isn't news: two tabs at different widths would write it in turns.
+   */
   async load(io: DeviceIo): Promise<void> {
     this.io = io;
     if (!this.path) return;
@@ -214,35 +249,42 @@ export class Device {
     if (!saved) return;
     this.revision = saved.revision;
     const kept = parseDeviceFile(saved.text);
-    const seenBefore = kept.seen;
-    this.take(kept);
-    const seen = { width: this.facts.width, pointer: this.facts.pointer, touch: this.facts.touch, keyboard: this.found || !!seenBefore?.keyboard };
-    const today = this.file.lastSeen.slice(0, 10);
-    const stale = !seenBefore || JSON.stringify(seenBefore) !== JSON.stringify(seen) || kept.lastSeen?.slice(0, 10) !== today;
-    this.file.seen = seen;
+    this.file = this.merged(kept);
+    const before = kept.seen;
+    const stale = !before || before.keyboard !== this.file.seen.keyboard || before.width !== this.file.seen.width || before.pointer !== this.file.seen.pointer || before.touch !== this.file.seen.touch || kept.lastSeen?.slice(0, 10) !== minute(new Date()).slice(0, 10);
     this.refresh(true);
     if (stale) await this.save();
   }
 
-  /** The file changed elsewhere (you edited it, or another tab wrote it): take what it says now. */
+  /** The file changed elsewhere (another tab wrote it, or you edited it): take what it says, with this tab's own changes on top. */
   async absorb(): Promise<void> {
     if (!this.io || !this.path) return;
     const saved = await this.io.read(this.path).catch(() => null);
     if (!saved || saved.revision <= this.revision) return;
     this.revision = saved.revision;
-    this.take(parseDeviceFile(saved.text));
+    this.file = this.merged(parseDeviceFile(saved.text));
     this.refresh();
     for (const fn of this.listeners) fn(this, this.facts);
   }
 
-  private take(kept: Partial<DeviceFile>) {
-    // The name and the time are this browser's; what you chose is the file's.
-    this.file = {
-      ...this.file,
-      ...(kept.name ? { name: kept.name } : {}),
-      seen: { ...this.file.seen, keyboard: this.file.seen.keyboard || !!kept.seen?.keyboard },
-      keyboard: kept.keyboard ?? "auto",
-      extensions: kept.extensions ?? {},
+  /**
+   * A file as it is elsewhere, with this tab's part in it: what this browser saw (the widest screen, a
+   * keyboard once one was found) and the changes it hasn't written yet. The rest is the file's.
+   */
+  private merged(there: Partial<DeviceFile>): DeviceFile {
+    const extensions = { ...(there.extensions ?? {}) };
+    for (const [id, value] of this.pending.extensions) {
+      if (value) extensions[id] = value;
+      else delete extensions[id];
+    }
+    const mine = this.file.seen;
+    const widest = there.seen && atLeast(there.seen.width, mine.width) ? there.seen.width : mine.width;
+    return {
+      name: there.name ?? this.file.name,
+      lastSeen: this.file.lastSeen,
+      seen: { width: widest, pointer: mine.pointer, touch: mine.touch, keyboard: mine.keyboard || !!there.seen?.keyboard || !!this.pending.seenKeyboard },
+      keyboard: this.pending.keyboard ?? there.keyboard ?? "auto",
+      extensions,
     };
   }
 
@@ -255,19 +297,24 @@ export class Device {
     return this.writing;
   }
 
+  /** Put this tab's changes on the file as it is now, and write that; if it changed meanwhile, again. */
   private async send(): Promise<void> {
     const io = this.io;
     if (!io || !this.path) return;
     this.file.lastSeen = minute(new Date());
+    const sending = { keyboard: this.pending.keyboard, extensions: new Map(this.pending.extensions) };
     for (let tries = 0; tries < 3; tries++) {
-      const result = await io.write(this.path, deviceText(this.file), this.revision);
-      if (result.status !== "conflict") {
-        this.revision = result.file.revision;
-        return;
-      }
-      // Changed elsewhere since: what it says now, with this browser's changes on top.
       const saved = await io.read(this.path);
-      this.revision = saved.revision;
+      const file = this.merged(parseDeviceFile(saved.text));
+      const result = await io.write(this.path, deviceText(file), saved.revision);
+      if (result.status === "conflict") continue;
+      this.revision = result.file.revision;
+      this.file = file;
+      // Written: what was sent is the file's now, unless it was changed again while it went.
+      if (this.pending.keyboard === sending.keyboard) delete this.pending.keyboard;
+      for (const [id, value] of sending.extensions) if (this.pending.extensions.get(id) === value) this.pending.extensions.delete(id);
+      delete this.pending.seenKeyboard;
+      return;
     }
   }
 

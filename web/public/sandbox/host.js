@@ -7,7 +7,7 @@
   let me;
   let settings = {};
   // What the device has ({ facts, why }), from the app, and again whenever it changes.
-  let device = { facts: { width: "compact", px: 0, pointer: "coarse", touch: false, keyboard: false }, why: {} };
+  let device = { facts: { width: "compact", pointer: "coarse", touch: false, keyboard: false }, why: {} };
   const widths = ["compact", "medium", "expanded", "large"];
   let next = 0;
   const calls = new Map();

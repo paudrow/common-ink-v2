@@ -95,7 +95,8 @@ browserTest(h, "on a phone Vim is off and keys aren't hinted until a keyboard is
     return (await item.locator(".detail").count()) ? await item.locator(".detail").innerText() : "";
   };
   assert.equal(await hint(), "", "no shortcut without a keyboard");
-  // Escape closes the bar, and is a key a touch screen's keyboard doesn't send.
+  // An arrow and then Escape, which closes the bar: two kinds of key a touch screen's keyboard rarely sends.
+  await app.page.keyboard.press("ArrowDown");
   await app.page.keyboard.press("Escape");
   await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
   await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "vim")?.state === "active"));

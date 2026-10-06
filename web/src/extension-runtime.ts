@@ -304,8 +304,9 @@ export class ExtensionRuntime {
 
   /** What sandboxed extensions are told about the device. */
   private deviceSnapshot() {
-    const d = this.app.device.describe();
-    return { facts: d.facts, why: d.why };
+    // The width class is enough for a frame to adapt to; the pixels would say more about the screen than it needs.
+    const { px: _px, ...facts } = this.app.device.facts;
+    return { facts, why: { ...this.app.device.describe().why, width: `the window is ${facts.width} width` } };
   }
 
   /** Tell sandboxed extensions the device changed. */
