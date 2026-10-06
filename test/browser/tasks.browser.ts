@@ -1,12 +1,13 @@
 // Tasks in a real browser against the real Worker: chips sit clear of a task's words and of each other,
 // a chip's editor changes just its token, a ::tasks list ticks a task in its note, and the Tasks view
-// puts what's overdue or due today at the top.
+// puts what's overdue or due today at the top. Each runs on the tasks scenario, whose clock is 9:00 on
+// Monday 2026-10-05, so "today" never depends on when or where the tests run.
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import type { Page } from "playwright-core";
-import { harness, runCommand } from "./harness.ts";
+import { browserTest, harness, runCommand } from "./harness.ts";
 
 const h = harness();
+const TASKS = { scenario: "tasks", open: "Chores.md" };
 
 const note = (page: Page, path: string): Promise<{ text: string }> => page.evaluate((path) => fetch(`/api/file?path=${encodeURIComponent(path)}`).then((r) => r.json()), path);
 
@@ -45,23 +46,16 @@ const CHIP_PROBLEMS = `(() => {
   return problems;
 })()`;
 
-test("a task's chips and checkmark sit in their own boxes, clear of its words, wide and narrow", async () => {
-  for (const width of [1100, 420]) {
-    const page = await h.browser.newPage({ viewport: { width, height: 800 } });
-    await page.goto(`${h.base}/?file=Chores.md`);
+for (const width of [1100, 420]) {
+  browserTest(h, `a task's chips and checkmark sit in their own boxes, clear of its words, at ${width}px`, { ...TASKS, viewport: { width, height: 800 } }, async ({ page }) => {
     await page.waitForSelector(".cm-line .tk");
     // Plain JavaScript, as a string: the test runner's TypeScript would name these functions with a helper the page doesn't have.
     const report = (await page.evaluate(CHIP_PROBLEMS)) as string[];
-    assert.deepEqual(report, [], `at ${width}px`);
-    await page.close();
-  }
-});
+    assert.deepEqual(report, []);
+  });
+}
 
-test("a chip opens its own editor, and a pick rewrites just that token in the note", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1100, height: 800 } });
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`${h.base}/?file=Chores.md`);
+browserTest(h, "a chip opens its own editor, and a pick rewrites just that token in the note", { ...TASKS, viewport: { width: 1100, height: 800 } }, async ({ page }) => {
   const rent = page.locator(".cm-line", { hasText: "Pay rent" });
   await rent.locator('.tk[data-field="priority"]').click();
   await page.locator(".chip-pop .fp-item", { hasText: "Low" }).click();
@@ -73,15 +67,9 @@ test("a chip opens its own editor, and a pick rewrites just that token in the no
   assert.match((await page.textContent(".chip-rec-summary"))!, /^Every month on the 1st/);
   assert.match((await page.textContent(".chip-rec-dates"))!, /^After this one:/);
   await page.keyboard.press("Escape");
-  assert.deepEqual(errors, []);
-  await page.close();
 });
 
-test("a ::tasks list ticks a task in its note; a repeating one moves on to its next date", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1100, height: 1000 } });
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`${h.base}/?file=${encodeURIComponent("Tasks tour.md")}`);
+browserTest(h, "a ::tasks list ticks a task in its note; a repeating one moves on to its next date", { ...TASKS, open: "Tasks tour.md", viewport: { width: 1100, height: 1000 } }, async ({ page }) => {
   const list = page.locator('.cm-embed[data-embed="tasks"]').first();
   const row = list.locator(".qt-row", { hasText: "Plan the offsite" });
   await row.waitFor();
@@ -94,13 +82,9 @@ test("a ::tasks list ticks a task in its note; a repeating one moves on to its n
     const due = /- \[ \] Send the Q4 invoice to Acme due:(\S+) rec:monthly/.exec(text)?.[1];
     return !!due && due > before;
   });
-  assert.deepEqual(errors, []);
-  await page.close();
 });
 
-test("Show tasks puts what's overdue and due today at the top, then the rest", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1200, height: 900 } });
-  await page.goto(`${h.base}/?file=Chores.md`);
+browserTest(h, "Show tasks puts what's overdue and due today at the top, then the rest", { ...TASKS, viewport: { width: 1200, height: 900 } }, async ({ page }) => {
   await page.waitForSelector(".cm-line .tk");
   await runCommand(page, "Show tasks");
   const today = page.locator(".td-block");
@@ -111,17 +95,9 @@ test("Show tasks puts what's overdue and due today at the top, then the rest", a
   const rest = page.locator(".tasks-view .qt-list");
   await rest.locator(".qt-row", { hasText: "Pay rent" }).waitFor();
   assert.equal(await rest.locator(".qt-row", { hasText: "Water the plants" }).count(), 0);
-  await page.close();
 });
 
-/** Today as the page has it. */
-const todayIn = (page: Page) => page.evaluate(() => new Date().toLocaleDateString("en-CA"));
-
-test("⌘⇧. opens quick-add from a note, Dvorak's key included; Enter adds the task, read from words, to today's note", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1100, height: 800 } });
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`${h.base}/?file=Chores.md`);
+browserTest(h, "⌘⇧. opens quick-add from a note, Dvorak's key included; Enter adds the task, read from words, to today's note", { ...TASKS, viewport: { width: 1100, height: 800 } }, async ({ page }) => {
   await page.waitForSelector(".cm-line .tk");
   await page.locator(".cm-line", { hasText: "Chores" }).click();
   await page.keyboard.press("ControlOrMeta+Shift+Period");
@@ -132,8 +108,7 @@ test("⌘⇧. opens quick-add from a note, Dvorak's key included; Enter adds the
   assert.ok(await page.locator('.qa-float .qa-preview .tk[data-field="rec"]').count(), "the repeat's chip, before it's added");
   await page.keyboard.press("Enter");
   await page.waitForSelector(".qa-float", { state: "detached" });
-  const day = await todayIn(page);
-  await until(page, `Journal/${day}.md`, (text) => /## Tasks\n\n- \[ \] Pay the gas bill due:\d{4}-\d{2}-01 rec:1st #home/.test(text));
+  await until(page, "Journal/2026-10-05.md", (text) => /## Tasks\n\n- \[ \] Pay the gas bill due:2026-11-01 rec:1st #home/.test(text));
 
   // On Dvorak, "." is the physical E key: the shortcut is the character, wherever it is, and with Shift the browser may say ">".
   await page.locator(".cm-line", { hasText: "Chores" }).click();
@@ -145,13 +120,9 @@ test("⌘⇧. opens quick-add from a note, Dvorak's key included; Enter adds the
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await page.waitForSelector(".qa-float", { state: "detached" });
-  assert.deepEqual(errors, []);
-  await page.close();
 });
 
-test("on a task line, Tab right after a phrase makes it a token, and it's in the command list as Add a task", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1100, height: 800 } });
-  await page.goto(`${h.base}/?file=Chores.md`);
+browserTest(h, "on a task line, Tab right after a phrase makes it a token, and it's in the command list as Add a task", { ...TASKS, viewport: { width: 1100, height: 800 } }, async ({ page }) => {
   await page.waitForSelector(".cm-line .tk");
   // To the end of Ask's line with Vim, not a click (that could land on a chip and open its editor).
   await page.locator(".cm-line", { hasText: "Chores" }).click();
@@ -162,9 +133,8 @@ test("on a task line, Tab right after a phrase makes it a token, and it's in the
   await page.keyboard.type(" tomorrow");
   assert.equal(await page.textContent(".cm-phrase"), "tomorrow");
   await page.keyboard.press("Tab");
-  await until(page, "Chores.md", (text) => /- \[ \] Ask @jane about the #garden plan !low due:\d{4}-\d{2}-\d{2}\n/.test(text));
+  await until(page, "Chores.md", (text) => /- \[ \] Ask @jane about the #garden plan !low due:2026-10-06\n/.test(text));
   await page.keyboard.press("Escape");
   await runCommand(page, "Add a task");
   await page.waitForSelector(".qa-float .cm-content");
-  await page.close();
 });
