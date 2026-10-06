@@ -697,9 +697,15 @@ if (typeof addEventListener !== "undefined") addEventListener("resize", () => al
  */
 if (typeof MutationObserver !== "undefined" && typeof document !== "undefined")
   new MutationObserver((records) => {
-    if (!all.size || !records.some((r) => r.target instanceof Element && !r.target.closest(".cm-editor, .embed-layer"))) return;
+    if (!all.size || !records.some(aroundEditors)) return;
     for (const lives of all) lives.place(false);
-  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ["style", "class", "hidden"] });
+
+/** A change to the page around the editors: not inside one or among the boxes, and not an attribute set to what it was. */
+function aroundEditors(r: MutationRecord): boolean {
+  if (!(r.target instanceof Element) || r.target.closest(".cm-editor, .embed-layer")) return false;
+  return r.type !== "attributes" || r.oldValue !== r.target.getAttribute(r.attributeName!);
+}
 
 // What plays changed: a video that started or stopped may float, dock or go.
 if (typeof queueMicrotask !== "undefined")
