@@ -23,12 +23,12 @@ export function freePort(): Promise<number> {
   });
 }
 
-/** The file a run writes into the built app for its server to serve, so the run can tell its own server from another's. */
-export const RUN_FILE = "dev-run.json";
-
-/** Whether the server at `base` is the one this run started: it serves this run's nonce. */
+/**
+ * Whether the server at `base` is the one this run started: its levers answer this run's nonce, which
+ * the run gave its Worker (DEV_RUN), so another server, even one from the same worktree, can't.
+ */
 export async function isOurs(base: string, nonce: string): Promise<boolean> {
-  const res = await fetch(`${base}/${RUN_FILE}`).catch(() => null);
-  const body = res?.ok ? ((await res.json().catch(() => null)) as { nonce?: unknown } | null) : null;
-  return body?.nonce === nonce;
+  const res = await fetch(`${base}/api/levers`).catch(() => null);
+  const body = res?.ok ? ((await res.json().catch(() => null)) as { run?: unknown } | null) : null;
+  return body?.run === nonce;
 }

@@ -118,3 +118,25 @@ browserTest(h, "a box takes the text styles of the editor's scroller, where boxe
   });
   assert.deepEqual(styles.box, styles.scroller);
 });
+
+browserTest(h, "idle, a note with embeds isn't measured again and again: nothing around the editors changes", { scenario: "tasks", open: "Boards tour" }, async (app) => {
+  await app.page.locator(".cm-embed[data-live]").first().waitFor();
+  await app.idle();
+  await app.page.waitForTimeout(1500);
+  const measured = await app.page.evaluate(
+    () =>
+      new Promise<number>((done) => {
+        const original = Element.prototype.getBoundingClientRect;
+        let n = 0;
+        Element.prototype.getBoundingClientRect = function (this: Element) {
+          if (this.classList.contains("cm-scroller")) n++;
+          return original.call(this);
+        };
+        setTimeout(() => {
+          Element.prototype.getBoundingClientRect = original;
+          done(n);
+        }, 3000);
+      }),
+  );
+  assert.ok(measured <= 3, `the editor measured ${measured} times in 3s`);
+});
