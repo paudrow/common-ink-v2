@@ -25,10 +25,11 @@ async function built<T>(assets: Assets, path: string): Promise<T | null> {
 }
 
 /** The levers' API: GET /api/levers says what's set, POST /api/levers/reset empties the workspace and seeds it again. */
-export async function leversApi(req: Request, url: URL, assets: Assets, workspace: LeversWorkspace): Promise<Response | null> {
+export async function leversApi(req: Request, url: URL, assets: Assets, workspace: LeversWorkspace, run?: string): Promise<Response | null> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/levers") {
-    return json({ scenario: await workspace.scenario(), levers: leversFromCookie(req.headers.get("Cookie")), scenarios: (await built(assets, "levers/scenarios.json")) ?? [] });
+    // `run`: which `npm run dev` started this Worker, so it can tell its own server from another's.
+    return json({ scenario: await workspace.scenario(), levers: leversFromCookie(req.headers.get("Cookie")), scenarios: (await built(assets, "levers/scenarios.json")) ?? [], ...(run ? { run } : {}) });
   }
   if (route === "POST /api/levers/reset") {
     const { scenario } = ((await req.json().catch(() => ({}))) ?? {}) as { scenario?: unknown };
