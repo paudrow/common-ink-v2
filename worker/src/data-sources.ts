@@ -7,7 +7,7 @@
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
-import { Conflict, ReconnectNeeded, Refusal, type Adapter, type SyncIO } from "./adapter.ts";
+import { Conflict, ReconnectNeeded, Refusal, Unreadable, type Adapter, type SyncIO } from "./adapter.ts";
 import { GoogleCalendar } from "./google-calendar.ts";
 import { addressOf, isRecordPath, keyOfPath, parseAddress, readEvent, recordPath, recordText, Records, RECORDS_DIR, type SourceId } from "./records.ts";
 import { fixtures, matchesContact, type Contact } from "./sources.ts";
@@ -399,7 +399,8 @@ export class DataSources {
           this.setState(source, { error: err.message });
           return err.message;
         }
-        if (err instanceof Refusal) {
+        // Three tries in all, then it's refused, so the edits behind it aren't held for good.
+        if (err instanceof Refusal || (err instanceof Unreadable && row.attempts >= 2)) {
           this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
           continue;
         }
