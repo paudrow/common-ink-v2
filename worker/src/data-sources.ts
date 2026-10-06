@@ -81,6 +81,15 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** An etag that matches no version, so a PATCH sent with it meets the source's version first. */
+const UNKNOWN_ETAG = '"common-ink:unknown"';
+
+/**
+ * Kept as a record's etag once our own delete of it went: the version the source holds is the one that
+ * delete made, whose etag it didn't say. Never sent; the echo of that delete a sync brings isn't a change.
+ */
+const DELETED_HERE = '"common-ink:deleted-here"';
+
 /** How long an edit waits for the source to say how its record is, before it's refused. */
 const UNREADABLE_FOR = 30 * 60_000;
 
@@ -389,7 +398,8 @@ export class DataSources {
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
-      const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const etag = known === DELETED_HERE ? null : known;
       try {
         this.pushing = row.path;
         let pushed: Pushed;
@@ -401,7 +411,7 @@ export class DataSources {
         }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
-          if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
+          if (op.op === "delete") this.setEtag(row.path, DELETED_HERE);
           else if (pushed.etag) this.setEtag(row.path, pushed.etag);
         });
         this.setState(source, { error: undefined });
@@ -438,11 +448,12 @@ export class DataSources {
    */
   private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
     const bookkeeping = () => {
-      this.db.run("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", row.seq);
+      this.db.run("UPDATE outbox SET attempts = attempts + 1, unreadable = NULL WHERE seq = ?", row.seq);
       if (conflict.etag) this.setEtag(row.path, conflict.etag);
       else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
     };
     if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
+    let named = "";
     const queued = this.db.all<{ seq: number; op: string; base: string | null }>("SELECT seq, op, base FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", row.path, row.seq);
     let theirs = conflict.remote;
     const lost = new Set<string>();
@@ -451,10 +462,13 @@ export class DataSources {
       const o = JSON.parse(r.op) as RecordOp;
       // A delete waiting after them wins, whatever they merge to.
       if (o.op === "delete") break;
-      const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
-      for (const field of merged.lost) lost.add(field);
+      // An occurrence's first edit started from the occurrence as its series makes it.
+      const merged = mergeEvents(r.base ? readEvent(r.base) : o.event.series !== undefined ? this.asSeriesMakes(source, o.event) : null, o.event, theirs);
       // Cancelled isn't a field an edit makes, so it's never among what's lost: say so when it beat one.
+      // A cancellation comes without the occurrence's fields, so they aren't counted against it.
       if (theirs.status === "cancelled" && o.event.status !== "cancelled") lost.add("cancellation");
+      else for (const field of merged.lost) lost.add(field);
+      named ||= o.event.title;
       rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
       theirs = merged.event;
     }
@@ -465,7 +479,7 @@ export class DataSources {
       bookkeeping();
       for (const r of rebased) this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify(r.op), r.base, r.seq);
     });
-    if (lost.size) this.setState(source, { conflict: `${theirs.title || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
+    if (lost.size) this.setState(source, { conflict: `${theirs.title || named || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
   }
 
   /**
@@ -484,6 +498,12 @@ export class DataSources {
     const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
     this.setState(source, { conflict: message, error: undefined });
     return message;
+  }
+
+  /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
+  private asSeriesMakes(source: SourceId, e: CalendarEvent): CalendarEvent | null {
+    const found = findTarget(this.family(source, e.calendar, e.id).filter((o) => o.id !== e.id), e.id);
+    return found?.kind === "occurrence" ? found.occurrence : null;
   }
 
   private setEtag(path: string, etag: string) {
@@ -580,6 +600,29 @@ export class DataSources {
     const dropEvent = (path: FilePath) => {
       if (!pending(path)) write(path, null);
     };
+    const put = (event: CalendarEvent, etag: string | null) => {
+      const path = eventPath(event.calendar, event.id);
+      if (pending(path)) {
+        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+        const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", path)[0]?.etag;
+        // Our own delete, heard back: that version is ours, so the edit waiting goes on from it.
+        if (etag && waiting && known === DELETED_HERE && event.status === "cancelled") this.setEtag(path, etag);
+        // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
+        // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
+        else if (etag && waiting && (!known || known === DELETED_HERE)) this.setEtag(path, UNKNOWN_ETAG);
+        return;
+      }
+      write(path, recordText(event));
+      if (etag) this.setEtag(path, etag);
+    };
+    // A cancelled occurrence its series doesn't have cancels nothing, as Google keeps one for an
+    // occurrence moved off its start. Kept, it would block undoing that move, and cancel the
+    // occurrence once the series came back to it. What's here at its id goes, as Google ended it.
+    const cancelled: Array<{ event: CalendarEvent; etag: string | null }> = [];
+    const cancels = (e: CalendarEvent) => {
+      const series = readEvent(this.files.read(eventPath(e.calendar, e.series ?? ""))?.text ?? "");
+      return !series?.recurrence || findTarget([series], e.id)?.kind === "occurrence";
+    };
     return {
       calendars: (list) => {
         const keep = new Set(list.map((c) => c.id));
@@ -595,15 +638,18 @@ export class DataSources {
       },
       token: (calendar) => this.state(source).tokens?.[calendar] ?? null,
       setToken: (calendar, token) => {
+        for (const { event, etag } of cancelled.filter((c) => c.event.calendar === calendar)) {
+          if (cancels(event)) put(event, etag);
+          else dropEvent(eventPath(event.calendar, event.id));
+        }
         this.setToken(source, calendar, token);
         this.setRecheck(source, calendar, [...(left.get(calendar) ?? [])]);
       },
       recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
-        const path = eventPath(event.calendar, event.id);
-        if (pending(path)) return;
-        write(path, recordText(event));
-        if (etag) this.setEtag(path, etag);
+        // Judged once the calendar's changes are all in, against its series as they leave it.
+        if (event.series !== undefined && event.status === "cancelled") return void cancelled.push({ event, etag });
+        put(event, etag);
       },
       remove: (calendar, id) => {
         dropEvent(eventPath(calendar, id));
@@ -703,7 +749,7 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (files.recent({ path, limit: 1 })[0]?.revision !== r) return { r, path, text: null };
+      if (changedSince(files, path, r)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -719,6 +765,19 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
     out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
   return out;
+}
+
+/**
+ * Whether a record changed after one of its revisions. The source filling in its own address for
+ * the record (`link`), as a sync does after an edit goes out, isn't a change.
+ */
+function changedSince(files: Files, path: FilePath, revision: Revision): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision);
+  if (!later.length) return false;
+  if (!later.every((c) => c.author.kind === "sync")) return true;
+  const was = readEvent(files.versionAt(path, revision) ?? "");
+  const now = readEvent(files.read(path)?.text ?? "");
+  return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */

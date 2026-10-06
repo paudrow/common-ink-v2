@@ -36,3 +36,11 @@ test("every stylesheet's braces balance, so no rule swallows the ones after it",
     assert.equal(depth, 0, `${f} leaves a brace open`);
   }
 });
+
+test("text colours come from the theme's tokens, so dark mode can make them readable too", () => {
+  for (const f of files.filter((f) => f.endsWith(".css"))) {
+    const css = fs.readFileSync(path.join(root, f), "utf8");
+    const fixed = [...css.matchAll(/(?<![-\w])color:\s*(#[0-9a-f]{3,8}|rgb\([^)]*\))/gi)].map((m) => `line ${css.slice(0, m.index).split("\n").length}: ${m[0]}`);
+    assert.deepEqual(fixed, [], `${f}: use a token (var(--bad), var(--add)…) for these`);
+  }
+});

@@ -79,6 +79,18 @@ export class Session {
     return this.queue;
   }
 
+  /**
+   * Settle a clash: take the server's latest as what the editor's text is based on, keeping that text.
+   * Saving it then puts yours over theirs; changing the editor to theirs leaves nothing to save.
+   */
+  adopt(latest: WorkspaceFile): Promise<void> {
+    this.queue = this.queue.then(() => {
+      [this.base, this.baseText] = [latest.revision, latest.text];
+      this.set(this.dirty ? "unsaved" : "saved");
+    });
+    return this.queue;
+  }
+
   /** Replace the editor's text with the server's latest (`:e!`). */
   reload(file: WorkspaceFile): void {
     this.base = file.revision;
