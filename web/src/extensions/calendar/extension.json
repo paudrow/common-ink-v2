@@ -4,7 +4,7 @@
   "version": "3.0.0",
   "description": "Your calendar: agenda, 3 days, week, month and year, scrolling sideways through dates, with events to make, move and change, repeating ones too. From Google Calendar, or in Previews the Sample calendar.",
   "main": "index.ts",
-  "files": ["index.ts", "model.ts", "dom.ts", "views.ts", "editor.ts", "grid.ts", "months.ts", "agenda.ts", "page.ts", "links.ts", "notes.ts"],
+  "files": ["index.ts", "model.ts", "dom.ts", "views.ts", "editor.ts", "grid.ts", "months.ts", "agenda.ts", "page.ts", "links.ts", "notes.ts", "search.ts"],
   "activationEvents": ["onStartup"],
   "permissions": {
     "data:calendar:read": { "why": "Show your events, and the events notes link to" },
@@ -15,6 +15,9 @@
   },
   "contributes": {
     "places": [{ "id": "calendar", "title": "Calendar", "view": "calendar", "icon": "calendar" }],
+    "search": {
+      "types": [{ "type": "event", "title": "Events" }]
+    },
     "commands": [
       { "command": "calendar.open", "title": "Open calendar" },
       { "command": "calendar.show", "title": "Show calendar" },

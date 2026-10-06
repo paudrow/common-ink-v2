@@ -7,6 +7,10 @@ import type { EventFound } from "../../worker/src/operations.ts";
 import type { Contact } from "../../worker/src/sources.ts";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
 import type { Upload } from "../../worker/src/uploads.ts";
+import type { SearchResults } from "../../worker/src/search.ts";
+
+/** What `search` answers: the query as it was read, what's wrong with it, and the notes it found. */
+export type SearchAnswer = SearchResults & { query: string; problems: string[] };
 
 /** An upload as the page knows it: what it is, and its address. */
 export type UploadDone = Upload & { url: string };
@@ -117,6 +121,10 @@ export const api = {
   },
   async events(from: Date, to: Date, calendars?: string[]): Promise<Occurrence[]> {
     return answer(await fetch(`/api/events?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), zone: ZONE, ...(calendars ? { calendars: calendars.join(",") } : {}) })}`));
+  },
+  /** The notes a query finds (docs/queries.md), best first, archived ones last; with `within`, only notes whose paths match one of those globs. */
+  async search(query: string, limit = 20, within?: readonly string[]): Promise<SearchAnswer> {
+    return answer(await fetch(`/api/search?${new URLSearchParams({ query, limit: String(limit), zone: ZONE, ...(within ? { within: JSON.stringify(within) } : {}) })}`));
   },
   async event(address: string): Promise<EventFound | null> {
     return answer(await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`));
