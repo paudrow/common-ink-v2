@@ -2,8 +2,10 @@
 // commands and key sequences that run the app's commands, and Ctrl-O and Ctrl-I as the app's Go back
 // and Go forward, as VSCodeVim does: one history of where you've been, jumps within a note included.
 // Every extension's "vim" keybindings are mapped here.
-import { Prec } from "@codemirror/state";
-import { EditorView, ViewPlugin } from "@codemirror/view";
+import { indentLess, indentMore } from "@codemirror/commands";
+import { getIndentUnit } from "@codemirror/language";
+import { countColumn, EditorSelection, Prec } from "@codemirror/state";
+import { EditorView, keymap, ViewPlugin } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
@@ -29,6 +31,29 @@ function freshJumps() {
   Object.assign(fresh, kept, { jumpList: fresh.jumpList });
 }
 
+/** Whether Vim is in insert mode in this editor; null if Vim isn't running in it. */
+function inInsertMode(view: EditorView): boolean | null {
+  const state = (getCM(view) as unknown as { state?: { vim?: { insertMode?: boolean } } } | null)?.state?.vim;
+  return state ? !!state.insertMode : null;
+}
+
+/** Spaces at each cursor, up to the next indent stop, as Vim's Tab with expandtab and softtabstop. A selection isn't replaced: it's indented. */
+function tabAtCursor(view: EditorView): boolean {
+  const { state } = view;
+  if (state.selection.ranges.some((r) => !r.empty)) return indentMore(view);
+  const unit = getIndentUnit(state);
+  view.dispatch(
+    state.changeByRange((range) => {
+      const line = state.doc.lineAt(range.head);
+      const column = countColumn(line.text.slice(0, range.head - line.from), state.tabSize);
+      const insert = " ".repeat(unit - (column % unit));
+      return { changes: { from: range.head, insert }, range: EditorSelection.cursor(range.head + insert.length) };
+    }),
+    { scrollIntoView: true, userEvent: "input" },
+  );
+  return true;
+}
+
 export default {
   activate(ctx: ExtensionContext) {
     const showMode = (mode: string) => ctx.statusBar.set("vim.mode", mode);
@@ -46,7 +71,26 @@ export default {
       return {};
     });
     // Before every other keymap, so Vim sees keys first.
-    ctx.editor.extend(Prec.highest([insertUndo, vim(), modeWatch, theme]), { everywhere: true });
+    // Outside insert mode, Tab is Vim's Ctrl-I (jump forward), and Shift-Tab is the keyboard's way out of
+    // the note, to what's before it, as the browser does: Vim has no use for it. Both are settled before the
+    // editor sees the key, in capture, through CodeMirror's tab focus mode: Escape doesn't make the next Tab
+    // leave (its escape hatch, which in Vim would take Ctrl-I away after every Escape), and Shift-Tab does.
+    const tabKeys = ViewPlugin.define((view) => {
+      const keydown = (e: KeyboardEvent) => {
+        if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey || inInsertMode(view) !== false) return;
+        view.setTabFocusMode(e.shiftKey ? 1000 : false);
+      };
+      view.dom.addEventListener("keydown", keydown, true);
+      return { destroy: () => view.dom.removeEventListener("keydown", keydown, true) };
+    });
+    // In insert mode Tab types an indent at the cursor, as in Vim, and Ctrl-T and Ctrl-D indent and dedent
+    // the whole line. Tab's comes after other extensions' (Lists' on a list item), Ctrl-T's before the editor's own.
+    const insertTab = keymap.of([{ key: "Tab", run: (view) => inInsertMode(view) === true && tabAtCursor(view) }]);
+    const lineIndent = keymap.of([
+      { key: "Ctrl-t", run: (view) => inInsertMode(view) === true && indentMore(view) },
+      { key: "Ctrl-d", run: (view) => inInsertMode(view) === true && indentLess(view) },
+    ]);
+    ctx.editor.extend([Prec.highest([tabKeys, insertUndo, vim(), lineIndent, modeWatch, theme]), insertTab], { everywhere: true });
 
     // A different editor took focus: it starts in normal mode, with its own jumps.
     let shown: EditorView | null = null;

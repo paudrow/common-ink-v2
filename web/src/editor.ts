@@ -2,12 +2,12 @@
 // Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
-import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
 import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
-import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { linePatch } from "./line-diff.ts";
@@ -111,6 +111,9 @@ export function createState(
       EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
+      // Tab and Shift-Tab indent the line, so the keyboard stays in the note. Last of all keys, so an
+      // extension's Tab comes first: Lists' on a list item, Vim's at the cursor in insert mode.
+      Prec.low(keymap.of([indentWithTab])),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
