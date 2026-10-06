@@ -198,6 +198,23 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
   await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
   await app.reload();
+  // What 100,000 calls and their answers cost this page on this machine, with nothing done for them: a
+  // port in the page answering each at once. The flood, refused, has to stay close to that.
+  const baseline = await app.page.evaluate(async () => {
+    const { port1, port2 } = new MessageChannel();
+    port2.onmessage = (e) => port2.postMessage({ t: "reject", id: (e.data as { id: string }).id, message: "no" });
+    let gap = 0;
+    let last = performance.now();
+    const timer = setInterval(() => ((gap = Math.max(gap, performance.now() - last)), (last = performance.now())), 20);
+    await new Promise<void>((done) => {
+      let answered = 0;
+      port1.onmessage = () => ++answered === 100_000 && done();
+      for (let i = 0; i < 100_000; i++) port1.postMessage({ t: "call", id: `h${i}`, method: "commands.shortcut", args: ["nope"] });
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    clearInterval(timer);
+    return gap;
+  });
   await app.page.evaluate(() => {
     const w = window as unknown as { gap: number };
     w.gap = 0;
@@ -211,6 +228,8 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   // Its own start (registering its command) counts toward the 2,000 too.
   assert.ok(r.taken > 1990 && r.taken <= 2000, `took ${r.taken}`);
   const gap = await app.page.evaluate(() => (window as unknown as { gap: number }).gap);
-  // On main, without the share, the same flood stalls the page about 370 ms; refusing it mustn't cost much more.
-  assert.ok(gap < 600, `the page went ${Math.round(gap)} ms without running`);
+  console.log(`flood stall ${Math.round(gap)} ms, baseline ${Math.round(baseline)} ms`);
+  // Refusing the flood costs about what passing the messages does (1.2 to 2.2 times here); formatting each
+  // refusal, as an earlier version did, cost 3.4 to 5 times.
+  assert.ok(gap < 2.5 * baseline + 200, `the page went ${Math.round(gap)} ms without running, against ${Math.round(baseline)} ms for the messages alone`);
 });
