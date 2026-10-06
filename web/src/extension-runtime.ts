@@ -343,7 +343,7 @@ export class ExtensionRuntime {
   }
 
   /** Who what an extension's manifest contributes (a key, a menu item, a status item) runs its command for: a sandboxed one's runs for it, so app-only commands refuse. */
-  private by(m: ExtensionManifest): { by?: "sandbox" } {
+  by(m: ExtensionManifest): { by?: "sandbox" } {
     return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: "sandbox" } : {};
   }
 

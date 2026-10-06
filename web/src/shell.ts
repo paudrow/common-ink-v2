@@ -20,6 +20,8 @@ export interface Place {
   end?: boolean;
   /** The extension that adds it: said beside it, so no extension's place passes for the app's own. */
   from?: string;
+  /** Added by a sandboxed extension: its command runs for it, not for the app (commands.ts, appOnly). */
+  by?: "sandbox";
 }
 
 /** A command as a button or a menu item, with why it's off on this device if it is. */
@@ -29,6 +31,8 @@ export interface Action {
   icon?: string;
   label?: string;
   off?: string | null;
+  /** Added by a sandboxed extension: its command runs for it, not for the app. */
+  by?: "sandbox";
 }
 
 export interface ShellDeps {
@@ -45,7 +49,7 @@ export interface ShellDeps {
    * its note (at the place in Navigation's history `nav` names, if that's still kept). Done once it's on show.
    */
   restore(show: string, nav: number | undefined): Promise<unknown>;
-  run(command: string): unknown;
+  run(command: string, by?: "sandbox"): unknown;
   /** Navigation's own place in its history (navigation.ts), for the entry of a note on show. */
   visitId(): number | null;
   notice(message: string): void;
@@ -226,7 +230,9 @@ export class Shell {
     // A tap while an entry is still being restored: it overtakes any waiting, and goes once the one under way is on show.
     if (!fromHistory && this.restoring && !how.now) {
       this.latest++;
-      return void this.restores.then(() => this.go(id, { ...how, now: true }));
+      // In the chain, so a pop after the tap is restored after it, not alongside.
+      this.restores = this.restores.then(() => this.go(id, { ...how, now: true })).catch(() => {});
+      return;
     }
     const at = entryOf(history.state);
     if (!fromHistory && id === this.place && at?.place === id) {
@@ -245,7 +251,7 @@ export class Shell {
       this.screen = "window";
       this.awaitingRoot = true;
       // Its note comes on show (opened), or was on show already: either way, once it's done, that's the place.
-      void Promise.resolve(this.deps.run(place.open.command)).then(() => this.awaitingRoot && this.place === id && this.showWindow());
+      void Promise.resolve(this.deps.run(place.open.command, place.by)).then(() => this.awaitingRoot && this.place === id && this.showWindow());
     }
     this.update();
   }
@@ -439,7 +445,7 @@ export class Shell {
       // Tapped without taking focus from the note, so the keyboard stays up.
       b.addEventListener("pointerdown", (e) => e.preventDefault());
       b.addEventListener("mousedown", (e) => e.preventDefault());
-      b.addEventListener("click", () => this.deps.run(a.command));
+      b.addEventListener("click", () => this.deps.run(a.command, a.by));
       return b;
     });
     const done = el("button", { type: "button", className: "shell-tool done", ariaLabel: "Hide the keyboard", title: "Hide the keyboard" }, icon("keyboard-off", "1em"));
@@ -564,7 +570,7 @@ export class Shell {
           if (a.off) b.setAttribute("aria-disabled", "true");
           b.addEventListener("click", () => {
             sheet.close();
-            this.deps.run(a.command);
+            this.deps.run(a.command, a.by);
           });
           return b;
         }),

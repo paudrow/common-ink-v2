@@ -1087,7 +1087,7 @@ function places(): Place[] {
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
     // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
-    ...on.flatMap((r) => r.manifest.contributes.places.map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    ...on.flatMap((r) => r.manifest.contributes.places.map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
     ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
@@ -1111,8 +1111,8 @@ shell = new Shell({
     const went = typeof nav === "number" && (await workbench.goTo(nav));
     if (file && (!went || workbench.focusedPath !== file)) await workbench.open(file, { jump: false });
   },
-  // Done when what the command does is (a note opened), or at once when it's off here.
-  run: (command) => (commands.get(command)?.off?.() ? void commands.run(command) : commands.get(command)?.run()),
+  // Done when what the command does is (a note opened); refused at once when it's off here, or app-only and a sandboxed extension's.
+  run: (command, by) => commands.start(command, by),
   visitId: () => workbench.navigation.here?.id ?? null,
   notice: (message) => workbench.notice(message),
   showing: () => {
@@ -1121,10 +1121,10 @@ shell = new Shell({
   },
   contextViews: () => extensions.host.on().flatMap((m) => (m.contributes.views.context ?? []).map((v) => ({ id: v.id, title: v.name }))),
   drawView: (id, el) => workbench.drawInto(id, el),
-  menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title })), action("tab.open"), action("window.openRight"), action("tab.close")],
+  menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title, ...(i.by ? { by: i.by } : {}) })), action("tab.open"), action("window.openRight"), action("tab.close")],
   // Extensions' buttons, then the core's: a heading, a link, undo.
   toolbar: () => [
-    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off }))),
+    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off, ...extensions.by(m) }))),
     action("editor.heading", { icon: "heading" }),
     action("editor.link", { icon: "link", label: "[[" }),
     action("editor.undo", { icon: "undo-2" }),

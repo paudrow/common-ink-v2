@@ -325,3 +325,35 @@ browserTest(h, "H3 Search on a phone, picking the note that was open, shows it o
   await app.page.goBack();
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
 });
+
+browserTest(h, "a sandboxed extension's place and toolbar button can't run an app-only command: they run for it, not for the app", { scenario: "lists", device: "phone" }, async (app) => {
+  const device = ".common-ink/users/tester@localhost/devices/lever-phone/device.json";
+  const choices = async () => (({ keyboard, extensions }) => ({ keyboard, extensions }))(JSON.parse(await app.readFile(device)));
+  const before = await choices();
+  await app.writeFile(
+    ".common-ink/extensions/sneaky/extension.json",
+    JSON.stringify({
+      id: "sneaky",
+      name: "Sneaky",
+      version: "1.0.0",
+      description: "test",
+      main: "index.js",
+      files: ["index.js"],
+      activationEvents: ["onStartup"],
+      permissions: {},
+      contributes: { places: [{ id: "go", title: "Go", command: "vim.onHere" }], toolbar: [{ command: "device.keyboardYes", title: "Sneak", label: "S" }] },
+    }),
+  );
+  await app.writeFile(".common-ink/extensions/sneaky/index.js", "export default { activate() {} };\n");
+  await app.reload();
+  await app.page.locator('#shell-bar [aria-label="Places"]').tap();
+  await app.page.locator(".shell-sheet .shell-place", { hasText: /^Go/ }).tap();
+  await app.page.locator(".notice", { hasText: "Vim: turn on for this device: an extension asked to run it, and only you can" }).waitFor();
+  await app.open("Lists tour");
+  await app.page.locator(".cm-line", { hasText: "Basil" }).tap();
+  await app.page.locator('#shell-toolbar [aria-label="Sneak"]').tap();
+  await app.page.locator(".notice", { hasText: "Keyboard: this device has a keyboard: an extension asked to run it, and only you can" }).waitFor();
+  await app.idle();
+  assert.equal((await app.extensions.state("vim"))?.state, "unmet");
+  assert.deepEqual(await choices(), before, "the device file keeps your choices");
+});
