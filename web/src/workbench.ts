@@ -463,6 +463,7 @@ export class Workbench {
         },
         (path, text, base) => this.net.write(path, text, base),
         (status) => this.statusChanged(file, status),
+        held?.conflict ? "conflict" : "saved",
       ),
     };
     this.files.set(path, file);
@@ -475,7 +476,14 @@ export class Workbench {
     return file.views.values().next().value;
   }
 
+  /** Keep an edit that clashes with the server's in this browser, as it is now, so a reload doesn't lose it. */
+  private holdClash(file: OpenFile) {
+    const unsent = file.session.unsaved;
+    if (unsent) void this.net.hold({ ...unsent, conflict: true });
+  }
+
   private statusChanged(file: OpenFile, status: SaveStatus) {
+    if (status === "conflict") this.holdClash(file);
     if (status === "offline") {
       clearTimeout(file.timer);
       file.timer = window.setTimeout(() => void file.session.save(), RETRY_MS);
@@ -507,6 +515,7 @@ export class Workbench {
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
     file.session.edited();
+    if (file.session.status === "conflict") this.holdClash(file);
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);

@@ -26,7 +26,10 @@ export class Session {
     private editor: Editor,
     private write: WriteFile,
     private onStatus: (status: SaveStatus) => void = () => {},
+    /** "conflict" for an edit this browser kept because it clashed with the server's: it waits to be settled. */
+    status: Extract<SaveStatus, "saved" | "conflict"> = "saved",
   ) {
+    this.status = status;
     this.path = file.path;
     this.base = file.revision;
     this.baseText = file.text;
