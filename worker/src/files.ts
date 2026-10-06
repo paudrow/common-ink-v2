@@ -37,7 +37,10 @@ export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path)
  * extension acting for the person using it, or a data source's sync bringing in what changed there
  * ("google-calendar").
  */
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string };
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string } | { kind: "retention" };
+
+/** Trash retention: who purges notes that have been in Trash longer than trash.retentionDays. */
+export const RETENTION: Author = { kind: "retention" };
 
 /** One string per author, for filtering history by who made a change. */
 export function authorKey(a: Author): string {
@@ -50,6 +53,8 @@ export function authorKey(a: Author): string {
       return `sync:${a.source}`;
     case "agent":
       return `agent:${a.name}${a.by ? `:${a.by}` : ""}`;
+    case "retention":
+      return "retention";
   }
 }
 
@@ -81,6 +86,11 @@ export interface Change {
   undoneBy?: Revision | null;
   /** The change deleted the file. Undoing it brings the file back. */
   deleted?: true;
+  /**
+   * A note's history was purged here: its changes, from when it was made to when it was deleted, are
+   * gone, text and all, and this one says who purged it and when. It has no text, and undo can't reach it.
+   */
+  purged?: true;
 }
 
 /** A file in Trash: its delete change, and its text just before. */
@@ -209,7 +219,14 @@ const SCHEMA: Array<(db: Db) => void> = [
     db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
     db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
   },
+  // 5. A change can say a note's history was purged.
+  (db) => {
+    if (!hasColumn(db, "changes", "purges")) db.run("ALTER TABLE changes ADD COLUMN purges INTEGER NOT NULL DEFAULT 0");
+  },
 ];
+
+/** What an edit id's hash becomes when its note is purged: the id stays, so the edit is refused if it's sent again, but nothing of its text does. */
+const PURGED_EDIT = "purged";
 
 /** How long an edit's id is kept: a page that went asks about it when its note next opens there. */
 const EDIT_DAYS = 30;
@@ -228,8 +245,14 @@ function editHash(text: string): string {
   return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
 }
 
-type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
-const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number; purges: number };
+const toChange = ({ deletes, purges, ...row }: ChangeRow): Change => ({
+  ...row,
+  author: JSON.parse(row.author),
+  diff: JSON.parse(row.diff),
+  ...(deletes ? { deleted: true as const } : {}),
+  ...(purges ? { purged: true as const } : {}),
+});
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
 /** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
@@ -241,6 +264,8 @@ export interface ChangeNotice {
   deleted?: true;
   /** The change undid this one (a restore from Trash is one). */
   undoes?: Revision;
+  /** A note's history at this path was purged. With `deleted`, there's no note at the path now. */
+  purged?: true;
 }
 
 export class Files {
@@ -249,8 +274,8 @@ export class Files {
     private now: () => number = Date.now,
     /** Told of every change once it's recorded. */
     private announce: (notice: ChangeNotice) => void = () => {},
-    /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
-    private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
+    /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files; and of a purge, after which no index may keep the purged text. */
+    private observe: (path: FilePath, text: string | null, revision: Revision, purged?: boolean) => void = () => {},
     /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
     private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
@@ -379,6 +404,8 @@ export class Files {
           const [row] = this.db.all<ChangeRow>("SELECT * FROM changes WHERE revision = ?", revision);
           if (!row) return { revision, status: "missing" as const };
           const change = toChange(row);
+          // A purge took the text it would need, on purpose.
+          if (change.purged) return { revision, status: "missing" as const };
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
@@ -424,15 +451,93 @@ export class Files {
    * path now (a daily note made again, say). A delete that was undone, or restored, isn't one. Only
    * revisions and times are read here; a deleted file's text is `versionAt(path, before)`, when asked.
    */
-  deleted(since: number): Deleted[] {
-    const undoneBy = this.undoneBy();
+  deleted(since: number, until = Infinity): Deleted[] {
+    const inEffect = this.inEffect();
     return this.db
-      .all<{ revision: number; path: FilePath; author: string; time: number }>("SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? ORDER BY revision DESC", since)
-      .filter((d) => undoneBy(d.revision) === null)
+      .all<{ revision: number; path: FilePath; author: string; time: number }>(
+        "SELECT revision, path, author, time FROM changes WHERE deletes = 1 AND time >= ? AND time < ? ORDER BY revision DESC",
+        since,
+        Number.isFinite(until) ? until : Number.MAX_SAFE_INTEGER,
+      )
+      .filter((d) => inEffect(d.revision, d.path))
       .map(({ revision, path, author, time }) => {
         const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
         return { path, revision, author: JSON.parse(author) as Author, time, before: before?.r ?? 0 };
       });
+  }
+
+  /**
+   * Whether a delete still ends its note: nothing undid it, and its path's next change didn't bring the
+   * note back (Restore, at its own path, which later undos and redos don't change).
+   */
+  private inEffect(): (revision: Revision, path: FilePath) => boolean {
+    const undoneBy = this.undoneBy();
+    return (revision, path) => {
+      if (undoneBy(revision) !== null) return false;
+      const [next] = this.db.all<{ undoes: number | null }>("SELECT undoes FROM changes WHERE path = ? AND revision > ? AND purges = 0 ORDER BY revision LIMIT 1", path, revision);
+      return next?.undoes !== revision;
+    };
+  }
+
+  /**
+   * The changes that made up the note a delete deleted: its path's changes after the delete before it
+   * (one a restore at the path didn't take back) up to and including this delete. Empty if `deleted`
+   * isn't a delete.
+   */
+  lifetime(deleted: Revision): Revision[] {
+    const [d] = this.db.all<{ path: FilePath; deletes: number }>("SELECT path, deletes FROM changes WHERE revision = ?", deleted);
+    if (!d?.deletes) return [];
+    // A purge's own change isn't part of any note, and the notes it purged are gone: what's left is the
+    // path's other notes, each ended by its delete.
+    const earlier = this.db.all<{ revision: number; deletes: number; undoes: number | null }>("SELECT revision, deletes, undoes FROM changes WHERE path = ? AND revision <= ? AND purges = 0 ORDER BY revision", d.path, deleted);
+    let start = 0;
+    for (let i = 0; i < earlier.length - 1; i++) {
+      // A delete ends a note unless the path's next change brought it back (Restore, at its own path).
+      if (earlier[i].deletes && earlier[i + 1].undoes !== earlier[i].revision) start = i + 1;
+    }
+    return earlier.slice(start).map((c) => c.revision);
+  }
+
+  /**
+   * Take deleted notes' text out of history: for each delete in effect (a note in Trash), the changes
+   * that made up that note go, and one change takes their place, with no text, saying who purged it and
+   * when. Edit ids sent for them stay, without their text's hash, so a page that sends one again is
+   * refused. Only those changes are touched: a note at the same path now, and every other file, keep
+   * their histories. Says which were purged; a revision that isn't a delete in effect is left out.
+   */
+  purge(deletes: readonly Revision[], author: Author): Array<{ path: FilePath; revision: Revision }> {
+    return this.tx(() => {
+      const inEffect = this.inEffect();
+      return [...new Set(deletes)].flatMap((deleted) => {
+        const [d] = this.db.all<{ path: FilePath; deletes: number }>("SELECT path, deletes FROM changes WHERE revision = ?", deleted);
+        if (!d?.deletes || !inEffect(deleted, d.path)) return [];
+        const gone = this.lifetime(deleted);
+        for (const some of chunks(gone)) {
+          const marks = some.map(() => "?").join(",");
+          this.db.run(`UPDATE edits SET hash = ? WHERE path = ? AND revision IN (${marks})`, PURGED_EDIT, d.path, ...some);
+          this.db.run(`DELETE FROM changes WHERE revision IN (${marks})`, ...some);
+        }
+        this.db.run("INSERT INTO changes(path, author, base, diff, time, undoes, deletes, purges) VALUES (?, ?, 0, '[]', ?, NULL, 0, 1)", d.path, JSON.stringify(author), this.now());
+        const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
+        const now = this.read(d.path);
+        // Indexes hear of the path as it is now (a note made since stays), and of the purge.
+        this.observe(d.path, now?.text ?? null, revision, true);
+        this.heard.push({ path: d.path, revision, author, purged: true, ...(now ? {} : { deleted: true as const }) });
+        return [{ path: d.path, revision }];
+      });
+    });
+  }
+
+  /** A file's changes, oldest first, each with the file's text after it: read back once, from now. */
+  versions(path: FilePath): Array<{ change: Change; text: string }> {
+    const changes = this.history(path);
+    let text = lines(this.read(path)?.text ?? "");
+    const out: Array<{ change: Change; text: string }> = [];
+    for (const c of [...changes].reverse()) {
+      out.push({ change: c, text: text.join("\n") });
+      text = patch(text, invert(c.diff));
+    }
+    return out.reverse();
   }
 
   /** A file's text just before a revision (of any file): "" if it had none yet. */
@@ -549,6 +654,8 @@ export class Files {
     const known = w.edit === undefined ? undefined : this.db.all<{ hash: string }>("SELECT hash FROM edits WHERE path = ? AND id = ?", w.path, w.edit)[0];
     if (known) {
       const current = this.read(w.path);
+      // Its note was deleted forever: the edit is never applied again, whatever else is at the path now.
+      if (known.hash === PURGED_EDIT) return { status: "conflict", file: current, reason: "That edit was to a note that's been deleted forever" };
       // Sent again by a page that never heard the answer: it's in already, and the file is as it is now.
       if (known.hash === hash) return current ? { status: "saved", file: current } : { status: "conflict", file: null, reason: "That edit was applied, and the file has been deleted since" };
       // An id is for one text: another under it would be lost, said to be saved.

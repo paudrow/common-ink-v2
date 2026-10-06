@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
 import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
-import { restoreFromTrash } from "./trash.ts";
+import { DAY, purgeExpired, restoreFromTrash, retentionOf } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
@@ -58,6 +58,8 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
     [this.files, this.sources, this.index] = this.open();
+    // Trash retention needs the alarm even in a workspace that never syncs.
+    void ctx.blockConcurrencyWhile(() => this.scheduleAlarm());
   }
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
@@ -158,6 +160,14 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return restoreFromTrash(this.files, d, author);
   }
 
+  purge(deletes: Revision[], author: Author) {
+    return this.files.purge(deletes, author);
+  }
+
+  retention() {
+    return retentionOf(this.files);
+  }
+
   search(query: Query, options: SearchOptions) {
     return this.index.search(query, options);
   }
@@ -239,16 +249,44 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return ok;
   }
 
-  /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
+  /**
+   * The one alarm a Durable Object has, for two timers: Trash retention's purge, once a day, and
+   * syncing while Google is connected (every 10 minutes, and soon after connecting). Each runs whatever
+   * the other does, and the next alarm is always set.
+   */
   async alarm() {
-    await this.sources.sealTokens();
-    await this.sources.sync();
-    await this.scheduleSync();
+    try {
+      const now = Date.now();
+      if (now >= this.retentionDue()) {
+        try {
+          purgeExpired(this.files, now);
+        } finally {
+          this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(now + DAY));
+        }
+      }
+    } catch (err) {
+      console.error("Trash retention failed:", err);
+    }
+    try {
+      await this.sources.sealTokens();
+      await this.sources.sync();
+    } finally {
+      await this.scheduleAlarm();
+    }
   }
 
-  private async scheduleSync() {
-    if (!this.sources.syncs) return;
-    const next = Date.now() + SYNC_EVERY;
+  /** When Trash retention next purges: a minute after the workspace first opens, then daily. */
+  private retentionDue(): number {
+    const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'retention-next'");
+    if (row) return Number(row.value);
+    const first = Date.now() + 60_000;
+    this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?)", String(first));
+    return first;
+  }
+
+  /** Set the alarm for whichever comes first: the next sync, or the next purge. */
+  private async scheduleAlarm() {
+    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue());
     const set = await this.ctx.storage.getAlarm();
     if (!set || set > next) await this.ctx.storage.setAlarm(next);
   }
@@ -256,7 +294,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** Sync now if it hasn't in the last half minute (a calendar view opening asks); always, if `force`. */
   async syncSources(force = false) {
     if (force || this.sources.due(30_000)) await this.sources.sync();
-    await this.scheduleSync();
+    await this.scheduleAlarm();
     return this.sources.status("").sources[0];
   }
 

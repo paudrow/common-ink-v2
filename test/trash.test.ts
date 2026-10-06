@@ -142,3 +142,81 @@ test("a note archived when it was deleted comes back archived", async () => {
   await run(store, "restore", { path: "Kept.md" });
   assert.deepEqual((await run(store, "list_files")).filter((f) => f.archived).map((f) => f.path), ["Kept.md"]);
 });
+
+test("only a person can delete a note forever: its text leaves history, and one change says who and when", async () => {
+  const { store, write, remove } = workspace();
+  write("Secret.md", "# Secret\nthe code is 1234");
+  const d = remove("Secret.md").file!.revision;
+  for (const who of [claude, { kind: "agent", name: "svc" } as Author, { kind: "extension", id: "tasks", by: "ada@example.com" } as Author, { kind: "sync", source: "google" } as Author, { kind: "retention" } as Author]) {
+    assert.deepEqual(await run(store, "purge", { deleted: [d] }, who), { error: "Only a person can delete notes forever, in the app. Agents and extensions can restore them instead." }, JSON.stringify(who));
+  }
+  const done = await run(store, "purge", { deleted: [d] });
+  assert.deepEqual((done.purged as Array<{ path: string }>).map((p) => p.path), ["Secret.md"]);
+  assert.deepEqual(store.files.history("Secret.md" as FilePath).map((c) => ({ author: c.author, purged: c.purged, diff: c.diff })), [{ author: ada, purged: true, diff: [] }]);
+  assert.deepEqual(await run(store, "trash"), []);
+  assert.deepEqual(await run(store, "purge", { deleted: [d] }), { error: "Nothing to delete forever: that isn't in Trash" });
+});
+
+test("deleting forever a note whose path a new note has now takes only the deleted note", async () => {
+  const { store, write, remove } = workspace();
+  write("Journal/2026-10-06.md", "# 2026-10-06\nold secret");
+  const d = remove("Journal/2026-10-06.md").file!.revision;
+  write("Journal/2026-10-06.md", "# 2026-10-06\nnew day");
+  await run(store, "purge", { deleted: [d] });
+  assert.equal(store.files.read("Journal/2026-10-06.md" as FilePath)?.text, "# 2026-10-06\nnew day");
+  assert.deepEqual(store.files.history("Journal/2026-10-06.md" as FilePath).map((c) => [c.purged ?? false, store.files.versionAt(c.path, c.revision)]), [[false, "# 2026-10-06\nnew day"], [true, "# 2026-10-06\nnew day"]]);
+});
+
+test("agents aren't offered purge over MCP", async () => {
+  const { mcp } = await import("../worker/src/mcp.ts");
+  const { store, write, remove } = workspace();
+  write("Gone.md", "# Gone");
+  const d = remove("Gone.md").file!.revision;
+  const call = async (method: string, params: unknown) => (await (await mcp(new Request("http://x/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) }), store, claude)).json()) as { result?: { tools: Array<{ name: string }> }; error?: { message: string } };
+  assert.equal((await call("tools/list", {})).result!.tools.some((t) => t.name === "purge"), false);
+  assert.deepEqual((await call("tools/call", { name: "purge", arguments: { deleted: [d] } })).error, { code: -32602, message: "No tool named purge" });
+  assert.equal(store.files.history("Gone.md" as FilePath).length, 2, "nothing purged");
+});
+
+test("only a person can change trash.retentionDays, and retention only ever uses a person's value", async () => {
+  const { purgeExpired } = await import("../worker/src/trash.ts");
+  const { store, age, write, remove } = workspace();
+  write("Mine.md", "# Mine\nkeep this");
+  remove("Mine.md");
+  age("Mine.md", 3);
+  assert.deepEqual(await run(store, "write_file", { path: ".common-ink/settings.json", text: JSON.stringify({ "trash.retentionDays": 1 }), base: 0 }, claude), { error: "Only a person can change trash.retentionDays: it decides when notes in Trash are deleted forever." });
+  assert.equal((await run(store, "write_file", { path: ".common-ink/settings.json", text: JSON.stringify({ "editor.fontSize": 18 }), base: 0 }, claude)).status, "saved", "other settings are fine");
+  // Written past the operations (an undo, a file restored), an agent's value still isn't used.
+  write(".common-ink/settings.json", JSON.stringify({ "editor.fontSize": 18, "trash.retentionDays": 1 }), claude);
+  assert.deepEqual(purgeExpired(store.files, Date.now()), []);
+  assert.deepEqual((await run(store, "trash")).map((t) => t.daysLeft), [27]);
+  write(".common-ink/settings.json", JSON.stringify({ "editor.fontSize": 18, "trash.retentionDays": 2 }));
+  assert.deepEqual(purgeExpired(store.files, Date.now()).map((p) => p.path), ["Mine.md"], "a person's value is");
+});
+
+test("a page that sends an edit again after its note was deleted forever is refused", () => {
+  const { store, write, remove } = workspace();
+  store.files.write({ path: "P.md" as FilePath, text: "# P\nsecret v1", base: 0, author: ada, edit: "e1" });
+  write("P.md", "# P\nsecret v2");
+  const d = remove("P.md").file!.revision;
+  store.files.purge([d], ada);
+  const again = store.files.write({ path: "P.md" as FilePath, text: "# P\nsecret v1", base: 0, author: ada, edit: "e1" });
+  assert.deepEqual([again.status, store.files.read("P.md" as FilePath)], ["conflict", null]);
+  assert.deepEqual(store.db.all("SELECT id, hash FROM edits WHERE path = 'P.md'"), [{ id: "e1", hash: "purged" }], "the id stays, its text's hash doesn't");
+});
+
+test("each day, notes in Trash longer than trash.retentionDays are purged by Trash retention", async () => {
+  const { purgeExpired } = await import("../worker/src/trash.ts");
+  const { store, age, write, remove } = workspace();
+  for (const p of ["Old.md", "Recent.md", "Projects/Older.md"]) write(p, `# ${p}`);
+  write(".common-ink/old.json", "{}");
+  for (const p of ["Old.md", "Recent.md", "Projects/Older.md", ".common-ink/old.json"]) remove(p);
+  age("Old.md", 31);
+  age("Projects/Older.md", 45);
+  age(".common-ink/old.json", 90);
+  age("Recent.md", 29);
+  assert.deepEqual(purgeExpired(store.files, Date.now()).map((p) => p.path).sort(), ["Old.md", "Projects/Older.md"]);
+  assert.deepEqual(store.files.history("Old.md" as FilePath).map((c) => [c.author, c.purged]), [[{ kind: "retention" }, true]]);
+  assert.deepEqual((await run(store, "trash")).map((t) => t.path), ["Recent.md"]);
+  assert.deepEqual(purgeExpired(store.files, Date.now()), [], "a second run that day has nothing to do");
+});

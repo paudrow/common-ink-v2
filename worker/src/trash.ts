@@ -1,14 +1,30 @@
 // Trash's rules, one place for the operations and the Durable Object: how long a deleted note stays
 // (trash.retentionDays, a workspace setting), which deletes are in Trash, and restoring one.
 import { ARCHIVE_PATH, archiveText, readArchive, withArchived } from "./archive.ts";
-import { isNote, parseFilePath, type Author, type Deleted, type FilePath, type Files, type Revision } from "./files.ts";
-import { parseSettings, SETTINGS } from "./settings.ts";
+import { isNote, parseFilePath, RETENTION, type Author, type Deleted, type FilePath, type Files, type Revision } from "./files.ts";
+import { parseSettings, SETTINGS, WORKSPACE_SETTINGS } from "./settings.ts";
 
 export const DAY = 86_400_000;
 
-/** How many days deleted notes stay in Trash, from the workspace settings file's text. */
+/** The trash.retentionDays a workspace settings file's text sets: a whole number of days in range, or the default. */
 export function retentionDays(workspaceSettings: string): number {
   return (parseSettings(workspaceSettings).settings["trash.retentionDays"] as number | undefined) ?? SETTINGS["trash.retentionDays"].default;
+}
+
+/**
+ * How long deleted notes stay in Trash: the trash.retentionDays a person last set. Only a person may
+ * change it (operations.ts refuses others), and a value anyone else wrote, by any route, is never used,
+ * so no agent can make Trash retention purge a person's notes sooner.
+ */
+export function retentionOf(files: Files): number {
+  let before = SETTINGS["trash.retentionDays"].default;
+  let set = before;
+  for (const { change, text } of files.versions(WORKSPACE_SETTINGS)) {
+    const now = retentionDays(change.deleted ? "" : text);
+    if (now !== before && change.author.kind === "user") set = now;
+    before = now;
+  }
+  return set;
 }
 
 /** Notes in Trash: deleted within the last `days`. Other files deleted are in history, not Trash. */
@@ -48,4 +64,12 @@ export function restoreFromTrash(files: Files, d: Deleted, author: Author): { pa
     if (wasArchived && now && !now.archived.includes(path)) files.write({ path: ARCHIVE_PATH, text: archiveText(withArchived(now, [path], true)), base: file?.revision ?? 0, author });
     return { path, revision };
   });
+}
+
+/** Notes deleted longer ago than `days`: what the daily purge takes. Only revisions and times are read. */
+export const expired = (files: Files, days: number, now: number): Revision[] => files.deleted(0, now - days * DAY).filter((d) => isNote(d.path)).map((d) => d.revision);
+
+/** Purge the notes that have been in Trash longer than trash.retentionDays, as changes by Trash retention. */
+export function purgeExpired(files: Files, now: number) {
+  return files.purge(expired(files, retentionOf(files), now), RETENTION);
 }

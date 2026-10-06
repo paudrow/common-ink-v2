@@ -74,9 +74,14 @@ export class SearchIndex {
     db.run("CREATE TABLE IF NOT EXISTS search_mark(revision INTEGER NOT NULL)");
   }
 
-  /** A file was written (text) or deleted (null) at a revision: keep its words, if it's a note, and how far the index has got. */
-  observe(path: string, text: string | null, revision: number): void {
+  /**
+   * A file was written (text) or deleted (null) at a revision: keep its words, if it's a note, and how
+   * far the index has got. After a purge, the index is merged, so no deleted note's words stay in its
+   * blocks: a contentless index otherwise keeps them until it next merges.
+   */
+  observe(path: string, text: string | null, revision: number, purged = false): void {
     this.mark(revision);
+    if (purged) this.db.run("INSERT INTO search(search) VALUES ('optimize')");
     if (!isNotePath(path)) return;
     const [doc] = this.db.all<{ id: number }>("SELECT id FROM search_docs WHERE path = ?", path);
     if (doc) this.db.run("DELETE FROM search WHERE rowid = ?", doc.id);
