@@ -610,7 +610,7 @@ const extensionDeps: ExtensionsViewDeps = {
       // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
       const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
       if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
-      else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+      else workbench.notice(`Installed ${name}. It starts after a reload${taken}.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
     }
@@ -712,11 +712,28 @@ async function installFromCatalog(entry: CatalogEntry) {
   }
 }
 
-/** Trust an extension to run in the page, or stop: kept in your settings, applied after a reload. */
+/** The extensions a settings file trusts, or null if it can't be read as JSON. */
+async function trustedIn(path: FilePath): Promise<string[] | null> {
+  try {
+    const value = JSON.parse((await api.read(path)).text || "{}")["extensions.trusted"];
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Trust an extension to run in the page, kept in your settings; or stop, wherever it was trusted (yours
+ * or the workspace's). Applied after a reload.
+ */
 async function setTrust(id: string, trusted: boolean) {
-  const others = settings["extensions.trusted"].filter((x) => x !== id);
-  await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.trusted", trusted ? [...others, id] : others);
+  for (const path of trusted ? [USER_SETTINGS ?? WORKSPACE_SETTINGS] : [USER_SETTINGS, WORKSPACE_SETTINGS]) {
+    if (!path) continue;
+    const list = (await trustedIn(path)) ?? [];
+    if (trusted !== list.includes(id)) await writeSetting(api, path, "extensions.trusted", trusted ? [...list, id] : list.filter((x) => x !== id));
+  }
   await loadSettings();
+  if (!trusted && settings["extensions.trusted"].includes(id)) workbench.notice(`${id} is still trusted: fix the settings file that lists it under extensions.trusted (it isn't valid JSON), then try again.`);
 }
 
 const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
