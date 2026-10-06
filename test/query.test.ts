@@ -119,3 +119,38 @@ test("the order is relevance with words to rank by, edited without", () => {
 test("a note's title is its first heading, or its file name", () => {
   assert.deepEqual([titleOf("A/b.md", "intro\n# Plan ##\n# Later"), titleOf("A/Reading list.md", "no heading")], ["Plan", "Reading list"]);
 });
+
+test("a note's title is read in linear time, however its heading line is padded", () => {
+  const start = performance.now();
+  for (const line of [`# a${" ".repeat(20_000)}b`, `# a${" #".repeat(20_000)}b`, `#${" ".repeat(20_000)}`]) titleOf("x.md", `${line}\n`);
+  assert.ok(performance.now() - start < 50, `took ${Math.round(performance.now() - start)} ms`);
+  assert.deepEqual([titleOf("x.md", "#   Plan  ##  \n"), titleOf("x.md", "# C# notes\n"), titleOf("x.md", "#\n# Real"), titleOf("a/Name.md", "#hashtag\n")], ["Plan", "C# notes", "Real", "Name"]);
+});
+
+test("words match by their letters in every script: accents fold where they're optional, and nowhere else", () => {
+  const n = (text: string) => note({ title: "", text });
+  const hits = (q: string, text: string) => matches(parse(q), n(text), ctx);
+  assert.deepEqual(
+    [
+      hits("cafe", "café"),
+      hits("cafe", "café"),
+      hits("αλφα", "Άλφα"),
+      hits("istanbul", "İstanbul"),
+      hits("שלום", "שָׁלוֹם"),
+      hits("كتب", "كَتَبَ"),
+      hits("한국", "한국 여행"),
+      hits("мой", "мой план"),
+      hits("мои", "мой план"),
+      hits("がっこう", "がっこう"),
+      hits("かっこう", "がっこう"),
+      hits("पठ", "हिन्दी पाठ"),
+      hits("पाठ", "हिन्दी पाठ"),
+    ],
+    [true, true, true, true, true, true, true, true, false, true, false, false, true],
+  );
+});
+
+test("a negated sort: is a problem, and doesn't empty the list", () => {
+  assert.equal(matches(parse("-sort:edited"), note({}), ctx), true);
+  assert.deepEqual(problems(parse("-sort:edited")), ["sort: can't be negated"]);
+});

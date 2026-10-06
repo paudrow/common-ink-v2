@@ -14,7 +14,7 @@ launch "beta date" -draft in:Projects/ -is:archived sort:edited
 | `"beta date"` | "beta" followed by a word starting with "date" |
 | `-draft` | no word starting with "draft" |
 
-Case and accents don't matter (`resume` finds "Résumé"). Words are runs of letters and digits, so `e-mail` is the phrase "e mail". Notes whose titles match come first.
+Case doesn't matter, and nor do accents where they're optional: on Latin, Greek, Hebrew and Arabic letters (`resume` finds "Résumé", `שלום` finds "שָׁלוֹם"). Marks that make another letter count (`мои` doesn't find "мой", nor `かっこう` "がっこう"). Words are runs of letters, digits and their marks, so `e-mail` is the phrase "e mail". Notes whose titles match come first.
 
 ## Filters
 

@@ -6,7 +6,7 @@ import { forAll, type Rng } from "./gen.ts";
 
 const EXTRA = ["due"];
 const KEYS = ["is", "in", "from", "type", "edited", "has", "sort", "due"];
-const WORDS = ["launch", "beta", "date", "résumé", "resume", "e-mail", "mail", "plan", "la", "b", "東京", "c++", "-", "--x", "is:archived", "http://x.io", ""];
+const WORDS = ["launch", "beta", "date", "résumé", "resume", "e-mail", "mail", "plan", "la", "b", "東京", "c++", "-", "--x", "is:archived", "http://x.io", "", "한국", "мой", "мои", "がっこう", "かっこう", "पाठ", "पठ", "שלום", "שָׁלוֹם", "Άλφα", "cafe\u0301"];
 const VALUES: Record<string, string[]> = {
   is: ["archived", "pinned", "trashed", "open", "done", "shiny", ""],
   in: ["Projects", "Projects/", "projects/", "Journal", "My Folder/", "Projects/Sub", ""],
@@ -54,7 +54,7 @@ const AUTHORS: Author[] = [
   { kind: "extension", id: "tasks", by: "ada@example.com" },
   { kind: "sync", source: "google-calendar" },
 ];
-const LINES = ["Ship the beta on Oct 20.", "- [ ] Record the demo", "* [x] done", "::timer{duration=25m}", "[Standup](event:sample/work/x)", "Résumé e-mail", "東京タワー", "launch party", "c++ and la"];
+const LINES = ["Ship the beta on Oct 20.", "- [ ] Record the demo", "* [x] done", "::timer{duration=25m}", "[Standup](event:sample/work/x)", "Résumé e-mail", "東京タワー", "launch party", "c++ and la", "한국 여행", "мой план", "がっこう", "हिन्दी पाठ", "שָׁלוֹם", "άλφα βήτα", "re🙂port"];
 const FOLDERS = ["Projects/", "Projects/Sub/", "Journal/", "My Folder/", "", "projectsX/"];
 
 const noteFacts = (r: Rng): NoteFacts => {
@@ -73,7 +73,18 @@ const noteFacts = (r: Rng): NoteFacts => {
 
 /** The reference: the language's rules written out plainly, one if at a time. */
 function reference(q: Query, n: NoteFacts, ctx: MatchContext): boolean {
-  const words = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  // Marks go only after a letter whose accents are optional; a mark after anything else stays.
+  const optional = /[\p{Script=Latin}\p{Script=Greek}\p{Script=Hebrew}\p{Script=Arabic}]/u;
+  const words = (s: string) => {
+    let out = "";
+    let base = "";
+    for (const ch of s.normalize("NFD")) {
+      if (/\p{M}/u.test(ch) && optional.test(base)) continue;
+      if (!/\p{M}/u.test(ch)) base = ch;
+      out += ch;
+    }
+    return out.normalize("NFC").toLowerCase().split(/[^\p{L}\p{N}\p{M}\p{Co}]+/u).filter(Boolean);
+  };
   const hay = ` ${words(`${n.title}\n${n.text}`).join(" ")}`;
   const isTrashedAsked = q.terms.some((t) => t.kind === "filter" && t.key === "is" && !t.negated && t.value.toLowerCase() === "trashed");
   if (n.trashed && !isTrashedAsked) return false;
@@ -115,7 +126,7 @@ function reference(q: Query, n: NoteFacts, ctx: MatchContext): boolean {
     if (key === "sort") return true;
     return "never";
   };
-  const filters = q.terms.filter((t): t is Extract<Term, { kind: "filter" }> => t.kind === "filter" && t.value !== "");
+  const filters = q.terms.filter((t): t is Extract<Term, { kind: "filter" }> => t.kind === "filter" && t.value !== "" && t.key !== "sort");
   if (filters.some((t) => passes(t.key, t.value) === "never")) return false;
   for (const key of ["in", "from", "type"]) {
     const wanted = filters.filter((t) => t.key === key && !t.negated);
