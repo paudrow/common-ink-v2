@@ -114,8 +114,10 @@ const blockFields = Facet.define<StateField<DecorationSet>>();
 /**
  * A block preview collapses its lines into one widget, and vertical motion (j/k, the arrows) would
  * step straight over it. When a one-step move jumps over collapsed blocks, it lands on the first of
- * their lines going down, or the last going up, which shows that block's text to edit. A click lands
- * where it was clicked. (Vim's j and k carry no user event, so this can't wait for one.)
+ * their lines going down, or the last going up, which shows that block's text to edit. A block that
+ * ends the note (or starts it) has no line past it: the move lands inside it, and that's one step
+ * too. A click lands where it was clicked. (Vim's j and k carry no user event, so this can't wait
+ * for one.)
  */
 const stepIntoBlocks = EditorState.transactionFilter.of((tr) => {
   if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1 || tr.isUserEvent("select.pointer")) return tr;
@@ -123,23 +125,27 @@ const stepIntoBlocks = EditorState.transactionFilter.of((tr) => {
   const doc = start.doc;
   const a = doc.lineAt(start.selection.main.head).number;
   const b = doc.lineAt(tr.selection.main.head).number;
-  if (Math.abs(b - a) < 2) return tr;
-  const [lo, hi] = a < b ? [a, b] : [b, a];
+  if (a === b) return tr;
+  const down = b > a;
+  const [lo, hi] = down ? [a, b] : [b, a];
   let hidden = 0;
   let target: number | null = null;
   for (const field of start.facet(blockFields)) {
-    start.field(field, false)?.between(doc.line(lo).to, doc.line(hi).from, (from, to, d) => {
+    start.field(field, false)?.between(doc.line(lo).from, doc.line(hi).to, (from, to, d) => {
       if (!d.spec.block || from === to) return;
       const first = doc.lineAt(from).number;
       const last = doc.lineAt(to).number;
-      if (first <= lo || last >= hi) return;
-      hidden += last - first + 1;
-      if (b > a) target = target === null ? doc.line(first).from : Math.min(target, doc.line(first).from);
+      // Past it, or inside it when it ends the note (going down) or starts it (going up).
+      const between = down ? first > a && (last < b || (last === doc.lines && first <= b)) : last < a && (first > b || (first === 1 && last >= b));
+      if (!between) return;
+      hidden += Math.min(last, hi) - Math.max(first, lo) + 1;
+      if (down) target = target === null ? doc.line(first).from : Math.min(target, doc.line(first).from);
       else target = target === null ? doc.line(last).from : Math.max(target, doc.line(last).from);
     });
   }
-  // Only a move of one visible line: a jump further (G, a search) goes where it was sent.
-  if (target === null || Math.abs(b - a) - hidden !== 1) return tr;
+  // Only a move of one visible line (none, into a block that ends the note): a jump further (G, a search) goes where it was sent.
+  const plain = hi - lo - hidden;
+  if (target === null || plain > 1) return tr;
   const main = tr.selection.main;
   return [tr, { selection: EditorSelection.single(main.empty ? target : main.anchor, target), sequential: true }];
 });
