@@ -91,7 +91,9 @@ const calendar: ExtensionModule = {
         const DAYS = ctx.settings.get<number>("calendar.days");
         const start = new Date();
         start.setHours(0, 0, 0, 0);
-        const end = new Date(start.getTime() + DAYS * 86_400_000);
+        // Local midnights, counted in days: a day the clocks change on isn't 24 hours.
+        const midnightAfter = (days: number) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + days);
+        const end = midnightAfter(DAYS);
         let events: Occurrence[];
         let colors: Map<string, string>;
         try {
@@ -100,7 +102,7 @@ const calendar: ExtensionModule = {
           return trouble(ctx, root, err);
         }
         const today = localDay(start);
-        const tomorrow = localDay(new Date(start.getTime() + 86_400_000));
+        const tomorrow = localDay(midnightAfter(1));
         const days = new Map<string, Occurrence[]>();
         for (const e of events) {
           // An all-day event's day is its date; a timed one's is its local start day, before today's counted as today.
