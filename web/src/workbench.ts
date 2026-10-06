@@ -95,6 +95,12 @@ const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(i
 const extensionSlot = new Compartment();
 const label = docLabel;
 
+/** The compact width class (phones), where a notice is a bar at the bottom that goes by itself. */
+const COMPACT = "(max-width: 599.98px)";
+/** How long a notice stays on a phone: a little longer when it has a button, such as Undo. */
+const NOTICE_MS = 4000;
+const NOTICE_WITH_ACTIONS_MS = 6000;
+
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
   private files = new Map<FilePath, OpenFile>();
@@ -177,7 +183,11 @@ export class Workbench {
     if (this.started) this.render();
   }
 
-  /** A message in the focused window, with buttons, until its tabs change. */
+  /**
+   * A message in the focused window, with buttons, until its tabs change. On a phone it's a bar at the
+   * bottom that goes after a few seconds, unless you're reaching for it (a finger or the pointer on it,
+   * or focus in it).
+   */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
     // Before there's a window to show it in (an extension starting with the app, say): show it once there is.
@@ -199,6 +209,24 @@ export class Workbench {
     }
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
+    // On a phone it goes by itself; on a wider screen it stays, until the window narrows to a phone's.
+    const compact = matchMedia(COMPACT);
+    let held = false;
+    box.addEventListener("pointerdown", () => (held = true));
+    box.addEventListener("pointerleave", () => (held = false));
+    const linger = () => held || box.matches(":hover") || box.contains(document.activeElement);
+    const go = () => {
+      if (!box.isConnected) return;
+      if (linger()) window.setTimeout(go, 1500);
+      else box.remove();
+    };
+    const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
+    if (compact.matches) return void start();
+    const narrowed = (e: MediaQueryListEvent) => {
+      if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
+      if (box.isConnected && e.matches) start();
+    };
+    compact.addEventListener("change", narrowed);
   }
 
   get focusedGroup(): L.Group {

@@ -11,8 +11,9 @@ import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
 import { format, parse, problems, type Query } from "./query.ts";
+import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
 import type { SearchOptions, SearchResults } from "./search.ts";
-import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { isNote, parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -34,6 +35,8 @@ export interface Store {
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
   completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
+  /** Delete a note, and take it out of the archive with it (archive.ts). */
+  deleteNote(w: Write): Promise<WriteResult> | WriteResult;
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
 }
 
@@ -174,10 +177,13 @@ function op<T>(o: Operation<T>): Operation<T> {
 
 export const OPERATIONS = {
   list_files: op<Record<string, never>>({
-    description: "List every file in the workspace (notes and workspace JSON) with its revision.",
+    description: "List every file in the workspace (notes and workspace JSON) with its revision. Archived notes say `archived: true`.",
     input: { type: "object", properties: {} },
     parse: () => ok({}),
-    run: async (store) => store.list(),
+    run: async (store) => {
+      const archived = await archivedIn(store);
+      return (await store.list()).map((f) => (archived.has(f.path) ? { ...f, archived: true } : f));
+    },
   }),
   read_file: op<{ path: WorkspaceFile["path"] }>({
     description: "Read a file's text and revision. Pass the revision back as `base` when you write it.",
@@ -222,7 +228,7 @@ export const OPERATIONS = {
       if (!base) return fail('"base" must be the revision you read');
       return ok({ path, base });
     },
-    run: async (store, { path, base }, author) => store.write({ path, text: "", base, author, delete: true }),
+    run: async (store, { path, base }, author) => (isNote(path) ? store.deleteNote({ path, text: "", base, author }) : store.write({ path, text: "", base, author, delete: true })),
   }),
   history: op<HistoryQuery>({
     description: "Changes across the workspace, newest first, each with its author, time and line diff. Filter by file or by author.",
@@ -529,8 +535,24 @@ export const OPERATIONS = {
     },
     run: async (store, { query, limit, zone, within }) => {
       const q = parse(query);
-      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, within })) };
+      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, archived: await archivedIn(store), within })) };
     },
+  }),
+  archive: op<{ paths: FilePath[] }>({
+    description:
+      "Archive notes: they stay where they are, unchanged and still linked, but leave the Feed and come last in search, marked archived. It's one change to .common-ink/archive.json, by you; undo its revision to take it back. Says the change's revision (null if they were all archived already) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      for (const path of paths) if (!(await store.read(path))) throw new OperationError(`There's no note at ${path}`);
+      return setArchived(store, paths, true, author);
+    },
+  }),
+  unarchive: op<{ paths: FilePath[] }>({
+    description: "Take notes out of the archive, back into the Feed. One change to .common-ink/archive.json, by you. Says the change's revision (null if none of them was archived) and every archived path.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => setArchived(store, paths, false, author),
   }),
   list_embeds: op<Record<string, never>>({
     description:
@@ -594,6 +616,29 @@ export const OPERATIONS = {
     },
   }),
 };
+
+/** Notes' paths, from an operation's arguments. */
+function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
+  const paths = Array.isArray(v) ? v.map(parseFilePath) : [];
+  if (!paths.length || paths.length > 500 || !paths.every((p): p is FilePath => !!p && p.endsWith(".md"))) return fail('"paths" must be a list of notes\' paths, ending in .md');
+  return ok({ paths: [...new Set(paths)] });
+}
+
+async function archivedIn(store: Store): Promise<Set<string>> {
+  return new Set(parseArchive((await store.read(ARCHIVE_PATH))?.text ?? ""));
+}
+
+/** Archive or unarchive notes: one change to the archive file. A write that meets another's is merged as a set (archive.ts). */
+async function setArchived(store: Store, paths: FilePath[], archived: boolean, author: Author): Promise<{ revision: Revision | null; archived: FilePath[] }> {
+  const file = await store.read(ARCHIVE_PATH);
+  const current = readArchive(file?.text ?? "");
+  if (!current) throw new OperationError(`${ARCHIVE_PATH} isn't valid JSON with an "archived" list, so it wasn't changed. Fix it, or put back an earlier version from History.`);
+  const next = withArchived(current, paths, archived);
+  if (next.archived.join("\n") === current.archived.join("\n")) return { revision: null, archived: next.archived };
+  const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
+  if (result.status === "conflict") throw new OperationError("The archive changed meanwhile and couldn't be merged; try again");
+  return { revision: result.file.revision, archived: parseArchive(result.file.text) };
+}
 
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */
 export class OperationError extends Error {}

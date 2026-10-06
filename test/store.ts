@@ -3,6 +3,7 @@ import type { Adapter } from "../worker/src/adapter.ts";
 import type { Store } from "../worker/src/operations.ts";
 import { addUpload, type Blobs } from "../worker/src/uploads.ts";
 import { completeTaskIn } from "../worker/src/complete-task.ts";
+import { deleteNote } from "../worker/src/archive.ts";
 import type { DataSources } from "../worker/src/data-sources.ts";
 import type { Files } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
@@ -44,6 +45,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     contacts: (e, q) => sources.contacts(e, q),
     upload: (n, d, a) => addUpload(files, blobs, n, d, a),
     completeTask: (args, a) => completeTaskIn(files, args, a),
+    deleteNote: (w) => deleteNote(files, w),
     search: (q, options) => search.search(q, options),
   };
   return store;
