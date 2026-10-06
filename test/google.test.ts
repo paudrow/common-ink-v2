@@ -129,18 +129,28 @@ test("sign-in's cookies are __Host- cookies, so another subdomain such as v1's c
   assert.match(session ?? "", /^__Host-ci_session=[\w.%-]+; Path=\/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax$/);
 });
 
-test("signing out from the app ends the session and clears what the browser kept; another site can only show the button", async () => {
+test("signing out from the app ends the session and clears what the browser kept; another site, or a picture in a note, only gets the button", async () => {
   const url = new URL(`${ORIGIN}/auth/sign-out`);
   const signOut = (init: RequestInit) => signInRoute(new Request(url, init), url, config, async () => true).then((r) => r!);
   const cleared = ["__Host-ci_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"];
-  const fromApp: RequestInit[] = [{ headers: { "Sec-Fetch-Site": "same-origin" } }, { headers: { "Sec-Fetch-Site": "none" } }, { method: "POST", headers: { Origin: ORIGIN } }];
+  const fromApp: RequestInit[] = [
+    { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate" } },
+    { headers: { "Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate" } },
+    { method: "POST", headers: { Origin: ORIGIN } },
+  ];
   for (const init of fromApp) {
     const res = await signOut(init);
     assert.equal(res.status, 200);
     assert.deepEqual(res.headers.getSetCookie(), cleared, JSON.stringify(init));
     assert.equal(res.headers.get("Clear-Site-Data"), '"cache", "storage"');
   }
-  const fromElsewhere: RequestInit[] = [{ headers: { "Sec-Fetch-Site": "cross-site" } }, { headers: { "Sec-Fetch-Site": "same-site" } }, {}];
+  const fromElsewhere: RequestInit[] = [
+    { headers: { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate" } },
+    { headers: { "Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate" } },
+    // A note's ![](/auth/sign-out), drawn as a picture: same-origin, but not you going there.
+    { headers: { "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image" } },
+    {},
+  ];
   for (const init of fromElsewhere) {
     const res = await signOut(init);
     assert.deepEqual(res.headers.getSetCookie(), [], JSON.stringify(init));
