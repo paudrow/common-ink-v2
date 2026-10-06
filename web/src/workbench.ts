@@ -11,7 +11,7 @@ import type { Offline, Unsent } from "./offline.ts";
 import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
-import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
+import { createState, forgetHistory, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
 import { layoutProblems } from "./layout-problems.ts";
@@ -383,7 +383,7 @@ export class Workbench {
     const file = path && this.files.get(path);
     if (!file) return;
     file.session.reload(await this.net.read(file.path));
-    await this.net.release(file.path);
+    await this.net.letGoOwn(file.path);
   }
 
   /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
@@ -561,7 +561,7 @@ export class Workbench {
       if (unsent) void this.net.hold(unsent);
     }
     if (status === "saved") file.keptAt = undefined;
-    if (status === "saved" && !file.session.dirty) void this.net.release(file.path).then(() => this.net.dropDraft(file.path));
+    if (status === "saved" && !file.session.dirty) void this.net.letGoOwn(file.path);
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
@@ -584,12 +584,26 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
+    const clashed = file.session.status === "conflict";
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
-    // Back to the text the server has (an undo, say): the draft kept of an edit since is no edit now.
+    // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
+    // offline, is no edit now.
     if (draft) void this.net.keepDraft(draft);
-    else void this.net.dropDraft(file.path);
+    else void this.net.letGoOwn(file.path);
+    // A clash undone: the note takes in the server's latest, which it held off while it clashed.
+    if (clashed && file.session.status !== "conflict") {
+      // Its undo and redo steps are of text theirs has replaced: they'd land in the wrong places.
+      queueMicrotask(() => file.views.forEach(forgetHistory));
+      const takeTheirs = (): void =>
+        void this.net.latest(file.path).then(
+          (latest) => file.session.absorb(latest),
+          // Offline: theirs is taken in once the page is back online.
+          () => addEventListener("online", takeTheirs, { once: true }),
+        );
+      takeTheirs();
+    }
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
