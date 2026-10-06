@@ -1,0 +1,8 @@
+{
+  "pr": 68,
+  "title": "Uploads answer with the same headers every time",
+  "steps": [
+    "Upload a picture (Upload a file…) and open /uploads/<its name> in a tab. Reload it: in DevTools > Network, the 304 has the same Content-Security-Policy as the first 200.",
+    "Pictures in notes and Boards, Word count and the html-app samples work as before."
+  ]
+}
