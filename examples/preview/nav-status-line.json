@@ -1,0 +1,10 @@
+{
+  "pr": 155,
+  "title": "Status line: a word count, and whether you're online",
+  "steps": [
+    "On a laptop, open any note. The status line says Saved and Online, and the note's word count is at its right end. Type a few words: the count follows within a moment. Open the calendar (⌘P, Calendar): the count goes away until you're back on a note.",
+    "Go offline (⌘⇧P, Test levers: Go offline). The status line says Offline; after an edit, Offline · 1 unsent change. Go back online.",
+    "On a phone, or a window under 600px wide, there's no status line. Go offline: nothing shows while everything is saved. Type something: a small line at the top says Not saved: offline, and it goes once you're back online and the edit is sent.",
+    "The word count is a built-in extension, Words: turn it off in the Extensions view and reload, and the count is gone."
+  ]
+}
