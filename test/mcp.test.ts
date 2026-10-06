@@ -75,3 +75,51 @@ test("an agent ticks a repeating task the way the app does: it moves on, and its
   const stale = await run("complete_task", { path: "Chores.md", line: 3, text: "- [ ] Something else" });
   assert.equal(stale.ok, false);
 });
+
+test("complete_task needs the person's day, since UTC's is tomorrow on a US evening; without it nothing changes", async () => {
+  const files = memoryStore();
+  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Call mum\n", base: 0 }, files, agent);
+  const result = await runOperation("complete_task", { path: "Chores.md", line: 3 }, files, agent);
+  assert.deepEqual(result, { ok: false, error: '"today" must be the person\'s day, like 2026-10-05: the tick writes it as done: and last:' });
+  assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Call mum\n");
+});
+
+test("a completion logged while someone else logs one in the same daily note goes in after theirs", async () => {
+  const files = memoryStore();
+  const daily = "Journal/2026-10-05.md" as never;
+  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d\n", base: 0 }, files, agent);
+  await runOperation("write_file", { path: daily, text: "# 2026-10-05\n\n## Done\n\n- [x] Pay rent done:2026-10-05\n", base: 0 }, files, agent);
+  let raced = false;
+  const store = {
+    ...files,
+    write: (w: Parameters<typeof files.write>[0]) => {
+      if (w.path === daily && !raced) {
+        raced = true;
+        const d = files.files.read(daily)!;
+        files.files.write({ path: daily, text: `${d.text}- [x] Feed the cat done:2026-10-05\n`, base: d.revision, author: { kind: "user", email: "ada@example.com" } });
+      }
+      return files.write(w);
+    },
+  };
+  const result = await runOperation("complete_task", { path: "Chores.md", line: 3, today: "2026-10-05" }, store, agent);
+  assert.equal(result.ok, true);
+  assert.equal(files.files.read(daily)?.text, "# 2026-10-05\n\n## Done\n\n- [x] Pay rent done:2026-10-05\n- [x] Feed the cat done:2026-10-05\n- [x] Water the plants done:2026-10-05 ([[Chores]])\n");
+});
+
+test("a tick that clashes with an edit of the same line is an error, and nothing is logged", async () => {
+  const files = memoryStore();
+  await runOperation("write_file", { path: "Chores.md", text: "# Chores\n\n- [ ] Water the plants due:2026-10-05 rec:3d\n", base: 0 }, files, agent);
+  const store = {
+    ...files,
+    write: (w: Parameters<typeof files.write>[0]) => {
+      if (w.path === "Chores.md" && w.author === agent) {
+        const d = files.files.read(w.path)!;
+        files.files.write({ path: w.path, text: d.text.replace("Water the plants", "Water the ferns"), base: d.revision, author: { kind: "user", email: "ada@example.com" } });
+      }
+      return files.write(w);
+    },
+  };
+  const result = await runOperation("complete_task", { path: "Chores.md", line: 3, today: "2026-10-05" }, store, agent);
+  assert.deepEqual(result, { ok: false, error: "Chores.md changed on line 3 meanwhile, so it wasn't ticked. Read it and try again." });
+  assert.equal(files.files.read("Journal/2026-10-05.md" as never), null);
+});
