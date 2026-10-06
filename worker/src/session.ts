@@ -37,7 +37,13 @@ export async function verify<T extends Record<string, unknown>>(value: string | 
 export function cookie(req: Request, name: string): string | null {
   for (const part of (req.headers.get("Cookie") ?? "").split(/;\s*/)) {
     const at = part.indexOf("=");
-    if (at > 0 && part.slice(0, at) === name) return decodeURIComponent(part.slice(at + 1));
+    if (at > 0 && part.slice(0, at) === name) {
+      try {
+        return decodeURIComponent(part.slice(at + 1));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
