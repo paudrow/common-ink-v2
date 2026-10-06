@@ -11,7 +11,18 @@ export interface Editor {
   replace(text: string, remote?: boolean): void;
 }
 
-export type WriteFile = (path: FilePath, text: string, base: Revision) => Promise<WriteResult>;
+/** `edit` names the text being sent, so a page that never hears the answer can ask later whether it landed. */
+export type WriteFile = (path: FilePath, text: string, base: Revision, edit: string) => Promise<WriteResult>;
+
+/** What a save would send: the text, the revision it's based on, and the id that names that text. */
+export interface Unsaved {
+  path: FilePath;
+  text: string;
+  base: Revision;
+  edit: string;
+}
+
+const newEditId = () => crypto.randomUUID();
 
 export class Session {
   readonly path: FilePath;
@@ -20,13 +31,21 @@ export class Session {
   private base: Revision;
   private baseText: string;
   private queue = Promise.resolve();
+  /** The id of the editor's text as it was last sent or kept: a new text gets a new one. */
+  private edit: { id: string; text: string } | null;
 
   constructor(
     file: WorkspaceFile,
     private editor: Editor,
     private write: WriteFile,
     private onStatus: (status: SaveStatus) => void = () => {},
+    /** "conflict" for an edit this browser kept because it clashed with the server's: it waits to be settled. */
+    status: Extract<SaveStatus, "saved" | "conflict"> = "saved",
+    /** The id of the kept edit the editor starts with, so sending it again is known as the same edit. */
+    edit: { id: string; text: string } | null = null,
   ) {
+    this.status = status;
+    this.edit = edit;
     this.path = file.path;
     this.base = file.revision;
     this.baseText = file.text;
@@ -47,8 +66,15 @@ export class Session {
   }
 
   /** What a save would send now, or null if there's nothing to save. */
-  get unsaved(): { path: FilePath; text: string; base: Revision } | null {
-    return this.dirty ? { path: this.path, text: this.editor.text(), base: this.base } : null;
+  get unsaved(): Unsaved | null {
+    if (!this.dirty) return null;
+    const text = this.editor.text();
+    return { path: this.path, text, base: this.base, edit: this.editId(text) };
+  }
+
+  private editId(text: string): string {
+    if (this.edit?.text !== text) this.edit = { id: newEditId(), text };
+    return this.edit.id;
   }
 
   edited(): void {
@@ -106,11 +132,13 @@ export class Session {
     this.set("saving");
     let result: WriteResult;
     try {
-      result = await this.write(this.path, text, this.base);
+      result = await this.write(this.path, text, this.base, this.editId(text));
     } catch {
       return this.set("offline");
     }
     if (result.status === "conflict") return this.set("conflict");
+    // It's in: the next text is a new edit, even if it's this one again (put back after someone changed it).
+    this.edit = null;
     const { file } = result;
     const now = this.editor.text();
     const caughtUp = now === text ? file.text : merge(now, text, file.text);

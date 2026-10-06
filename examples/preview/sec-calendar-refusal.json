@@ -1,0 +1,7 @@
+{
+  "pr": 115,
+  "title": "Event names kept from write-only extensions",
+  "steps": [
+    "The calendar works as before. test/browser/extension-calendar.browser.ts covers what a write-only sandboxed extension hears when Google refuses or holds its edit."
+  ]
+}
