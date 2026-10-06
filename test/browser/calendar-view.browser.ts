@@ -204,3 +204,17 @@ browserTest(h, "an event moved while offline waits in this browser, says so, and
   await until(app, "the dentist moved once back online", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-08T11:00:00");
   await app.page.locator("#unsent", { hasText: /^$/ }).waitFor({ state: "attached" });
 });
+
+browserTest(h, "saving the editor changes only what you changed, so what someone else changed meanwhile stays", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.page.locator('.cal-day[data-day="2026-10-06"] .cal-event', { hasText: "Dentist" }).click();
+  const editor = app.page.locator(".cal-editor");
+  await editor.waitFor();
+  // An agent renames it while the editor is open.
+  const renamed = await app.page.context().request.fetch(`${app.base}/api/event`, { method: "PATCH", headers: { "X-Common-Ink-Agent": "Planner" }, data: { address: "event:sample/personal/dentist", title: "Dentist (Dr Lee)" } });
+  assert.ok(renamed.ok(), await renamed.text());
+  await editor.locator('input[aria-label="Location"]').fill("14 High Street");
+  await editor.locator("button", { hasText: "Save" }).click();
+  await until(app, "the place is saved", async () => (await event(app, "event:sample/personal/dentist"))?.location === "14 High Street");
+  assert.equal((await event(app, "event:sample/personal/dentist"))?.title, "Dentist (Dr Lee)", "the agent's title stays");
+});
