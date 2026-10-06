@@ -276,8 +276,8 @@ function navigate(by: -1 | 1) {
 // An entry from before the app kept places, or one it no longer keeps, opens the file its address names.
 addEventListener("popstate", (e) => {
   browserHistory.moved();
-  // On a phone, the shell shows what the entry says: a place's own screen, or the note it was on.
-  if (shell?.popped(e.state)?.own) return;
+  // On a phone, the shell shows what the entry says: a place's list, a view, or a note.
+  if (shell?.popped(e.state)) return;
   const id = (e.state as { nav?: unknown } | null)?.nav;
   const restore = (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then(async (went) => {
     const file = went ? null : fileFromUrl(location.search);
@@ -1061,6 +1061,13 @@ shell = new Shell({
   bar: () => barIds,
   setBar,
   openView: (id) => workbench.openView(id),
+  restore: async (show, nav) => {
+    if (show.startsWith("view:")) return workbench.openView(show.slice("view:".length));
+    const file = show.startsWith("file:") ? (show.slice("file:".length) as FilePath) : null;
+    // Its place in Navigation's history brings its window and cursor back; one no longer kept, just the note.
+    const went = typeof nav === "number" && (await workbench.goTo(nav));
+    if (file && (!went || workbench.focusedPath !== file)) await workbench.open(file, { jump: false });
+  },
   // Done when what the command does is (a note opened), or at once when it's off here.
   run: (command) => (commands.get(command)?.off?.() ? void commands.run(command) : commands.get(command)?.run()),
   visitId: () => workbench.navigation.here?.id ?? null,

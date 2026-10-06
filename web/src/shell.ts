@@ -40,6 +40,11 @@ export interface ShellDeps {
   setBar(ids: string[]): Promise<void>;
   /** Show a view in the focused window; run a command, done when what it does is. */
   openView(id: string): void;
+  /**
+   * Show exactly what a history entry says is on show, a tab's key ("view:…" or "file:…"): its view, or
+   * its note (at the place in Navigation's history `nav` names, if that's still kept). Done once it's on show.
+   */
+  restore(show: string, nav: number | undefined): Promise<unknown>;
   run(command: string): unknown;
   /** Navigation's own place in its history (navigation.ts), for the entry of a note on show. */
   visitId(): number | null;
@@ -151,9 +156,16 @@ export class Shell {
   private root: string | null = null;
   /** A place's command went somewhere: what shows next is the place. */
   private awaitingRoot = false;
-  /** History is reconciled with what's on show once the app has started, and not while the browser restores an entry. */
+  /** History is reconciled with what's on show once the app has started, and not while an entry is restored. */
   private ready = false;
   private holding = 0;
+  /**
+   * Entries being restored (the browser's back and forward, a reload), one after another: each waits for
+   * the one before to be on show, and one a later pop has overtaken is skipped, so the latest one wins.
+   */
+  private restores: Promise<void> = Promise.resolve();
+  private restoring = 0;
+  private latest = 0;
   private reconciling = false;
   private sheet: Modal | null = null;
   private on = false;
@@ -206,11 +218,16 @@ export class Shell {
    * Go to a place. Tapped again, the place you're on goes back down the history to its first entry, or
    * does nothing there. Its history entry is made by the reconciling, once it's on show.
    */
-  go(id: string, how: { push?: boolean } = {}): void {
+  go(id: string, how: { push?: boolean; now?: boolean } = {}): void {
     const place = this.deps.places().find((p) => p.id === id);
     if (!place) return;
     this.sheet?.close();
     const fromHistory = how.push === false || !this.on;
+    // A tap while an entry is still being restored: it overtakes any waiting, and goes once the one under way is on show.
+    if (!fromHistory && this.restoring && !how.now) {
+      this.latest++;
+      return void this.restores.then(() => this.go(id, { ...how, now: true }));
+    }
     const at = entryOf(history.state);
     if (!fromHistory && id === this.place && at?.place === id) {
       if (at.above > 0) return this.deps.back(at.above);
@@ -248,11 +265,11 @@ export class Shell {
    * over anything else; anything else is a new entry over the one you're on.
    */
   reconcile(): void {
-    if (!this.on || !this.ready || this.holding || this.reconciling) return;
+    if (!this.on || !this.ready || this.holding || this.restoring || this.reconciling) return;
     this.reconciling = true;
     queueMicrotask(() => {
       this.reconciling = false;
-      if (!this.on || !this.ready || this.holding) return;
+      if (!this.on || !this.ready || this.holding || this.restoring) return;
       const want = this.onShow();
       if (!want) return;
       const at = entryOf(history.state);
@@ -288,10 +305,7 @@ export class Shell {
     const kept = entryOf(state);
     if (kept) {
       this.ready = true;
-      if (kept.own) return this.go(kept.place, { push: false });
-      const place = this.deps.places().find((p) => p.id === kept.place);
-      [this.place, this.screen, this.root] = [kept.place, "window", place && "command" in place.open && kept.above === 0 ? kept.show : null];
-      return this.update();
+      return this.restore(kept);
     }
     this.deps.replace({ place: this.place, show: "list", own: true, above: 0 });
     if (!this.deps.showing()) this.screen = "list";
@@ -306,19 +320,39 @@ export class Shell {
     this.update();
   }
 
-  /** The browser goes back or forward to an entry: show what it says; history isn't reconciled until it's on show. */
+  /** The browser goes back or forward to an entry: show what it says. Null if it isn't the shell's to show. */
   popped(state: unknown): ShellEntry | null {
     const entry = entryOf(state);
     if (!this.on || !entry) return null;
-    if (entry.own) {
-      this.go(entry.place, { push: false });
-      return entry;
-    }
-    const place = this.deps.places().find((p) => p.id === entry.place);
-    [this.place, this.screen, this.awaitingRoot] = [entry.place, "window", false];
-    this.root = place && "command" in place.open && entry.above === 0 ? entry.show : place && "view" in place.open ? `view:${place.open.view}` : null;
-    this.update();
+    this.restore(entry);
     return entry;
+  }
+
+  /**
+   * Put on show exactly what an entry says: the place, and its list, view or note, whatever is on show
+   * now. History isn't reconciled until it is, and restores go one at a time, the latest winning.
+   */
+  private restore(entry: ShellEntry): void {
+    const turn = ++this.latest;
+    this.restoring++;
+    this.restores = this.restores
+      .then(async () => {
+        if (turn !== this.latest) return;
+        this.sheet?.close();
+        const place = this.deps.places().find((p) => p.id === entry.place);
+        this.place = entry.place;
+        this.awaitingRoot = false;
+        this.screen = entry.show === "list" ? "list" : "window";
+        // What the place itself shows, for telling it from what's over it: its view, or the note its command went to.
+        this.root = !place ? null : "view" in place.open ? `view:${place.open.view}` : "command" in place.open && entry.above === 0 ? entry.show : null;
+        this.update();
+        if (entry.show !== "list") await this.deps.restore(entry.show, entry.nav);
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.restoring--;
+        this.update();
+      });
   }
 
   /** While the browser's entry is being put on show (a note loading), history is left as it is. */
