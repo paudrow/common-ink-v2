@@ -1,0 +1,8 @@
+{
+  "pr": 124,
+  "title": "Undo all after a sync between edits",
+  "steps": [
+    "With Google Calendar connected, have an agent rename one day of a repeating event, wait for a sync, then have it set that day's place.",
+    "In History, undo everything the agent did: the day is back as it was, here and in Google, with no conflict."
+  ]
+}

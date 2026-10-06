@@ -1,0 +1,7 @@
+{
+  "pr": 73,
+  "title": "Recurrence checked against RFC 5545's examples",
+  "steps": [
+    "Tests only: nothing changes in the app. ⌘⇧P, Show calendar: repeating events show on their days as before."
+  ]
+}
