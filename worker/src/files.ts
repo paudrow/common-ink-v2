@@ -117,7 +117,7 @@ export interface HistoryQuery {
  * and was merged with what changed since, so `file.text` is new to the writer. "conflict": it couldn't
  * be merged, nothing changed, and `file` is the current file.
  */
-export type WriteResult = { status: "saved" | "merged"; file: WorkspaceFile } | { status: "conflict"; file: WorkspaceFile | null };
+export type WriteResult = { status: "saved" | "merged"; file: WorkspaceFile } | { status: "conflict"; file: WorkspaceFile | null; reason?: string };
 
 export interface Write {
   path: FilePath;
@@ -127,6 +127,8 @@ export interface Write {
   undoes?: Revision;
   /** Delete the file instead: `text` is ignored, and `base` must be its revision. */
   delete?: true;
+  /** An id the writer gave this edit, to ask later whether it was applied: a page that went before it heard back. */
+  edit?: string;
 }
 
 /**
@@ -191,7 +193,29 @@ const SCHEMA: Array<(db: Db) => void> = [
   (db) => {
     if (!hasColumn(db, "changes", "deletes")) db.run("ALTER TABLE changes ADD COLUMN deletes INTEGER NOT NULL DEFAULT 0");
   },
+  // 4. The ids writers gave their edits, by file, once applied: with a hash of the text sent, and when.
+  (db) => {
+    db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
+    db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
+  },
 ];
+
+/** How long an edit's id is kept: a page that went asks about it when its note next opens there. */
+const EDIT_DAYS = 30;
+
+/** A hash of an edit's text, to tell whether its id is sent again with the same text: two 32-bit halves (cyrb53) and its length. */
+function editHash(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
+}
 
 type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
 const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
@@ -475,7 +499,32 @@ export class Files {
     });
   }
 
-  private apply({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
+  private apply(w: Write): WriteResult {
+    const hash = w.edit === undefined ? "" : editHash(w.text);
+    const known = w.edit === undefined ? undefined : this.db.all<{ hash: string }>("SELECT hash FROM edits WHERE path = ? AND id = ?", w.path, w.edit)[0];
+    if (known) {
+      const current = this.read(w.path);
+      // Sent again by a page that never heard the answer: it's in already, and the file is as it is now.
+      if (known.hash === hash) return current ? { status: "saved", file: current } : { status: "conflict", file: null, reason: "That edit was applied, and the file has been deleted since" };
+      // An id is for one text: another under it would be lost, said to be saved.
+      return { status: "conflict", file: current, reason: "This edit id was already used for different text" };
+    }
+    const result = this.applyWrite(w);
+    // Applied, even as a merge or with nothing left to change: the writer may ask by its id.
+    if (w.edit !== undefined && result.status !== "conflict") {
+      const now = this.now();
+      this.db.run("INSERT OR IGNORE INTO edits(path, id, revision, hash, time) VALUES (?, ?, ?, ?, ?)", w.path, w.edit, result.file.revision, hash, now);
+      this.db.run("DELETE FROM edits WHERE time < ?", now - EDIT_DAYS * 86_400_000);
+    }
+    return result;
+  }
+
+  /** Whether the edit a writer gave this id was applied to the file. */
+  editApplied(path: FilePath, id: string): boolean {
+    return this.db.all("SELECT 1 FROM edits WHERE path = ? AND id = ?", path, id).length > 0;
+  }
+
+  private applyWrite({ path, text, base, author, undoes, delete: deleting }: Write): WriteResult {
     const current = this.read(path);
     const currentText = current?.text ?? "";
     // A delete is never merged: it has to be of the file as it is.

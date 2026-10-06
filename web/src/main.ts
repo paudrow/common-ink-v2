@@ -3,7 +3,7 @@
 import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
@@ -27,7 +27,7 @@ import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
 import { createState, editText } from "./editor.ts";
-import { showClash } from "./conflict.ts";
+import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
@@ -81,9 +81,35 @@ const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const offline = new Offline(idbKV(), api);
 
+/** Signing out, here or in another tab: this browser keeps no edits of the account's from now on. */
+const accounts = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("common-ink.account");
+accounts?.addEventListener("message", (e) => {
+  if (e.data === "signed-out") void offline.forgetDrafts();
+});
+function signingOut() {
+  void offline.forgetDrafts();
+  accounts?.postMessage("signed-out");
+}
+// A link or a script here going to sign-out, as well as the command. (One typed in the address bar can't be seen.)
+(window as { navigation?: EventTarget }).navigation?.addEventListener("navigate", (e) => {
+  const to = (e as Event & { destination?: { url: string } }).destination?.url;
+  if (to && new URL(to).pathname === "/auth/sign-out") signingOut();
+});
+
+// Who was signed in is remembered from the start, before anything's typed. Not remembered, this
+// browser's storage was cleared (a sign-out does) since: a draft is there only because a page that was
+// going wrote it after, and it's the session's that ended.
+try {
+  if (localStorage.getItem("common-ink:me") === null) void offline.forgetDrafts();
+} catch {}
+
 /** Who's signed in, remembered so the app knows offline too. */
 const me = await fetch("/api/me")
-  .then((r) => r.json())
+  .then((r) => {
+    // The session's over: nothing kept for whoever was signed in is used, or kept on.
+    if (r.status === 401) signingOut();
+    return r.json();
+  })
   .then((who: { kind: string; email?: string }) => {
     try {
       if (who.email) localStorage.setItem("common-ink:me", who.email);
@@ -97,6 +123,8 @@ const me = await fetch("/api/me")
       return undefined;
     }
   });
+// Drafts of unsaved edits are this account's: another one signing in here doesn't see them.
+offline.account = me ?? null;
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = docLabel;
 
@@ -310,15 +338,31 @@ async function resolveConflict(): Promise<boolean> {
     .then((r) => (r.ok ? (r.json() as Promise<Array<{ author: Parameters<typeof describeAuthor>[0] }>>) : []))
     .catch(() => []);
   const who = latest[0] ? describeAuthor(latest[0].author, me) : "Someone";
-  showClash({
-    where: docLabel(path),
-    who: who.charAt(0).toUpperCase() + who.slice(1),
-    mine: view.state.doc.toString(),
-    theirs: theirs.text,
-    keepMine: () => void session.adopt(theirs).then(() => session.save(true)),
-    useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
-    returnTo: () => view.contentDOM,
-  });
+  const mine = view.state.doc.toString();
+  const base = session.revision;
+  const show = (keptAt?: string) =>
+    showClash({
+      where: docLabel(path),
+      who: who.charAt(0).toUpperCase() + who.slice(1),
+      mine,
+      theirs: theirs.text,
+      keepMine: keptAt ? () => void restore() : () => void session.adopt(theirs).then(() => session.save(true)),
+      useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
+      returnTo: () => view.contentDOM,
+      keptAt,
+    });
+  // Restore: the kept edit, from the revision it was made on, onto the note as it is now. Where the
+  // two changed the same lines, it's a clash like any other, to keep yours or use theirs.
+  const restore = async () => {
+    const before = base === 0 ? "" : await api.version(path, base).catch(() => null);
+    const merged = before === null ? null : merge(mine, before, theirs.text);
+    if (merged === null) return show();
+    await session.adopt(theirs);
+    editText(view, merged);
+    await session.save(true);
+  };
+  const kept = workbench.keptAt(path);
+  show(kept === undefined ? undefined : keptWhen(kept));
   return true;
 }
 
@@ -436,7 +480,15 @@ commands.register(
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
-  { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
+  {
+    id: "account.signOut",
+    title: "Sign out",
+    run: () => {
+      // Nothing of this account's is kept in this browser for whoever signs in next.
+      signingOut();
+      location.assign("/auth/sign-out");
+    },
+  },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
@@ -766,7 +818,10 @@ void learnLayout();
 
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
-  for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
+  const unsaved = workbench.unsaved();
+  // Kept first, where it's sure to be written: the request may never arrive.
+  offline.keepDraftsNow(unsaved);
+  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
 });
 
 // The app's own files, kept by a service worker so it opens offline.
