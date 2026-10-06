@@ -16,6 +16,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { seedOnce, type SeedRun } from "./seed-once.ts";
 import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
@@ -60,15 +61,26 @@ function secure(res: Response, frameHosts: readonly string[] = []): Response {
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+/** Where a page sends its last save with navigator.sendBeacon. */
+const BEACON = "/api/file/beacon";
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const elsewhere = redirectFor(url);
-    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
+    if (elsewhere) return new Response(null, { status: elsewhere.status, headers: { Location: elsewhere.location, "Strict-Transport-Security": HEADERS["Strict-Transport-Security"] } });
     const res = await handle(req, env, url);
-    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    // A WebSocket's answer can't be rewrapped; everything else asks for HTTPS, the sandbox route's included.
+    if (res.status === 101) return res;
+    if (res.headers.get("Content-Security-Policy") !== "{app}") {
+      if (res.headers.has("Strict-Transport-Security")) return res;
+      const out = new Response(res.body, res);
+      out.headers.set("Strict-Transport-Security", HEADERS["Strict-Transport-Security"]);
+      return out;
+    }
     const out = new Response(res.body, res);
-    out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
+    // Whatever answers under /uploads/ (a refusal, a sign-in, a 405) is under the uploads' policy, never the app's.
+    out.headers.set("Content-Security-Policy", url.pathname.startsWith("/uploads/") ? UPLOAD_CSP : appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
     return out;
   },
@@ -109,6 +121,11 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
     if (changes && origin && origin !== url.origin) {
       return secure(page("Not from here", "<p>That request came from another site.</p>", 403));
     }
+    // A save sent with sendBeacon is a simple request, with no preflight, so it has to show it's from
+    // this site rather than only not say otherwise. Browsers always say where a beacon came from.
+    if (url.pathname === BEACON && origin !== url.origin && req.headers.get("Sec-Fetch-Site") !== "same-origin") {
+      return secure(page("Not from here", "<p>That request didn't say it came from this site.</p>", 403));
+    }
     // A trusted workspace extension's code, from its files, so the page can import it under
     // `script-src 'self'`. Only a trusted one's: anyone else's code is never a script this site serves.
     const code = url.pathname.startsWith("/extensions/") && req.method === "GET" ? parseFilePath(`.common-ink${decodedPath(url)}`) : null;
@@ -127,7 +144,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       const isPage = asset.headers.get("Content-Type")?.startsWith("text/html");
       const out = secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
       if (!levers || !isPage) return out;
-      await seedOnce(env, workspace);
+      await seedPreview(env, workspace);
       const seeded = await workspace.scenario();
       return withLeversMeta(out, { scenario: seeded?.name ?? "", ...(seeded?.now ? { now: seeded.now } : {}) });
     }
@@ -153,12 +170,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       if (extensionAnswer) return secure(extensionAnswer);
     }
     if (levers && url.pathname.startsWith("/api/levers")) {
-      await seedOnce(env, workspace);
+      await seedPreview(env, workspace);
       const answer = await leversApi(req, url, env.ASSETS, workspace);
       if (answer) return secure(answer);
     }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
-    await seedOnce(env, workspace);
+    await seedPreview(env, workspace);
     return secure(await api(req, url, who, store));
   }
 }
@@ -174,6 +191,8 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
+  // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.
+  "POST /api/file/beacon": "write_file",
   "DELETE /api/file": "delete_file",
   "GET /api/history": "history",
   "POST /api/undo": "undo",
@@ -189,10 +208,14 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/contacts": "list_contacts",
   "POST /api/diff": "diff",
   "GET /api/version": "read_version",
+  "GET /api/edit": "edit_applied",
   "POST /api/restore": "restore",
   "GET /api/labels": "labels",
   "POST /api/labels": "add_label",
 };
+
+/** An extension's id, as manifests and folders have it. */
+const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
@@ -206,11 +229,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
   // A second gate behind the app's: a change in an extension's name to the files that decide trust,
   // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  // Undo is by revision, so it could take back any file's change: none for an untrusted extension.
   const extension = req.headers.get("X-Common-Ink-Extension");
+  if (extension !== null && !EXTENSION_ID.test(extension)) return json({ error: "X-Common-Ink-Extension must be an extension's id" }, 400);
   const path = parseFilePath(args.path);
-  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+  const touchesTrust = name === "undo" || (path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension ?? ""));
+  if (extension && touchesTrust) {
     const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
-    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't ${name === "undo" ? "undo changes" : `change ${path}`}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
@@ -227,34 +253,44 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
  * plain text downloads instead of opening.
  */
 async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  // Every answer under /uploads/ carries the upload's policy, a 404 or 503 too: what the browser shows at
+  // an upload's address is never a page of this site.
+  const underPolicy = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    return out;
+  };
+  const notFound = () => underPolicy(new Response("Not found\n", { status: 404 }));
   let name: string;
   try {
     name = decodeURIComponent(url.pathname.slice("/uploads/".length));
   } catch {
-    return secure(new Response("Not found\n", { status: 404 }));
+    return notFound();
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
-  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
+  if (!upload) return notFound();
   // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
   // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
   const sandboxed = (res: Response) => {
-    const out = secure(res);
-    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    const out = underPolicy(res);
     out.headers.set("ETag", `"${upload.hash}"`);
     // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
     out.headers.set("Cache-Control", "private, no-cache");
     return out;
   };
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash)).catch((err) => {
+  // A HEAD asks only whether the bytes are there; it doesn't read them.
+  const key = blobKey(upload.hash);
+  const read: Promise<R2Object | R2ObjectBody | null> = req.method === "HEAD" ? env.UPLOADS.head(key) : env.UPLOADS.get(key);
+  const blob = await read.catch((err) => {
     console.error("Reading an upload's bytes failed:", err);
     return undefined;
   });
   if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
-  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  if (!blob) return notFound();
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(req.method === "HEAD" ? null : blob.body, {
+    new Response("body" in blob ? blob.body : null, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
@@ -276,13 +312,15 @@ function decodedPath(url: URL): string {
   }
 }
 
-let seeded = false;
+const seedRun: SeedRun = { done: false, running: null };
 
-/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate. */
-async function seedOnce(env: Env, workspace: DurableObjectStub<Workspace>) {
-  if (seeded || env.SEED !== "1") return;
-  const res = await env.ASSETS.fetch("https://assets.local/seed.json");
-  // A missing file comes back as the web app's index.html, since the app handles its own routes.
-  if (res.headers.get("Content-Type")?.startsWith("application/json")) await workspace.seed((await res.json()) as Seed);
-  seeded = true;
+/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate (seed-once.ts). */
+async function seedPreview(env: Env, workspace: DurableObjectStub<Workspace>) {
+  if (env.SEED !== "1") return;
+  const load = async () => {
+    const res = await env.ASSETS.fetch("https://assets.local/seed.json");
+    // A missing file comes back as the web app's index.html, since the app handles its own routes.
+    return res.headers.get("Content-Type")?.startsWith("application/json") ? ((await res.json()) as Seed) : null;
+  };
+  await seedOnce(seedRun, load, (seed) => workspace.seed(seed));
 }

@@ -12,7 +12,7 @@ npm run dev -- --scenario lists        # just the lists tour, on the scenario's 
 npm run dev -- --scenario tasks --fresh --port 8790
 ```
 
-`npm run dev` builds the app, seeds the workspace and starts the Worker with its Durable Object as the dev user `dev@localhost`. Each scenario keeps its own workspace on disk in `.wrangler/scenarios/<name>`, so switching scenarios keeps what you did in each. `--fresh` resets the workspace to its scenario once the server is up.
+`npm run dev` builds the app, seeds the workspace and starts the Worker with its Durable Object as the dev user `dev@localhost`. It refuses a port another server already answers on, perhaps another worktree's, and `--port 0` picks a free one. `--fresh` resets only the server it started. Each scenario keeps its own workspace on disk in `.wrangler/scenarios/<name>`, so switching scenarios keeps what you did in each. `--fresh` resets the workspace to its scenario once the server is up.
 
 In Claude Code, `preview_start` starts the same servers by name from `.claude/launch.json`: `common-ink` on port 8787, and `common-ink-lists`, `common-ink-tasks`, `common-ink-embeds`, `common-ink-extensions`, `common-ink-history`, `common-ink-empty` and `common-ink-calendar` on ports 8788 to 8794. Stop a server by the process you started, never by what listens on its port.
 

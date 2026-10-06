@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ReconnectNeeded, type Adapter } from "../worker/src/adapter.ts";
+import { openWorkspace } from "../worker/src/data-sources.ts";
 import { authorKey, type Author, type FilePath } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { addressOf, keyOfPath, parseAddress, recordPath, recordText } from "../worker/src/records.ts";
@@ -141,6 +142,24 @@ test("the records index is made from the files, the same however often", () => {
   assert.equal(before.length, 4);
 });
 
+test("a records index made from the files that stops partway is made whole the next time the workspace opens", () => {
+  const store = sampleWorkspace();
+  const whole = store.db.all("SELECT * FROM records ORDER BY path");
+  store.db.run("DELETE FROM records");
+  // The workspace stops (an eviction, a CPU limit) after indexing two records.
+  let indexed = 0;
+  const stopping = {
+    ...store.db,
+    run: (sql: string, ...params: Array<string | number | null>) => {
+      if (sql.startsWith("INSERT INTO records") && ++indexed > 2) throw new Error("The workspace stopped");
+      store.db.run(sql, ...params);
+    },
+  };
+  assert.throws(() => openWorkspace(stopping, { fixtures: true, google: null }), /stopped/);
+  openWorkspace(store.db, { fixtures: true, google: null });
+  assert.deepEqual(store.db.all("SELECT * FROM records ORDER BY path"), whole);
+});
+
 test("a create sent again with its id makes one event, and a bad id says what one is", async () => {
   const store = sampleWorkspace();
   const lunch = { id: "lunch0000000000000000000a", title: "Lunch", start: "2026-10-06T12:00", timeZone: "UTC" };
@@ -166,4 +185,16 @@ test("an event lists the notes that link to it, and to its series", async () => 
   assert.equal(linked.link, "[Fall break](event:sample/holidays/fall)");
   assert.equal(store.files.read("Trips.md" as FilePath)?.text, "# Fall break\n\n[Fall break](event:sample/holidays/fall)\n");
   assert.deepEqual(((await op(store, "read_event", { address: "event:sample/holidays/fall" })) as { notes: Array<{ path: string }> }).notes.map((n) => n.path), ["Other.md", "Trips.md"]);
+});
+
+test("update_event writes each field it's given as given, so a client sends only the fields it changed", async () => {
+  const store = sampleWorkspace();
+  const made = (await op(store, "create_event", { title: "Dentist", start: "2026-10-06T14:30", calendar: "work" })) as { address: string };
+  await op(store, "update_event", { address: made.address, title: "Dentist (Dr Lee)" }, claude);
+  await op(store, "update_event", { address: made.address, location: "14 High Street" });
+  const kept = (await op(store, "read_event", { address: made.address })) as { event: { title: string; location?: string } };
+  assert.deepEqual([kept.event.title, kept.event.location], ["Dentist (Dr Lee)", "14 High Street"], "a field left out is left as it is");
+  await op(store, "update_event", { address: made.address, title: "Dentist", location: "15 High Street" });
+  const sent = (await op(store, "read_event", { address: made.address })) as { event: { title: string } };
+  assert.equal(sent.event.title, "Dentist", "a field sent as it was when the client read it undoes a change made since");
 });

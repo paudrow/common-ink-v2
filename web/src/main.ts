@@ -1,7 +1,9 @@
 // The app: a list of notes, the windows (workbench.ts) and the command bar. Everything it does is a
 // command (commands.ts); keybindings, the command bar and Vim's ex commands run them.
+import { mediaHooks, whenHiddenOf } from "./media.ts";
+import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
@@ -24,7 +26,8 @@ import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } 
 import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
-import { createState } from "./editor.ts";
+import { createState, editText } from "./editor.ts";
+import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
@@ -54,6 +57,7 @@ const list = $<HTMLUListElement>("#notes ul");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
+const resolveButton = $<HTMLButtonElement>("#resolve");
 const reloadLine = $("#reload");
 const netLine = $("#net-activity");
 netLine.addEventListener("click", () => panels.show("extension-activity"));
@@ -62,7 +66,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   saved: "Saved",
   unsaved: "Edited",
   saving: "Saving…",
-  conflict: "Not saved: this note changed in the same place elsewhere. :e! loads that version.",
+  conflict: "Not saved: this note changed in the same place elsewhere.",
   offline: "Not saved: can't reach the server. Trying again.",
 };
 
@@ -77,9 +81,35 @@ const focusListeners: Array<(path: FilePath | null) => void> = [];
 
 const offline = new Offline(idbKV(), api);
 
+/** Signing out, here or in another tab: this browser keeps no edits of the account's from now on. */
+const accounts = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("common-ink.account");
+accounts?.addEventListener("message", (e) => {
+  if (e.data === "signed-out") void offline.forgetDrafts();
+});
+function signingOut() {
+  void offline.forgetDrafts();
+  accounts?.postMessage("signed-out");
+}
+// A link or a script here going to sign-out, as well as the command. (One typed in the address bar can't be seen.)
+(window as { navigation?: EventTarget }).navigation?.addEventListener("navigate", (e) => {
+  const to = (e as Event & { destination?: { url: string } }).destination?.url;
+  if (to && new URL(to).pathname === "/auth/sign-out") signingOut();
+});
+
+// Who was signed in is remembered from the start, before anything's typed. Not remembered, this
+// browser's storage was cleared (a sign-out does) since: a draft is there only because a page that was
+// going wrote it after, and it's the session's that ended.
+try {
+  if (localStorage.getItem("common-ink:me") === null) void offline.forgetDrafts();
+} catch {}
+
 /** Who's signed in, remembered so the app knows offline too. */
 const me = await fetch("/api/me")
-  .then((r) => r.json())
+  .then((r) => {
+    // The session's over: nothing kept for whoever was signed in is used, or kept on.
+    if (r.status === 401) signingOut();
+    return r.json();
+  })
   .then((who: { kind: string; email?: string }) => {
     try {
       if (who.email) localStorage.setItem("common-ink:me", who.email);
@@ -93,6 +123,8 @@ const me = await fetch("/api/me")
       return undefined;
     }
   });
+// Drafts of unsaved edits are this account's: another one signing in here doesn't see them.
+offline.account = me ?? null;
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
 const name = docLabel;
 
@@ -154,6 +186,8 @@ const workbench = new Workbench(
     status(status, message) {
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
+      resolveButton.hidden = status !== "conflict";
+      queueMicrotask(() => void renderUnsent());
     },
     navigated: (how, visit) => browserHistory.follow(how, visit),
     focus(path) {
@@ -177,6 +211,12 @@ const workbench = new Workbench(
   offline,
   new Navigation(savedNavigation()),
 );
+// A floating video's setting, and its Back to note (media.ts, lives.ts).
+mediaHooks.whenHidden = () => whenHiddenOf(settings["media.whenHidden"]);
+mediaHooks.reveal = (view, pos) => workbench.reveal(view, pos);
+mediaHooks.open = (path) => workbench.open(path);
+// Focus in an embed's box (in the layer, outside every window) focuses the window its note is in.
+embedHooks.focused = (view) => workbench.focusView(view);
 // After a reload, the entry the browser is on is where you are.
 if (typeof history.state?.nav === "number") workbench.navigation.goTo(history.state.nav);
 
@@ -261,18 +301,70 @@ async function refreshList() {
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
-  const waiting = unsent.length + ops.length;
-  const clashing = unsent.filter((u) => u.conflict);
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : ""].filter(Boolean);
-  unsentLine.textContent = parts.join(" · ") + (clashing.length ? ` (${clashing.length} can't be merged: open ${docLabel(clashing[0].path)})` : "");
-  unsentLine.title = [...unsent.map((u) => `${u.path}${u.conflict ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
+  // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
+  const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
+  const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  unsentLine.textContent = parts.filter(Boolean).join(" · ");
+  unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
   unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
 offline.onChange(() => void renderUnsent());
 unsentLine.addEventListener("click", async () => {
-  const clashing = (await offline.unsent()).find((u) => u.conflict);
-  if (clashing) await workbench.open(clashing.path, { newTab: true });
+  const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
+  if (!clashing) return;
+  if (clashing !== workbench.focusedPath) await workbench.open(clashing, { newTab: true });
+  await resolveConflict();
 });
+resolveButton.addEventListener("click", () => void resolveConflict());
+
+/**
+ * The note on show has an edit that clashes with someone else's: show the two, and keep yours (saved
+ * over theirs, which stays in History) or use theirs (as an edit of yours, so u brings yours back).
+ */
+async function resolveConflict(): Promise<boolean> {
+  const session = workbench.focusedSession;
+  const view = workbench.focusedView;
+  if (!session || !view || session.status !== "conflict") return false;
+  const path = session.path;
+  let theirs: Awaited<ReturnType<typeof api.read>>;
+  try {
+    theirs = await api.read(path);
+  } catch {
+    workbench.notice("Their version can't be read while offline: try again when you're back online.");
+    return true;
+  }
+  const latest = await fetch(`/api/history?${new URLSearchParams({ path, limit: "1" })}`)
+    .then((r) => (r.ok ? (r.json() as Promise<Array<{ author: Parameters<typeof describeAuthor>[0] }>>) : []))
+    .catch(() => []);
+  const who = latest[0] ? describeAuthor(latest[0].author, me) : "Someone";
+  const mine = view.state.doc.toString();
+  const base = session.revision;
+  const show = (keptAt?: string) =>
+    showClash({
+      where: docLabel(path),
+      who: who.charAt(0).toUpperCase() + who.slice(1),
+      mine,
+      theirs: theirs.text,
+      keepMine: keptAt ? () => void restore() : () => void session.adopt(theirs).then(() => session.save(true)),
+      useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
+      returnTo: () => view.contentDOM,
+      keptAt,
+    });
+  // Restore: the kept edit, from the revision it was made on, onto the note as it is now. Where the
+  // two changed the same lines, it's a clash like any other, to keep yours or use theirs.
+  const restore = async () => {
+    const before = base === 0 ? "" : await api.version(path, base).catch(() => null);
+    const merged = before === null ? null : merge(mine, before, theirs.text);
+    if (merged === null) return show();
+    await session.adopt(theirs);
+    editText(view, merged);
+    await session.save(true);
+  };
+  const kept = workbench.keptAt(path);
+  show(kept === undefined ? undefined : keptWhen(kept));
+  return true;
+}
 
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
@@ -378,15 +470,25 @@ commands.register(
   { id: "note.new", title: "New note…", run: () => pick("here") },
   { id: "note.save", title: "Save note", run: () => workbench.save(true) },
   { id: "note.reload", title: "Reload note from the server, discarding unsaved changes", run: () => workbench.reload() },
+  { id: "note.resolveConflict", title: "Compare your edit with the one it clashes with, and keep yours or theirs", run: () => void resolveConflict() },
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
   { id: "go.back", title: "Go back", run: () => navigate(-1) },
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
   { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
+  { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
   { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
   { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
   { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
-  { id: "account.signOut", title: "Sign out", run: () => location.assign("/auth/sign-out") },
+  {
+    id: "account.signOut",
+    title: "Sign out",
+    run: () => {
+      // Nothing of this account's is kept in this browser for whoever signs in next.
+      signingOut();
+      location.assign("/auth/sign-out");
+    },
+  },
   { id: "settings.user", title: "Open user settings", run: () => openSettingsUi("user") },
   { id: "settings.userJson", title: "Open user settings (JSON)", run: () => openSettings(USER_SETTINGS) },
   { id: "settings.workspace", title: "Open workspace settings", run: () => openSettingsUi("workspace") },
@@ -554,9 +656,12 @@ const extensionDeps: ExtensionsViewDeps = {
     );
     if (!url) return;
     try {
-      const { id, name } = await api.installExtension(url);
+      const { id, name, untrusted } = await api.installExtension(url);
+      if (untrusted) await loadSettings();
       await refreshList();
-      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
+      // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
+      const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
       else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
@@ -713,7 +818,10 @@ void learnLayout();
 
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
-  for (const u of workbench.unsaved()) void api.write(u.path, u.text, u.base, true).catch(() => {});
+  const unsaved = workbench.unsaved();
+  // Kept first, where it's sure to be written: the request may never arrive.
+  offline.keepDraftsNow(unsaved);
+  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
 });
 
 // The app's own files, kept by a service worker so it opens offline.
@@ -725,7 +833,8 @@ connectLive({
   async change(notice) {
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
-    if (open && !mine && notice.path === workbench.focusedPath) {
+    // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.
+    if (open && !mine && notice.path === workbench.focusedPath && workbench.focusedSession?.status !== "conflict") {
       saveLine.textContent = `Edited by ${describeAuthor(notice.author, me)}`;
       saveLine.dataset.status = "remote";
     }

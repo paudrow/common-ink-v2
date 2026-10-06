@@ -2,6 +2,8 @@
 // (as on this machine): nothing that changes the workspace or listens to it is answered. The CLI and
 // agents send no Origin, and the app's own page sends its own.
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { harness } from "./harness.ts";
 
@@ -37,4 +39,33 @@ function opens(origin: string): Promise<boolean> {
 test("another site can't open the live socket that hears of every change", async () => {
   assert.equal(await opens(EVIL), false);
   assert.equal(await opens(h.base), true);
+});
+
+test("a page on another site, in a real browser, can't write through MCP with a no-cors POST, which the app's own page can", async () => {
+  const elsewhere = createServer((_, res) => res.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html><title>elsewhere</title>"));
+  await new Promise<void>((resolve) => elsewhere.listen(0, "127.0.0.1", resolve));
+  const context = await h.browser.newContext();
+  try {
+    const page = await context.newPage();
+    const answers: number[] = [];
+    page.on("response", (r) => r.url() === `${h.base}/mcp` && answers.push(r.status()));
+    const write = (path: string) =>
+      page.evaluate(
+        async ({ base, path }) => {
+          const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "write_file", arguments: { path, text: "x", base: 0 } } };
+          await fetch(`${base}/mcp`, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(call) });
+        },
+        { base: h.base, path },
+      );
+    await page.goto(`http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/`);
+    await write("From a page elsewhere.md");
+    // The same request from the app's own page goes through: the refusal above is the Worker's, not the browser's.
+    await page.goto(`${h.base}/schema/settings.json`);
+    await write("From the app's page.md");
+    assert.deepEqual(answers, [403, 200], "it reached the Worker both times");
+    assert.deepEqual([await exists("From a page elsewhere.md"), await exists("From the app's page.md")], [false, true]);
+  } finally {
+    await context.close();
+    elsewhere.close();
+  }
 });
