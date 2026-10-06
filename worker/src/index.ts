@@ -67,11 +67,19 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const elsewhere = redirectFor(url);
-    if (elsewhere) return Response.redirect(elsewhere.location, elsewhere.status);
+    if (elsewhere) return new Response(null, { status: elsewhere.status, headers: { Location: elsewhere.location, "Strict-Transport-Security": HEADERS["Strict-Transport-Security"] } });
     const res = await handle(req, env, url);
-    if (res.headers.get("Content-Security-Policy") !== "{app}") return res;
+    // A WebSocket's answer can't be rewrapped; everything else asks for HTTPS, the sandbox route's included.
+    if (res.status === 101) return res;
+    if (res.headers.get("Content-Security-Policy") !== "{app}") {
+      if (res.headers.has("Strict-Transport-Security")) return res;
+      const out = new Response(res.body, res);
+      out.headers.set("Strict-Transport-Security", HEADERS["Strict-Transport-Security"]);
+      return out;
+    }
     const out = new Response(res.body, res);
-    out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
+    // Whatever answers under /uploads/ (a refusal, a sign-in, a 405) is under the uploads' policy, never the app's.
+    out.headers.set("Content-Security-Policy", url.pathname.startsWith("/uploads/") ? UPLOAD_CSP : appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
     return out;
   },
@@ -205,6 +213,9 @@ const ROUTES: Record<string, OperationName> = {
   "POST /api/labels": "add_label",
 };
 
+/** An extension's id, as manifests and folders have it. */
+const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
+
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
 
@@ -217,11 +228,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
   // A second gate behind the app's: a change in an extension's name to the files that decide trust,
   // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  // Undo is by revision, so it could take back any file's change: none for an untrusted extension.
   const extension = req.headers.get("X-Common-Ink-Extension");
+  if (extension !== null && !EXTENSION_ID.test(extension)) return json({ error: "X-Common-Ink-Extension must be an extension's id" }, 400);
   const path = parseFilePath(args.path);
-  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+  const touchesTrust = name === "undo" || (path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension ?? ""));
+  if (extension && touchesTrust) {
     const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
-    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't ${name === "undo" ? "undo changes" : `change ${path}`}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
@@ -238,34 +252,44 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
  * plain text downloads instead of opening.
  */
 async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  // Every answer under /uploads/ carries the upload's policy, a 404 or 503 too: what the browser shows at
+  // an upload's address is never a page of this site.
+  const underPolicy = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    return out;
+  };
+  const notFound = () => underPolicy(new Response("Not found\n", { status: 404 }));
   let name: string;
   try {
     name = decodeURIComponent(url.pathname.slice("/uploads/".length));
   } catch {
-    return secure(new Response("Not found\n", { status: 404 }));
+    return notFound();
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
-  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
+  if (!upload) return notFound();
   // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
   // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
   const sandboxed = (res: Response) => {
-    const out = secure(res);
-    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    const out = underPolicy(res);
     out.headers.set("ETag", `"${upload.hash}"`);
     // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
     out.headers.set("Cache-Control", "private, no-cache");
     return out;
   };
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash)).catch((err) => {
+  // A HEAD asks only whether the bytes are there; it doesn't read them.
+  const key = blobKey(upload.hash);
+  const read: Promise<R2Object | R2ObjectBody | null> = req.method === "HEAD" ? env.UPLOADS.head(key) : env.UPLOADS.get(key);
+  const blob = await read.catch((err) => {
     console.error("Reading an upload's bytes failed:", err);
     return undefined;
   });
   if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
-  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  if (!blob) return notFound();
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(req.method === "HEAD" ? null : blob.body, {
+    new Response("body" in blob ? blob.body : null, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),

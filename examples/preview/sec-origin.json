@@ -3,6 +3,6 @@
   "title": "Another site's requests are refused, whoever is signed in",
   "steps": [
     "Use the app as usual: edit a note, open the calendar, install Word count from the Catalog. Everything the app's own page asks works as before.",
-    "From another site's console (any page), run fetch(\"<this Preview>/api/file\", { method: \"PUT\", mode: \"no-cors\", headers: { \"Content-Type\": \"text/plain\" }, body: JSON.stringify({ path: \"From elsewhere.md\", text: \"x\", base: 0 }) }). No note called From elsewhere appears here."
+    "Open a new tab at about:blank (a page with no policy of its own: a site whose policy limits connect-src would block the fetch itself and prove nothing). In its console, run fetch(\"<this Preview>/mcp\", { method: \"POST\", mode: \"no-cors\", headers: { \"Content-Type\": \"text/plain\" }, body: JSON.stringify({ jsonrpc: \"2.0\", id: 1, method: \"tools/call\", params: { name: \"write_file\", arguments: { path: \"From elsewhere.md\", text: \"x\", base: 0 } } }) }). DevTools > Network shows the POST reached the Preview and was answered 403, and no note called From elsewhere appears here. (A no-cors request can only be a GET, HEAD or POST, which is why this goes through MCP.)"
   ]
 }

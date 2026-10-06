@@ -2,9 +2,8 @@
 // (here, page.goBack and goForward, as its buttons do) move through the notes you opened, a reload
 // keeps the place, the app's ⌘[ and ⌘] agree with the browser, and moving the cursor about adds nothing.
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import type { Page } from "playwright-core";
-import { harness } from "./harness.ts";
+import { browserTest, harness } from "./harness.ts";
 
 const h = harness();
 
@@ -12,9 +11,7 @@ const h = harness();
 const showing = (page: Page) => page.evaluate(() => document.title.replace(/ · Common Ink$/, ""));
 const until = (page: Page, title: string) => page.waitForFunction((title) => document.title === `${title} · Common Ink`, title);
 
-test("the browser's Back and Forward go through the notes you opened; a reload keeps the place; ⌘[ agrees", async () => {
-  const page = await h.browser.newPage({ viewport: { width: 1200, height: 800 } });
-  await page.goto(`${h.base}/?file=Welcome.md`);
+browserTest(h, "the browser's Back and Forward go through the notes you opened; a reload keeps the place; ⌘[ agrees", { scenario: "preview", open: "Welcome" }, async ({ page }) => {
   await until(page, "Welcome");
   const entries = () => page.evaluate(() => history.length);
   const start = await entries();
@@ -56,5 +53,4 @@ test("the browser's Back and Forward go through the notes you opened; a reload k
   await page.goForward();
   await until(page, "Shopping");
   assert.equal(await showing(page), "Shopping");
-  await page.close();
 });
