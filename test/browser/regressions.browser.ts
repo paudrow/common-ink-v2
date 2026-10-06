@@ -118,6 +118,109 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "closing a note's tab after an edit keeps the edit, rather than putting back the note as it opened", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  await app.command("Close tab");
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
+});
+
+browserTest(h, "moving an edited note's tab to another window shows and keeps the edit", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  await app.keys(":vs Other<CR>");
+  await app.idle();
+  await app.keys("<C-w>h<C-w>L");
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "packed" }).waitFor();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
+});
+
+browserTest(h, "closing a split, or one of two windows on the same note, keeps the note's edits", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.keys(":vs<CR>");
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  await app.keys("<C-w>c");
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n", "one of two windows on it closed");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "packed" }).waitFor();
+  await app.keys(":vs Other<CR>");
+  await app.idle();
+  await app.keys("<C-w>h");
+  await app.call("cursor", 2, 1);
+  await app.keys("o- passport<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.textContent === "Saved");
+  await app.keys("<C-w>c");
+  await app.page.waitForTimeout(500);
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n- passport\n", "its only window closed");
+});
+
+browserTest(h, "an edited note moved to another window while offline is sent once back online", { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.keys(":vs Other<CR>");
+  await app.idle();
+  await app.keys("<C-w>h");
+  await app.page.context().setOffline(true);
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent === "Offline · 1 unsent change");
+  await app.keys("<C-w>L");
+  await app.page.waitForTimeout(500);
+  await app.page.context().setOffline(false);
+  for (let i = 0; i < 40 && (await app.readFile("Trip.md")) !== "# Trip\n- packed\n"; i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
+});
+
+browserTest(h, "a reload straight after an edit keeps it", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  await app.call("cursor", 1, 7);
+  await app.keys("o- packed<Esc>");
+  await app.reload();
+  await app.idle();
+  for (let i = 0; i < 20 && (await app.readFile("Trip.md")) !== "# Trip\n- packed\n"; i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n");
+});
+
+browserTest(h, "a note deleted elsewhere while it's open isn't written back when its tab closes", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\n- packed\n");
+  await app.writeFile("Other.md", "# Other\n");
+  await app.goto({}, "Trip");
+  await app.idle();
+  const { revision } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`)).json()) as { revision: number };
+  const res = await app.page.context().request.fetch(`${app.base}/api/file`, { method: "DELETE", data: { path: "Trip.md", base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  assert.ok(res.ok(), `${res.status()}`);
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  await app.command("Close tab");
+  await app.page.waitForTimeout(800);
+  await app.idle();
+  const after = await app.page.context().request.get(`${app.base}/api/file?path=Trip.md`);
+  assert.equal(((await after.json()) as { revision: number; text: string }).text ?? "", "");
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
