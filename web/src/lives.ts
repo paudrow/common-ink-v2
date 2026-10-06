@@ -171,11 +171,14 @@ export class Lives {
   private shown = { top: NaN, left: NaN, width: NaN, height: NaN };
   private watching = 0;
   private still = 0;
+  /** Watching the boxes' sizes again on the next frame, after they were placed as the editor resized. */
+  private placing = 0;
   private resized: Pick<ResizeObserver, "observe" | "unobserve" | "disconnect"> = typeof ResizeObserver === "undefined" ? { observe() {}, unobserve() {}, disconnect() {} } : new ResizeObserver((entries) => {
     let changed = false;
+    let editor = false;
     for (const entry of entries) {
       if (entry.target === this.view?.dom) {
-        changed = true;
+        editor = true;
         continue;
       }
       const key = this.keyOfBox(entry.target as HTMLElement);
@@ -195,7 +198,24 @@ export class Lives {
       this.view?.requestMeasure();
       this.place();
     }
+    if (editor) this.placeUnwatched();
   });
+
+  /**
+   * The editor changed size, and nothing placed the boxes for it yet: they go over their slots now,
+   * before the page is painted. Their new widths would be seen in a second delivery of this observer,
+   * which the browser reports as a loop, so their sizes aren't watched until the next frame (where a
+   * box that grew or shrank as it narrowed is measured as it's watched again).
+   */
+  private placeUnwatched() {
+    for (const live of this.lives.values()) this.resized.unobserve(live.el);
+    this.place();
+    cancelAnimationFrame(this.placing);
+    this.placing = requestAnimationFrame(() => {
+      this.placing = 0;
+      for (const live of this.lives.values()) if (live.el.isConnected) this.resized.observe(live.el);
+    });
+  }
 
   /** A box that becomes ready: remember its height now, whether or not its size changed as it did. */
   private ready = typeof MutationObserver === "undefined" ? null : new MutationObserver((records) => {
@@ -358,8 +378,10 @@ export class Lives {
    * Lay the scroller over the editor's, and put each box over its slot; or, while it has none or it's out
    * of sight, hide it, or float it if it's a video playing. Reads layout first, then writes.
    */
-  place() {
-    this.watch();
+  place(watch = true) {
+    // A placing for something around the editors (a clock in the status bar) doesn't start the watch,
+    // or what changes every second would keep it running.
+    if (watch) this.watch();
     const view = this.view;
     const editor = view?.scrollDOM;
     const r = editor?.getBoundingClientRect();
@@ -665,6 +687,19 @@ export function resetFloats() {
 
 // The page resized: floating windows stay on it (and go back toward where they were put, as it grows).
 if (typeof addEventListener !== "undefined") addEventListener("resize", () => all.forEach((l) => l.place()));
+
+/**
+ * The page's layout changed around the editors (a window split, closed or resized, the side bar shown
+ * or hidden, a border dragged): the boxes go over their slots before the page is painted. Done in the
+ * mutation's microtask, the boxes' new sizes are seen with the editors' in the next resize delivery,
+ * not in a second one, which the browser would report as a loop. What changes inside an editor, or
+ * among the boxes themselves, isn't a change around them.
+ */
+if (typeof MutationObserver !== "undefined" && typeof document !== "undefined")
+  new MutationObserver((records) => {
+    if (!all.size || !records.some((r) => r.target instanceof Element && !r.target.closest(".cm-editor, .embed-layer"))) return;
+    for (const lives of all) lives.place(false);
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
 
 // What plays changed: a video that started or stopped may float, dock or go.
 if (typeof queueMicrotask !== "undefined")
