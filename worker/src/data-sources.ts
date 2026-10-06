@@ -81,6 +81,9 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** An etag that matches no version, so a PATCH sent with it meets the source's version first. */
+const UNKNOWN_ETAG = '"common-ink:unknown"';
+
 /** How long an edit waits for the source to say how its record is, before it's refused. */
 const UNREADABLE_FOR = 30 * 60_000;
 
@@ -437,11 +440,12 @@ export class DataSources {
    */
   private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
     const bookkeeping = () => {
-      this.db.run("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", row.seq);
+      this.db.run("UPDATE outbox SET attempts = attempts + 1, unreadable = NULL WHERE seq = ?", row.seq);
       if (conflict.etag) this.setEtag(row.path, conflict.etag);
       else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
     };
     if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
+    let named = "";
     const queued = this.db.all<{ seq: number; op: string; base: string | null }>("SELECT seq, op, base FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", row.path, row.seq);
     let theirs = conflict.remote;
     const lost = new Set<string>();
@@ -450,10 +454,13 @@ export class DataSources {
       const o = JSON.parse(r.op) as RecordOp;
       // A delete waiting after them wins, whatever they merge to.
       if (o.op === "delete") break;
-      const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
-      for (const field of merged.lost) lost.add(field);
+      // An occurrence's first edit started from the occurrence as its series makes it.
+      const merged = mergeEvents(r.base ? readEvent(r.base) : o.event.series !== undefined ? this.asSeriesMakes(source, o.event) : null, o.event, theirs);
       // Cancelled isn't a field an edit makes, so it's never among what's lost: say so when it beat one.
+      // A cancellation comes without the occurrence's fields, so they aren't counted against it.
       if (theirs.status === "cancelled" && o.event.status !== "cancelled") lost.add("cancellation");
+      else for (const field of merged.lost) lost.add(field);
+      named ||= o.event.title;
       rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
       theirs = merged.event;
     }
@@ -464,7 +471,7 @@ export class DataSources {
       bookkeeping();
       for (const r of rebased) this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify(r.op), r.base, r.seq);
     });
-    if (lost.size) this.setState(source, { conflict: `${theirs.title || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
+    if (lost.size) this.setState(source, { conflict: `${theirs.title || named || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
   }
 
   /**
@@ -483,6 +490,12 @@ export class DataSources {
     const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
     this.setState(source, { conflict: message, error: undefined });
     return message;
+  }
+
+  /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
+  private asSeriesMakes(source: SourceId, e: CalendarEvent): CalendarEvent | null {
+    const found = findTarget(this.family(source, e.calendar, e.id).filter((o) => o.id !== e.id), e.id);
+    return found?.kind === "occurrence" ? found.occurrence : null;
   }
 
   private setEtag(path: string, etag: string) {
@@ -600,7 +613,13 @@ export class DataSources {
       recheck: (calendar) => this.state(source).recheck?.[calendar] ?? [],
       put: (event, etag) => {
         const path = eventPath(event.calendar, event.id);
-        if (pending(path)) return;
+        if (pending(path)) {
+          // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
+          // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
+          const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+          if (etag && waiting && !this.db.all("SELECT 1 FROM etags WHERE path = ?", path).length) this.setEtag(path, UNKNOWN_ETAG);
+          return;
+        }
         write(path, recordText(event));
         if (etag) this.setEtag(path, etag);
       },
