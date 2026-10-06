@@ -1,5 +1,5 @@
 // Changes in words, for the history panel and the CLI: who made them, when, and which lines.
-import { diffPatch } from "node-diff3";
+import { linePatch } from "./line-diff.ts";
 import { isNote, type Author, type Change, type FilePath } from "../../worker/src/files.ts";
 import { keyOfPath } from "../../worker/src/records.ts";
 
@@ -41,13 +41,14 @@ export function diffStat(change: Pick<Change, "diff">): string {
   return `+${lines.filter((l) => l.kind === "+").length} −${lines.filter((l) => l.kind === "-").length}`;
 }
 
-/** "just now", "5 min ago", "3 h ago", or a date. */
+/** "just now", "5 min ago", "3 h ago", or the local day. */
 export function ago(time: number, now = Date.now()): string {
   const s = Math.round((now - time) / 1000);
   if (s < 45) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return new Date(time).toISOString().slice(0, 10);
+  const d = new Date(time);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const NAMES: Array<[RegExp, string]> = [
@@ -70,7 +71,7 @@ export function docLabel(path: FilePath): string {
 
 /** A before and after, as the lines that changed. */
 export function runLines(before: string, after: string): Array<{ kind: "-" | "+"; text: string }> {
-  return diffPatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
+  return linePatch(before.split("\n"), after.split("\n")).flatMap(({ buffer1, buffer2 }) => [
     ...buffer1.chunk.map((text) => ({ kind: "-" as const, text })),
     ...buffer2.chunk.map((text) => ({ kind: "+" as const, text })),
   ]);

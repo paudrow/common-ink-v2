@@ -84,6 +84,20 @@ test("the brokered fetch reaches only declared hosts you've allowed, without cre
   assert.deepEqual(seen.filter((u) => !u.includes("cloudflare-dns")), ["https://api.weather.gov/points"], "nothing else went out");
 });
 
+test("a brokered fetch redirected to a host the extension doesn't declare stops there", async () => {
+  const s = store();
+  write(s, ".common-ink/extensions/weather/extension.json", WEATHER);
+  write(s, ".common-ink/users/you@example.com/settings.json", JSON.stringify({ "extensions.permissions": { weather: { "network:api.weather.gov": "allow" } } }));
+  const seen = await withFetch(
+    (url) => (url === "https://api.weather.gov/moved" ? new Response(null, { status: 302, headers: { location: "https://evil.example/?data=1" } }) : new Response("sunny")),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/fetch", { extension: "weather", url: "https://api.weather.gov/moved" }), new URL("https://app.example/api/extensions/fetch"), you.email, you, s);
+      assert.deepEqual(await res!.json(), { error: "It was sent on to evil.example, which it may not reach" });
+    },
+  );
+  assert.deepEqual(seen.filter((u) => !u.includes("cloudflare-dns")), ["https://api.weather.gov/moved"]);
+});
+
 test("installing copies an extension's files in, as changes by you; a built-in's id is refused", async () => {
   const s = store();
   const files: Record<string, string> = {
@@ -96,12 +110,58 @@ test("installing copies an extension's files in, as changes by you; a built-in's
     (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
     async () => {
       const install = (url: string) => extensionApi(post("/api/extensions/install", { url }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
-      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"] });
+      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"], untrusted: false });
       assert.equal(s.files.read(".common-ink/extensions/weather/lib.js" as FilePath)?.text, "export const x = 1;");
       assert.deepEqual(JSON.parse(s.files.read(".common-ink/extensions/weather/installed.json" as FilePath)!.text), { from: "https://ext.example/weather/extension.json" }, "where it came from, for the app to say");
       assert.deepEqual(s.files.recent({ path: ".common-ink/extensions/weather/index.js" as FilePath })[0].author, you);
       assert.deepEqual(await (await install("https://ext.example/history/"))!.json(), { error: '"history" is a built-in\'s id. To change a built-in, Customize it.' });
       assert.deepEqual(await (await install("http://localhost:8787/x/"))!.json(), { error: "Local names can't be fetched" });
+    },
+  );
+});
+
+test("installing from a URL never inherits trust left for the same id: it starts sandboxed for everyone", async () => {
+  const s = store();
+  write(s, ".common-ink/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather", "boards"], "editor.fontSize": 15 }, null, 2)}\n`);
+  write(s, ".common-ink/users/you@example.com/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather"] }, null, 2)}\n`);
+  write(s, ".common-ink/users/sam@example.com/settings.json", `${JSON.stringify({ "extensions.trusted": ["weather", "timers"] }, null, 2)}\n`);
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Someone else's Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+      assert.equal(res!.status, 200);
+    },
+  );
+  const trusted = (path: string) => JSON.parse(s.files.read(path as FilePath)!.text)["extensions.trusted"];
+  assert.deepEqual(trusted(".common-ink/settings.json"), ["boards"]);
+  assert.deepEqual(trusted(".common-ink/users/you@example.com/settings.json"), []);
+  assert.deepEqual(trusted(".common-ink/users/sam@example.com/settings.json"), ["timers"]);
+  assert.equal(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text)["editor.fontSize"], 15, "the rest of the settings stay");
+});
+
+test("installing says so when it took back trust, and refuses while a settings file that trusts extensions can't be read", async () => {
+  const s = store();
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  const install = () => extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"], ');
+      assert.deepEqual(await (await install())!.json(), {
+        error: ".common-ink/users/sam@example.com/settings.json isn't valid JSON, so weather can't be taken out of the extensions it trusts. Fix it first.",
+      });
+      assert.equal(s.files.read(".common-ink/extensions/weather/index.js" as FilePath), null, "nothing was installed");
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"] }\n');
+      const res = (await (await install())!.json()) as { untrusted?: boolean };
+      assert.equal(res.untrusted, true);
+      assert.equal(((await (await install())!.json()) as { untrusted?: boolean }).untrusted, false);
     },
   );
 });

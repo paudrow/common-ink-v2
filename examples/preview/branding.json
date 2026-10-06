@@ -1,0 +1,9 @@
+{
+  "pr": 41,
+  "title": "Common Ink's icons and link-preview tags",
+  "steps": [
+    "The tab shows Common Ink's indigo drop. Add the Preview to a phone's home screen and it gets the same icon.",
+    "Open <this Preview>/site.webmanifest: it names Common Ink and three icons, and each opens at its address (/icon-192.png, /icon-512.png, /icon-maskable-512.png). /social.png is the link-preview card.",
+    "This Preview signs you in as a dev user, so it can't show signing out. In production, the icons, the manifest and /social.png answer without sign-in, and everything else still asks you to sign in: test/browser/public-files.browser.ts checks both."
+  ]
+}
