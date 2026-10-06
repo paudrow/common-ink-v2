@@ -111,3 +111,20 @@ test("a tick that clashes with an edit of the same line is an error, and nothing
   assert.deepEqual(result, { ok: false, error: "Chores.md changed on line 3 meanwhile, so it wasn't ticked. Read it and try again." });
   assert.equal(files.files.read("Journal/2026-10-05.md" as never), null);
 });
+
+test("an operation that fails unexpectedly says so in a sentence, logs why, and leaks no stack", async () => {
+  const files = memoryStore();
+  const broken = { ...files, read: () => { throw new Error("SQLITE_IOERR: disk I/O error at /var/do/123"); } };
+  const logged: unknown[] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => void logged.push(args);
+  try {
+    assert.deepEqual(await runOperation("read_file", { path: "Plan.md" }, broken, agent), { ok: false, internal: true, error: "Something went wrong running read_file. It's been logged; try again." });
+    const { body } = await call(broken, "tools/call", { name: "read_file", arguments: { path: "Plan.md" } });
+    assert.deepEqual(body.result, { content: [{ type: "text", text: "Something went wrong running read_file. It's been logged; try again." }], isError: true });
+    assert.equal(logged.length, 2);
+    assert.match(String((logged[0] as unknown[])[1]), /read_file/);
+  } finally {
+    console.error = log;
+  }
+});

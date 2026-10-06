@@ -5,7 +5,8 @@ import type { Occurrence } from "../../../../worker/src/calendar.ts";
 import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import type { EventFound } from "../../../../worker/src/operations.ts";
-import { EventLinks, dayOfEvent, linkTo } from "./links.ts";
+import { EventLinks, dayOfEvent, dayOfOccurrence, linkTo } from "./links.ts";
+import { dayOf } from "./model.ts";
 import { notesSection } from "./notes.ts";
 import type { CalendarPage, Embedded, PageState } from "./page.ts";
 import type { Embed } from "../../extension-api.ts";
@@ -57,6 +58,13 @@ const calendar: ExtensionModule = {
       void ctx.data.sync().catch(() => {});
     };
     const pages = new Set<CalendarPage>();
+    /**
+     * Let go of pages gone from the page: a tab's that closed or drew something else, and a note's
+     * calendar once its embed is (lives.ts keeps it, hidden, until then).
+     */
+    const prune = () => {
+      for (const p of pages) if (!document.contains(p.root)) (p.destroy(), pages.delete(p));
+    };
     /** An event a chip's click asked the next Calendar tab to show. */
     let reveal: { address: string; day: string } | undefined;
     ctx.views.register("calendar", {
@@ -64,11 +72,11 @@ const calendar: ExtensionModule = {
         sync();
         if (!root.closest("#panel")) {
           // In a tab: the whole calendar. One page per tab, kept until the tab draws something else.
-          for (const p of pages) if (!document.contains(p.root) && ![...embedded.values()].includes(p)) (p.destroy(), pages.delete(p));
+          prune();
           const { CalendarPage } = await import("./page.ts");
           const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState, reveal);
           reveal = undefined;
-          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : dayOfOccurrence(o));
           pages.add(page);
           root.replaceChildren(page.root);
           page.root.focus({ preventScroll: true });
@@ -126,7 +134,7 @@ const calendar: ExtensionModule = {
     });
     // Links to events in notes are chips; a click shows the event in a Calendar tab, open on it.
     const links = new EventLinks(ctx, (address, found: EventFound | null) => {
-      reveal = { address, day: found ? dayOfEvent(found) : new Date().toISOString().slice(0, 10) };
+      reveal = { address, day: found ? dayOfEvent(found) : dayOf(new Date()) };
       ctx.views.open("calendar", { newTab: true });
     });
     ctx.editor.extend(links.extension());
@@ -156,9 +164,10 @@ const calendar: ExtensionModule = {
       target = ctx.editor.focused();
       ctx.commandBar.open("event:");
     });
-    // ::calendar in a note: a calendar of its own, kept by its embed's key, so drawing it again (the
-    // note scrolled back, the cursor left its line) puts back the same one, where it was.
-    const embedded = new Map<string, CalendarPage>();
+    // ::calendar in a note: a calendar of its own, in the box the app keeps for the embed (lives.ts), which
+    // is never drawn again or moved: the cursor on its line, a new tab or a split leave it as it was. Each
+    // box is its own, so a note shown in two windows has two calendars, not one moved between them.
+    const embedded = new WeakMap<HTMLElement, CalendarPage>();
     const argsOf = (embed: Embed): Embedded => {
       const view = (["agenda", "3day", "week", "month"] as const).find((v) => v === embed.args.view) ?? "agenda";
       const number = (v: string | undefined, d: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(Number(v ?? d)) || d));
@@ -171,19 +180,19 @@ const calendar: ExtensionModule = {
     };
     ctx.embeds.register("calendar", {
       async render(el: HTMLElement, embed: Embed) {
-        let page = embedded.get(embed.key);
+        let page = embedded.get(el);
         if (!page) {
           const { CalendarPage } = await import("./page.ts");
           page = new CalendarPage(ctx, {}, undefined, argsOf(embed));
-          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : o.start.slice(0, 10));
+          page.extra = async (o, found) => notesSection(ctx, o, found, found ? dayOfEvent(found) : dayOfOccurrence(o));
           page.openWhole = () => ctx.views.open("calendar", { newTab: true });
-          embedded.set(embed.key, page);
+          embedded.set(el, page);
           pages.add(page);
         } else page.setEmbedded(argsOf(embed));
         el.replaceChildren(page.root);
       },
       update(el: HTMLElement, embed: Embed) {
-        const page = embedded.get(embed.key);
+        const page = embedded.get(el);
         if (!page) return;
         page.setEmbedded(argsOf(embed));
         if (page.root.parentElement !== el) el.replaceChildren(page.root);
@@ -191,6 +200,7 @@ const calendar: ExtensionModule = {
     });
     ctx.data.calendar.onChange(() => {
       links.refresh();
+      prune();
       for (const p of pages) p.refresh();
       // The side panel draws again; a tab's page loads what changed without drawing from nothing.
       if (ctx.views.shown() === "calendar") ctx.views.show("calendar");

@@ -112,3 +112,16 @@ test("sample notes can say dates relative to the day the Preview deploys", () =>
   assert.equal(fillDates("due:{{today}} due:{{today+3}} due:{{today-1}}", "2026-12-30"), "due:2026-12-30 due:2027-01-02 due:2026-12-29");
   assert.equal(fillDates("standup_{{day+2}}T090000.json", "2026-12-30"), "standup_20270101T090000.json");
 });
+
+test("the Preview's sample notes are dated on the local day where the seed is written, as the page's today is", (t) => {
+  const was = process.env.TZ;
+  process.env.TZ = "America/Chicago";
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-06T02:00:00Z") }); // 9 PM on Oct 5 in Chicago
+  try {
+    const sections = [{ slug: "tasks", pr: 1, title: "Tasks", steps: [], notes: [{ path: "Chores.md", text: "- [ ] Water due:{{today}}\n" }], edits: [] }];
+    assert.equal(buildSeed(sections, {}).notes[0].text, "- [ ] Water due:2026-10-05\n");
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
+  }
+});

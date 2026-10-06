@@ -57,7 +57,7 @@ export const api = {
   },
   /** Fetch a URL for an extension, through the Worker, which checks what it declares and what you've allowed. */
   async extensionFetch(extension: string, url: string, init: { method?: string; headers?: Record<string, string>; body?: string }, once: boolean): Promise<ExtensionResponse> {
-    const res = await fetch("/api/extensions/fetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ extension, url, ...init, once }) });
+    const res = await fetch("/api/extensions/fetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ extension, url, method: init.method, headers: init.headers, body: init.body, once }) });
     const data = await res.json();
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
     return data as ExtensionResponse;

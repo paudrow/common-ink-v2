@@ -318,7 +318,7 @@ set_var GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
 set_var ALLOWED_EMAILS "$ALLOWED_EMAILS"
 [[ -n "$GOOGLE_CLIENT_SECRET" ]] && set_secret GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
 if gh secret list -R "$V2_REPO" 2>/dev/null | grep -q '^SESSION_SECRET'; then
-  note "SESSION_SECRET is set already. A new one signs everyone out of v2."
+  note "SESSION_SECRET is set already. A new one signs everyone out of v2, and Google Calendar asks to be connected again (its refresh token is sealed with it)."
   if confirm "Make a new SESSION_SECRET anyway?"; then set_secret SESSION_SECRET "$(openssl rand -base64 32)"; fi
 else
   set_secret SESSION_SECRET "$(openssl rand -base64 32)"
