@@ -544,6 +544,11 @@ button.status-item:hover {
   font-size: 0.8rem;
 }
 
+#command-bar li.plain > .detail {
+  font: 0.75rem var(--mono);
+  align-self: center;
+}
+
 #command-bar .aside {
   flex: none;
   color: var(--faint);

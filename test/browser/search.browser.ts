@@ -3,7 +3,7 @@
 // filters into the query.
 import assert from "node:assert/strict";
 import type { Page } from "playwright-core";
-import { browserTest, harness } from "./harness.ts";
+import { browserTest, harness, runCommand, writeFile } from "./harness.ts";
 
 const h = harness();
 
@@ -69,4 +69,121 @@ browserTest(h, "on a phone, search fills the screen, and a chip writes its filte
   await app.call("command", "Search…");
   await page.locator("#command-bar .cancel").tap();
   assert.equal(await bar(page).isHidden(), true, "Cancel closes it");
+});
+
+async function install(page: Page, id: string, files: Record<string, string>) {
+  for (const [file, text] of Object.entries(files)) await writeFile(page, `.common-ink/extensions/${id}/${file}`, text);
+}
+const notice = (page: Page, mark: string) =>
+  page.waitForFunction((mark) => [...document.querySelectorAll(".notice p")].map((p) => p.textContent).find((t) => t?.includes(mark)), mark, { timeout: 15000 }).then((h) => h.jsonValue() as Promise<string>);
+
+const SNOOP = `export default { activate(ctx) {
+  ctx.commands.register("snoop.run", async () => {
+    const out = {};
+    for (const q of ["garden", "pay", "type:event pay"]) out[q] = await ctx.search.find(q, 20);
+    let read = "blocked"; try { await ctx.files.read("Welcome.md"); read = "reached"; } catch {}
+    let events = "blocked"; try { await ctx.data.calendar.events(new Date(0), new Date(4e12)); events = "reached"; } catch {}
+    await ctx.workbench.notice("SNOOP " + JSON.stringify({ read, events, out }));
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension with no permissions can't read notes, tasks or events through ctx.search.find", { scenario: "preview", open: "Welcome", levers: { permissions: "deny" } }, async ({ page }) => {
+  await install(page, "snoop", {
+    "extension.json": JSON.stringify({ name: "Snoop", activationEvents: ["onCommand:snoop.run"], contributes: { commands: [{ command: "snoop.run", title: "Run snoop" }] } }),
+    "index.js": SNOOP,
+  });
+  await page.reload();
+  await page.waitForSelector(".cm-content");
+  await runCommand(page, "Run snoop");
+  const said = await notice(page, "SNOOP");
+  const got = JSON.parse(said.slice(said.indexOf("{")));
+  assert.equal(got.read, "blocked", "files.read is refused");
+  assert.equal(got.events, "blocked", "calendar events are refused");
+  const leaked = Object.values(got.out as Record<string, Array<{ results: unknown[] }>>).flat().flatMap((s) => s.results);
+  assert.deepEqual(leaked, [], "search.find must not hand it what files.read and data.calendar refuse");
+});
+
+const SLOW = `export default { activate(ctx) {
+  ctx.search.provide("slow", { search: () => new Promise(() => {}) });
+} };`;
+
+browserTest(h, "a sandboxed provider that never answers doesn't stop search", { scenario: "preview", open: "Welcome" }, async ({ page }) => {
+  await install(page, "slowpoke", {
+    "extension.json": JSON.stringify({ name: "Slowpoke", activationEvents: ["onStartup"], contributes: { search: { types: [{ type: "slow", title: "Slow" }] } } }),
+    "index.js": SLOW,
+  });
+  await page.reload();
+  await page.waitForSelector(".cm-content");
+  await page.waitForTimeout(1500);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.locator("#command-bar input").fill("garden");
+  await page.waitForTimeout(4000);
+  const rows = await page.locator("#command-bar li").allTextContents();
+  assert.ok(rows.length > 0, "notes still show while one extension's provider hangs");
+});
+
+const HIJACK = `export default { activate(ctx) {
+  ctx.search.provide("task", { search: (q) => [{ title: "<img src=x onerror=window.top.__xss=1>Pay rent (fake)", detail: "<b>bold</b>", run: () => {} }] });
+} };`;
+
+browserTest(h, "a sandboxed extension can't take over another extension's kind of result", { scenario: "preview", open: "Welcome", allowErrors: [/Search type "task" belongs to tasks, not hijack/] }, async ({ page }) => {
+  await install(page, "hijack", {
+    "extension.json": JSON.stringify({ name: "Hijack", activationEvents: ["onStartup"], contributes: { search: { types: [{ type: "task", title: "Tasks" }] } } }),
+    "index.js": HIJACK,
+  });
+  await page.reload();
+  await page.waitForSelector(".cm-content");
+  await page.waitForTimeout(2000);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.locator("#command-bar input").fill("pay");
+  await page.locator("#command-bar ul:not([aria-busy])").waitFor({ state: "attached" });
+  await page.waitForTimeout(500);
+  const rows = await page.locator("#command-bar li").evaluateAll((lis) => lis.map((li) => (li.classList.contains("section") ? `[${li.textContent}]` : li.querySelector(".label")!.textContent!)));
+  assert.equal(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss), undefined, "no HTML from a provider runs");
+  assert.equal(await page.locator("#command-bar img").count(), 0, "no HTML from a provider is drawn");
+  assert.ok(rows.includes("Pay rent"), "Tasks' own task is still found");
+  assert.ok(!rows.some((r) => r.includes("(fake)")) || rows.filter((r) => r === "[Tasks]").length === 2, "the hijacker doesn't answer under Tasks' section");
+});
+
+browserTest(h, "off a Mac, Ctrl-k and Ctrl-p in search move up the list and keep the query", { scenario: "preview", open: "Welcome" }, async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" }));
+  await page.reload();
+  await title(page, "Welcome");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+k");
+  await bar(page).waitFor();
+  await field(page).pressSequentially("pay");
+  await rows(page);
+  await page.keyboard.press("Control+j");
+  await page.keyboard.press("Control+j");
+  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+p");
+  assert.equal(await field(page).inputValue(), "pay");
+  assert.equal(await page.locator("#command-bar li[role=option]").first().getAttribute("aria-selected"), "true");
+});
+
+browserTest(h, "Tab with nothing to complete moves on to the chips, and the bar stays open", { scenario: "preview", open: "Welcome" }, async ({ page }) => {
+  await title(page, "Welcome");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await field(page).fill("garden");
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Agents");
+  assert.equal(await bar(page).isVisible(), true);
+});
+
+browserTest(h, "offline, search says it needs a connection and still finds notes by name", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch/] }, async (app) => {
+  const { page } = app;
+  await title(page, "Welcome");
+  await app.call("idle");
+  await page.context().setOffline(true);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await field(page).fill("garden");
+  const found = await rows(page);
+  assert.ok(found.includes("Search needs a connection: notes by name are below"), found.join(" | "));
+  assert.ok(found.includes("Garden plan"), "by name still works");
+  await page.context().setOffline(false);
 });
