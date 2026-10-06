@@ -474,7 +474,7 @@ for (const [what, series, move] of moves) {
 }
 
 test("an edit that keeps meeting Google's newer versions waits, then goes once Google holds still, with the edits behind it", async () => {
-  const { fake } = google();
+  const { fake } = await google();
   let busy = 4;
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
     if (init?.method === "PATCH" && String(input).endsWith("/events/dentist") && busy-- > 0) fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, colorId: String(busy) });
@@ -493,7 +493,7 @@ test("an edit that keeps meeting Google's newer versions waits, then goes once G
 });
 
 test("when Google can't say how an event is after a 412, the edit waits with its etag, so it never overwrites Google's newer version", async () => {
-  const { fake } = google();
+  const { fake } = await google();
   let failing = 1;
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
     if ((init?.method ?? "GET") === "GET" && String(input).endsWith("/events/dentist") && failing-- > 0) return new Response("{}", { status: 503 });
@@ -510,7 +510,7 @@ test("when Google can't say how an event is after a 412, the edit waits with its
 });
 
 test("an edit that failed for a while, then meets one 412 once Google is back, merges and goes in the same flush", async () => {
-  const { fake, store } = google();
+  const { fake, store } = await google();
   await op(store, "sync_calendar", {});
   fake.revoked = true;
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
@@ -530,7 +530,7 @@ for (const [how, deleted] of [
   ["with 410", () => Response.json({ error: { code: 410, message: "Resource has been deleted" } }, { status: 410 })],
 ] as const) {
   test(`an edit of an event Google deleted meanwhile is refused and goes away with the next sync, Google answering a read ${how}; deleting one is done already`, async () => {
-    const { fake } = google();
+    const { fake } = await google();
     const gone = new Set<string>();
     const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
       const id = /\/events\/([^/?]+)$/.exec(String(input))?.[1];
@@ -554,7 +554,7 @@ for (const [how, deleted] of [
 }
 
 test("Google's change made while our push of the same event was in flight comes in on a later sync", async () => {
-  const { fake } = google();
+  const { fake } = await google();
   let failing = 2;
   let pageGate: Promise<void> | null = null;
   let openPage!: () => void;
@@ -591,7 +591,7 @@ test("Google's change made while our push of the same event was in flight comes 
 });
 
 test("after a full sync that left an event for a change made meanwhile, the next sync is incremental and still brings Google's version", async () => {
-  const { fake } = google();
+  const { fake } = await google();
   let gate: Promise<void> | null = null;
   const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
     if (gate && String(input).includes("/calendars/primary/events?")) await gate;
@@ -622,7 +622,7 @@ for (const [how, answer] of [
   ["answering a read with 404", 404],
 ] as const) {
   test(`an event Google deleted during a sync in which we edited it goes on the next sync, Google ${how}`, async () => {
-    const { fake } = google();
+    const { fake } = await google();
     let gate: Promise<void> | null = null;
     const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
       if (gate && String(input).includes("/calendars/primary/events?")) await gate;
