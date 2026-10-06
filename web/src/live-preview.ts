@@ -119,6 +119,20 @@ const blockFields = Facet.define<StateField<DecorationSet>>();
  * too. A click lands where it was clicked. (Vim's j and k carry no user event, so this can't wait
  * for one.)
  */
+/**
+ * Whether the key being handled steps one line up or down (j, k, or an arrow, by the character typed).
+ * Only such a step goes into a block at a note's very start or end: a G, a count, a search or a click
+ * that lands there is where it was sent, though it looks the same as a transaction.
+ */
+let stepping = false;
+const watchSteps = EditorView.domEventObservers({
+  keydown(e) {
+    stepping = ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey;
+    // Over once the key is handled: the move it makes comes while it is.
+    queueMicrotask(() => (stepping = false));
+  },
+});
+
 const stepIntoBlocks = EditorState.transactionFilter.of((tr) => {
   if (!tr.selection || tr.docChanged || tr.selection.ranges.length > 1 || tr.isUserEvent("select.pointer")) return tr;
   const start = tr.startState;
@@ -130,22 +144,27 @@ const stepIntoBlocks = EditorState.transactionFilter.of((tr) => {
   const [lo, hi] = down ? [a, b] : [b, a];
   let hidden = 0;
   let target: number | null = null;
+  /** Whether the move landed inside a block that ends (or starts) the note. */
+  let inside = false;
   for (const field of start.facet(blockFields)) {
     start.field(field, false)?.between(doc.line(lo).from, doc.line(hi).to, (from, to, d) => {
       if (!d.spec.block || from === to) return;
       const first = doc.lineAt(from).number;
       const last = doc.lineAt(to).number;
       // Past it, or inside it when it ends the note (going down) or starts it (going up).
-      const between = down ? first > a && (last < b || (last === doc.lines && first <= b)) : last < a && (first > b || (first === 1 && last >= b));
-      if (!between) return;
+      const past = down ? first > a && last < b : last < a && first > b;
+      const into = stepping && (down ? first > a && last === doc.lines && first <= b && last >= b : last < a && first === 1 && first <= b && last >= b);
+      if (!past && !into) return;
+      inside ||= into;
       hidden += Math.min(last, hi) - Math.max(first, lo) + 1;
       if (down) target = target === null ? doc.line(first).from : Math.min(target, doc.line(first).from);
       else target = target === null ? doc.line(last).from : Math.max(target, doc.line(last).from);
     });
   }
-  // Only a move of one visible line (none, into a block that ends the note): a jump further (G, a search) goes where it was sent.
+  // Only a one-step move: one visible line on, past blocks, or straight into a block at the note's end with
+  // no line between. A jump further (G, gg, a count, a search) goes where it was sent.
   const plain = hi - lo - hidden;
-  if (target === null || plain > 1) return tr;
+  if (target === null || plain !== (inside ? 0 : 1)) return tr;
   const main = tr.selection.main;
   return [tr, { selection: EditorSelection.single(main.empty ? target : main.anchor, target), sequential: true }];
 });
@@ -214,5 +233,5 @@ export function blockPreview(source: BlockPreviewSource): Extension {
       tr.docChanged || tr.selection || tr.reconfigured || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? buildBlocks(tr.state, source) : blocks,
     provide: (f) => EditorView.decorations.from(f),
   });
-  return [field, blockFields.of(field), stepIntoBlocks, blockKeys];
+  return [field, blockFields.of(field), stepIntoBlocks, watchSteps, blockKeys];
 }
