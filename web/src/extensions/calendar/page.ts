@@ -198,9 +198,12 @@ export class CalendarPage {
       const opening = this.openWhenLoaded && this.cache?.events.find((o) => o.address === this.openWhenLoaded);
       if (opening) {
         this.openWhenLoaded = null;
-        this.renderer?.reveal(opening.address);
-        const node = this.root.querySelector<HTMLElement>(`[data-address="${CSS.escape(opening.address)}"]`);
-        void this.open(opening, (node ?? this.root).getBoundingClientRect());
+        // A frame on: the view lays itself out on its first frame, and the event and its editor go where that puts them.
+        requestAnimationFrame(() => {
+          this.renderer?.reveal(opening.address);
+          const node = this.root.querySelector<HTMLElement>(`[data-address="${CSS.escape(opening.address)}"]`);
+          void this.open(opening, (node ?? this.root).getBoundingClientRect());
+        });
       }
     })();
   }
