@@ -167,6 +167,17 @@ export default {
         drop.hidden = true;
         editors.append(drop);
         el.prepend(tabs, marker);
+        // Shift-Tab out of a note lands on its tab, not on the close button that comes last in the bar,
+        // where Enter would close it. A press on the bar focuses what it pressed, as before.
+        let pressing = false;
+        tabs.addEventListener("pointerdown", () => {
+          pressing = true;
+          setTimeout(() => (pressing = false));
+        });
+        tabs.addEventListener("focusin", (e) => {
+          if (pressing || !editors.contains(e.relatedTarget as Node)) return;
+          tabs.querySelector<HTMLElement>('.tab[aria-selected="true"] .name')?.focus();
+        });
         const hide = () => {
           drop.hidden = true;
           marker.hidden = true;

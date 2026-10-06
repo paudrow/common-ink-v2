@@ -1,0 +1,1379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Mobile-First Places</title>
+<style>
+/* The app's tokens (web/src/style.css), so the prototype reads like Common Ink. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --ink: #1f1e1c;
+  --muted: #6f6b66;
+  --line: #e7e4df;
+  --accent: #2f5fd0;
+  --selection: #d6e0f7;
+  --accent-soft: rgb(47 95 208 / 0.14);
+  --code-bg: rgb(31 30 28 / 0.05);
+  --hover: rgb(31 30 28 / 0.06);
+  --bg-elev: #ffffff;
+  --line-strong: #d6d2cb;
+  --faint: #a9a49d;
+  --ink-2: #3d3a36;
+  --accent-ink: #2450b8;
+  --on-accent: #ffffff;
+  --bad: #c2410c;
+  --warn: #b7791f;
+  --ok: #2f8f5b;
+  --agent: #7a4fc4;
+  --agent-soft: rgb(122 79 196 / 0.12);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
+  --prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--prose);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+    --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+    --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+    --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+    --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+    --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171716; --ink: #e8e6e3; --muted: #9a958f; --line: #2c2b29; --accent: #8fb0ff;
+  --selection: #2c3a5c; --accent-soft: rgb(143 176 255 / 0.16); --code-bg: rgb(232 230 227 / 0.06);
+  --hover: rgb(232 230 227 / 0.08); --bg-elev: #22211f; --line-strong: #3d3b38; --faint: #6b6762;
+  --ink-2: #cfccc7; --accent-ink: #a9c2ff; --on-accent: #10131a; --bad: #f0855a; --warn: #e0a84a;
+  --ok: #5cc28c; --agent: #b99cf0; --agent-soft: rgb(185 156 240 / 0.14);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-size: 14px; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+kbd { font-family: var(--mono); font-size: 0.75rem; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 0.3rem; color: var(--ink-2); background: var(--bg-elev); white-space: nowrap; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.mono { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Tabs and status bar, as the app draws them. */
+.tabs { display: flex; border-bottom: 1px solid var(--line); min-height: 33px; overflow-x: auto; flex: none; }
+.tab { padding: 0.45rem 0.75rem; font-size: 0.8125rem; color: var(--muted); border-right: 1px solid var(--line); display: flex; gap: 0.5rem; align-items: center; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab .x { color: var(--faint); font-size: 0.8rem; }
+.status { grid-area: status; display: flex; gap: 1rem; padding: 0.3rem 1rem; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); border-top: 1px solid transparent; }
+.status .grow { flex: 1; }
+
+/* Rendered markdown (cards and notes). */
+.md h1 { font-size: 1.05rem; margin: 0 0 0.35rem; }
+.md h2 { font-size: 0.95rem; margin: 0.6rem 0 0.25rem; }
+.md h3 { font-size: 0.9rem; margin: 0.5rem 0 0.2rem; }
+.md p { margin: 0.25rem 0; line-height: 1.5; }
+.md ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+.md li { line-height: 1.5; }
+.md li.task { list-style: none; margin-left: -1.25rem; display: flex; gap: 0.45rem; align-items: baseline; }
+.md li.task input { margin: 0; accent-color: var(--accent); transform: translateY(1px); }
+.md li.task.done span { color: var(--muted); text-decoration: line-through; }
+.md code { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); padding: 0 0.25rem; border-radius: 3px; }
+.md a, .md .wikilink { color: var(--accent-ink); text-decoration: none; }
+.chip { display: inline-flex; gap: 0.35rem; align-items: center; border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 0.4rem; font-size: 0.85em; background: var(--bg-elev); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chip .when { color: var(--muted); }
+.due { font-size: 0.75rem; border-radius: 4px; padding: 0 0.3rem; background: var(--code-bg); color: var(--muted); font-family: var(--mono); }
+.due.over { color: var(--bad); }
+.embed-ph { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; padding: 0.35rem 0.6rem; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--muted); font-size: 0.8125rem; }
+.embed-ph b { color: var(--ink-2); font-weight: 600; }
+.embed-live { margin: 0.35rem 0; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elev); font-size: 0.8125rem; }
+.embed-live .big { font-family: var(--mono); font-size: 1.2rem; }
+.embed-live .cal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .cal div { border-left: 2px solid var(--accent); padding-left: 0.4rem; }
+.embed-live .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.embed-live .board div { background: var(--code-bg); border-radius: 4px; padding: 0.3rem; }
+
+/* Authors */
+.who { font-weight: 600; color: var(--ink-2); }
+.who.agent { color: var(--agent); }
+.badge { font-size: 0.7rem; border-radius: 999px; padding: 0 0.4rem; background: var(--code-bg); color: var(--muted); }
+.badge.agent { background: var(--agent-soft); color: var(--agent); }
+.badge.archived { background: var(--code-bg); color: var(--muted); }
+.stat { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.stat .add { color: var(--ok); }
+.stat .del { color: var(--bad); }
+
+/* Overlays: toast, dialogs, the keys sheet and the prototype's controls. */
+.toast { position: fixed; left: 50%; bottom: 2.5rem; transform: translateX(-50%); background: var(--ink); color: var(--bg); border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.8125rem; box-shadow: var(--shadow-lg); display: flex; gap: 0.75rem; align-items: center; z-index: 50; }
+.toast button { color: var(--bg); text-decoration: underline; }
+.toast kbd { background: transparent; color: var(--bg); border-color: color-mix(in srgb, var(--bg) 40%, transparent); }
+.scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.25); display: grid; place-items: start center; padding-top: 12vh; z-index: 40; }
+.dialog { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); width: min(680px, 92vw); max-height: 72vh; display: flex; flex-direction: column; overflow: hidden; }
+.dialog.small { width: min(420px, 92vw); padding: 1rem 1.1rem; gap: 0.6rem; }
+.dialog .row { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.btn { border: 1px solid var(--line-strong); border-radius: 6px; padding: 0.25rem 0.7rem; background: var(--bg); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+.keys-sheet { padding: 1rem 1.25rem; overflow: auto; columns: 2; column-gap: 2rem; font-size: 0.8125rem; }
+.keys-sheet h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.75rem 0 0.35rem; break-after: avoid; }
+.keys-sheet div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.12rem 0; break-inside: avoid; }
+.proto { position: fixed; right: 0.75rem; bottom: 2rem; z-index: 30; font-size: 0.75rem; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 0.55rem 0.7rem; display: grid; gap: 0.35rem; min-width: 220px; }
+.proto[hidden] { display: none; }
+.proto b { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.proto label { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; }
+.proto select, .proto button { font: inherit; font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--bg); color: var(--ink); padding: 0.1rem 0.3rem; }
+
+
+body { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); }
+html[data-framed] body { background: color-mix(in srgb, var(--bg) 82%, var(--ink) 18%); }
+
+/* The prototype's own controls: outside the device, never part of the design. */
+#rig { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; padding: 0.4rem 0.75rem; font-size: 0.75rem; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+#rig b { color: var(--ink); font-weight: 600; }
+#rig select, #rig button { font: inherit; font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--bg-elev); color: var(--ink); padding: 0.15rem 0.4rem; }
+#rig .caps { font-family: var(--mono); font-size: 0.7rem; }
+#rig .grow { flex: 1; }
+#rig[data-min] > :not(.keep) { display: none; }
+#stage { flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; position: relative; }
+#device { position: relative; background: var(--bg); overflow: hidden; container-type: inline-size; width: 100%; height: 100%; }
+html[data-framed] #device { position: absolute; left: 50%; top: 50%; border-radius: 22px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); transform-origin: center center; flex: none; }
+
+/* ---------- The app ---------- */
+#app { position: absolute; inset: 0; display: grid; grid-template-columns: auto auto 1fr auto; grid-template-rows: 1fr auto auto; grid-template-areas: "places list detail ctx" "bar bar bar bar" "osk osk osk osk"; font-size: 15px; }
+#app.c-expanded, #app.c-large { font-size: 14px; }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+#places { grid-area: places; width: 15rem; border-right: 1px solid var(--line); overflow: auto; }
+#list { grid-area: list; }
+#detail { grid-area: detail; }
+#ctx { grid-area: ctx; width: 18rem; border-left: 1px solid var(--line); }
+#app.c-compact #list, #app.c-medium #list { grid-column: 1 / -1; }
+#app.c-expanded #list, #app.c-large #list { width: clamp(20rem, 32cqw, 26rem); border-right: 1px solid var(--line); }
+#app.c-compact #detail, #app.c-medium #detail { grid-column: 1 / -1; grid-row: 1; }
+.pane[hidden], #places[hidden], #ctx[hidden] { display: none !important; }
+
+.top { display: flex; align-items: center; gap: 0.35rem; padding: 0.55rem 0.6rem 0.45rem; min-height: 3rem; flex: none; border-bottom: 1px solid var(--line); background: var(--bg); position: relative; z-index: 2; }
+.top h1 { font-size: 1.05rem; margin: 0 0.25rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app.c-compact .top h1 { font-size: 1.2rem; }
+.icon { min-width: 2.5rem; height: 2.5rem; display: grid; place-items: center; border-radius: 8px; color: var(--ink-2); font-size: 1.1rem; }
+#app.c-expanded .icon, #app.c-large .icon { min-width: 2rem; height: 2rem; font-size: 0.95rem; }
+.icon:active { background: var(--hover); }
+.icon.text { font-size: 0.9rem; padding: 0 0.5rem; color: var(--accent-ink); }
+.chips { display: flex; gap: 0.35rem; padding: 0.45rem 0.75rem; overflow-x: auto; flex: none; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.chips button { white-space: nowrap; font-size: 0.82rem; padding: 0.3rem 0.75rem; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink-2); }
+.chips button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.chips .n { color: var(--agent); margin-left: 0.2rem; font-size: 0.75rem; }
+.chips button[aria-pressed="true"] .n { color: inherit; }
+.scroll { flex: 1; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.qline { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); padding: 0.35rem 0.85rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group { font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin: 0.9rem 0.85rem 0.3rem; font-weight: 600; }
+
+/* Cards, with swipe */
+.sw { position: relative; margin: 0.4rem 0.6rem; border-radius: 10px; overflow: hidden; touch-action: pan-y; }
+.sw .bg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 0.85rem; color: #fff; }
+.sw .bg span { padding: 0 1.1rem; display: flex; gap: 0.4rem; align-items: center; height: 100%; }
+.sw .bg .r { background: var(--ok); }
+.sw .bg .l { background: var(--bad); margin-left: auto; }
+.sw .bg .r, .sw .bg .l { opacity: 0; }
+.sw[data-dir="right"] .bg .r, .sw[data-dir="left"] .bg .l { opacity: 1; flex: 1; }
+.sw[data-dir="left"] .bg .l { justify-content: flex-end; }
+.sw.armed .bg span { filter: brightness(1.12); }
+.card { position: relative; background: var(--bg-elev); border: 1px solid var(--line); border-radius: 10px; padding: 0.65rem 0.8rem 0.6rem; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform 0.18s ease; cursor: default; }
+.card.dragging { transition: none; }
+.sw.focus .card { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.sw.picked .card { background: color-mix(in srgb, var(--selection) 60%, var(--bg-elev)); }
+.sw.current .card { border-left: 3px solid var(--accent); }
+.sw.gone { transition: max-height 0.2s, margin 0.2s, opacity 0.2s; max-height: 0 !important; margin-top: 0; margin-bottom: 0; opacity: 0; }
+.card .t1 { display: flex; gap: 0.45rem; align-items: baseline; }
+.card .title { font-weight: 600; font-size: 0.98rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .folder { font-size: 0.75rem; color: var(--faint); white-space: nowrap; }
+.card .when { margin-left: auto; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.card .meta { font-size: 0.78rem; color: var(--muted); margin: 0.1rem 0 0.3rem; display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+.card .preview { font-size: 0.87rem; color: var(--ink-2); max-height: 8.6rem; overflow: hidden; -webkit-mask-image: linear-gradient(#000 75%, transparent); mask-image: linear-gradient(#000 75%, transparent); }
+.card .preview h1 { display: none; }
+.card .dotu { position: absolute; left: 0.3rem; top: 1rem; width: 6px; height: 6px; border-radius: 50%; background: var(--agent); }
+.card .pick { position: absolute; right: 0.6rem; bottom: 0.55rem; width: 1.3rem; height: 1.3rem; border-radius: 50%; border: 2px solid var(--line-strong); display: none; }
+.selecting .card .pick { display: block; }
+.sw.picked .card .pick { background: var(--accent); border-color: var(--accent); }
+.md li.task input { width: 1.05rem; height: 1.05rem; }
+#app.c-expanded .card .preview, #app.c-large .card .preview { max-height: 6rem; }
+.dense .card .preview, .dense .card .meta { display: none; }
+.dense .sw { margin: 0.15rem 0.5rem; }
+.dense .card { padding: 0.45rem 0.7rem; }
+.pill { position: sticky; top: 0.5rem; z-index: 3; display: flex; justify-content: center; height: 0; }
+.pill button { background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.82rem; box-shadow: var(--shadow-lg); }
+.end { text-align: center; color: var(--faint); font-size: 0.8rem; padding: 1rem 1rem 2rem; }
+.empty { text-align: center; color: var(--muted); padding: 3rem 1.5rem; }
+.empty b { color: var(--ink); display: block; font-size: 1rem; margin-bottom: 0.3rem; }
+.hintrow { font-size: 0.72rem; color: var(--faint); padding: 0.3rem 0.85rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+/* Rows: trash, tasks, sources, extensions, places */
+.row { display: flex; gap: 0.7rem; align-items: center; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--line); background: var(--bg); min-height: 3.2rem; }
+.row.focus { background: var(--selection); }
+.row .grow { flex: 1; min-width: 0; }
+.row .t { font-weight: 600; font-size: 0.92rem; }
+.row .s { font-size: 0.78rem; color: var(--muted); }
+.row .s.why { color: var(--warn); }
+.left { width: 3.5rem; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; flex: none; }
+.left i { display: block; height: 100%; background: var(--warn); }
+.left.soon i { background: var(--bad); }
+.sw.rowsw { margin: 0; border-radius: 0; }
+.sw.rowsw .card { border: 0; border-radius: 0; border-bottom: 1px solid var(--line); padding: 0.65rem 0.85rem; background: var(--bg); }
+.callout { font-size: 0.8rem; color: var(--muted); border-left: 2px solid var(--line-strong); padding: 0.2rem 0.7rem; margin: 0.75rem 0.85rem; }
+select.ovr { font: inherit; font-size: 0.78rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg-elev); color: var(--ink); padding: 0.2rem; }
+
+/* Places list (sidebar and sheet) */
+.plist h4 { margin: 0.9rem 0.85rem 0.25rem; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+.place { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.85rem; color: var(--ink-2); cursor: pointer; }
+#places .place { padding: 0.3rem 0.85rem; font-size: 0.85rem; color: var(--muted); }
+.place .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place .count { font-size: 0.75rem; color: var(--faint); }
+.place .k { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); }
+.place[aria-current="true"] { color: var(--ink); background: var(--line); }
+#places .place:hover { color: var(--ink); background: var(--hover); }
+.place .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.kept { margin: 0.6rem 0.85rem; font-size: 0.78rem; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 8px; padding: 0.5rem 0.7rem; }
+
+/* Bottom bar */
+#bar, .top, .chips, .sheet .handle, .act, .place { user-select: none; -webkit-user-select: none; }
+#bar { grid-area: bar; display: flex; border-top: 1px solid var(--line); background: var(--bg); padding-bottom: env(safe-area-inset-bottom); }
+#bar[hidden] { display: none; }
+#bar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.1rem; padding: 0.4rem 0 0.45rem; font-size: 0.68rem; color: var(--muted); }
+#bar button .g { font-size: 1.15rem; line-height: 1.3; }
+#bar button[aria-current="true"] { color: var(--accent-ink); }
+#bar.select button { color: var(--ink); }
+#bar .badge2 { position: absolute; margin-left: 1.3rem; margin-top: -0.1rem; font-size: 0.6rem; background: var(--agent); color: #fff; border-radius: 999px; padding: 0 0.3rem; }
+
+/* Note */
+.note { padding: 1rem 1.1rem 6rem; max-width: 44rem; margin: 0 auto; width: 100%; }
+.note .md h1 { font-size: 1.45rem; margin: 0 0 0.6rem; }
+.note .md { font-size: 1rem; }
+.note .md li { line-height: 1.6; }
+.note .crumbs { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.6rem; display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+.banner { border: 1px solid var(--line-strong); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.82rem; color: var(--muted); margin-bottom: 0.8rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line-strong); border-radius: 7px; padding: 0.35rem 0.8rem; background: var(--bg-elev); font-size: 0.85rem; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+textarea.ed { width: 100%; min-height: 50vh; border: 0; outline: none; resize: none; background: transparent; color: var(--ink); font: 1rem/1.6 var(--mono); padding: 0; }
+.tabs2 { display: flex; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; scrollbar-width: none; }
+.tabs2 .tab { cursor: pointer; }
+.tabs2 .tab .x { padding-left: 0.2rem; }
+.kchip { font-size: 0.7rem; border: 1px dashed var(--line-strong); border-radius: 999px; padding: 0.1rem 0.5rem; color: var(--muted); white-space: nowrap; }
+#detail .placeholder { margin: auto; color: var(--faint); text-align: center; font-size: 0.85rem; line-height: 2; }
+.splitwrap { display: flex; flex: 1; min-height: 0; }
+.splitwrap > .win { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.splitwrap > .win + .win { border-left: 1px solid var(--line); }
+.win .scroll { flex: 1; }
+
+/* Keyboard toolbar and the simulated on-screen keyboard */
+#ktool { display: flex; gap: 0.1rem; overflow-x: auto; border-top: 1px solid var(--line); background: var(--bg-elev); padding: 0.25rem 0.3rem; flex: none; scrollbar-width: none; }
+#ktool button { min-width: 2.6rem; height: 2.4rem; border-radius: 7px; font-size: 0.95rem; color: var(--ink-2); flex: none; }
+#ktool button:active { background: var(--hover); }
+#ktool .sep { width: 1px; background: var(--line); margin: 0.3rem 0.2rem; flex: none; }
+#osk { grid-area: osk; height: 0; overflow: hidden; background: color-mix(in srgb, var(--bg-elev) 70%, var(--line-strong)); transition: height 0.2s; display: grid; place-items: center; color: var(--muted); font-size: 0.75rem; }
+#osk.on { height: 15.5rem; }
+#osk .keys { display: grid; gap: 0.35rem; width: 92%; }
+#osk .keys div { display: flex; gap: 0.3rem; justify-content: center; }
+#osk .keys i { flex: 1; max-width: 2rem; height: 2.3rem; border-radius: 5px; background: var(--bg-elev); box-shadow: 0 1px 0 var(--line-strong); }
+
+/* Calendar */
+.day { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.9rem 0.85rem 0.35rem; font-weight: 600; }
+.ev { display: flex; gap: 0.7rem; align-items: baseline; margin: 0.15rem 0.6rem; padding: 0.55rem 0.7rem; border-radius: 8px; border-left: 3px solid var(--accent); background: var(--bg-elev); cursor: pointer; }
+.ev.focus, .ev.current { box-shadow: 0 0 0 2px var(--accent); }
+.ev .tm { color: var(--muted); font-size: 0.78rem; width: 4.8rem; flex: none; }
+.ev .ti { font-weight: 600; font-size: 0.9rem; }
+.ev .wh { color: var(--muted); font-size: 0.78rem; }
+.evd { padding: 1rem 1.1rem; }
+.evd h2 { margin: 0 0 0.3rem; font-size: 1.2rem; }
+.days3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; padding: 0 0.4rem; }
+.days3 .ev { margin: 0.15rem 0; display: block; }
+.days3 .ev .tm { width: auto; }
+
+/* Context panel (docked) and sheets */
+.ptabs { display: flex; gap: 0.2rem; padding: 0.35rem 0.6rem 0; border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; }
+.ptabs button { padding: 0.35rem 0.55rem; color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+.ptabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.change { padding: 0.5rem 0.85rem; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.change .l1 { display: flex; gap: 0.4rem; }
+.change .l1 .grow { flex: 1; }
+.scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 0.28); z-index: 40; opacity: 0; transition: opacity 0.2s; }
+.scrim.on { opacity: 1; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 41; background: var(--bg-elev); border-radius: 14px 14px 0 0; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; max-height: 92%; transform: translateY(100%); transition: transform 0.22s ease; padding-bottom: env(safe-area-inset-bottom); }
+.sheet.on { transform: translateY(0); }
+.sheet.dragging { transition: none; }
+.sheet .handle { height: 1.4rem; display: grid; place-items: center; cursor: grab; touch-action: none; flex: none; }
+.sheet .handle i { width: 2.4rem; height: 4px; border-radius: 2px; background: var(--line-strong); }
+.sheet h3 { margin: 0 1rem 0.4rem; font-size: 0.95rem; }
+.sheet .sbody { overflow: auto; flex: 1; }
+.sheet.side { left: auto; top: 0; width: min(22rem, 90%); max-height: none; border-radius: 0; transform: translateX(100%); }
+.sheet.side.on { transform: translateX(0); }
+.sheet.left { right: auto; left: 0; top: 0; width: min(18rem, 86%); max-height: none; border-radius: 0; transform: translateX(-100%); }
+.sheet.left.on { transform: translateX(0); }
+.act { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; font-size: 0.95rem; width: 100%; text-align: left; border-top: 1px solid var(--line); }
+.act:first-child { border-top: 0; }
+.act .g { width: 1.3rem; text-align: center; color: var(--muted); }
+.act .why { margin-left: auto; font-size: 0.75rem; color: var(--faint); }
+.act[aria-disabled="true"] { color: var(--faint); }
+.act.danger { color: var(--bad); }
+.act.focus { background: var(--hover); }
+
+/* Search */
+.search { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+#app:has(#osk.on) .search:not(.dialog) { bottom: 15.5rem; }
+.search.dialog { inset: 8% auto auto 50%; transform: translateX(-50%); width: min(44rem, 92%); max-height: 78%; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); background: var(--bg-elev); }
+.search .sq { display: flex; gap: 0.4rem; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--line); align-items: center; }
+.search input { flex: 1; font: inherit; font-size: 1rem; border: 1px solid var(--line-strong); border-radius: 9px; padding: 0.45rem 0.7rem; background: var(--bg-elev); color: var(--ink); outline: none; min-width: 0; }
+.search.dialog input { border: 0; background: transparent; }
+.search .results { overflow: auto; flex: 1; }
+.search .sec { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); padding: 0.7rem 0.85rem 0.2rem; font-weight: 600; display: flex; justify-content: space-between; }
+.res { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.55rem 0.85rem; cursor: pointer; }
+.search.dialog .res { padding: 0.35rem 0.85rem; }
+.res.focus { background: var(--selection); }
+.res .k { width: 1.1rem; color: var(--faint); text-align: center; flex: none; }
+.res .tt { flex: 1; min-width: 0; }
+.res .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res .d { color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res .r { color: var(--faint); font-size: 0.75rem; white-space: nowrap; }
+.res mark { background: var(--accent-soft); color: inherit; border-radius: 2px; }
+.res.dim .t { color: var(--muted); }
+
+/* Status bar (only where there's room and a keyboard) */
+#status { grid-area: bar; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); display: flex; gap: 1rem; padding: 0.25rem 0.9rem; border-top: 1px solid var(--line); }
+#status[hidden] { display: none; }
+#status .grow { flex: 1; }
+
+/* Snackbar */
+.snack { position: absolute; z-index: 70; left: 50%; transform: translateX(-50%); bottom: calc(var(--snack-b, 4.6rem)); z-index: 60; background: var(--ink); color: var(--bg); border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.85rem; box-shadow: var(--shadow-lg); display: flex; gap: 1rem; align-items: center; width: max-content; max-width: 92%; }
+.snack button { color: var(--accent); font-weight: 700; color: color-mix(in srgb, var(--accent) 60%, var(--bg)); }
+.json { font-family: var(--mono); font-size: 0.75rem; background: var(--code-bg); border-radius: 8px; padding: 0.6rem 0.75rem; white-space: pre; overflow: auto; margin: 0.3rem 0.85rem 0.9rem; }
+.keysheet { padding: 0.5rem 1rem 1rem; font-size: 0.82rem; columns: 2; column-gap: 1.5rem; }
+.keysheet div { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.12rem 0; break-inside: avoid; }
+.keysheet h5 { margin: 0.6rem 0 0.2rem; font-size: 0.68rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; }
+@media (prefers-reduced-motion: reduce) { .card, .sheet, .sw.gone, #osk, .scrim { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="rig">
+  <b class="keep">Prototype</b>
+  <label>Device <select id="rDevice"></select></label>
+  <label>Theme <select id="rTheme"><option value="">System</option><option>light</option><option>dark</option></select></label>
+  <button id="rAgent">Simulate an agent's edit</button>
+  <button id="rReset">Start over</button>
+  <span class="caps" id="rCaps"></span>
+  <span class="grow"></span>
+  <button class="keep" id="rHide" title="Hide or show these controls">⚙</button>
+</div>
+<div id="stage"><div id="device"><div id="app"></div></div></div>
+<script>
+// ---- Sample workspace: notes, events, contacts, commands and settings, on a fixed clock. ----
+const NOW = new Date("2026-10-05T09:00:00").getTime();
+const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "⌘" : "Ctrl-";
+
+const AGENTS = { claude: "Claude", research: "Research agent", sync: "Google Calendar sync" };
+
+/** A note: its path, text, and its last change (who, when, how big). */
+const SEED_NOTES = [
+  { path: "Projects/Launch plan.md", ago: 4 * MIN, by: "claude", add: 12, del: 3, summary: "Added a risks section and two tasks", pinned: true,
+    text: `# Launch plan\n\nShip the public beta on **Oct 20**. Agents keep the checklist current.\n\n## This week\n- [x] Freeze the onboarding copy\n- [ ] Record the demo video due:2026-10-07\n- [ ] Draft the changelog post due:2026-10-04\n- [ ] Ask [[Sam Rivera]] to review pricing\n\n## Risks\n- Google's test app ends grants after 7 days\n- Import from v1 isn't done` },
+  { path: "Journal/2026-10-05.md", ago: 22 * MIN, by: "you", add: 6, del: 0,
+    text: `# 2026-10-05\n\n## Today\n- [ ] Plan the navigation study\n- [x] Inbox to zero\n- [ ] Call the dentist about Tuesday\n\n::timer{duration=25m label="Focus"}\n\n## Log\n- 08:40 — reviewed the agent's launch checklist` },
+  { path: "Research/Reading list.md", ago: 70 * MIN, by: "research", add: 9, del: 0, summary: "Added 3 links on feed design",
+    text: `# Reading list\n\nCollected by the research agent; tick what you've read.\n\n- [ ] Readwise Reader: the triage workflow\n- [ ] Superhuman: getting to inbox zero\n- [x] VS Code: custom layout\n- [ ] Obsidian: search operators` },
+  { path: "Meetings/Quarterly planning.md", ago: 2 * HOUR, by: "you", add: 14, del: 2,
+    text: `# Quarterly planning\n\n[Quarterly planning](event:google/primary/planning) · Room 4\n\n## Agenda\n- Review Q3 numbers\n- Pick the three bets for Q4\n- [ ] Send the pre-read to [[Priya Natarajan]]\n\n\`\`\`calendar\nview: 3 days\n\`\`\`` },
+  { path: "Ideas/A feed for notes.md", ago: 5 * HOUR, by: "you", add: 22, del: 5, pinned: true,
+    text: `# A feed for notes\n\nLike X, but for my own notes: scroll what changed, archive what I'm done with.\n\n- Cards show the start of each note\n- **e** archives, **#** trashes, **p** pins\n- Agents' edits show who made them\n\nOpen question: should an agent's edit bring an archived note back?` },
+  { path: "Boards/Website.md", ago: 9 * HOUR, by: "claude", add: 3, del: 3, summary: "Moved 'Pricing page' to Doing",
+    text: `# Website\n\n:::kanban\n## To do\n- Blog index\n## Doing\n- Pricing page\n## Done\n- New logo\n:::` },
+  { path: "Meetings/Meeting prep.md", ago: 20 * HOUR, by: "you", add: 4, del: 1,
+    text: `# Meeting prep\n\n- Tomorrow: [Team standup (late start)](event:google/primary/standup_20261006)\n- [Dentist](event:google/primary/dentist) — bring the insurance card\n- [ ] Read the planning pre-read` },
+  { path: "Journal/2026-10-04.md", ago: 1 * DAY + 3 * HOUR, by: "you", add: 11, del: 0,
+    text: `# 2026-10-04\n\n- [x] Groceries\n- [x] Weekly review\n- Long walk; thought about the feed idea, see [[A feed for notes]]` },
+  { path: "Areas/Weekly review.md", ago: 1 * DAY + 5 * HOUR, by: "you", add: 7, del: 7,
+    text: `# Weekly review\n\n1. Empty the inboxes\n2. Look at next week's calendar\n3. Archive what's done\n\n- [ ] Review agent changes from the week due:2026-10-05` },
+  { path: "Research/Trash retention.md", ago: 1 * DAY + 8 * HOUR, by: "research", add: 31, del: 0, summary: "New note: how 6 apps keep deleted items",
+    text: `# Trash retention\n\nGmail, Notion, Apple Notes and Google Drive keep deleted items **30 days**. macOS empties its Trash after 30 days only if you turn that on.\n\n- Restore puts an item back where it was\n- "Delete forever" skips the wait` },
+  { path: "Recipes/Dal.md", ago: 2 * DAY, by: "you", add: 18, del: 0,
+    text: `# Dal\n\n- 1 cup red lentils\n- 1 onion, 3 cloves garlic, ginger\n- Turmeric, cumin, chili\n\nSimmer 20 minutes. Temper the spices in ghee last.` },
+  { path: "Ideas/Agent blackboard.md", ago: 2 * DAY + 4 * HOUR, by: "claude", add: 8, del: 2, summary: "Summarized the open threads",
+    text: `# Agent blackboard\n\nWhere agents leave work for each other and for me.\n\n- Research agent: reading list is current\n- Claude: launch checklist updated daily\n- [ ] Decide who owns the changelog` },
+  { path: "People/Sam Rivera.md", ago: 3 * DAY, by: "you", add: 5, del: 0,
+    text: `# Sam Rivera\n\nPricing, partnerships. Prefers async.\n\n- [ ] Send Sam the beta invite` },
+  { path: "Projects/Import from v1.md", ago: 4 * DAY, by: "claude", add: 16, del: 4, summary: "Mapped v1's folders to v2 paths",
+    text: `# Import from v1\n\n- Folders map one to one\n- Stars become pins\n- \`Archive/\` notes become archived notes, in place\n- [ ] Handle \`.trash/\` (drop, or bring as trashed)` },
+  { path: "Areas/Health.md", ago: 6 * DAY, by: "you", add: 3, del: 1,
+    text: `# Health\n\n- [ ] Book the physio due:2026-10-09 rec:monthly\n- Gym Mon and Thu, 7am` },
+];
+
+/** Older notes, made up, so the feed scrolls a long way. */
+const FILLER_TOPICS = ["Book notes", "Trip ideas", "Garden", "Reading", "Taxes", "Bike repair", "Podcast notes", "Birthday gifts", "Home network", "Language practice", "Coffee", "Running log", "Photography", "Recipes to try", "Side project", "Conference talk", "Kitchen reno", "Car", "Budget", "Writing prompts"];
+function fillerNote(i) {
+  const topic = FILLER_TOPICS[i % FILLER_TOPICS.length];
+  const n = Math.floor(i / FILLER_TOPICS.length) + 1;
+  const by = i % 7 === 3 ? "claude" : i % 11 === 5 ? "research" : "you";
+  const title = n > 1 ? `${topic} ${n}` : topic;
+  return {
+    path: `Notes/${title}.md`, ago: 7 * DAY + i * 0.9 * DAY, by, add: 2 + (i * 7) % 20, del: (i * 3) % 6,
+    summary: by === "you" ? undefined : "Tidied the list",
+    text: `# ${title}\n\n${["Some thoughts, kept for later.", "A few links and a plan.", "Notes from the weekend.", "What to try next time."][i % 4]}\n\n- ${["First idea", "A link to follow up", "Ask around"][i % 3]}\n- [${i % 3 ? " " : "x"}] ${["Follow up", "Look this up", "Write it down properly"][i % 3]}`,
+  };
+}
+
+const SEED_ARCHIVED = [
+  { path: "Projects/Onboarding v1.md", ago: 40 * DAY, by: "you", add: 2, del: 0, text: `# Onboarding v1\n\nThe old welcome flow. Replaced by the tour.\n\n- [x] Ship it` },
+  { path: "Meetings/Q2 retro.md", ago: 95 * DAY, by: "you", add: 9, del: 0, text: `# Q2 retro\n\n- Went well: the calendar\n- To fix: too many top-bar buttons` },
+  { path: "Travel/Lisbon.md", ago: 120 * DAY, by: "you", add: 4, del: 0, text: `# Lisbon\n\n- Time Out market\n- Belém, early` },
+  { path: "Research/Old competitor scan.md", ago: 3 * HOUR, by: "research", add: 2, del: 0, summary: "Added a line to an archived note", text: `# Old competitor scan\n\nArchived in August. The research agent added a line today.\n\n- Mem: timeline of notes` },
+];
+
+const SEED_TRASH = [
+  { path: "Scratch.md", deleted: 2 * DAY, by: "you", text: `# Scratch\n\npaste buffer` },
+  { path: "Untitled 3.md", deleted: 12 * DAY, by: "you", text: `# Untitled 3\n\n` },
+  { path: "Drafts/Thread about feeds.md", deleted: 26 * DAY, by: "claude", text: `# Thread about feeds\n\n1/ Notes apps should have a feed…` },
+  { path: "Ideas/Smart folders everywhere.md", deleted: 29 * DAY + 20 * HOUR, by: "you", text: `# Smart folders everywhere\n\nEvery list is a saved search.` },
+];
+
+const EVENTS = [
+  { id: "standup", title: "Team standup", cal: "Work", day: 0, start: "09:00", end: "09:15", rec: true },
+  { id: "gym", title: "Gym", cal: "Personal", day: 0, start: "07:00", end: "08:00", rec: true },
+  { id: "planning", title: "Quarterly planning", cal: "Work", day: 0, start: "13:00", end: "14:30", where: "Room 4", notes: ["Meetings/Quarterly planning.md"] },
+  { id: "review", title: "Weekly review", cal: "Work", day: 0, start: "15:00", end: "15:30", rec: true, notes: ["Areas/Weekly review.md"] },
+  { id: "standup_20261006", title: "Team standup (late start)", cal: "Work", day: 1, start: "09:30", end: "09:45", rec: true, notes: ["Meetings/Meeting prep.md"] },
+  { id: "dentist", title: "Dentist", cal: "Personal", day: 1, start: "14:30", end: "15:15", where: "12 High Street", notes: ["Meetings/Meeting prep.md"] },
+  { id: "offsite", title: "Team offsite", cal: "Work", day: 3, allDay: true, where: "Lake house" },
+  { id: "dinner", title: "Dinner with Sam", cal: "Personal", day: 4, start: "19:00", end: "21:00", where: "Luigi's" },
+  { id: "payday", title: "Payday", cal: "Personal", day: 4, allDay: true, rec: true },
+];
+const CAL_COLORS = { Work: "var(--accent)", Personal: "var(--bad)" };
+
+const CONTACTS = [
+  { name: "Sam Rivera", email: "sam@example.com", note: "People/Sam Rivera.md" },
+  { name: "Priya Natarajan", email: "priya@example.com" },
+  { name: "Jordan Lee", email: "jordan@example.com" },
+  { name: "Mei Chen", email: "mei@example.com" },
+];
+
+const SETTINGS = [
+  { key: "trash.retentionDays", value: "30", desc: "Days a deleted note waits in Trash before it's purged" },
+  { key: "feed.liveEmbeds", value: '"focused"', desc: "Draw embeds in feed cards: never, focused, always" },
+  { key: "feed.agentEditsResurface", value: "false", desc: "An agent's edit brings an archived note back to the feed" },
+  { key: "feed.groupAgentChanges", value: "true", desc: "One card per note for a run of an agent's changes" },
+  { key: "editor.livePreview", value: "true", desc: "Draw markdown as it reads" },
+  { key: "search.includeArchived", value: '"last"', desc: "Archived notes in ⌘P: hidden, last" },
+];
+
+// ---- Dates and words ----
+function ago(ms) {
+  if (ms < MIN) return "just now";
+  if (ms < HOUR) return `${Math.round(ms / MIN)} min ago`;
+  if (ms < DAY) return `${Math.round(ms / HOUR)} h ago`;
+  if (ms < 2 * DAY) return "yesterday";
+  if (ms < 30 * DAY) return `${Math.round(ms / DAY)} days ago`;
+  return new Date(NOW - ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function bucket(ms) {
+  const d = new Date(NOW - ms), today = new Date(NOW);
+  const days = Math.floor((new Date(today.toDateString()) - new Date(d.toDateString())) / DAY);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  if (days < 30) return "This month";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+const dayName = (n) => n === 0 ? "Today" : n === 1 ? "Tomorrow" : new Date(NOW + n * DAY).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+const fmtTime = (t) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
+const titleOf = (n) => (n.text.match(/^# (.+)$/m) || [, n.path.replace(/\.md$/, "").split("/").pop()])[1];
+const folderOf = (path) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+const whoName = (by) => by === "you" ? "You" : AGENTS[by] || by;
+const isAgent = (by) => by !== "you";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ---- A small markdown renderer: headings, lists, tasks, links, event links, embeds. ----
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\(event:([^)]+)\)/g, (_, t, addr) => {
+      const ev = EVENTS.find((e) => addr.endsWith("/" + e.id));
+      const when = ev ? `${ev.day === 0 ? "Today" : ev.day === 1 ? "Tomorrow" : dayName(ev.day).split(",")[0]}${ev.start ? " · " + fmtTime(ev.start) : ""}` : "";
+      return `<span class="chip" data-event="${ev ? ev.id : ""}"><span class="dot" style="background:${ev ? CAL_COLORS[ev.cal] : "var(--accent)"}"></span><span class="when">${when}</span> <b>${t}</b></span>`;
+    })
+    .replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink">$1</span>')
+    .replace(/ due:(\d{4}-\d\d-\d\d)/g, (_, d) => ` <span class="due${new Date(d + "T23:59").getTime() < NOW ? " over" : ""}">${new Date(d + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>`)
+    .replace(/ rec:(\w+)/g, ' <span class="due">↻ $1</span>');
+}
+const EMBED_WORDS = {
+  timer: (a) => ["◷", "Timer", a.duration || ""],
+  calendar: (a) => ["▦", "Calendar", a.view || "agenda"],
+  kanban: () => ["▤", "Board", "3 columns"],
+};
+function embedArgs(s) { const a = {}; s.replace(/(\w+)=("([^"]*)"|\S+)/g, (_, k, v, q) => (a[k] = q ?? v)); return a; }
+/** Markdown to HTML. `live`: draw embeds live (true) or as a quiet line saying what they are. `limit`: lines to keep. */
+function renderMarkdown(text, { live = false, limit = Infinity, noteIndex = -1 } = {}) {
+  const out = [];
+  let list = false, taskNo = 0, lines = text.split("\n"), shown = 0;
+  const close = () => { if (list) out.push("</ul>"), (list = false); };
+  for (let i = 0; i < lines.length && shown < limit; i++) {
+    const line = lines[i];
+    let m;
+    if ((m = line.match(/^::(\w+)\{(.*)\}$/))) { close(); out.push(embedHtml(m[1], embedArgs(m[2]), live)); shown += 2; continue; }
+    if ((m = line.match(/^```(\w+)/))) {
+      close(); const body = []; i++;
+      while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
+      out.push(embedHtml(m[1], Object.fromEntries(body.map((l) => l.split(/:\s*/))), live)); shown += 2; continue;
+    }
+    if ((m = line.match(/^:::(\w+)/))) {
+      close(); const cols = []; i++;
+      while (i < lines.length && !lines[i].startsWith(":::")) { if (lines[i].startsWith("## ")) cols.push([lines[i].slice(3), []]); else if (cols.length && lines[i].startsWith("- ")) cols.at(-1)[1].push(lines[i].slice(2)); i++; }
+      out.push(embedHtml(m[1], { cols }, live)); shown += 2; continue;
+    }
+    if (!line.trim()) { close(); continue; }
+    shown++;
+    if ((m = line.match(/^(#{1,3}) (.*)/))) { close(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
+    if ((m = line.match(/^(?:- |\d+\. )\[( |x)\] (.*)/))) {
+      if (!list) out.push("<ul>"), (list = true);
+      const done = m[1] === "x";
+      out.push(`<li class="task${done ? " done" : ""}"><input type="checkbox" tabindex="-1" data-note="${noteIndex}" data-task="${taskNo++}"${done ? " checked" : ""}><span>${inline(m[2])}</span></li>`);
+      continue;
+    }
+    if ((m = line.match(/^(?:- |\d+\. )(.*)/))) { if (!list) out.push("<ul>"), (list = true); out.push(`<li>${inline(m[1])}</li>`); continue; }
+    close(); out.push(`<p>${inline(line)}</p>`);
+  }
+  close();
+  return out.join("");
+}
+function embedHtml(kind, a, live) {
+  const words = (EMBED_WORDS[kind] || (() => ["◇", kind, ""]))(a);
+  if (!live) return `<div class="embed-ph" title="An embed. It draws when the card is focused, or in the note."><span>${words[0]}</span><b>${words[1]}</b><span>${esc(words[2])}</span></div>`;
+  if (kind === "timer") return `<div class="embed-live" data-timer="${parseInt(a.duration) || 25}"><div class="muted">${esc(a.label || "Timer")}</div><div class="big">${(parseInt(a.duration) || 25)}:00</div></div>`;
+  if (kind === "calendar") return `<div class="embed-live"><div class="cal">${[0, 1, 2].map((d) => `<div><b>${dayName(d).split(",")[0]}</b>${EVENTS.filter((e) => e.day === d).slice(0, 3).map((e) => `<div class="muted">${e.start ? fmtTime(e.start) : "All day"} ${esc(e.title)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  if (kind === "kanban") return `<div class="embed-live"><div class="board">${(a.cols || []).map(([c, items]) => `<div><b>${esc(c)}</b>${items.map((t) => `<div class="muted">${esc(t)}</div>`).join("")}</div>`).join("")}</div></div>`;
+  return `<div class="embed-live">${esc(kind)}</div>`;
+}
+function toggleTask(note, n) {
+  let k = -1;
+  note.text = note.text.split("\n").map((l) => { const m = l.match(/^(- |\d+\. )\[( |x)\] /); if (m && ++k === n) return l.replace(/\[( |x)\]/, m[2] === "x" ? "[ ]" : "[x]"); return l; }).join("\n");
+}
+
+// ---- Queries: one parser for the search bar, the feed's filter and saved searches. ----
+const OPERATORS = [
+  { op: "is:", values: ["archived", "pinned", "trashed", "open", "done"], desc: "State of a note or task" },
+  { op: "in:", values: ["Projects/", "Journal/", "Research/", "Meetings/", "Ideas/"], desc: "A folder" },
+  { op: "from:", values: ["me", "agent", "claude", "research", "sync"], desc: "Who made the last change" },
+  { op: "type:", values: ["note", "task", "event", "contact", "command", "setting"], desc: "Only one kind of result" },
+  { op: "edited:", values: ["today", "<7d", "<30d", ">90d"], desc: "When it last changed" },
+  { op: "due:", values: ["today", "<=today", "<7d"], desc: "Tasks by due date" },
+  { op: "has:", values: ["task", "embed", "event"], desc: "What a note holds" },
+];
+function parseQuery(q) {
+  const out = { words: [], is: [], in: [], from: [], type: [], edited: null, due: null, has: [], not: [] };
+  for (const tok of q.match(/"[^"]*"|\S+/g) || []) {
+    const m = tok.match(/^(-?)(is|in|from|type|edited|due|has):(.+)$/);
+    if (m) { const [, neg, k, v] = m; if (neg) out.not.push([k, v.toLowerCase()]); else if (Array.isArray(out[k])) out[k].push(v.toLowerCase()); else out[k] = v.toLowerCase(); }
+    else if (tok.startsWith("-") && tok.length > 1) out.not.push(["word", tok.slice(1).toLowerCase()]);
+    else out.words.push(tok.replace(/"/g, "").toLowerCase());
+  }
+  return out;
+}
+function editedOk(spec, msAgo) {
+  if (!spec) return true;
+  if (spec === "today") return msAgo < 9 * HOUR + MIN;
+  const m = spec.match(/^([<>])(\d+)d$/); if (!m) return true;
+  return m[1] === "<" ? msAgo < +m[2] * DAY : msAgo > +m[2] * DAY;
+}
+function fromOk(list, by) {
+  if (!list.length) return true;
+  return list.some((f) => f === "me" ? by === "you" : f === "agent" ? isAgent(by) && by !== "sync" : by === f);
+}
+
+// ---- Keys: by the character typed (Dvorak-safe), Mod is ⌘ on a Mac and Ctrl elsewhere. ----
+const isMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+const inText = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+
+
+// ======================= Devices and capabilities =======================
+// The prototype can stand in for a device. "Fit" uses this browser as it is, and detects a keyboard
+// the way the app would: from a key pressed outside a text field.
+const PRESETS = {
+  fit: { label: "Fit this window (real device)" },
+  phone: { label: "Phone · touch", w: 375, h: 780, touch: true, keyboard: false, pointer: "coarse" },
+  phoneKb: { label: "Phone + Bluetooth keyboard", w: 375, h: 780, touch: true, keyboard: true, pointer: "coarse" },
+  tablet: { label: "Tablet, portrait · touch", w: 820, h: 1100, touch: true, keyboard: false, pointer: "coarse" },
+  tabletKb: { label: "Tablet, landscape + keyboard", w: 1180, h: 820, touch: true, keyboard: true, pointer: "fine" },
+  laptop: { label: "Laptop", w: 1440, h: 880, touch: false, keyboard: true, pointer: "fine" },
+  narrow: { label: "Laptop, narrow window", w: 520, h: 820, touch: false, keyboard: true, pointer: "fine" },
+};
+const WIDTHS = [["compact", 0], ["medium", 600], ["expanded", 840], ["large", 1200]];
+const widthClass = (w) => WIDTHS.filter(([, min]) => w >= min).pop()[0];
+const atLeast = (cls, min) => WIDTHS.findIndex(([c]) => c === cls) >= WIDTHS.findIndex(([c]) => c === min);
+const mq = (q) => matchMedia(q).matches;
+
+/** Extensions and what each needs. `requires` is checked on this device; `adapts` says how one changes instead. */
+const EXTS = [
+  { id: "feed", name: "Feed", desc: "Notes by their last change, with triage", adapts: "Swipes on touch, keys with a keyboard" },
+  { id: "workbench.tabs", name: "Workbench: tabs", desc: "Tabs over a window", requires: { width: "medium" } },
+  { id: "workbench.splits", name: "Workbench: splits", desc: "Windows side by side; a list beside its note", requires: { width: "expanded" } },
+  { id: "vim", name: "Vim", desc: "Vim keys in every editor", requires: { keyboard: true } },
+  { id: "keys", name: "Keyboard shortcuts", core: true, desc: "Every extension's keys, and the hints that show them", requires: { keyboard: true } },
+  { id: "command-bar", name: "Command bar", core: true, desc: "Search and commands in one bar", adapts: "Full screen on a phone; ⌘K with a keyboard" },
+  { id: "lists", name: "Lists", desc: "Outliner editing", adapts: "Indent and outdent on the keyboard toolbar" },
+  { id: "tasks", name: "Tasks", desc: "Due dates and repeats; the Tasks place" },
+  { id: "calendar", name: "Calendar", desc: "Calendar place, Agenda view, ::calendar", adapts: "Agenda on a phone; 3 days and weeks when wider" },
+  { id: "boards", name: "Boards", desc: "Kanban boards in notes", adapts: "Drag with a mouse; long-press to drag by touch, or Move to…" },
+  { id: "html-app", name: "HTML app", desc: "Small apps in a note", adapts: "On a phone it waits for a tap to run; an app can ask for a wide screen" },
+  { id: "history", name: "History", desc: "History view for the note in focus" },
+  { id: "wordcount", name: "Word count", desc: "A Word count view", catalog: true },
+];
+const NEEDS_WORDS = { keyboard: "a keyboard", width: { medium: "a screen 600px wide", expanded: "a screen 840px wide", large: "a screen 1200px wide" }, pointer: "a mouse or trackpad" };
+
+// ======================= State =======================
+let uid = 0;
+const S = {};
+function reset() {
+  Object.assign(S, {
+    notes: [...SEED_NOTES.map((n) => ({ ...n })), ...Array.from({ length: 90 }, (_, i) => fillerNote(i)), ...SEED_ARCHIVED.map((n) => ({ ...n, archived: true }))]
+      .map((n) => ({ ...n, id: ++uid, seen: !(isAgent(n.by) && n.ago < 2 * DAY), history: [{ by: n.by, ago: n.ago, add: n.add, del: n.del, summary: n.summary }, { by: "you", ago: n.ago + 3 * DAY, add: 8, del: 0, summary: "Made the note" }] })),
+    trash: SEED_TRASH.map((t) => ({ note: { path: t.path, text: t.text, by: t.by, ago: t.deleted, id: ++uid, history: [] }, deletedAgo: t.deleted, by: t.by })),
+    place: "feed", filter: "all", sel: 0, loaded: 25, newCount: 0, dense: false,
+    showDetail: false, // compact and medium: the note (or event) is on top of the list
+    tabs: ["Projects/Launch plan.md", "Ideas/A feed for notes.md", "Meetings/Quarterly planning.md"], note: "Projects/Launch plan.md", split: "Research/Reading list.md",
+    event: null, trashPeek: null, editing: false, selecting: null, sheet: null, search: null, ctxView: "history", placesOpen: true,
+    bar: ["feed", "today", "calendar"], saved: [{ id: "s:agents", title: "Agent edits this week", query: "from:agent edited:<7d" }, { id: "s:projects", title: "Projects", query: "in:Projects/" }],
+    undo: [], pending: "", detected: false, overrides: {}, installed: new Set(),
+  });
+}
+let preset = "fit";
+function caps() {
+  const app = document.getElementById("app");
+  const w = app.clientWidth || innerWidth;
+  const p = PRESETS[preset];
+  const fitKeyboard = S.detected || (mq("(pointer: fine)") && mq("(hover: hover)"));
+  return {
+    w, width: widthClass(w),
+    keyboard: p.keyboard ?? fitKeyboard,
+    pointer: p.pointer ?? (mq("(pointer: fine)") ? "fine" : "coarse"),
+    touch: p.touch ?? (navigator.maxTouchPoints > 0),
+    keyboardWhy: p.keyboard != null ? "simulated" : S.detected ? "a key was pressed outside a text field" : fitKeyboard ? "fine pointer and hover (a desktop)" : "no key pressed yet",
+  };
+}
+const ovr = () => (S.overrides[preset] ||= {});
+/** Is this extension (or part) on here, and why. */
+function statusOf(x, C = caps()) {
+  const o = ovr()[x.id] || "auto";
+  const missing = [];
+  if (x.requires?.keyboard && !C.keyboard) missing.push(NEEDS_WORDS.keyboard);
+  if (x.requires?.width && !atLeast(C.width, x.requires.width)) missing.push(NEEDS_WORDS.width[x.requires.width]);
+  if (x.requires?.pointer && C.pointer !== "fine") missing.push(NEEDS_WORDS.pointer);
+  if (x.catalog && !S.installed.has(x.id)) return { on: false, text: "Not installed", why: "" };
+  if (o === "off") return { on: false, text: "Off on this device", why: "you turned it off here" };
+  if (o === "on") return { on: true, text: "On here", why: missing.length ? `you turned it on; it needs ${missing.join(" and ")}` : "you turned it on" };
+  if (missing.length) return { on: false, text: "Off on this device", why: "needs " + missing.join(" and ") };
+  return { on: true, text: "On", why: x.adapts ? "adapts: " + x.adapts : "" };
+}
+const on = (id) => statusOf(EXTS.find((x) => x.id === id)).on;
+
+// ======================= Lists =======================
+const noteByPath = (p) => S.notes.find((n) => n.path === p);
+const pinned = () => S.notes.filter((n) => n.pinned && !n.archived);
+function queryFor(place) {
+  if (place === "feed") return "-is:archived" + (S.filter === "mine" ? " from:me" : S.filter === "agents" ? " from:agent" : "");
+  if (place === "archive") return "is:archived";
+  if (place.startsWith("s:")) return (S.saved.find((s) => s.id === place) || {}).query || "";
+  if (place.startsWith("q:")) return place.slice(2);
+  return "";
+}
+function notesFor(place) {
+  const p = parseQuery(queryFor(place));
+  const neg = p.not.some(([k, v]) => k === "is" && v === "archived");
+  let items = S.notes.filter((n) => {
+    if (p.is.includes("archived") ? !n.archived : n.archived && (neg || place !== "feed" || S.filter !== "agents" || !isAgent(n.by) || n.ago > 7 * DAY)) return false;
+    if (p.is.includes("pinned") && !n.pinned) return false;
+    if (!fromOk(p.from, n.by)) return false;
+    if (p.in.length && !p.in.some((f) => n.path.toLowerCase().startsWith(f.replace(/\/?$/, "/").toLowerCase()))) return false;
+    if (!editedOk(p.edited, n.ago)) return false;
+    const hay = (n.path + " " + n.text).toLowerCase();
+    return p.words.every((w) => hay.includes(w));
+  }).sort((a, b) => a.ago - b.ago);
+  if (place === "feed" && S.filter === "all") items = [...items.filter((n) => n.pinned), ...items.filter((n) => !n.pinned)];
+  return items;
+}
+const isNoteList = (pl) => pl === "feed" || pl === "archive" || pl.startsWith("s:") || pl.startsWith("q:");
+const TITLES = { feed: "Feed", archive: "Archive", trash: "Trash", tasks: "Tasks", calendar: "Calendar", sources: "Sources", extensions: "Extensions", settings: "Settings", today: "Today" };
+const placeTitle = (pl) => TITLES[pl] || (S.saved.find((s) => s.id === pl) || {}).title || (pl.startsWith("q:") ? "Search: " + pl.slice(2) : pl);
+function allTasks() {
+  const out = [];
+  for (const n of S.notes) { if (n.archived) continue; let k = -1; for (const l of n.text.split("\n")) { const m = l.match(/^(?:- |\d+\. )\[( |x)\] (.*)/); if (m) { k++; if (m[1] === " ") out.push({ n, k, text: m[2], due: (m[2].match(/due:(\S+)/) || [])[1] }); } } }
+  return out.sort((a, b) => (a.due || "9").localeCompare(b.due || "9"));
+}
+const calEvents = () => [0, 1, 2, 3, 4].flatMap((d) => EVENTS.filter((e) => e.day === d).sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.start.localeCompare(b.start))));
+function listLength() {
+  if (isNoteList(S.place)) return notesFor(S.place).length;
+  return { trash: S.trash.length, tasks: allTasks().length, calendar: calEvents().length, extensions: EXTS.length }[S.place] || 0;
+}
+
+// ======================= Rendering =======================
+const $ = (s, el = document) => el.querySelector(s);
+const app = document.getElementById("app");
+let C = null;
+function render() {
+  C = caps();
+  app.className = "c-" + C.width + (C.touch ? " touch" : "") + (C.keyboard ? " kb" : "");
+  const wide = atLeast(C.width, "expanded") && on("workbench.splits");
+  const showPlaces = wide && S.placesOpen;
+  const showDetail = wide || S.showDetail;
+  const showList = wide || !S.showDetail;
+  const docked = C.width === "large" && on("workbench.splits") && !S.split;
+  const keepSel = $("#list .scroll")?.scrollTop;
+  app.innerHTML = `
+    <nav id="places" class="pane plist" ${showPlaces ? "" : "hidden"} aria-label="Places"></nav>
+    <section id="list" class="pane" ${showList ? "" : "hidden"}></section>
+    <section id="detail" class="pane" ${showDetail ? "" : "hidden"}></section>
+    <aside id="ctx" class="pane" ${docked ? "" : "hidden"} aria-label="Context panel"></aside>
+    <nav id="bar" ${wide || S.editing ? "hidden" : ""} aria-label="Bottom bar"></nav>
+    <footer id="status" ${wide && C.keyboard ? "" : "hidden"}></footer>
+    <div id="osk"></div>`;
+  if (showPlaces) renderPlaces($("#places"), false);
+  if (showList) renderList($("#list"));
+  if (showDetail) renderDetail($("#detail"));
+  if (docked) renderCtx($("#ctx"));
+  if (!wide && !S.editing) renderBar();
+  if (wide && C.keyboard) renderStatus();
+  renderOsk();
+  if (S.search) renderSearch();
+  if (S.sheet) renderSheet(true);
+  const sc = $("#list .scroll"); if (sc && keepSel != null) sc.scrollTop = keepSel;
+  const f = app.querySelector("#list .focus"); if (f && C.keyboard) f.scrollIntoView({ block: "nearest" });
+  $("#rCaps").textContent = `${C.width} ${Math.round(C.w)}px · ${C.touch ? "touch" : "no touch"} · pointer ${C.pointer} · keyboard ${C.keyboard ? "yes" : "no"} (${C.keyboardWhy})`;
+  document.documentElement.style.setProperty("--snack-b", wide ? "2.2rem" : "4.8rem");
+}
+function placeRows() {
+  const unseen = S.notes.filter((n) => !n.seen && !n.archived).length;
+  return [
+    { items: [["feed", "Feed", unseen ? `<span style="color:var(--agent)">${unseen} new</span>` : "", "g f"], ["search", "Search", "", "⌘K"], ["today", "Today", "", "g d"], ["tasks", "Tasks", allTasks().length, "g t"], ["calendar", "Calendar", "", "g c"]] },
+    { head: "Pinned", items: pinned().map((n) => ["note:" + n.path, titleOf(n), ""]) },
+    { head: "Saved searches", items: S.saved.map((s) => [s.id, s.title, notesFor(s.id).length]) },
+    { head: " ", items: [["sources", "Sources", '<span class="dot" title="Google Calendar synced 3 min ago"></span>', "g s"], ["archive", "Archive", S.notes.filter((n) => n.archived).length, "g a"], ["trash", "Trash", S.trash.length, "g x"], ["extensions", "Extensions", "", "g e"], ["settings", "Settings", "", "g ,"]] },
+  ];
+}
+function renderPlaces(el, inSheet) {
+  const kept = keptLayout();
+  el.innerHTML = placeRows().map((g) => `${g.head ? `<h4>${g.head}</h4>` : ""}${g.items.map(([id, t, c, k]) => `<div class="place" data-go="${esc(id)}" aria-current="${S.place === id || (id.startsWith("note:") && S.note === id.slice(5) && (S.showDetail || (atLeast(C.width, "expanded") && isNoteList(S.place))))}"><span class="name">${esc(t)}</span><span class="count">${c ?? ""}</span>${C.keyboard && k && !inSheet ? `<span class="k">${k}</span>` : ""}</div>`).join("")}`).join("")
+    + (inSheet && kept ? `<div class="kept"><b>Kept for wider screens</b><br>${kept}. They stay in this device's layout, unchanged, and come back when the window is wide enough again.</div>` : "")
+    + (inSheet ? `<div class="place" data-go="bar"><span class="name muted">Customize the bottom bar…</span></div>` : "");
+  el.querySelectorAll("[data-go]").forEach((d) => d.addEventListener("click", () => { closeSheet(); go(d.dataset.go); }));
+}
+function keptLayout() {
+  if (on("workbench.tabs") && on("workbench.splits") && (C.width === "large" || !S.split)) return "";
+  const parts = [];
+  if (!on("workbench.tabs") && S.tabs.length > 1) parts.push(`${S.tabs.length} tabs`);
+  if (S.split && !(C.width === "large" && on("workbench.splits"))) parts.push(`a window beside (${esc(titleOf(noteByPath(S.split) || { text: "", path: S.split }))})`);
+  return parts.join(" and ");
+}
+function renderBar() {
+  const bar = $("#bar");
+  if (S.selecting) {
+    bar.className = "select";
+    bar.innerHTML = [["✕", "Cancel", () => { S.selecting = null; render(); }], ["◉", "Pin", () => act("pin", pickedNotes())], ["⤓", "Archive", () => act("archive", pickedNotes())], ["⌫", "Trash", () => act("trash", pickedNotes())]].map(([g, t], i) => `<button data-i="${i}"><span class="g">${g}</span>${t}${i === 0 ? ` (${S.selecting.size})` : ""}</button>`).join("");
+    const fns = [() => { S.selecting = null; render(); }, () => act("pin", pickedNotes()), () => act("archive", pickedNotes()), () => act("trash", pickedNotes())];
+    bar.querySelectorAll("button").forEach((b, i) => (b.onclick = fns[i]));
+    return;
+  }
+  const G = { feed: "≋", today: "◐", calendar: "▦", tasks: "☐", archive: "⤓", trash: "⌫" };
+  const unseen = S.notes.filter((n) => !n.seen && !n.archived).length;
+  const items = [...S.bar.map((id) => [id, TITLES[id], G[id] || "•"]), ["search", "Search", "⌕"], ["more", "Places", "☰"]];
+  bar.innerHTML = items.map(([id, t, g]) => `<button data-go="${id}" aria-current="${S.place === id && !S.showDetail || (id === "today" && S.showDetail && S.note === "Journal/2026-10-05.md")}"><span class="g">${g}</span>${t}${id === "feed" && unseen ? `<span class="badge2">${unseen}</span>` : ""}</button>`).join("");
+  bar.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => (b.dataset.go === "more" ? openSheet({ kind: "places" }) : go(b.dataset.go))));
+}
+function renderStatus() {
+  const vim = on("vim");
+  const hint = isNoteList(S.place) ? "j/k · ↵ open · e archive · # trash · p pin · u undo" : S.place === "trash" ? "j/k · r restore · D delete forever" : "j/k · ↵ open";
+  $("#status").innerHTML = `${vim ? "<span>NORMAL</span>" : ""}<span>Saved</span><span class="grow"></span><span>${S.pending ? `<kbd>${esc(S.pending)}</kbd> …` : hint}</span><span>? keys</span>`;
+}
+
+// ---------- the list pane ----------
+function topBar(title, { back, right = "" } = {}) {
+  return `<div class="top">${back ? `<button class="icon" data-back aria-label="Back">‹</button>` : ""}<h1>${esc(title)}</h1>${right}</div>`;
+}
+function renderList(el) {
+  const pl = S.place;
+  const wide = atLeast(C.width, "expanded");
+  const searchBtn = `<button class="icon" data-search aria-label="Search">⌕</button>`;
+  const newBtn = `<button class="icon" data-new aria-label="New note">✎</button>`;
+  const placesBtn = wide ? `<button class="icon" data-toggleplaces aria-label="Places" title="Places${C.keyboard ? " (⌘B)" : ""}">☰</button>` : "";
+  if (isNoteList(pl)) {
+    const items = notesFor(pl);
+    S.sel = Math.max(0, Math.min(S.sel, items.length - 1));
+    if (S.sel > S.loaded - 5) S.loaded = S.sel + 25;
+    const unseen = S.notes.filter((n) => !n.seen && !n.archived).length;
+    const selectBtn = C.touch ? `<button class="icon text" data-select>${S.selecting ? "Done" : "Select"}</button>` : "";
+    const save = pl.startsWith("q:") ? `<button class="icon text" data-savesearch>Save</button>` : "";
+    el.innerHTML = `${topBar(placeTitle(pl), { back: false, right: placesBtn ? "" : "" })}`;
+    $(".top", el).insertAdjacentHTML("afterbegin", placesBtn);
+    $(".top", el).insertAdjacentHTML("beforeend", save + selectBtn + (wide ? searchBtn : "") + newBtn);
+    if (pl === "feed") el.insertAdjacentHTML("beforeend", `<div class="chips">${[["all", "All"], ["mine", "Mine"], ["agents", "Agents"]].map(([f, t]) => `<button data-filter="${f}" aria-pressed="${S.filter === f}">${t}${f === "agents" && unseen ? `<span class="n">${unseen}</span>` : ""}</button>`).join("")}<button data-dense aria-pressed="${S.dense}">Compact</button></div>`);
+    let html = `<div class="qline" title="What this list is: a query, as every list is">${esc(queryFor(pl))} sort:edited</div>`;
+    if (S.newCount) html += `<div class="pill"><button data-new-pill>↑ ${S.newCount} new change${S.newCount > 1 ? "s" : ""}</button></div>`;
+    if (C.touch && !S.hintSeen && pl === "feed") html += `<div class="hintrow">Swipe right to archive, left to trash. Long-press to select several.</div>`;
+    if (C.keyboard && !C.touch) html += `<div class="hintrow"><span><kbd>j</kbd><kbd>k</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>e</kbd> archive</span><span><kbd>#</kbd> trash</span><span><kbd>p</kbd> pin</span><span><kbd>?</kbd> all keys</span></div>`;
+    if (!items.length) html += pl === "archive" ? `<div class="empty"><b>Nothing archived</b>Swipe a card right in the Feed to archive it.</div>` : `<div class="empty"><b>${pl === "feed" ? "Inbox zero for notes" : "No notes match"}</b></div>`;
+    let last = "";
+    items.slice(0, S.loaded).forEach((n, i) => {
+      const g = pl === "feed" && S.filter === "all" && n.pinned ? "Pinned" : bucket(n.ago);
+      if (g !== last) { html += `<div class="group">${g}</div>`; last = g; }
+      html += cardHtml(n, i, pl);
+    });
+    html += items.length > S.loaded ? `<div class="end" id="more">Loading older notes…</div>` : items.length ? `<div class="end">That's everything${pl === "feed" ? " not archived" : ""}.</div>` : "";
+    el.insertAdjacentHTML("beforeend", `<div class="scroll${S.dense ? " dense" : ""}${S.selecting ? " selecting" : ""}">${html}</div>`);
+    wireList(el, items);
+  } else if (pl === "trash") {
+    S.sel = Math.max(0, Math.min(S.sel, S.trash.length - 1));
+    el.innerHTML = topBar("Trash", { right: placesBtn + `<button class="icon text" data-empty>Empty</button>` });
+    el.insertAdjacentHTML("beforeend", `<div class="scroll"><div class="callout">Deleted notes wait here 30 days, then they're purged. Swipe right to restore, left to delete forever. Restoring brings back the note with its history.</div>${S.trash.length ? "" : '<div class="empty"><b>Trash is empty</b></div>'}${S.trash.map((x, i) => { const left = Math.max(0, 30 - x.deletedAgo / DAY); return `<div class="sw rowsw${C.keyboard && i === S.sel ? " focus" : ""}${S.trashPeek === i && atLeast(C.width, "expanded") ? " current" : ""}" data-i="${i}"><div class="bg"><span class="r">↺ Restore</span><span class="l">Delete forever ✕</span></div><div class="card" style="display:flex;gap:0.7rem;align-items:center"><div style="flex:1;min-width:0"><div class="t" style="font-weight:600">${esc(titleOf(x.note))}</div><div class="s muted" style="font-size:0.78rem">${esc(folderOf(x.note.path) || "Top level")} · deleted ${ago(x.deletedAgo)} by <span class="who${isAgent(x.by) ? " agent" : ""}">${esc(whoName(x.by))}</span></div></div><div style="text-align:right;font-size:0.75rem;color:${left < 3 ? "var(--bad)" : "var(--muted)"}"><div class="left${left < 3 ? " soon" : ""}"><i style="width:${(left / 30) * 100}%"></i></div>${left < 1 ? "today" : Math.ceil(left) + " days"}</div></div></div>`; }).join("")}</div>`);
+    el.querySelectorAll(".sw").forEach((sw) => swipe(sw, {
+      right: { label: "restore", run: () => restore(+sw.dataset.i) },
+      left: { label: "delete forever", run: () => purge(+sw.dataset.i), confirm: true },
+      tap: () => { S.sel = +sw.dataset.i; S.trashPeek = +sw.dataset.i; if (atLeast(C.width, "expanded")) render(); else openSheet({ kind: "trashPeek", i: +sw.dataset.i }); },
+    }));
+  } else if (pl === "tasks") {
+    const ts = allTasks();
+    S.sel = Math.max(0, Math.min(S.sel, ts.length - 1));
+    el.innerHTML = topBar("Tasks", { right: placesBtn });
+    el.insertAdjacentHTML("beforeend", `<div class="qline">is:open type:task -is:archived</div><div class="scroll">${ts.map((t, i) => `<div class="row${C.keyboard && i === S.sel ? " focus" : ""}" data-i="${i}"><input type="checkbox" style="width:1.2rem;height:1.2rem;accent-color:var(--accent)" aria-label="Done"><div class="grow md"><div>${inline(t.text)}</div><div class="s">${esc(titleOf(t.n))}</div></div></div>`).join("")}</div>`);
+    el.querySelectorAll(".row").forEach((r) => r.addEventListener("click", (e) => { const t = ts[+r.dataset.i]; if (e.target.type === "checkbox") { tick(t.n, t.k); snack(`Ticked “${esc(t.text.replace(/ (due|rec):\S+/g, ""))}”`, true); render(); } else openNote(t.n.path); }));
+  } else if (pl === "calendar") {
+    const evs = calEvents();
+    S.sel = Math.max(0, Math.min(S.sel, evs.length - 1));
+    const three = atLeast(C.width, "medium") && !atLeast(C.width, "expanded");
+    el.innerHTML = topBar("Calendar", { right: placesBtn + `<button class="icon text" data-today>Today</button>` });
+    let html = `<div class="qline">Google Calendar · Work, Personal · synced 3 min ago</div>`;
+    if (three) html += `<div class="days3">${[0, 1, 2].map((d) => `<div><div class="day" style="margin-left:0">${dayName(d).split(",")[0]}</div>${EVENTS.filter((e) => e.day === d).map((e) => evHtml(e, evs)).join("")}</div>`).join("")}</div><div class="day">Later</div>${evs.filter((e) => e.day > 2).map((e) => evHtml(e, evs)).join("")}`;
+    else { let d0 = -1; for (const e of evs) { if (e.day !== d0) { html += `<div class="day">${dayName(e.day)}</div>`; d0 = e.day; } html += evHtml(e, evs); } }
+    el.insertAdjacentHTML("beforeend", `<div class="scroll">${html}</div>`);
+    el.querySelectorAll("[data-ev]").forEach((d) => d.addEventListener("click", () => openEvent(d.dataset.ev)));
+  } else if (pl === "sources") {
+    el.innerHTML = topBar("Sources", { right: placesBtn });
+    el.insertAdjacentHTML("beforeend", `<div class="scroll"><div class="row"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:var(--ok)"></span><div class="grow"><div class="t">Google Calendar</div><div class="s">Connected · synced 3 min ago · 412 records · nothing waiting to send</div></div><button class="btn">Sync</button></div><div class="row"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:var(--ok)"></span><div class="grow"><div class="t">Google Contacts</div><div class="s">Read-only · 4 contacts · in search as type:contact</div></div></div><div class="callout">A source has no notes of its own. Its records show where they're used: Calendar, the Agenda view, chips in notes, and search.</div></div>`);
+  } else if (pl === "extensions") renderExtensions(el, placesBtn);
+  else if (pl === "settings") renderSettings(el, placesBtn);
+  el.querySelectorAll("[data-back]").forEach((b) => (b.onclick = back));
+  const q = (s, f) => el.querySelectorAll(s).forEach((b) => (b.onclick = f));
+  q("[data-search]", () => openSearch(""));
+  q("[data-new]", newNote);
+  q("[data-toggleplaces]", () => { S.placesOpen = !S.placesOpen; render(); });
+  q("[data-empty]", emptyTrash);
+  q("[data-today]", () => { const sc = $(".scroll", el); sc.scrollTop = 0; });
+  q("[data-savesearch]", saveSearch);
+}
+function evHtml(e, evs) {
+  const i = evs.indexOf(e);
+  return `<div class="ev${C.keyboard && i === S.sel ? " focus" : ""}${S.event === e.id && atLeast(C.width, "expanded") ? " current" : ""}" data-ev="${e.id}" style="border-left-color:${CAL_COLORS[e.cal]}"><span class="tm">${e.allDay ? "All day" : fmtTime(e.start)}</span><span><span class="ti">${esc(e.title)}${e.rec ? " ↻" : ""}</span><br><span class="wh">${e.where ? esc(e.where) + " · " : ""}${e.cal}</span></span></div>`;
+}
+function cardHtml(n, i, pl) {
+  const cur = atLeast(C.width, "expanded") && S.note === n.path;
+  return `<div class="sw${C.keyboard && i === S.sel ? " focus" : ""}${S.selecting?.has(n.id) ? " picked" : ""}${cur ? " current" : ""}" data-i="${i}" data-id="${n.id}">
+    <div class="bg"><span class="r">${n.archived ? "↺ Unarchive" : "⤓ Archive"}</span><span class="l">Trash ⌫</span></div>
+    <div class="card">${!n.seen && !n.archived ? '<span class="dotu" title="Changed by an agent since you looked"></span>' : ""}
+      <div class="t1"><span class="title">${esc(titleOf(n))}</span><span class="folder">${esc(folderOf(n.path))}</span><span class="when">${ago(n.ago)}</span></div>
+      <div class="meta"><span class="who${isAgent(n.by) ? " agent" : ""}">${esc(whoName(n.by))}</span>${n.summary ? `<span>· ${esc(n.summary)}</span>` : ""}${n.pinned ? '<span class="badge">pinned</span>' : ""}${n.archived ? '<span class="badge archived">archived</span>' : ""}</div>
+      <div class="preview md">${renderMarkdown(n.text, { live: false, limit: 6, noteIndex: n.id })}</div>
+      <span class="pick"></span>
+    </div></div>`;
+}
+function wireList(el, items) {
+  const sc = $(".scroll", el);
+  sc.onscroll = () => { const m = $("#more", el); if (m && m.getBoundingClientRect().top < sc.getBoundingClientRect().bottom + 300) { S.loaded += 25; render(); } };
+  el.querySelectorAll("[data-filter]").forEach((b) => (b.onclick = () => { S.filter = b.dataset.filter; S.sel = 0; render(); }));
+  const d = $("[data-dense]", el); if (d) d.onclick = () => { S.dense = !S.dense; render(); };
+  const sel = $("[data-select]", el); if (sel) sel.onclick = () => { S.selecting = S.selecting ? null : new Set(); render(); };
+  const pill = $("[data-new-pill]", el); if (pill) pill.onclick = () => { S.newCount = 0; sc.scrollTop = 0; S.sel = 0; render(); };
+  el.querySelectorAll(".sw").forEach((sw) => {
+    const n = items[+sw.dataset.i];
+    swipe(sw, {
+      right: { label: n.archived ? "unarchive" : "archive", run: () => act("archive", [n], !n.archived) },
+      left: { label: "trash", run: () => act("trash", [n]) },
+      tap: (e) => {
+        if (e.target.matches("input[type=checkbox]")) { tick(n, +e.target.dataset.task); render(); return; }
+        if (e.target.closest(".chip[data-event]")) { openEvent(e.target.closest(".chip").dataset.event); return; }
+        if (S.selecting) { S.selecting.has(n.id) ? S.selecting.delete(n.id) : S.selecting.add(n.id); if (!S.selecting.size) S.selecting = null; render(); return; }
+        S.sel = +sw.dataset.i; openNote(n.path);
+      },
+      long: () => { S.selecting ||= new Set(); S.selecting.add(n.id); if (navigator.vibrate) navigator.vibrate(10); render(); },
+    });
+  });
+}
+
+// ---------- swipes, by touch or mouse ----------
+let openReveal = null;
+function swipe(sw, { left, right, tap, long }) {
+  const card = $(".card", sw);
+  let x0 = null, y0 = 0, dx = 0, mode = null, pid = null, timer = 0, longDone = false;
+  const W = () => sw.clientWidth;
+  const setX = (x) => { card.style.transform = `translateX(${x}px)`; sw.dataset.dir = x > 0 ? "right" : x < 0 ? "left" : ""; sw.classList.toggle("armed", Math.abs(x) > W() * 0.42); };
+  sw.addEventListener("pointerdown", (e) => {
+    if (e.button > 0 || S.selecting && false) return;
+    if (openReveal && openReveal !== sw) { openReveal.close(); }
+    x0 = e.clientX; y0 = e.clientY; dx = sw._rest || 0; mode = null; pid = e.pointerId; longDone = false;
+    clearTimeout(timer);
+    if (long) timer = setTimeout(() => { if (!mode) { longDone = true; mode = "long"; long(); } }, 480);
+  });
+  sw.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== pid || x0 == null || mode === "long") return;
+    const mx = e.clientX - x0, my = e.clientY - y0;
+    if (!mode && (Math.abs(mx) > 8 || Math.abs(my) > 8)) {
+      clearTimeout(timer);
+      mode = Math.abs(mx) > Math.abs(my) * 1.3 && !S.selecting ? "swipe" : "scroll";
+      if (mode === "swipe") { sw.setPointerCapture(pid); card.classList.add("dragging"); }
+    }
+    if (mode === "swipe") { e.preventDefault(); const x = (sw._rest || 0) + mx; if ((x > 0 && !right) || (x < 0 && !left)) return; setX(x); dx = x; }
+  });
+  const end = (e) => {
+    if (e.pointerId !== pid || x0 == null) return;
+    clearTimeout(timer);
+    card.classList.remove("dragging");
+    const m = mode; x0 = null; pid = null;
+    if (m === "swipe") {
+      const w = W();
+      if (Math.abs(dx) > w * 0.42) commit(dx > 0 ? right : left, dx > 0);
+      else if (Math.abs(dx) > 64) { sw._rest = dx > 0 ? 104 : -104; setX(sw._rest); openReveal = sw; sw.close = () => { sw._rest = 0; setX(0); openReveal = null; }; }
+      else { sw._rest = 0; setX(0); }
+      return;
+    }
+    if (m === "long" || longDone) return;
+    if (!m && e.type === "pointerup") {
+      if (sw._rest) { const onBg = sw._rest > 0 ? e.clientX < sw.getBoundingClientRect().left + 104 : e.clientX > sw.getBoundingClientRect().right - 104; if (onBg) commit(sw._rest > 0 ? right : left, sw._rest > 0); else sw.close(); return; }
+      tap && tap(e);
+    }
+  };
+  function commit(a, toRight) {
+    if (!a) return;
+    if (a.confirm) { sw._rest = 0; setX(0); a.run(); return; }
+    setX(toRight ? W() : -W());
+    setTimeout(() => { sw.style.maxHeight = sw.offsetHeight + "px"; requestAnimationFrame(() => { sw.classList.add("gone"); setTimeout(a.run, 180); }); }, 120);
+  }
+  sw.addEventListener("pointerup", end);
+  sw.addEventListener("pointercancel", (e) => { if (e.pointerId === pid) { clearTimeout(timer); card.classList.remove("dragging"); x0 = null; if (!sw._rest) setX(0); } });
+  sw.addEventListener("contextmenu", (e) => { if (C.touch) e.preventDefault(); });
+}
+
+// ---------- detail: note, event, trash preview ----------
+function renderDetail(el) {
+  const wide = atLeast(C.width, "expanded") && on("workbench.splits");
+  if (S.place === "calendar" && S.event && (wide || S.showDetail)) { renderEventDetail(el, wide); return; }
+  if (S.place === "trash" && wide) {
+    const x = S.trash[S.trashPeek ?? -1];
+    el.innerHTML = x ? `<div class="top"><h1>${esc(titleOf(x.note))}</h1><button class="btn" data-restore>Restore</button><button class="btn danger" data-purge>Delete forever</button></div><div class="scroll"><div class="note"><div class="banner">In Trash · purged in ${Math.ceil(30 - x.deletedAgo / DAY)} days · last version, read-only</div><div class="md">${renderMarkdown(x.note.text)}</div></div></div>` : `<div class="placeholder">Select a deleted note to look inside.</div>`;
+    if (x) { $("[data-restore]", el).onclick = () => restore(S.trashPeek); $("[data-purge]", el).onclick = () => purge(S.trashPeek); }
+    return;
+  }
+  if (!S.note || !noteByPath(S.note)) { el.innerHTML = `<div class="placeholder">${C.keyboard ? "<kbd>↵</kbd> opens the focused card here" : "Tap a card to read it here"}</div>`; return; }
+  const tabsOn = on("workbench.tabs");
+  const splitShown = S.split && C.width === "large" && on("workbench.splits") && noteByPath(S.split);
+  const tabsHtml = tabsOn && S.tabs.length ? `<div class="tabs2">${S.tabs.map((p) => { const n = noteByPath(p); return n ? `<div class="tab" data-tab="${esc(p)}" aria-selected="${p === S.note}">${esc(titleOf(n))}<span class="x" data-close="${esc(p)}">×</span></div>` : ""; }).join("")}</div>` : "";
+  el.innerHTML = `<div class="splitwrap"><div class="win" id="w1">${tabsHtml}</div>${splitShown ? `<div class="win" id="w2"><div class="tabs2"><div class="tab" aria-selected="true">${esc(titleOf(noteByPath(S.split)))}<span class="x" data-closesplit>×</span></div></div></div>` : ""}</div>`;
+  noteView($("#w1", el), S.note, { back: !wide });
+  if (splitShown) noteView($("#w2", el), S.split, { back: false, read: true });
+  el.querySelectorAll("[data-tab]").forEach((t) => t.addEventListener("click", (e) => { if (e.target.dataset.close) { S.tabs = S.tabs.filter((p) => p !== e.target.dataset.close); if (S.note === e.target.dataset.close) S.note = S.tabs[0] || null; } else S.note = t.dataset.tab; S.editing = false; render(); }));
+  const cs = $("[data-closesplit]", el); if (cs) cs.onclick = () => { S.split = null; render(); };
+}
+function noteView(win, path, { back: showBack, read }) {
+  const n = noteByPath(path);
+  const kept = !read && keptLayout();
+  const top = document.createElement("div");
+  top.className = "top";
+  top.innerHTML = `${showBack ? `<button class="icon" data-back aria-label="Back">‹</button>` : ""}<h1>${S.editing && !read ? "" : esc(titleOf(n))}</h1>${kept && atLeast(C.width, "medium") ? `<span class="kchip" title="Kept in this device's layout until there's room">${kept} kept</span>` : ""}${S.editing && !read ? `<button class="icon text" data-done>Done</button>` : `<button class="icon" data-ctx aria-label="History and links" title="History, links">◷</button><button class="icon" data-more aria-label="More">⋯</button>`}`;
+  const body = document.createElement("div");
+  body.className = "scroll";
+  if (S.editing && !read) {
+    body.innerHTML = `<div class="note"><textarea class="ed" spellcheck="true" aria-label="Note text">${esc(n.text)}</textarea></div>`;
+  } else {
+    body.innerHTML = `<div class="note">${n.archived ? `<div class="banner">Archived · out of the Feed; links still work. <button class="btn" data-unarch>Unarchive</button></div>` : ""}<div class="crumbs"><span class="mono">${esc(n.path)}</span><span class="who${isAgent(n.by) ? " agent" : ""}">${esc(whoName(n.by))}</span><span>${ago(n.ago)}</span>${n.pinned ? '<span class="badge">pinned</span>' : ""}</div><div class="md" data-body>${renderMarkdown(n.text, { live: true, noteIndex: n.id })}</div>${read ? "" : `<p class="faint" style="font-size:0.8rem;margin-top:1.5rem">${C.touch ? "Tap the text to edit." : "Click the text to edit."}</p>`}</div>`;
+  }
+  win.append(top, body);
+  if (S.editing && !read) {
+    const ta = $("textarea", body);
+    const tool = document.createElement("div");
+    tool.id = "ktool";
+    const vim = on("vim");
+    tool.innerHTML = (vim ? `<span class="mono faint" style="align-self:center;font-size:0.7rem;padding:0 0.4rem">VIM</span>` : "") + KTOOL.filter((b) => !b.ext || on(b.ext)).map((b, i) => b.sep ? '<span class="sep"></span>' : `<button data-k="${i}" title="${esc(b.title)}${b.ext ? " · from " + EXTS.find((x) => x.id === b.ext).name : ""}">${b.g}</button>`).join("");
+    if (C.touch) win.append(tool);
+    tool.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("pointerdown", (e) => { e.preventDefault(); KTOOL[+b.dataset.k].run(ta); }));
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
+    ta.addEventListener("focus", renderOsk); ta.addEventListener("blur", () => setTimeout(renderOsk, 50));
+    ta.oninput = () => { n.text = ta.value; };
+  } else if (!read) {
+    $("[data-body]", body).addEventListener("click", (e) => {
+      if (e.target.matches("input[type=checkbox]")) { tick(n, +e.target.dataset.task); render(); return; }
+      if (e.target.closest(".chip[data-event]")) { openEvent(e.target.closest(".chip").dataset.event); return; }
+      S.editing = true; render();
+    });
+  }
+  const q = (s, f) => { const b = $(s, win); if (b) b.onclick = f; };
+  q("[data-back]", back);
+  q("[data-done]", finishEdit);
+  q("[data-unarch]", () => act("archive", [n], false));
+  q("[data-more]", () => openSheet({ kind: "noteMenu", path }));
+  q("[data-ctx]", () => { if (C.width === "large" && on("workbench.splits") && !S.split) { S.ctxView = "history"; render(); } else openSheet({ kind: "ctx" }); });
+}
+const KTOOL = [
+  { g: "☐", title: "Task", ext: "tasks", run: (t) => makeTask(t) },
+  { g: "•", title: "Bullet", ext: "lists", run: (t) => lineStart(t, "- ") },
+  { g: "⇥", title: "Indent", ext: "lists", run: (t) => lineStart(t, "  ", true) },
+  { g: "⇤", title: "Outdent", ext: "lists", run: (t) => outdent(t) },
+  { sep: true },
+  { g: "H", title: "Heading", run: (t) => lineStart(t, "## ") },
+  { g: "[[", title: "Link a note", run: (t) => insert(t, "[[]]", -2) },
+  { g: "due", title: "Due date", ext: "tasks", run: (t) => insert(t, " due:2026-10-06") },
+  { g: "@", title: "Link an event or person", ext: "calendar", run: (t) => insert(t, "[Dentist](event:google/primary/dentist)") },
+  { sep: true },
+  { g: "↶", title: "Undo", run: (t) => { document.execCommand && document.execCommand("undo"); } },
+  { g: "⌄", title: "Hide the keyboard", run: (t) => t.blur() },
+];
+function insert(t, s, back = 0) { const a = t.selectionStart; t.setRangeText(s, a, t.selectionEnd, "end"); t.selectionStart = t.selectionEnd = t.selectionStart + back; t.dispatchEvent(new Event("input")); }
+function lineStart(t, s, always) { const a = t.selectionStart; const ls = t.value.lastIndexOf("\n", a - 1) + 1; const line = t.value.slice(ls); if (!always && line.startsWith(s)) return; t.setRangeText(s, ls, ls, "preserve"); t.selectionStart = t.selectionEnd = a + s.length; t.dispatchEvent(new Event("input")); }
+function makeTask(t) { const a = t.selectionStart; const ls = t.value.lastIndexOf("\n", a - 1) + 1; const m = t.value.slice(ls).match(/^(\s*)(- \[[ x]\] |- )?/); if (m[2] && m[2] !== "- ") return; t.setRangeText(m[1] + "- [ ] ", ls, ls + m[0].length, "preserve"); t.selectionStart = t.selectionEnd = a + 6 - (m[2] ? 2 : 0); t.dispatchEvent(new Event("input")); }
+function outdent(t) { const a = t.selectionStart; const ls = t.value.lastIndexOf("\n", a - 1) + 1; if (t.value.startsWith("  ", ls)) { t.setRangeText("", ls, ls + 2, "preserve"); t.selectionStart = t.selectionEnd = Math.max(ls, a - 2); t.dispatchEvent(new Event("input")); } }
+function finishEdit() {
+  const n = noteByPath(S.note);
+  if (n) { n.ago = 0; n.by = "you"; n.add = 1; n.del = 0; n.summary = undefined; n.history.unshift({ by: "you", ago: 0, add: 1, del: 0 }); }
+  S.editing = false; render();
+}
+function renderOsk() {
+  const osk = $("#osk"); if (!osk) return;
+  const active = document.activeElement;
+  const typing = active && /^(TEXTAREA|INPUT)$/.test(active.tagName) && app.contains(active);
+  const show = preset !== "fit" && C.touch && !C.keyboard && typing;
+  osk.classList.toggle("on", !!show);
+  if (show && !osk.firstChild) osk.innerHTML = `<div class="keys">${["qwertyuiop", "asdfghjkl", "zxcvbnm"].map((r) => `<div>${[...r].map(() => "<i></i>").join("")}</div>`).join("")}<div style="justify-content:center">On-screen keyboard (simulated). Type with your own.</div></div>`;
+}
+function renderEventDetail(el, wide) {
+  const e = EVENTS.find((x) => x.id === S.event);
+  el.innerHTML = `<div class="top">${wide ? "" : '<button class="icon" data-back>‹</button>'}<h1>${esc(e.title)}</h1></div><div class="scroll">${eventBody(e)}</div>`;
+  wireEventBody(el, e);
+  const b = $("[data-back]", el); if (b) b.onclick = back;
+}
+function eventBody(e) {
+  return `<div class="evd"><div class="muted">${dayName(e.day)} · ${e.allDay ? "All day" : fmtTime(e.start) + "–" + fmtTime(e.end)}${e.rec ? " · repeats" : ""}</div><div class="muted">${e.where ? esc(e.where) + " · " : ""}${e.cal} · Google Calendar</div><div class="mono faint" style="font-size:0.7rem;margin:0.4rem 0 0.8rem">event:google/primary/${e.id}</div><div class="day" style="margin-left:0">Notes that link here</div>${(e.notes || []).map((p) => `<button class="act" data-open="${esc(p)}"><span class="g">¶</span>${esc(titleOf(noteByPath(p)))}</button>`).join("") || '<p class="muted" style="font-size:0.85rem">None yet.</p>'}<button class="act" data-meet><span class="g">✎</span>Make a meeting note</button><button class="act" data-copy><span class="g">⧉</span>Copy link to this event</button></div>`;
+}
+function wireEventBody(el, e) {
+  el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => { closeSheet(); openNote(b.dataset.open); }));
+  const m = $("[data-meet]", el); if (m) m.onclick = () => { closeSheet(); const path = `Meetings/${e.title}.md`; if (!noteByPath(path)) S.notes.unshift({ id: ++uid, path, text: `# ${e.title}\n\n[${e.title}](event:google/primary/${e.id})\n\n- `, by: "you", ago: 0, add: 3, del: 0, seen: true, history: [{ by: "you", ago: 0, add: 3, del: 0, summary: "Made the note" }] }); (e.notes ||= []).push(path); openNote(path); S.editing = true; render(); };
+  const c = $("[data-copy]", el); if (c) c.onclick = () => { closeSheet(); snack("Copied the event's link"); };
+}
+
+// ---------- context views ----------
+function ctxBody(view) {
+  const n = noteByPath(S.note);
+  if (view === "history") return n ? n.history.map((h) => `<div class="change"><div class="l1"><span class="who${isAgent(h.by) ? " agent" : ""}">${esc(whoName(h.by))}</span><span class="grow"></span><span class="stat"><span class="add">+${h.add}</span> <span class="del">−${h.del}</span></span></div><div class="muted">${ago(h.ago)}${h.summary ? " · " + esc(h.summary) : ""}</div></div>`).join("") : '<div class="callout">History of the note in focus.</div>';
+  if (view === "links") { const t = n && titleOf(n); const b = n ? S.notes.filter((x) => x !== n && x.text.includes(`[[${t}]]`)) : []; return b.map((x) => `<div class="change"><b>${esc(titleOf(x))}</b><div class="muted">${esc(x.path)}</div></div>`).join("") || '<div class="callout">No notes link here.</div>'; }
+  if (view === "agenda") return EVENTS.filter((e) => e.day === 0).map((e) => `<div class="ev" data-ev="${e.id}" style="border-left-color:${CAL_COLORS[e.cal]}"><span class="tm">${fmtTime(e.start)}</span><span class="ti">${esc(e.title)}</span></div>`).join("");
+  if (view === "wordcount") return `<div style="padding:1rem"><div class="muted">Word count · sandboxed extension</div><div style="font:2rem var(--mono)">${n ? n.text.split(/\s+/).filter(Boolean).length : 0}</div></div>`;
+  return "";
+}
+const ctxViews = () => ["history", "links", "agenda", ...(S.installed.has("wordcount") ? ["wordcount"] : [])];
+const CTX_T = { history: "History", links: "Links", agenda: "Agenda", wordcount: "Word count" };
+function renderCtx(el) {
+  el.innerHTML = `<div class="ptabs">${ctxViews().map((v) => `<button data-v="${v}" aria-selected="${S.ctxView === v}">${CTX_T[v]}</button>`).join("")}</div><div class="scroll">${ctxBody(S.ctxView)}</div>`;
+  el.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => { S.ctxView = b.dataset.v; render(); }));
+  el.querySelectorAll("[data-ev]").forEach((d) => (d.onclick = () => openEvent(d.dataset.ev)));
+}
+
+// ---------- extensions and settings ----------
+function renderExtensions(el, placesBtn) {
+  const C2 = caps();
+  el.innerHTML = topBar("Extensions", { right: placesBtn });
+  const dev = `<div class="callout"><b>This device</b>: ${PRESETS[preset].label.split(" ·")[0]} · ${C2.width} width (${Math.round(C2.w)}px) · ${C2.touch ? "touch" : "no touch"} · ${C2.pointer} pointer · keyboard: ${C2.keyboard ? "yes" : "no"} <span class="faint">(${C2.keyboardWhy})</span>. Extensions say what they need; what's off here is listed with why, never hidden. Change it per device below.</div>`;
+  el.insertAdjacentHTML("beforeend", `<div class="scroll">${dev}${EXTS.map((x, i) => { const st = statusOf(x, C2); const o = ovr()[x.id] || "auto"; return `<div class="row${C.keyboard && i === S.sel ? " focus" : ""}" data-i="${i}"><div class="grow"><div class="t">${esc(x.name)}${x.core ? ' <span class="badge">core</span>' : ""}</div><div class="s">${esc(x.desc)}</div><div class="s${!st.on && st.why ? " why" : ""}">${st.text}${st.why ? " · " + esc(st.why) : ""}</div>${x.requires ? `<div class="s mono" style="font-size:0.68rem">requires ${esc(JSON.stringify(x.requires))}</div>` : ""}</div>${x.catalog && !S.installed.has(x.id) ? `<button class="btn" data-install="${x.id}">Install</button>` : `<select class="ovr" data-ovr="${x.id}" aria-label="On this device"><option value="auto"${o === "auto" ? " selected" : ""}>Auto</option><option value="on"${o === "on" ? " selected" : ""}>On here</option><option value="off"${o === "off" ? " selected" : ""}>Off here</option></select>`}</div>`; }).join("")}</div>`);
+  el.querySelectorAll("[data-ovr]").forEach((s) => (s.onchange = () => { ovr()[s.dataset.ovr] = s.value; if (s.value === "auto") delete ovr()[s.dataset.ovr]; snack(`${EXTS.find((x) => x.id === s.dataset.ovr).name}: ${s.value === "auto" ? "decided by what this device has" : s.value === "on" ? "on, on this device" : "off, on this device"}. Saved in this device's file.`); render(); }));
+  el.querySelectorAll("[data-install]").forEach((b) => (b.onclick = () => { S.installed.add(b.dataset.install); snack("Installed Word count: a view in History, links… (◷) on a note"); render(); }));
+}
+function deviceJson() {
+  const C2 = caps();
+  return JSON.stringify({ name: PRESETS[preset].label, seen: { width: C2.width, touch: C2.touch, pointer: C2.pointer, keyboard: C2.keyboard }, keyboardBecause: C2.keyboardWhy, extensions: ovr(), lastPlace: S.place }, null, 2);
+}
+function renderSettings(el, placesBtn) {
+  el.innerHTML = topBar("Settings", { right: placesBtn });
+  el.insertAdjacentHTML("beforeend", `<div class="scroll"><div class="group">This device · .common-ink/users/you/devices/${preset}/device.json</div><div class="json">${esc(deviceJson())}</div>
+  <div class="group">.common-ink/places.json</div><div class="json">${esc(JSON.stringify({ order: ["feed", "search", "today", "tasks", "calendar"], bar: S.bar, saved: Object.fromEntries(S.saved.map((s) => [s.title, s.query])) }, null, 2))}</div>
+  <div class="group">This device's layout · .common-ink/users/you/devices/${preset}/layout.json</div><div class="json">${esc(JSON.stringify({ windows: [{ tabs: ["view:feed"] }, { tabs: S.tabs, active: S.note }, ...(S.split ? [{ tabs: [S.split] }] : [])] }, null, 2))}</div>
+  <div class="group">.common-ink/archive.json</div><div class="json">${esc(JSON.stringify({ archived: S.notes.filter((n) => n.archived).map((n) => n.path).sort() }, null, 2))}</div>
+  <div class="group">Settings</div><div class="json">${esc(JSON.stringify({ "feed.swipe.right": "archive", "feed.swipe.left": "trash", "feed.liveEmbeds": "focused", "trash.retentionDays": 30 }, null, 2))}</div></div>`);
+}
+
+// ---------- sheets ----------
+function openSheet(s) { S.sheet = s; document.querySelectorAll(".snack").forEach((x) => x.remove()); renderSheet(); }
+function closeSheet() { if (!S.sheet) return; const sh = $(".sheet", app), sc = $(".scrim", app); S.sheet = null; if (sh) { sh.classList.remove("on"); sc.classList.remove("on"); setTimeout(() => { sh.remove(); sc.remove(); }, 220); } }
+function renderSheet(instant) {
+  app.querySelectorAll(".sheet, .scrim").forEach((x) => x.remove());
+  const s = S.sheet;
+  const sc = document.createElement("div"); sc.className = "scrim";
+  const sh = document.createElement("div"); sh.className = "sheet"; sh.setAttribute("role", "dialog");
+  const side = atLeast(C.width, "medium") && (s.kind === "ctx");
+  if (side) sh.classList.add("side");
+  if (s.kind === "places" && atLeast(C.width, "medium")) sh.classList.add("left");
+  let title = "", body = "";
+  if (s.kind === "places") { title = "Places"; body = `<div class="plist" id="sheetPlaces"></div>`; }
+  else if (s.kind === "noteMenu") {
+    const n = noteByPath(s.path);
+    const tabsOn = on("workbench.tabs"), split = C.width === "large" && on("workbench.splits");
+    title = titleOf(n);
+    body = [
+      ["◉", n.pinned ? "Unpin" : "Pin", "pin"], ["⤓", n.archived ? "Unarchive" : "Archive", "archive"], ["◷", "History, links…", "ctx"],
+      ["⧉", "Copy link", "copy"], ["⊞", "Open in a new tab", "tab", !tabsOn && "needs a screen 600px wide"], ["◫", "Open beside", "beside", !split && "needs a screen 1200px wide"],
+      ["⌫", "Move to Trash", "trash", false, "danger"],
+    ].map(([g, t, a, why, cls]) => `<button class="act${cls ? " " + cls : ""}" data-a="${a}" ${why ? 'aria-disabled="true"' : ""}><span class="g">${g}</span>${t}${why ? `<span class="why">${why}</span>` : ""}</button>`).join("");
+  } else if (s.kind === "ctx") { title = ""; body = `<div class="ptabs">${ctxViews().map((v) => `<button data-v="${v}" aria-selected="${S.ctxView === v}">${CTX_T[v]}</button>`).join("")}</div><div>${ctxBody(S.ctxView)}</div>`; }
+  else if (s.kind === "event") { const e = EVENTS.find((x) => x.id === s.id); title = e.title; body = eventBody(e); }
+  else if (s.kind === "trashPeek") { const x = S.trash[s.i]; title = titleOf(x.note); body = `<div style="padding:0 1rem"><div class="banner">Deleted ${ago(x.deletedAgo)} by ${esc(whoName(x.by))} · purged in ${Math.ceil(30 - x.deletedAgo / DAY)} days</div><div class="md">${renderMarkdown(x.note.text)}</div></div><button class="act" data-a="restore"><span class="g">↺</span>Restore, with its history</button><button class="act danger" data-a="purge"><span class="g">✕</span>Delete forever</button>`; }
+  else if (s.kind === "confirm") { title = s.title; body = `<p class="muted" style="margin:0 1rem 0.8rem">${s.body}</p><button class="act danger" data-a="yes"><span class="g">✕</span>${s.ok}</button><button class="act" data-a="no"><span class="g"></span>Cancel</button>`; }
+  else if (s.kind === "bar") { title = "Bottom bar"; body = `<p class="muted" style="margin:0 1rem 0.5rem;font-size:0.85rem">Pick up to three places. Search and Places are always there. Saved in places.json, so every phone you use gets the same bar.</p>` + ["feed", "today", "calendar", "tasks", "archive", "trash"].map((id) => `<button class="act" data-bar="${id}"><span class="g">${S.bar.includes(id) ? "☑" : "☐"}</span>${TITLES[id]}</button>`).join(""); }
+  else if (s.kind === "keys") { title = "Keys"; body = keysHtml(); }
+  sh.innerHTML = `<div class="handle"><i></i></div>${title ? `<h3>${esc(title)}</h3>` : ""}<div class="sbody">${body}</div>`;
+  app.append(sc, sh);
+  requestAnimationFrame(() => { sc.classList.add("on"); sh.classList.add("on"); });
+  if (instant) { sc.classList.add("on"); sh.classList.add("on"); }
+  sc.onclick = closeSheet;
+  if (s.kind === "places") renderPlaces($("#sheetPlaces", sh), true);
+  if (s.kind === "event") wireEventBody(sh, EVENTS.find((x) => x.id === s.id));
+  sh.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => { S.ctxView = b.dataset.v; renderSheet(true); }));
+  sh.querySelectorAll("[data-bar]").forEach((b) => (b.onclick = () => { const id = b.dataset.bar; if (S.bar.includes(id)) S.bar = S.bar.filter((x) => x !== id); else if (S.bar.length < 3) S.bar.push(id); else return snack("Three at most; untick one first"); render(); }));
+  sh.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => {
+    if (b.getAttribute("aria-disabled") === "true") { snack(`Off here: ${b.querySelector(".why").textContent}. Your tabs and windows are kept for a wider screen.`); return; }
+    const a = b.dataset.a;
+    if (s.kind === "noteMenu") {
+      const n = noteByPath(s.path); closeSheet();
+      if (a === "pin") act("pin", [n]); else if (a === "archive") act("archive", [n], !n.archived); else if (a === "trash") act("trash", [n]);
+      else if (a === "ctx") openSheet({ kind: "ctx" }); else if (a === "copy") snack(`Copied [[${esc(titleOf(n))}]]`);
+      else if (a === "tab") { if (!S.tabs.includes(n.path)) S.tabs.push(n.path); snack("Opened in a new tab"); render(); }
+      else if (a === "beside") { S.split = n.path; render(); }
+    } else if (s.kind === "trashPeek") { closeSheet(); if (a === "restore") restore(s.i); else purge(s.i); }
+    else if (s.kind === "confirm") { closeSheet(); if (a === "yes") s.yes(); }
+  }));
+  // Drag the handle: down to close, up to full height.
+  const h = $(".handle", sh); let y0 = null, h0 = 0;
+  h.addEventListener("pointerdown", (e) => { y0 = e.clientY; h0 = sh.offsetHeight; h.setPointerCapture(e.pointerId); sh.classList.add("dragging"); });
+  h.addEventListener("pointermove", (e) => { if (y0 == null) return; const dy = e.clientY - y0; if (dy > 0) sh.style.transform = `translateY(${dy}px)`; else sh.style.height = Math.min(app.clientHeight * 0.92, h0 - dy) + "px"; });
+  h.addEventListener("pointerup", (e) => { if (y0 == null) return; sh.classList.remove("dragging"); const dy = e.clientY - y0; y0 = null; sh.style.transform = ""; if (dy > 80) closeSheet(); });
+  h.addEventListener("click", () => { if (!sh.style.height) sh.style.height = app.clientHeight * 0.92 + "px"; });
+}
+function keysHtml() {
+  const g = (t, rows) => `<h5>${t}</h5>` + rows.map(([k, d]) => `<div><span>${d}</span><span>${k.split(" ").map((x) => `<kbd>${x}</kbd>`).join(" ")}</span></div>`).join("");
+  return `<div class="keysheet">${g("Anywhere", [[MOD + "K", "Search"], [MOD + "B", "Places (wide)"], ["Esc", "Back"], ["?", "Keys"]])}${g("Go", [["g f", "Feed"], ["g d", "Today"], ["g t", "Tasks"], ["g c", "Calendar"], ["g a", "Archive"], ["g x", "Trash"], ["g s", "Sources"], ["g e", "Extensions"], ["g ,", "Settings"]])}${g("Lists", [["j k", "Move"], ["↵", "Open"], ["e", "Archive"], ["#", "Trash"], ["p", "Pin"], ["x", "Select"], ["u", "Undo"]])}${g("Trash", [["r", "Restore"], ["D", "Delete forever"]])}${g("Touch", [["→", "Swipe right: archive (restore in Trash)"], ["←", "Swipe left: trash (delete forever in Trash)"], ["hold", "Long-press: select"]])}</div>`;
+}
+
+// ---------- search ----------
+function openSearch(q) { S.search = { q, sel: 0 }; render(); setTimeout(() => $(".search input", app)?.focus(), 20); }
+function closeSearch() { S.search = null; render(); }
+const CHIPS = [["Archived", "is:archived"], ["Pinned", "is:pinned"], ["Agents", "from:agent"], ["Mine", "from:me"], ["This week", "edited:<7d"], ["Events", "type:event"], ["Tasks", "type:task"], ["Trash", "is:trashed"]];
+function searchSections(raw) {
+  const p = parseQuery(raw);
+  const want = (k) => !p.type.length || p.type.includes(k);
+  const match = (s) => p.words.every((w) => s.toLowerCase().includes(w));
+  const mark = (s) => { let h = esc(s); for (const w of p.words) if (w) h = h.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>"); return h; };
+  const plain = (l) => l.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/ (due|rec):\S+/g, "").replace(/\*\*/g, "").replace(/^(\s*[-*]|\s*\d+\.|#+)\s+(\[.\]\s+)?/, "");
+  const secs = [];
+  if (want("note")) {
+    const pool = p.is.includes("trashed") ? S.trash.map((x) => ({ ...x.note, trashed: true })) : S.notes;
+    let ns = pool.filter((n) => (!p.is.includes("archived") || n.archived) && (!p.is.includes("pinned") || n.pinned) && fromOk(p.from, n.by) && editedOk(p.edited, n.ago) && (!p.in.length || p.in.some((f) => n.path.toLowerCase().startsWith(f.toLowerCase()))) && match(n.path + " " + plain(n.text)));
+    ns.sort((a, b) => (a.archived - b.archived) || (match(titleOf(b)) - match(titleOf(a))) || a.ago - b.ago);
+    if (!raw.trim()) ns = ns.filter((n) => !n.archived);
+    secs.push({ sec: raw.trim() ? "Notes" : "Recent", items: ns.slice(0, raw.trim() ? 8 : 6).map((n) => { const line = p.words.length ? plain(n.text.split("\n").find((l) => !l.startsWith("# ") && match(plain(l))) || "") : ""; return { k: n.trashed ? "⌫" : "¶", t: mark(titleOf(n)), d: line ? mark(line) : esc(folderOf(n.path)), r: (n.archived ? "archived · " : n.trashed ? "in Trash · " : "") + ago(n.ago), dim: n.archived || n.trashed, go: () => (n.trashed ? go("trash") : openNote(n.path)) }; }) });
+  }
+  if (raw.trim() && want("task")) secs.push({ sec: "Tasks", items: allTasks().filter((t) => match(t.text) && fromOk(p.from, t.n.by)).slice(0, 3).map((t) => ({ k: "☐", t: inline(t.text), d: esc(titleOf(t.n)), go: () => openNote(t.n.path) })) });
+  if (raw.trim() && want("event") && !p.from.length && !p.is.length) secs.push({ sec: "Events", items: EVENTS.filter((e) => match(e.title + " " + (e.where || ""))).slice(0, 3).map((e) => ({ k: "▦", t: mark(e.title), d: `${dayName(e.day)}${e.start ? " · " + fmtTime(e.start) : ""}`, r: e.cal, go: () => { S.place = "calendar"; S.showDetail = false; render(); openEvent(e.id); } })) });
+  if (raw.trim() && want("contact") && !p.from.length && !p.is.length) secs.push({ sec: "Contacts", items: CONTACTS.filter((c) => match(c.name)).slice(0, 3).map((c) => ({ k: "@", t: mark(c.name), d: esc(c.email), go: () => (c.note ? openNote(c.note) : snack(`${esc(c.name)} · a contact from Google`)) })) });
+  if (raw.trim() && want("command") && !p.from.length && !p.is.length) secs.push({ sec: "Commands", items: [["Go to Trash", () => go("trash")], ["Go to Archive", () => go("archive")], ["New note", newNote], ["Empty Trash", emptyTrash], ["Connect Google calendar and contacts", () => go("sources")]].filter(([t]) => match(t)).map(([t, f]) => ({ k: "›", t: mark(t), go: f })) });
+  return secs.filter((s) => s.items.length);
+}
+function renderSearch() {
+  app.querySelectorAll(".search, .search-scrim").forEach((x) => x.remove());
+  const wide = atLeast(C.width, "expanded");
+  const el = document.createElement("div");
+  el.className = "search" + (wide ? " dialog" : "");
+  el.setAttribute("role", "dialog");
+  const q = S.search.q;
+  const secs = searchSections(q);
+  const flat = secs.flatMap((s) => s.items);
+  S.search.flat = flat;
+  S.search.sel = Math.max(0, Math.min(S.search.sel, flat.length - 1));
+  let i = 0;
+  el.innerHTML = `<div class="sq"><input type="search" enterkeyhint="search" placeholder="Search notes, events, people…" value="${esc(q)}" autocomplete="off" autocapitalize="off" spellcheck="false">${wide ? "" : '<button class="icon text" data-cancel>Cancel</button>'}</div>
+    <div class="chips">${CHIPS.map(([t, op]) => `<button data-op="${op}" aria-pressed="${q.split(/\s+/).includes(op)}">${t}</button>`).join("")}</div>
+    <div class="results">${secs.map((s) => `<div class="sec"><span>${s.sec}</span></div>` + s.items.map((r) => `<div class="res${C.keyboard && i === S.search.sel ? " focus" : ""}${r.dim ? " dim" : ""}" data-r="${i++}"><span class="k">${r.k}</span><span class="tt"><div class="t">${r.t}</div>${r.d ? `<div class="d">${r.d}</div>` : ""}</span><span class="r">${r.r || ""}</span></div>`).join("")).join("") || '<div class="empty"><b>Nothing matches</b>Archived notes are included; Trash only with the Trash chip.</div>'}
+    ${q.trim() ? `<div class="res" data-all><span class="k">≋</span><span class="tt"><div class="t">See all as a list</div><div class="d mono">${esc(q)}</div></span></div>` : ""}</div>`;
+  app.append(el);
+  const input = $("input", el);
+  input.oninput = () => { S.search.q = input.value; S.search.sel = 0; const pos = input.selectionStart; renderSearch(); const n = $(".search input", app); n.focus(); n.setSelectionRange(pos, pos); };
+  input.onkeydown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+    else if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "j")) { e.preventDefault(); S.search.sel++; renderSearch(); $(".search input", app).focus(); }
+    else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "k")) { e.preventDefault(); S.search.sel = Math.max(0, S.search.sel - 1); renderSearch(); $(".search input", app).focus(); }
+    else if (e.key === "Enter") { e.preventDefault(); if (isMod(e)) seeAll(); else { const r = S.search.flat[S.search.sel]; if (r) { S.search = null; render(); r.go(); } } }
+  };
+  input.addEventListener("focus", renderOsk); input.addEventListener("blur", () => setTimeout(renderOsk, 50));
+  el.querySelectorAll("[data-op]").forEach((b) => b.addEventListener("click", () => { const parts = S.search.q.split(/\s+/).filter(Boolean); const op = b.dataset.op; S.search.q = (parts.includes(op) ? parts.filter((x) => x !== op) : [...parts, op]).join(" ") + " "; renderSearch(); }));
+  el.querySelectorAll("[data-r]").forEach((d) => d.addEventListener("click", () => { const r = flat[+d.dataset.r]; S.search = null; render(); r.go(); }));
+  const all = $("[data-all]", el); if (all) all.onclick = seeAll;
+  const c = $("[data-cancel]", el); if (c) c.onclick = closeSearch;
+  if (wide) { const sc = document.createElement("div"); sc.className = "scrim on"; sc.style.zIndex = 29; sc.onclick = closeSearch; el.before(sc); sc.classList.add("search-scrim"); }
+}
+function seeAll() { const q = S.search.q.trim(); S.search = null; if (q) { S.place = "q:" + q; S.sel = 0; S.showDetail = false; } render(); }
+function saveSearch() { const q = S.place.slice(2); const id = "s:" + q.toLowerCase().replace(/[^a-z0-9]+/g, "-"); S.saved.push({ id, title: q.replace(/\b\w+:\S*/g, "").trim() || q, query: q }); S.place = id; snack("Saved in Places"); render(); }
+
+// ======================= Actions =======================
+function snack(text, undo) {
+  const dev = document.getElementById("device");
+  dev.querySelectorAll(".snack").forEach((x) => x.remove());
+  const el = document.createElement("div"); el.className = "snack"; el.setAttribute("role", "status");
+  el.innerHTML = `<span>${text}</span>${undo ? `<button>Undo</button>` : ""}`;
+  if (undo) $("button", el).onclick = () => { el.remove(); doUndo(); };
+  dev.append(el); clearTimeout(snack.t); snack.t = setTimeout(() => el.remove(), 5000);
+}
+function doUndo() { const u = S.undo.pop(); if (!u) return snack("Nothing to undo"); u(); snack("Undone"); render(); }
+const pickedNotes = () => S.notes.filter((n) => S.selecting?.has(n.id));
+function act(kind, ns, onOff = true) {
+  if (!ns.length) return;
+  const label = ns.length > 1 ? `${ns.length} notes` : `“${esc(titleOf(ns[0]))}”`;
+  if (kind === "archive") { const was = ns.map((n) => [n, n.archived]); ns.forEach((n) => { n.archived = onOff; n.seen = true; }); S.undo.push(() => was.forEach(([n, a]) => (n.archived = a))); snack(`${onOff ? "Archived" : "Unarchived"} ${label}`, true); }
+  if (kind === "pin") { const v = !ns.every((n) => n.pinned); const was = ns.map((n) => [n, n.pinned]); ns.forEach((n) => (n.pinned = v)); S.undo.push(() => was.forEach(([n, p]) => (n.pinned = p))); snack(`${v ? "Pinned" : "Unpinned"} ${label}`, true); }
+  if (kind === "trash") {
+    const es = ns.map((n) => ({ note: n, deletedAgo: 0, by: "you", index: S.notes.indexOf(n) }));
+    S.notes = S.notes.filter((n) => !ns.includes(n)); S.trash.unshift(...es);
+    if (ns.some((n) => n.path === S.note)) { S.tabs = S.tabs.filter((p) => !ns.some((n) => n.path === p)); S.note = S.tabs[0] || null; S.showDetail = false; S.editing = false; }
+    S.undo.push(() => es.forEach((e) => { S.trash.splice(S.trash.indexOf(e), 1); S.notes.splice(e.index, 0, e.note); }));
+    snack(`Moved ${label} to Trash`, true);
+  }
+  S.selecting = null; S.hintSeen = true;
+  render();
+}
+function restore(i) {
+  const x = S.trash[i]; if (!x) return;
+  S.trash.splice(i, 1); x.note.ago = 0; x.note.by = "you"; x.note.seen = true; x.note.archived = false; x.note.summary = "Restored from Trash";
+  (x.note.history ||= []).unshift({ by: "you", ago: 0, add: 3, del: 0, summary: "Restored from Trash (undid the delete)" });
+  S.notes.unshift(x.note); S.trashPeek = null;
+  S.undo.push(() => { S.notes.splice(S.notes.indexOf(x.note), 1); S.trash.splice(i, 0, x); });
+  snack(`Restored “${esc(titleOf(x.note))}”, with its history`, true); render();
+}
+function purge(i) {
+  const x = S.trash[i]; if (!x) return;
+  openSheet({ kind: "confirm", title: `Delete “${titleOf(x.note)}” forever?`, body: "Its text leaves history too, so nothing can bring it back. Agents can't do this.", ok: "Delete forever", yes: () => { S.trash.splice(i, 1); S.trashPeek = null; snack("Deleted forever. History keeps a line saying so."); render(); } });
+}
+function emptyTrash() { if (!S.trash.length) return; openSheet({ kind: "confirm", title: "Empty Trash?", body: `${S.trash.length} notes leave history for good.`, ok: "Empty Trash", yes: () => { S.trash = []; snack("Trash is empty"); render(); } }); }
+function tick(n, k) { toggleTask(n, k); n.ago = 0; n.by = "you"; n.summary = "Ticked a task"; n.history.unshift({ by: "you", ago: 0, add: 1, del: 1, summary: "Ticked a task" }); }
+function newNote() { const path = `Notes/Untitled ${++uid}.md`; S.notes.unshift({ id: uid, path, text: "# Untitled\n\n", by: "you", ago: 0, add: 2, del: 0, seen: true, history: [{ by: "you", ago: 0, add: 2, del: 0, summary: "Made the note" }] }); openNote(path); S.editing = true; render(); }
+
+// ======================= Navigation =======================
+function go(id) {
+  S.search = null; S.editing = false;
+  if (id === "search") return openSearch("");
+  if (id === "more") return openSheet({ kind: "places" });
+  if (id === "bar") return openSheet({ kind: "bar" });
+  if (id === "today") return openNote("Journal/2026-10-05.md");
+  if (id.startsWith("note:")) return openNote(id.slice(5));
+  S.place = id; S.sel = 0; S.loaded = 25; S.showDetail = false; S.selecting = null; S.event = null;
+  render();
+  const sc = $("#list .scroll"); if (sc) sc.scrollTop = 0;
+}
+/** Opening a note replaces the preview tab, as the desktop does, so a phone never piles up tabs. */
+function openNote(path) {
+  const n = noteByPath(path); if (!n) return;
+  n.seen = true;
+  if (!S.tabs.includes(path)) { const i = S.tabs.indexOf(S.previewTab); if (i >= 0) S.tabs[i] = path; else S.tabs.push(path); S.previewTab = path; }
+  S.note = path; S.showDetail = true; S.editing = false; S.search = null;
+  render();
+}
+function openEvent(id) {
+  S.event = id;
+  if (atLeast(C.width, "expanded") && on("workbench.splits")) { S.place = "calendar"; S.sel = calEvents().findIndex((e) => e.id === id); render(); }
+  else openSheet({ kind: "event", id });
+}
+function back() {
+  if (S.editing) return finishEdit();
+  if (S.sheet) return closeSheet();
+  if (S.search) return closeSearch();
+  if (S.selecting) { S.selecting = null; return render(); }
+  if (S.showDetail) { S.showDetail = false; return render(); }
+}
+
+// ======================= Keys (only where a keyboard is) =======================
+document.addEventListener("keydown", (e) => {
+  if (!e.isTrusted) return;
+  const inField = inText(e);
+  // Detection, as the app would do it: a key outside a text field means a hardware keyboard.
+  if (preset === "fit" && !S.detected && !inField && !e.repeat && (e.key.length === 1 || /^(Escape|Tab|Arrow)/.test(e.key))) {
+    const had = caps().keyboard; S.detected = true;
+    if (!had) { snack("Keyboard found: Vim and shortcuts are on here. See Extensions."); render(); }
+  }
+  if (inField) { if (e.key === "Escape" && S.editing) { e.preventDefault(); finishEdit(); } return; }
+  const C1 = caps();
+  if (!C1.keyboard) { if (!keysHinted && (e.key.length === 1 || e.key === "Escape")) { keysHinted = true; snack("This simulated device has no keyboard. Pick one with a keyboard to try the keys."); } return; }
+  if (!on("keys")) return;
+  if (S.sheet) { if (e.key === "Escape" || e.key === "?") { e.preventDefault(); closeSheet(); } return; }
+  if (isMod(e) && e.key.toLowerCase() === "k") { e.preventDefault(); openSearch(""); return; }
+  if (isMod(e) && e.key.toLowerCase() === "b") { e.preventDefault(); S.placesOpen = !S.placesOpen; render(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (S.pending === "g") { S.pending = ""; const m = { f: "feed", d: "today", t: "tasks", c: "calendar", a: "archive", x: "trash", s: "sources", e: "extensions", ",": "settings", "/": "search" }[e.key]; if (m) { e.preventDefault(); go(m); } else render(); return; }
+  if (e.key === "g") { S.pending = "g"; render(); return; }
+  if (e.key === "?") { openSheet({ kind: "keys" }); return; }
+  if (e.key === "Escape") { back(); return; }
+  if (e.key === "/") { e.preventDefault(); openSearch(""); return; }
+  if (e.key === "u") { doUndo(); return; }
+  const len = listLength();
+  const move = (by) => { S.sel = Math.max(0, Math.min(len - 1, S.sel + by)); if (isNoteList(S.place) && atLeast(C1.width, "expanded") && on("workbench.splits")) { const n = notesFor(S.place)[S.sel]; if (n) { S.note = n.path; n.seen = true; if (!S.tabs.includes(n.path)) openNote(n.path); } } if (S.place === "calendar" && atLeast(C1.width, "expanded")) S.event = calEvents()[S.sel]?.id; if (S.place === "trash" && atLeast(C1.width, "expanded")) S.trashPeek = S.sel; render(); };
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); move(1); return; }
+  if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); return; }
+  if (e.key === "G") { move(len); return; }
+  if (isNoteList(S.place)) {
+    const n = notesFor(S.place)[S.sel]; if (!n) return;
+    const ns = S.selecting?.size ? pickedNotes() : [n];
+    if (e.key === "Enter" || e.key === "o") openNote(n.path);
+    else if (e.key === "e") act("archive", ns, !ns[0].archived);
+    else if (e.key === "#") act("trash", ns);
+    else if (e.key === "p") act("pin", ns);
+    else if (e.key === "x") { S.selecting ||= new Set(); S.selecting.has(n.id) ? S.selecting.delete(n.id) : S.selecting.add(n.id); if (!S.selecting.size) S.selecting = null; move(1); }
+  } else if (S.place === "trash") { if (e.key === "r") restore(S.sel); else if (e.key === "D") purge(S.sel); else if (e.key === "Enter") { S.trashPeek = S.sel; atLeast(C1.width, "expanded") ? render() : openSheet({ kind: "trashPeek", i: S.sel }); } }
+  else if (S.place === "calendar" && e.key === "Enter") openEvent(calEvents()[S.sel].id);
+  else if (S.place === "tasks" && (e.key === "x" || e.key === " ")) { e.preventDefault(); const t = allTasks()[S.sel]; if (t) { tick(t.n, t.k); render(); } }
+  else if (S.place === "tasks" && e.key === "Enter") { const t = allTasks()[S.sel]; if (t) openNote(t.n.path); }
+});
+let keysHinted = false;
+
+// ======================= The rig =======================
+const rDevice = document.getElementById("rDevice");
+rDevice.innerHTML = Object.entries(PRESETS).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("");
+function fitDevice() {
+  const dev = document.getElementById("device"), stage = document.getElementById("stage");
+  const p = PRESETS[preset];
+  if (!p.w) { delete document.documentElement.dataset.framed; dev.style.cssText = ""; return; }
+  document.documentElement.dataset.framed = "";
+  const k = Math.min(1, (stage.clientWidth - 24) / p.w, (stage.clientHeight - 24) / p.h);
+  dev.style.width = p.w + "px"; dev.style.height = p.h + "px"; dev.style.transform = `translate(-50%, -50%) scale(${k})`;
+}
+rDevice.onchange = () => { preset = rDevice.value; try { localStorage.setItem("ci-proto-device", preset); } catch {} S.sheet = null; fitDevice(); render(); };
+document.getElementById("rTheme").onchange = (e) => { if (e.target.value) document.documentElement.dataset.theme = e.target.value; else delete document.documentElement.dataset.theme; };
+document.getElementById("rReset").onclick = () => { reset(); render(); };
+document.getElementById("rHide").onclick = () => { const r = document.getElementById("rig"); if (r.hasAttribute("data-min")) r.removeAttribute("data-min"); else r.setAttribute("data-min", ""); fitDevice(); render(); };
+document.getElementById("rAgent").onclick = () => {
+  const pool = S.notes.filter((n) => !n.archived && n.ago > HOUR && !n.pinned).slice(0, 10);
+  const n = pool[Math.floor(Math.random() * pool.length)];
+  n.text += "\n- Claude: added a follow-up"; n.ago = 0; n.by = "claude"; n.summary = "Added a follow-up"; n.seen = false; n.add = 1; n.del = 0;
+  n.history.unshift({ by: "claude", ago: 0, add: 1, del: 0, summary: "Added a follow-up" });
+  const sc = $("#list .scroll"); if (S.place === "feed" && sc && sc.scrollTop > 40) S.newCount++;
+  snack(`Claude changed “${esc(titleOf(n))}”`); render();
+};
+new ResizeObserver(() => { const w = widthClass(app.clientWidth); if (C && w !== C.width) render(); }).observe(document.getElementById("device"));
+addEventListener("resize", fitDevice);
+if (window.visualViewport) visualViewport.addEventListener("resize", () => { const kb = innerHeight - visualViewport.height; app.style.bottom = preset === "fit" && kb > 80 ? kb + "px" : ""; });
+
+reset();
+try { const d = new URLSearchParams(location.search).get("device") || localStorage.getItem("ci-proto-device"); if (d && PRESETS[d]) preset = d; } catch {}
+if (preset === "fit" && innerWidth >= 700 && !new URLSearchParams(location.search).get("device")) preset = "phone";
+if (innerWidth < 600) { preset = "fit"; document.getElementById("rig").setAttribute("data-min", ""); }
+rDevice.value = preset;
+fitDevice();
+render();
+</script>
+</body>
+</html>
