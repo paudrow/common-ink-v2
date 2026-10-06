@@ -58,6 +58,7 @@ function setUp() {
     showActivity: () => {},
     catalog: () => ({ entries: [{ id: "pomodoro", name: "Pomodoro", version: "1.0.0", description: "Focus timer.", folder: "https://app.example/catalog/pomodoro/", catalog: "Common Ink", firstParty: true, embeds: ["pomodoro"] }], problems: [] }),
     commandTitle: () => undefined,
+    device: { summary: () => "Mac · Chrome · large width (1440px)", open() {}, here: () => ({ on: true, by: "default" }), override: () => undefined, setOverride: async () => {} },
     installFromCatalog: async () => {},
   });
   const root = document.createElement("div");
