@@ -95,3 +95,52 @@ test("the Worker refuses an untrusted extension's change to the files that decid
   assert.equal((await write(".common-ink/extensions/grabby/state.json", "grabby")).status, 200);
   assert.equal((await write("Grabby was here.md", "grabby")).status, 200);
 });
+
+const DRIVER = {
+  name: "Driver",
+  activationEvents: ["onCommand:driver.run", "onCommand:driver.own"],
+  contributes: {
+    commands: [
+      { command: "driver.run", title: "Run Driver" },
+      { command: "driver.own", title: "Driver's own" },
+    ],
+  },
+};
+
+const DRIVE = `export default { activate(ctx) {
+  let ownRan = false;
+  ctx.commands.register("driver.own", () => { ownRan = true; });
+  ctx.commands.register("driver.run", async () => {
+    const r = {};
+    const t = async (k, f) => { try { await f(); r[k] = "done"; } catch (e) { r[k] = "refused"; } };
+    await t("open settings", () => ctx.workbench.open(".common-ink/settings.json"));
+    await t("split to settings", () => ctx.workbench.split("right", ".common-ink/users/tester@localhost/settings.json"));
+    await t("open a note", () => ctx.workbench.open("Plan.md"));
+    for (const c of ["lists.toBullets", "note.save", "account.signOut"]) await t(c, () => ctx.commands.run(c));
+    await t("its own command", () => ctx.commands.run("driver.own"));
+    r.ownRan = ownRan;
+    await ctx.workbench.notice("DRIVER " + JSON.stringify(r));
+  });
+} };`;
+
+browserTest(h, "a sandboxed extension runs only its own commands, and opens no settings or extension files", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/settings.json", '{\n  "extensions.trusted": []\n}\n');
+  await app.writeFile("Plan.md", "# Plan\n");
+  await app.writeFile(".common-ink/extensions/driver/extension.json", JSON.stringify(DRIVER));
+  await app.writeFile(".common-ink/extensions/driver/index.js", DRIVE);
+  await app.reload();
+  const before = await app.readFile(".common-ink/settings.json");
+  await app.command("Run Driver");
+  const said = (await app.page.locator(".notice p", { hasText: "DRIVER" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), {
+    "open settings": "refused",
+    "split to settings": "refused",
+    "open a note": "done",
+    "lists.toBullets": "refused",
+    "note.save": "refused",
+    "account.signOut": "refused",
+    "its own command": "done",
+    ownRan: true,
+  });
+  assert.equal(await app.readFile(".common-ink/settings.json"), before);
+});
