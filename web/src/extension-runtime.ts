@@ -85,7 +85,7 @@ function dataApi(check: (ask: Ask) => Promise<void>, author: string | undefined,
       events: (from, to, calendars) => read("data:calendar:read", () => api.events(from, to, calendars)),
       event: (address) => read("data:calendar:read", () => api.event(address)),
       // The id is made here, so an edit held offline and sent twice makes one event.
-      create: (event) => send("POST", { id: newEventId(), ...event }, `Add ${event.title}`),
+      create: (event) => send("POST", { ...event, id: newEventId() }, `Add ${event.title}`),
       update: (address, change, scope) => send("PATCH", { ...change, address, ...(scope ? { scope } : {}) }, `Change ${change.title ?? "an event"}`),
       remove: (address, scope) => send("DELETE", { address, ...(scope ? { scope } : {}) }, "Delete an event"),
     },
@@ -150,6 +150,30 @@ function filePath(value: unknown): FilePath {
   const path = parseFilePath(value);
   if (!path) throw new Error(`${typeof value === "string" ? value : "That"} isn't a file path`);
   return path;
+}
+
+/** An event's fields, as a sandboxed extension passed them: each one an event has, of its type, and nothing else. */
+function eventInput(value: unknown): EventInput {
+  const o = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  const text = (k: string) => (typeof o[k] === "string" ? { [k]: o[k] } : {});
+  const textOrNull = (k: string) => (typeof o[k] === "string" || o[k] === null ? { [k]: o[k] } : {});
+  const rule = o.recurrence;
+  return {
+    ...text("title"),
+    ...text("start"),
+    ...text("end"),
+    ...(typeof o.allDay === "boolean" ? { allDay: o.allDay } : {}),
+    ...textOrNull("timeZone"),
+    ...text("calendar"),
+    ...textOrNull("location"),
+    ...textOrNull("description"),
+    ...(typeof rule === "string" || rule === null || (Array.isArray(rule) && rule.every((r) => typeof r === "string")) ? { recurrence: rule as EventInput["recurrence"] } : {}),
+  };
+}
+
+/** Which occurrences of a series an edit is for, or none (the Worker's default). */
+function scopeOf(value: unknown): Scope | undefined {
+  return value === "this" || value === "following" || value === "all" ? value : undefined;
 }
 
 /** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
@@ -848,11 +872,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(b as Parameters<DataApi["calendar"]["create"]>[0]);
+            return data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]);
           case "data.update":
-            return data.calendar.update(a, b as EventInput, (c ?? undefined) as Scope | undefined);
+            return data.calendar.update(address(a), eventInput(b), scopeOf(c));
           case "data.remove":
-            return data.calendar.remove(a, (b ?? undefined) as Scope | undefined);
+            return data.calendar.remove(address(a), scopeOf(b));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
