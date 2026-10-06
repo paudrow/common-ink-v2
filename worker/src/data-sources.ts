@@ -529,15 +529,20 @@ export class DataSources {
   /**
    * Put a record back to a text it had (or delete it, for ""), as an edit of its source: how undo
    * and restore reach records, so the source hears of it too. A changed occurrence with no text to go
-   * back to goes back to how its series makes it.
+   * back to goes back to how its series makes it, its series as `undoing` will leave it: the texts
+   * other records of the same undo go back to.
    */
-  async revert(path: FilePath, text: string, author: Author, undoes?: Revision): Promise<EditResult | Refused> {
+  async revert(path: FilePath, text: string, author: Author, undoes?: Revision, undoing: ReadonlyMap<string, string> = new Map()): Promise<EditResult | Refused> {
     const key = keyOfPath(path);
     if (!key || key.kind !== "event") return { status: "refused", error: `${path} changes only through its source's sync` };
     const before = readEvent(this.files.read(path)?.text ?? "");
     const after = text ? readEvent(text) : null;
     if (text && !after) return { status: "refused", error: `That version of ${path} isn't an event` };
-    const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [planUnchange(this.family(key.source, key.collection, key.id), before)] : [];
+    const ops: RecordOp[] = after ? [{ op: "put", event: after, created: !before }] : before ? [planUnchange(this.family(key.source, key.collection, key.id).flatMap((e) => {
+      const going = undoing.get(recordPath({ source: key.source, kind: "event", collection: e.calendar, id: e.id }));
+      const event = going === undefined ? e : readEvent(going);
+      return event ? [event] : [];
+    }), before)] : [];
     return this.apply(key.source, ops, author, addressOf(key), undoes);
   }
 }
@@ -582,15 +587,23 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
   const plain = revisions.filter((r) => !isRecord(r));
   const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
-  for (const r of [...new Set(revisions.filter(isRecord))].sort((a, b) => b - a)) {
-    const { path } = change(r)!;
-    if (files.recent({ path, limit: 1 })[0]?.revision !== r) {
+  // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
+  const reverts = [...new Set(revisions.filter(isRecord))]
+    .sort((a, b) => b - a)
+    .map((r) => {
+      const { path } = change(r)!;
+      if (files.recent({ path, limit: 1 })[0]?.revision !== r) return { r, path, text: null };
+      const previous = files.recent({ path, before: r, limit: 1 })[0];
+      return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
+    });
+  const undoing = new Map(reverts.flatMap(({ path, text }) => (text === null ? [] : [[path, text] as const])));
+  for (const { r, path, text } of reverts) {
+    if (text === null) {
       const file = files.read(path);
       out.push({ revision: r, status: "conflict", ...(file ? { file } : {}) });
       continue;
     }
-    const previous = files.recent({ path, before: r, limit: 1 })[0];
-    const result = await sources.revert(path, previous ? (files.versionAt(path, previous.revision) ?? "") : "", author, r);
+    const result = await sources.revert(path, text, author, r, undoing);
     const file = files.read(path);
     out.push({ revision: r, status: result.status === "refused" ? "conflict" : "undone", ...(file ? { file } : {}) });
   }
