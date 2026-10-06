@@ -89,7 +89,8 @@ test("a manifest that's wrong says what's wrong with it", () => {
   assert.match(wrong({ activationEvents: ["whenever"] }) as string, /^"activationEvents"\[0\] isn't an activation event/);
   assert.equal(wrong({}, "../up"), `"../up" can't be an extension's id: letters, digits, dots, dashes and underscores`);
   assert.equal(wrong({ contributes: { search: { types: [{ type: "note", title: "Mine" }] } } }), 'contributes.search.types[0].type must be lowercase letters and dashes, and not "note"');
-  assert.equal(wrong({ contributes: { search: { filters: [{ filter: "is:", values: [] }] } } }), 'contributes.search.filters[0].filter must be a word like "due:", and not one of is, in, from, type, edited, has, sort');
+  assert.equal(wrong({ contributes: { search: { filters: [{ filter: "is:", values: [] }] } } }), 'contributes.search.filters[0].filter must be a word like "due:", and not one of is, in, from, type, edited, has, sort, http, https, www, ftp, mailto, file, note');
+  assert.match(wrong({ contributes: { search: { filters: [{ filter: "https", values: [] }] } } }) as string, /not one of/);
 });
 
 test("a manifest's search contribution names its kinds of result and its filters, without their colons", () => {

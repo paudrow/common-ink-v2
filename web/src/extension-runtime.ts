@@ -636,15 +636,15 @@ export class ExtensionRuntime {
       },
       statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {
-        provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
+        provide: (p) => app.bar.provide({ ...p, items: guard((q: string, update?: (items: Item[]) => void) => p.items(q, update && guard(update)), []) }),
         open: (text) => app.bar.open(text),
       },
       search: {
         provide: (type, p) => {
           if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
-          app.search.provide(type, { search: guard((q: Query, limit: number) => p.search(q, limit), []) });
+          app.search.provide(type, { search: guard((q: Query, limit: number) => p.search(q, limit), []) }, m.id);
         },
-        find: (text, limit = 20) => app.search.find(text, limit),
+        find: (text, limit = 20, progress) => app.search.find(text, limit, progress && guard(progress)),
         filterKeys: () => app.search.extraKeys(),
       },
       views: {
@@ -874,16 +874,40 @@ export class ExtensionRuntime {
           case "search.provide": {
             const type = String(a);
             if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
-            app.search.provide(type, {
-              search: async (query, limit) => {
-                const results = (await host.invoke(`search:${type}`, query, limit).catch(() => [])) as Array<Omit<SearchResult, "run"> & { run: string }>;
-                return results.map((r) => ({ title: String(r.title), path: r.path, detail: r.detail, aside: r.aside, dim: r.dim === true, run: () => host.invoke(`item:${r.run}`).catch(failed) }));
+            const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+            app.search.provide(
+              type,
+              {
+                search: async (query, limit) => {
+                  const results = (await host.invoke(`search:${type}`, query, limit).catch(() => [])) as unknown[];
+                  return (Array.isArray(results) ? results : []).flatMap((r) => {
+                    const o = (r ?? {}) as Record<string, unknown>;
+                    if (typeof o.title !== "string" || typeof o.run !== "string") return [];
+                    const path = parseFilePath(o.path) ?? undefined;
+                    return [{ title: o.title, path, detail: text(o.detail), aside: text(o.aside), dim: o.dim === true, run: () => host.invoke(`item:${o.run}`).catch(failed) }];
+                  });
+                },
               },
-            });
+              m.id,
+            );
             return;
           }
-          case "search.find":
-            return app.search.find(String(a), typeof b === "number" ? b : 20).then((sections) => sections.map((s) => ({ ...s, results: s.results.map(({ run: _run, ...r }) => r) })));
+          case "search.find": {
+            // What search finds is what the extension could read itself: a note's (or a task's) file
+            // with files:read, events with data:calendar:read, contacts with data:contacts:read, and
+            // other kinds only if they're its own.
+            const may = (ask: Ask) => services.check(ask).then(() => true, () => false);
+            const readable = (type: string, r: SearchResult) =>
+              r.path ? may({ kind: "files:read", target: r.path }) : type === "event" ? may({ kind: "data:calendar:read" }) : type === "contact" ? may({ kind: "data:contacts:read" }) : Promise.resolve(app.search.ownerOf(type) === m.id);
+            const sections = await app.search.find(String(a), typeof b === "number" ? Math.min(b, 100) : 20);
+            const allowed = await Promise.all(
+              sections.map(async (s) => {
+                const ok = await Promise.all(s.results.map((r) => readable(s.type, r)));
+                return { type: s.type, title: s.title, results: s.results.filter((_, i) => ok[i]).map(({ run: _run, ...r }) => r) };
+              }),
+            );
+            return allowed.filter((s) => s.results.length);
+          }
           case "search.filterKeys":
             return app.search.extraKeys();
           case "views.register":

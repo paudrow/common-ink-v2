@@ -30,7 +30,7 @@ test("Tab completes a filter's key, then its value, then moves on to the next va
   assert.equal(complete("due:to", 6, FILTERS), null);
 });
 
-const manifest = (search: ExtensionManifest["contributes"]["search"]) => ({ contributes: { search } }) as ExtensionManifest;
+const manifest = (search: ExtensionManifest["contributes"]["search"], id = "tasks") => ({ id, contributes: { search } }) as ExtensionManifest;
 
 test("search asks each kind of result, and type: picks which", async () => {
   const asked: string[] = [];
@@ -38,7 +38,7 @@ test("search asks each kind of result, and type: picks which", async () => {
     manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [{ filter: "due", description: "", values: [] }] })],
     notes: { search: (q) => (asked.push(`notes: ${JSON.stringify(q.terms)}`), [{ title: "Launch plan", run() {} }]) },
   });
-  search.provide("task", { search: (q) => (asked.push(`tasks: ${q.terms.length}`), [{ title: "Record the demo", run() {} }]) });
+  search.provide("task", { search: (q) => (asked.push(`tasks: ${q.terms.length}`), [{ title: "Record the demo", run() {} }]) }, "tasks");
   const titles = async (text: string) => (await search.find(text, 5)).map((s) => `${s.title}: ${s.results.map((r) => r.title).join(", ")}`);
   assert.deepEqual(await titles("launch"), ["Notes: Launch plan", "Tasks: Record the demo"]);
   assert.deepEqual(await titles("launch type:task"), ["Tasks: Record the demo"]);
@@ -73,4 +73,31 @@ test("events match their title and place, a series once at its next time, coming
   assert.deepEqual(findEvents(events, parse(""), now).map((o) => o.id), ["s2", "d", "r"]);
   assert.deepEqual(findEvents(events, parse("main"), now).map((o) => o.id), ["d"]);
   assert.deepEqual(findEvents(events, parse("standup is:archived"), now), []);
+});
+
+test("one kind of result has one provider: the first extension to declare it", async () => {
+  const search = new Search({ manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }), manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] }, "hijack")], notes: { search: () => [] } });
+  assert.throws(() => search.provide("task", { search: () => [] }, "hijack"), /belongs to tasks, not hijack/);
+  assert.deepEqual(search.types().map((t) => t.type), ["note", "task"]);
+});
+
+test("a provider that never answers is left out after a moment, and notes come first", async () => {
+  const search = new Search({ manifests: () => [manifest({ types: [{ type: "slow", title: "Slow" }], filters: [] }, "slowpoke")], notes: { search: () => [{ title: "Garden plan", run() {} }] } });
+  search.provide("slow", { search: () => new Promise(() => {}) }, "slowpoke");
+  const seen: string[][] = [];
+  const start = Date.now();
+  const found = await search.find("garden", 5, (sections) => seen.push(sections.map((s) => s.title)));
+  assert.ok(Date.now() - start < 1500);
+  assert.deepEqual([found.map((s) => s.title), seen[0]], [["Notes"], ["Notes"]]);
+});
+
+test("-type: leaves a kind out, and notes that can't be searched say why", async () => {
+  const search = new Search({ manifests: () => [manifest({ types: [{ type: "task", title: "Tasks" }], filters: [] })], notes: { search: () => Promise.reject(new TypeError("Failed to fetch")) } });
+  search.provide("task", { search: () => [{ title: "Pay rent", run() {} }] }, "tasks");
+  assert.deepEqual((await search.find("pay -type:task", 5)).map((s) => [s.title, s.note ?? s.results.length]), [["Notes", "Search needs a connection: notes by name are below"]]);
+});
+
+test("Tab completes a quoted value, spaces and all", () => {
+  assert.deepEqual(complete('hello in:"My F', 14, FILTERS), { text: 'hello in:"My Folder/"', caret: 21 });
+  assert.deepEqual(complete('in:"my', 6, FILTERS), { text: 'in:"My Folder/"', caret: 15 });
 });

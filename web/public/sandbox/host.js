@@ -113,13 +113,18 @@
       },
       search: {
         provide(type, provider) {
-          handlers.set(`search:${type}`, async (query, limit) =>
-            (await provider.search(query, limit)).map((result) => {
+          // Each search's results replace the last one's, so their handlers don't pile up.
+          let previous = [];
+          handlers.set(`search:${type}`, async (query, limit) => {
+            for (const run of previous) handlers.delete(`item:${run}`);
+            previous = [];
+            return (await provider.search(query, limit)).map((result) => {
               const run = `search-${type}:${++items}`;
+              previous.push(run);
               handlers.set(`item:${run}`, () => result.run());
               return { title: result.title, path: result.path, detail: result.detail, aside: result.aside, dim: result.dim, run };
-            }),
-          );
+            });
+          });
           return call("search.provide", type);
         },
         find: (text, limit) => call("search.find", text, limit),
