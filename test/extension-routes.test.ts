@@ -129,6 +129,29 @@ test("installing from a URL never inherits trust left for the same id: it starts
   assert.equal(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text)["editor.fontSize"], 15, "the rest of the settings stay");
 });
 
+test("installing says so when it took back trust, and refuses while a settings file that trusts extensions can't be read", async () => {
+  const s = store();
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  const install = () => extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"], ');
+      assert.deepEqual(await (await install())!.json(), {
+        error: ".common-ink/users/sam@example.com/settings.json isn't valid JSON, so weather can't be taken out of the extensions it trusts. Fix it first.",
+      });
+      assert.equal(s.files.read(".common-ink/extensions/weather/index.js" as FilePath), null, "nothing was installed");
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"] }\n');
+      const res = (await (await install())!.json()) as { untrusted?: boolean };
+      assert.equal(res.untrusted, true);
+      assert.equal(((await (await install())!.json()) as { untrusted?: boolean }).untrusted, false);
+    },
+  );
+});
+
 test("the app's policy frames only the sandbox route and connects only to itself", () => {
   const csp = appCsp("https://app.example");
   assert.match(csp, /frame-src https:\/\/app\.example\/sandbox\//);
