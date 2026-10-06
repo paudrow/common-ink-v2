@@ -581,3 +581,18 @@ test("a sync that works doesn't hide edits still waiting for Google: the source 
   const state = (await op(store, "sync_calendar", { force: true })) as { state: string; pending: number; error?: string };
   assert.deepEqual([state.state, state.pending, state.error], ["error", 1, "Google Calendar answered 503 saving Dentist (Dr Lee)"]);
 });
+
+test("an edit whose event Google keeps refusing to read is refused after a few tries, so the edits behind it still go", async () => {
+  let unreadable = false;
+  const { fake, store } = googleWith((url, method) => (unreadable && method === "GET" && url.endsWith("/events/dentist") ? Response.json({ error: { code: 400, message: "Bad Request" } }, { status: 400 }) : undefined));
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  unreadable = true;
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
+  for (let i = 0; i < 3; i++) await store.sources.flush("google");
+  assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff", "the edit behind it went");
+  assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist");
+  assert.deepEqual(store.sources.outbox("google"), []);
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Google Calendar refused the change to Dentist (Dr Lee): Google Calendar answered 400 reading Dentist (Dr Lee). It's back as it was, and the change is in its history.");
+});
