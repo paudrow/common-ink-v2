@@ -1,0 +1,10 @@
+{
+  "pr": 162,
+  "title": "Purge: Delete forever, Empty Trash, and a daily purge after 30 days",
+  "steps": [
+    "Press ⌘K (Ctrl+K), type trash and press Enter. Select Untitled 3 and press D (Shift+d): it asks first; Cancel keeps it. Press D again and choose Delete forever.",
+    "Open Show history of everything: the line says Deleted forever, by you, with no Undo, and the note's old text can't be opened.",
+    "Move a couple of notes to Trash with :trash, then use Empty Trash at the top of the Trash view: it asks, then deletes them all forever.",
+    "On a phone, in Trash, swipe a row left: it goes red, and letting go asks before deleting forever."
+  ]
+}
