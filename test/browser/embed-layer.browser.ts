@@ -139,3 +139,26 @@ browserTest(h, "the boxes scrolled right after the note scrolled (a wheel over a
   assert.ok(note > 40, `the note followed the boxes (it's at ${note}, they're at ${boxes})`);
   assert.equal(note, boxes, "and they're in step");
 });
+
+browserTest(h, "the boxes scrolled, then placed again before their scroll event comes, still take the note with them, and settle", { scenario: "embeds", open: "Embeds tour.md" }, async (app) => {
+  await app.page.locator(".cm-embed[data-live]").last().waitFor();
+  await app.idle();
+  const scrolls = await app.page.evaluate(async () => {
+    const editor = document.querySelector<HTMLElement>(".tab-editor:not([hidden]) .cm-scroller")!;
+    const layer = document.querySelector<HTMLElement>(".embed-scroller")!;
+    let n = 0;
+    editor.addEventListener("scroll", () => n++);
+    layer.addEventListener("scroll", () => n++);
+    const boxes = document.querySelectorAll(".embed-layer .cm-embed[data-live]");
+    boxes[boxes.length - 1].scrollIntoView({ block: "center" });
+    // A change to the page around the editors: the boxes are placed again (in a microtask), before the layer's scroll event.
+    document.body.classList.toggle("probe");
+    await new Promise((r) => setTimeout(r, 1000));
+    return n;
+  });
+  await app.idle();
+  const [note, boxes] = await app.page.evaluate(() => [document.querySelector<HTMLElement>(".tab-editor:not([hidden]) .cm-scroller")!.scrollTop, document.querySelector<HTMLElement>(".embed-scroller")!.scrollTop]);
+  assert.ok(note > 0, `the note followed the boxes (it's at ${note}, they're at ${boxes})`);
+  assert.equal(note, boxes, "and they're in step");
+  assert.ok(scrolls < 10, `and settled: ${scrolls} scroll events in a second`);
+});
