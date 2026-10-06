@@ -533,7 +533,7 @@ for (const [how, deleted] of [
     fake.remove("ada@example.com", "dentist");
     gone.add("dentist");
     const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
-    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's gone here too, and the change is in its history." });
     assert.equal(fake.event("ada@example.com", "dentist")?.status, "cancelled", "not brought back by our edit");
     fake.remove("ada@example.com", "standup");
     gone.add("standup");
@@ -570,7 +570,7 @@ test("an edit Google answers 404 or 410 for says the event was deleted in Google
     const { store } = googleWith((url, method) => (method === "PATCH" && url.endsWith("/events/dentist") ? Response.json({ error: { code: status, message: "Not Found" } }, { status }) : undefined));
     await op(store, "sync_calendar", {});
     const refused = await runOperation("update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" }, store, ada);
-    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's back as it was, and the change is in its history." });
+    assert.deepEqual(refused, { ok: false, error: "Google Calendar refused the change to Dentist (Dr Lee): It was deleted in Google. It's gone here too, and the change is in its history." });
   }
 });
 
@@ -613,4 +613,22 @@ test("an event Google deleted while an edit of it waited goes here too, with the
   const path = recordPath({ source: "google", kind: "event", collection: "primary", id: "dentist" });
   assert.ok(store.files.recent({ path }).some((c) => store.files.versionAt(path, c.revision)?.includes("Dentist (Dr Lee)")), "the edit is in its history");
   assert.match(store.sources.status("ada@example.com").sources[0].conflict ?? "", /It was deleted in Google\. It's gone here too/);
+});
+
+test("when Google cancelled an occurrence an edit of it waited for, the source says Google's cancellation won", async () => {
+  let down = false;
+  const late = "standup_20261006T160000Z";
+  const { fake, store } = googleWith((url, method) => {
+    if (down && method === "PATCH") return new Response("{}", { status: 503 });
+    // Google answers a get of a cancelled occurrence with the occurrence, cancelled.
+    if (method === "GET" && url.endsWith(`/events/${late}`)) return Response.json(fake.event("ada@example.com", late));
+  });
+  await op(store, "sync_calendar", {});
+  down = true;
+  await op(store, "update_event", { address: "event:google/primary/standup_20261006T160000Z", title: "Late standup", scope: "this" });
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "standup_20261006T160000Z")!, status: "cancelled" });
+  down = false;
+  await store.sources.flush("google");
+  assert.equal(fake.event("ada@example.com", "standup_20261006T160000Z")?.status, "cancelled");
+  assert.equal(store.sources.status("ada@example.com").sources[0].conflict, "Late standup: Google's cancellation replaced yours, which is still in its history");
 });
