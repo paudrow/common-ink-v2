@@ -170,6 +170,17 @@ test("IndexedDB that won't open (storage blocked) leaves a store in memory, so t
   else delete (globalThis as { indexedDB?: unknown }).indexedDB;
 });
 
+test("back online, one request says whether the server can be reached, with nothing waiting to send", async () => {
+  const { offline, setUp } = setup();
+  setUp(false);
+  await offline.list();
+  assert.equal(offline.online, false);
+  assert.equal(await offline.check(), false, "the browser says online, the server still can't be reached");
+  setUp(true);
+  assert.equal(await offline.check(), true);
+  assert.equal(offline.online, true);
+});
+
 /** A note saved once, opened by a page signed in as you. */
 async function kept(text = "# Trip\n- a\n") {
   const s = setup();

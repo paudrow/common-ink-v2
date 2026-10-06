@@ -1,0 +1,8 @@
+{
+  "pr": 89,
+  "title": "Taking back trust on install, first and out loud",
+  "steps": [
+    "In Extensions, Install from URL with <this Preview>/catalog/word-count/, then Trust it in its details.",
+    "Install it again from the same URL. The notice says trust given to an earlier Word count was taken back, for everyone, and it runs sandboxed."
+  ]
+}

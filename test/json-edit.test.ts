@@ -40,3 +40,10 @@ test("a file that isn't a JSON object is left alone", () => {
   assert.equal(setTopLevelKey('{"a": }', "a", 1), null);
   assert.deepEqual(topLevelKeys('{"a": {"b": "}"}, "c": [1, "]"]}')?.keys.map((k) => k.key), ["a", "c"]);
 });
+
+test("a key written twice is set once: the later copies, which JSON.parse would read, go", () => {
+  const file = '{\n  "extensions.trusted": ["a"],\n  "editor.fontSize": 15,\n  "extensions.trusted": ["a", "b"]\n}\n';
+  const out = setTopLevelKey(file, "extensions.trusted", ["c"])!;
+  assert.deepEqual(JSON.parse(out), { "extensions.trusted": ["c"], "editor.fontSize": 15 });
+  assert.equal(out.match(/extensions\.trusted/g)?.length, 1);
+});

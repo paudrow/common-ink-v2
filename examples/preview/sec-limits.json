@@ -1,0 +1,7 @@
+{
+  "pr": 119,
+  "title": "More IPv6 ranges refused, next= capped as kept",
+  "steps": [
+    "Link cards draw as before: open Link embeds tour. The rest is in test/safe-fetch.test.ts and test/google.test.ts."
+  ]
+}
