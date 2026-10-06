@@ -1,0 +1,7 @@
+{
+  "pr": 100,
+  "title": "The event editor saves only what you changed",
+  "steps": [
+    "⌘⇧P, Show calendar, and open the Dentist's editor. In another tab, rename the Dentist from its editor (or with bin/common-ink event set). Back in the first tab, change only its place and Save: the new name stays."
+  ]
+}

@@ -58,7 +58,7 @@ class TableWidget extends WidgetType {
     box.addEventListener("mousedown", (e) => {
       if ((e.target as HTMLElement).closest(".cm-md-link") && (e.metaKey || e.ctrlKey)) return;
       e.preventDefault();
-      view.dispatch({ selection: { anchor: view.posAtDOM(box) } });
+      view.dispatch({ selection: { anchor: view.posAtDOM(box) }, userEvent: "select.pointer" });
       view.focus();
     });
     return box;
