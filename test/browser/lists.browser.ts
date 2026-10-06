@@ -19,8 +19,9 @@ test("Vim's < and > move list items with their children, and ]e moves them past 
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(`${h.base}/?file=${encodeURIComponent("Lists tour.md")}`);
-  await page.waitForSelector(".cm-list-bullet");
-  assert.ok((await page.locator(".cm-list-number").count()) >= 4, "numbers drawn in their column");
+  // Lists draws what the parser has reached: on a slow machine the first pass has the bullets at the top
+  // and the numbers come a pass later, once the parse gets to them.
+  await page.waitForFunction(() => document.querySelectorAll(".cm-list-number").length >= 4, null, { timeout: 10_000 }).catch(() => assert.fail("numbers drawn in their column"));
   await page.click(".cm-content");
   await page.keyboard.type("/Order seeds");
   await page.keyboard.press("Enter");
