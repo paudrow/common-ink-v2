@@ -6,6 +6,8 @@ import { browserTest, harness } from "../browser/harness.ts";
 import type { App } from "../browser/pages.ts";
 
 const h = harness();
+/** What the real players' own pages log about the browser they're in: nothing the app does. */
+const PLAYER_NOISE = /Permissions policy violation: compute-pressure/;
 const FRAME = '.cm-url-embed[data-url-embed="youtube"] iframe';
 const BOX = '.cm-url-embed[data-url-embed="youtube"]';
 const NOTE = `# Video\n\nhttps://www.youtube.com/watch?v=aqz-KE-bpKQ\n\n${Array.from({ length: 80 }, (_, i) => `Line ${i + 1} below the video.`).join("\n\n")}\n`;
@@ -49,7 +51,7 @@ async function playing(app: App, floating: boolean, after: string) {
   assert.ok(now.time > before, `its time moves on after ${after}: ${before} → ${now.time}`);
 }
 
-browserTest(h, "a real YouTube video floats while its note is out of sight, docks when it's back, and keeps playing in the same frame", { internet: "live" }, async (app) => {
+browserTest(h, "a real YouTube video floats while its note is out of sight, docks when it's back, and keeps playing in the same frame", { internet: "live", allowErrors: [PLAYER_NOISE] }, async (app) => {
   await app.writeFile("Video.md", NOTE);
   await app.goto({}, "Video");
   await app.page.locator(FRAME).first().waitFor();
@@ -87,7 +89,7 @@ browserTest(h, "a real YouTube video floats while its note is out of sight, dock
   assert.equal((await watched(app)).floating, false, "Stop and close: it pauses, and its window goes");
 });
 
-browserTest(h, "a real Spotify track plays on unseen when its tab is hidden, and the mini player pauses it and goes back to its note", { internet: "live" }, async (app) => {
+browserTest(h, "a real Spotify track plays on unseen when its tab is hidden, and the mini player pauses it and goes back to its note", { internet: "live", allowErrors: [PLAYER_NOISE] }, async (app) => {
   const TRACK = '.cm-url-embed[data-url-embed="spotify"] iframe';
   await app.writeFile("Track.md", "# Track\n\nhttps://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC\n");
   await app.goto({}, "Track");
@@ -125,7 +127,7 @@ browserTest(h, "a real Spotify track plays on unseen when its tab is hidden, and
   assert.equal(await app.page.evaluate((sel) => document.querySelector(sel) === (window as unknown as { sp: { frame: Element } }).sp.frame, TRACK), true, "the same frame throughout");
 });
 
-browserTest(h, 'with "media.whenHidden": "pause", a real YouTube video pauses when its tab is hidden, and doesn\'t float', { internet: "live" }, async (app) => {
+browserTest(h, 'with "media.whenHidden": "pause", a real YouTube video pauses when its tab is hidden, and doesn\'t float', { internet: "live", allowErrors: [PLAYER_NOISE] }, async (app) => {
   await app.writeFile(".common-ink/settings.json", JSON.stringify({ "media.whenHidden": "pause" }));
   await app.writeFile("Video.md", NOTE);
   await app.goto({}, "Video");

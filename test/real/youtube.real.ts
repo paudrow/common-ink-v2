@@ -40,7 +40,7 @@ async function stillPlaying(app: App, after: string) {
   assert.ok(now.time > before, `its time moves on after ${after}: ${before} → ${now.time}`);
 }
 
-browserTest(h, "a real YouTube video plays on through typing, a new tab, a split, and the cursor on its line", { internet: "live" }, async (app) => {
+browserTest(h, "a real YouTube video plays on through typing, a new tab, a split, and the cursor on its line", { internet: "live", allowErrors: [/Permissions policy violation: compute-pressure/] }, async (app) => {
   await app.writeFile("Video.md", NOTE);
   await app.goto({}, "Video");
   await app.page.locator(FRAME).first().waitFor();

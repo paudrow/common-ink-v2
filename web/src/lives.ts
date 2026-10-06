@@ -373,9 +373,10 @@ export class Lives {
       const seen = !!at && !!s && s.bottom > r!.top && s.top < r!.bottom;
       return { live, at, seen };
     });
+    // Where the editor was, shown or not (a hidden tab's is all zeros), for the watch to tell it moved.
+    if (r) this.shown = { top: r.top, left: r.left, width: r.width, height: r.height };
     if (view && editor && on) {
       const size = { width: editor.clientWidth, height: editor.clientHeight, inner: editor.scrollHeight, innerWidth: editor.scrollWidth };
-      this.shown = { top: r.top, left: r.left, width: r.width, height: r.height };
       // The editor's theme classes, so the styles extensions give their embeds (scoped to the editor) apply here too.
       const themed = `embed-themes ${[...view.dom.classList].filter((c) => c !== "cm-editor" && c !== "cm-focused").join(" ")}`;
       if (this.themed.className !== themed) {
