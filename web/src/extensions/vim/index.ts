@@ -10,6 +10,7 @@ import type { ExtensionContext } from "../../extension-api.ts";
 
 type ExParams = { argString?: string; input?: string };
 type CM = NonNullable<ReturnType<typeof getCM>>;
+type Pos = { line: number; ch: number };
 
 const theme = EditorView.theme({
   ".cm-vim-panel": { padding: "0.25rem 1rem", fontFamily: "var(--mono)" },
@@ -100,9 +101,15 @@ export default {
       if (operator) {
         // In place of Vim's own operator: Vim selects what the motion covers (>> a line, >ip a
         // paragraph, or the visual selection), the command acts on the selection, and the cursor stays.
-        Vim.defineOperator(name, (cm: CM) => {
+        Vim.defineOperator(name, (cm: CM, _args: unknown, ranges: ReadonlyArray<{ anchor: Pos; head: Pos }>) => {
+          const doc = cm.cm6.state.doc;
           ctx.commands.run(command);
-          return cm.getCursor();
+          // A command that put the cursor somewhere (a list item moved by the outline's rules) keeps it there.
+          if (cm.cm6.state.doc !== doc && cm.cm6.state.selection.main.empty) return cm.getCursor();
+          // Nothing changed (the outline's rules refused), or the motion's range is still selected (a
+          // plain shift): where Vim leaves a shift, the first line's first non-blank, not past the range.
+          const line = Math.min(...ranges.map((r) => Math.min(r.anchor.line, r.head.line)));
+          return { line, ch: cm.getLine(line).search(/\S|$/) };
         });
         Vim.mapCommand(keys, "operator", name, {}, {});
         continue;

@@ -1,0 +1,7 @@
+{
+  "pr": 60,
+  "title": "Calls to Google give up after 30 seconds",
+  "steps": [
+    "Nothing changes on a Preview, whose Sample calendar has no Google behind it. Edits go to Google as before with `npm run dev -- --fake-google`."
+  ]
+}

@@ -2,7 +2,7 @@ import { openWorkspace, restoreFile, undoChanges, type SourceSettings } from "..
 import type { Adapter } from "../worker/src/adapter.ts";
 import type { Store } from "../worker/src/operations.ts";
 import { addUpload, type Blobs } from "../worker/src/uploads.ts";
-import { logDone } from "../worker/src/complete-task.ts";
+import { completeTaskIn } from "../worker/src/complete-task.ts";
 import type { DataSources } from "../worker/src/data-sources.ts";
 import type { Files } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
@@ -30,6 +30,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     undo: (r, a) => undoChanges(files, sources, r, a),
     combined: (r) => files.combined(r),
     versionAt: (p, r) => files.versionAt(p, r),
+    editApplied: (p, id) => files.editApplied(p, id),
     restore: (p, at, a) => restoreFile(files, sources, p, at, a),
     sourceStatus: (e) => sources.status(e),
     calendars: () => sources.calendars(),
@@ -42,7 +43,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     },
     contacts: (e, q) => sources.contacts(e, q),
     upload: (n, d, a) => addUpload(files, blobs, n, d, a),
-    logDone: (p, e, d, a) => logDone(files, p, e, d, a),
+    completeTask: (args, a) => completeTaskIn(files, args, a),
   };
   return store;
 }
