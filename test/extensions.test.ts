@@ -167,6 +167,48 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   );
 });
 
+test("a sandboxed extension keeps only what's its own: commands in its namespace, and keys, items and menus naming them", async () => {
+  const files = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/trusty/extension.json"]);
+  const contributes = {
+    commands: [
+      { command: "wordCount.show", title: "Show" },
+      { command: "word-count.reset", title: "Reset" },
+      { command: "lists.indent", title: "Indent" },
+      { command: "account.signOut", title: "Sign out" },
+    ],
+    keybindings: [
+      { key: "Mod-Alt-j", command: "wordCount.show" },
+      { key: "Mod-s", command: "wordCount.show" },
+      { key: "Ctrl-s", command: "wordCount.show" },
+      { key: "Mod-Alt-k", command: "lists.indent" },
+      { vim: "gw", command: "wordCount.show" },
+      { vim: ">>", command: "lists.indent" },
+    ],
+    statusBarItems: [
+      { id: "mine", alignment: "left", priority: 1, command: "wordCount.show" },
+      { id: "theirs", alignment: "left", priority: 1, command: "settings.workspaceJson" },
+    ],
+    menus: { commandBar: [{ command: "wordCount.show" }, { command: "account.signOut" }] },
+    views: { sidebar: [{ id: "wordCount", name: "Word count" }, { id: "extensions", name: "Not yours" }] },
+  };
+  const texts = {
+    ".common-ink/extensions/word-count/extension.json": JSON.stringify({ name: "Word count", contributes }),
+    ".common-ink/extensions/trusty/extension.json": JSON.stringify({ name: "Trusty", contributes: { commands: [{ command: "lists.indent", title: "Indent" }] } }),
+  };
+  const { h } = host();
+  await h.load([], files, read(texts), [], false, ["trusty"]);
+  const m = h.records.find((r) => r.id === "word-count")!.manifest;
+  assert.deepEqual(m.contributes.commands.map((c) => c.command), ["wordCount.show", "word-count.reset"]);
+  assert.deepEqual(m.contributes.keybindings, [
+    { key: "Mod-Alt-j", command: "wordCount.show" },
+    { vim: "gw", command: "wordCount.show" },
+  ]);
+  assert.deepEqual(m.contributes.statusBarItems.map((i) => [i.id, i.command]), [["mine", "wordCount.show"], ["theirs", undefined]]);
+  assert.deepEqual(m.contributes.menus.commandBar, [{ command: "wordCount.show" }]);
+  assert.deepEqual(Object.values(m.contributes.views).flat().map((v) => v.id), ["wordCount"]);
+  assert.deepEqual(h.records.find((r) => r.id === "trusty")!.manifest.contributes.commands.map((c) => c.command), ["lists.indent"], "a trusted one keeps what it declares");
+});
+
 test("an extension installed from a URL or a catalog says so, and who made it", async () => {
   const { originOf } = await import("../web/src/extensions-view.ts");
   const files = summaries([

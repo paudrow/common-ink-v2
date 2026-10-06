@@ -144,3 +144,67 @@ browserTest(h, "a sandboxed extension runs only its own commands, and opens no s
   });
   assert.equal(await app.readFile(".common-ink/settings.json"), before);
 });
+
+const SQUATTER = {
+  name: "Squatter",
+  activationEvents: ["onStartup"],
+  contributes: {
+    commands: [
+      { command: "squatter.go", title: "Squatter go" },
+      { command: "lists.indent", title: "Indent" },
+      { command: "tab.next", title: "Next tab" },
+    ],
+    keybindings: [
+      { key: "Mod-s", command: "squatter.go" },
+      { key: "Mod-Alt-j", command: "squatter.go" },
+      { key: "Mod-Alt-k", command: "lists.indent" },
+    ],
+    statusBarItems: [{ id: "squatter", alignment: "left", priority: 1000, command: "settings.workspaceJson" }],
+    menus: { commandBar: [{ command: "account.signOut" }] },
+  },
+};
+
+const SQUAT = `export default { activate(ctx) {
+  let went = 0;
+  const r = {};
+  const t = async (k, f) => { try { await f(); r[k] = "done"; } catch (e) { r[k] = "refused"; } };
+  ctx.commands.register("squatter.go", async () => {
+    went++;
+    await t("run lists.indent", () => ctx.commands.run("lists.indent"));
+    await t("run tab.next", () => ctx.commands.run("tab.next"));
+    await t("open the Extensions view", () => ctx.views.open("extensions"));
+    await t("show the Extensions view", () => ctx.views.show("extensions"));
+    await ctx.workbench.notice("SQUAT " + went + " " + JSON.stringify(r));
+  });
+  ctx.statusBar.set("squatter", "Words: 12");
+  void t("register lists.indent", () => ctx.commands.register("lists.indent", () => {}));
+} };`;
+
+browserTest(h, "a sandboxed extension can't take an app command's id, an app key, or point its status item and menus at app commands", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/settings.json", '{\n  "extensions.trusted": []\n}\n');
+  await app.writeFile("Plan.md", "# Plan\n\n- one\n- two\n");
+  await app.writeFile(".common-ink/extensions/squatter/extension.json", JSON.stringify(SQUATTER));
+  await app.writeFile(".common-ink/extensions/squatter/index.js", SQUAT);
+  await app.reload();
+  await app.open("Plan");
+  await app.keys("G");
+  // Its key that the app doesn't use is its own; the app's save key stays the app's.
+  await app.page.keyboard.press(process.platform === "darwin" ? "Meta+Alt+j" : "Control+Alt+j");
+  const said = (await app.page.locator(".notice p", { hasText: "SQUAT 1" }).textContent())!;
+  assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), {
+    "register lists.indent": "refused",
+    "run lists.indent": "refused",
+    "run tab.next": "refused",
+    "open the Extensions view": "refused",
+    "show the Extensions view": "refused",
+  });
+  await app.page.keyboard.press(process.platform === "darwin" ? "Meta+s" : "Control+s");
+  await app.page.keyboard.press(process.platform === "darwin" ? "Meta+Alt+k" : "Control+Alt+k");
+  await app.page.waitForTimeout(800);
+  assert.equal(await app.page.locator(".notice p", { hasText: "SQUAT 2" }).count(), 0, "Mod-s still saves");
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\n- one\n- two\n", "lists.indent never ran for it");
+  // Its status item shows its words, but a click runs nothing of the app's.
+  await app.page.locator(".status-item", { hasText: "Words: 12" }).click();
+  await app.page.waitForTimeout(500);
+  assert.notEqual(await app.page.evaluate(() => (window as unknown as { __commonInk: { where(): { path?: string } | null } }).__commonInk.where()?.path), ".common-ink/settings.json");
+});
