@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { browserTest, harness } from "./harness.ts";
+import type { App } from "./pages.ts";
 
 const h = harness();
 
@@ -185,6 +186,8 @@ const SPAMMER = {
 const SPAM = `export default { activate(ctx) {
   ctx.commands.register("spammer.run", async () => {
     const rs = await Promise.allSettled(Array.from({ length: 100000 }, () => ctx.commands.shortcut("nope")));
+    // Every call answered: its share stays spent until the moment rolls on, and the test acts in that time.
+    console.log("SPAM SETTLED");
     const refused = rs.filter((r) => r.status === "rejected");
     const said = "SPAM " + JSON.stringify({ taken: rs.length - refused.length, why: refused[0] && refused[0].reason.message });
     // Its share is spent for this moment: it says so once there's room again.
@@ -194,42 +197,114 @@ const SPAM = `export default { activate(ctx) {
   });
 } };`;
 
-browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, and the page keeps running", { scenario: "empty", allowErrors: [/./] }, async (app) => {
-  await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
-  await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
-  await app.reload();
-  // What 100,000 calls and their answers cost this page on this machine, with nothing done for them: a
-  // port in the page answering each at once. The flood, refused, has to stay close to that.
-  const baseline = await app.page.evaluate(async () => {
+const NEIGHBOR = {
+  name: "Neighbor",
+  activationEvents: ["onCommand:neighbor.run"],
+  contributes: { commands: [{ command: "neighbor.run", title: "Run Neighbor" }] },
+};
+
+const NEIGHBORLY = `export default { activate(ctx) {
+  ctx.commands.register("neighbor.run", async () => {
+    const rs = await Promise.allSettled(Array.from({ length: 20 }, () => ctx.commands.shortcut("nope")));
+    // Said in its console, which costs no call: with a share for everyone, a notice would be refused too.
+    console.log("NEIGHBOR " + JSON.stringify({ answered: rs.filter((r) => r.status === "fulfilled").length }));
+  });
+} };`;
+
+/**
+ * The page's main thread's CPU time, in ms (CDP's ThreadTime). Not the time on the clock: on a busy
+ * machine (CI's runners, two test files at once) the clock also counts the page waiting its turn while
+ * the flooding frame's own process and other tests run, which swung a wall-time comparison from 1.2 to
+ * over 3 times its baseline with nothing in the app changed.
+ */
+async function pageCpu(app: App) {
+  const cdp = await app.page.context().newCDPSession(app.page);
+  await cdp.send("Performance.enable", { timeDomain: "threadTicks" });
+  return async () => {
+    const { metrics } = (await cdp.send("Performance.getMetrics")) as { metrics: Array<{ name: string; value: number }> };
+    return metrics.find((m) => m.name === "ThreadTime")!.value * 1000;
+  };
+}
+
+/** What 100,000 calls and their answers cost the page with nothing done for them: a port in the page answering each at once. */
+async function messagesAlone(app: App, cpu: () => Promise<number>) {
+  const before = await cpu();
+  await app.page.evaluate(async () => {
     const { port1, port2 } = new MessageChannel();
     port2.onmessage = (e) => port2.postMessage({ t: "reject", id: (e.data as { id: string }).id, message: "no" });
-    let gap = 0;
-    let last = performance.now();
-    const timer = setInterval(() => ((gap = Math.max(gap, performance.now() - last)), (last = performance.now())), 20);
     await new Promise<void>((done) => {
       let answered = 0;
       port1.onmessage = () => ++answered === 100_000 && done();
       for (let i = 0; i < 100_000; i++) port1.postMessage({ t: "call", id: `h${i}`, method: "commands.shortcut", args: ["nope"] });
     });
-    await new Promise((r) => setTimeout(r, 100));
-    clearInterval(timer);
-    return gap;
   });
+  return (await cpu()) - before;
+}
+
+browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, refused at the cost of its messages, and leaves other frames their share", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
+  await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
+  await app.writeFile(".common-ink/extensions/neighbor/extension.json", JSON.stringify(NEIGHBOR));
+  await app.writeFile(".common-ink/extensions/neighbor/index.js", NEIGHBORLY);
+  await app.reload();
+  const cpu = await pageCpu(app);
+  const alone = [await messagesAlone(app, cpu)];
+  // What the page makes for each refusal, counted: a refusal is a message with words made once, so no
+  // Error and no number written out per refused call. (The version that did both stalled the page 2.5 to
+  // 4 times longer.) These count the spellings that version used, not every way of doing the same: an
+  // Error subclass per refusal isn't counted here. What any refusal costs is bounded twice more below: no
+  // long task, and the flood's CPU time. CallShare's own words and count are unit tested
+  // (sandbox-limits.test.ts), where a number formatted per refusal fails on time.
   await app.page.evaluate(() => {
-    const w = window as unknown as { gap: number };
-    w.gap = 0;
-    let last = performance.now();
-    setInterval(() => ((w.gap = Math.max(w.gap, performance.now() - last)), (last = performance.now())), 20);
+    const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
+    w.made = { errors: 0, numbers: 0 };
+    // Built code calls Error() without new, which makes one all the same.
+    w.Error = new Proxy(Error, {
+      construct: (target, args, made) => (w.made.errors++, Reflect.construct(target, args, made)),
+      apply: (target, self, args) => (w.made.errors++, Reflect.apply(target, self, args)),
+    });
+    const toLocale = Number.prototype.toLocaleString;
+    Number.prototype.toLocaleString = function (this: number, ...args: Parameters<typeof toLocale>) {
+      w.made.numbers++;
+      return toLocale.apply(this, args);
+    };
+    // The longest the page's thread was held at once: each refusal is a task of its own, so a page that
+    // keeps running has none long, however busy the machine.
+    w.longest = 0;
+    w.longTasks = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) w.longest = Math.max(w.longest, e.duration);
+    });
+    w.longTasks.observe({ type: "longtask" });
   });
+  const before = await cpu();
+  const settled = app.page.waitForEvent("console", { predicate: (m) => m.text() === "SPAM SETTLED", timeout: 120_000 });
   await app.command("Run Spammer");
-  const said = (await app.page.locator(".notice p", { hasText: "SPAM" }).textContent({ timeout: 120_000 }))!;
+  await settled;
+  // While the spammer's share is still spent, another frame's calls are answered: each frame's share is its own.
+  const answered = app.page.waitForEvent("console", { predicate: (m) => m.text().startsWith("NEIGHBOR "), timeout: 30_000 });
+  await app.command("Run Neighbor");
+  // Refused from its start (registering its command is a call), it never runs, and says nothing.
+  const neighbor = (await answered.catch(() => assert.fail("the other frame's calls weren't answered: it never ran"))).text();
+  assert.deepEqual(JSON.parse(neighbor.slice(neighbor.indexOf("{"))), { answered: 20 }, "another frame's 20 calls, while the spammer's share is spent");
+  const said = (await app.page.locator(".notice p", { hasText: /^Spammer: SPAM \{/ }).textContent({ timeout: 120_000 }))!;
+  const flood = (await cpu()) - before;
+  const { made, longest } = await app.page.evaluate(() => {
+    const w = window as unknown as { made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
+    w.longTasks.disconnect();
+    return { made: w.made, longest: w.longest };
+  });
   const r = JSON.parse(said.slice(said.indexOf("{"))) as { taken: number; why: string };
   assert.equal(r.why, "Spammer is calling too often: it can make 2,000 calls every 10 seconds");
   // Its own start (registering its command) counts toward the 2,000 too.
   assert.ok(r.taken > 1990 && r.taken <= 2000, `took ${r.taken}`);
-  const gap = await app.page.evaluate(() => (window as unknown as { gap: number }).gap);
-  console.log(`flood stall ${Math.round(gap)} ms, baseline ${Math.round(baseline)} ms`);
-  // Refusing the flood costs about what passing the messages does (1.2 to 2.2 times here); formatting each
-  // refusal, as an earlier version did, cost 3.4 to 5 times.
-  assert.ok(gap < 2.5 * baseline + 200, `the page went ${Math.round(gap)} ms without running, against ${Math.round(baseline)} ms for the messages alone`);
+  assert.ok(made.errors < 100 && made.numbers < 100, `refusing 98,000 calls, the page made ${made.errors} Errors and wrote ${made.numbers} numbers`);
+  assert.ok(longest < 1000, `the page's thread was held ${Math.round(longest)} ms at once during the flood`);
+
+  // And the page kept running: the flood, and the ten seconds its share was spent, took the page's thread
+  // about what 100,000 messages alone do, measured either side of it. Here that's 1.3 to 2.7 times the
+  // larger of the two: the messages from another process cost more than ones within the page, and vary.
+  alone.push(await messagesAlone(app, cpu));
+  const baseline = Math.max(...alone);
+  console.log(`flood ${Math.round(flood)} ms of the page's CPU, its messages alone ${alone.map(Math.round).join(" and ")} ms, its longest task ${Math.round(longest)} ms`);
+  assert.ok(flood < 4 * baseline + 500, `the flood took ${Math.round(flood)} ms of the page's CPU, against ${Math.round(baseline)} ms for its messages alone`);
 });
