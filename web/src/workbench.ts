@@ -244,6 +244,27 @@ export class Workbench {
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
   }
 
+  /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
+  reveal(view: EditorView, pos: number | null): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    if (!at) return;
+    const [id, item] = at.split("\n");
+    const group = L.groups(this.layout).find((g) => g.id === id);
+    const index = group?.tabs.findIndex((t) => L.openableKey(t) === item) ?? -1;
+    if (!group || index < 0) return;
+    this.change((l) => L.selectTab(l, group.id, index));
+    view.focus();
+    // Once its tab shows: scrolled while hidden, the editor would keep the scroll for later, and do it on the next scroll of yours.
+    if (pos !== null) requestAnimationFrame(() => view.dispatch({ effects: EditorView.scrollIntoView(Math.min(pos, view.state.doc.length), { y: "center" }) }));
+  }
+
+  /** Focus the window this editor is in, as focus coming into it does (an embed's box is outside it, in the layer). */
+  focusView(view: EditorView): void {
+    const at = [...this.views].find(([, v]) => v === view)?.[0];
+    const id = at?.split("\n")[0];
+    if (id && this.layout.focus !== id) this.setLayout(L.focusGroup(this.layout, id));
+  }
+
   /** Show an extension's view in the focused group, in place of the tab on show or in a new tab. */
   openView(id: string, how: { newTab?: boolean } = {}): void {
     const item = { view: id };
@@ -641,9 +662,11 @@ export class Workbench {
     // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
-    const wanted = [...empty, ...boxes, ...chrome];
-    const same = wanted.length === editors.children.length && wanted.every((n, i) => editors.children[i] === n);
-    if (!same) editors.replaceChildren(...wanted);
+    // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
+    // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
+    const wanted = new Set<Node>([...empty, ...boxes]);
+    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }
 
