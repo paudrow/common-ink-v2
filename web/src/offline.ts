@@ -87,7 +87,20 @@ export class Offline {
   constructor(
     private kv: KV,
     private net: Network,
-  ) {}
+  ) {
+    // The browser says its connection went: offline now, rather than at the next request. And when it
+    // says it's back, one request says whether the server can be reached, or an idle page says Offline on.
+    if (typeof addEventListener !== "undefined") {
+      addEventListener("offline", () => this.reached(false));
+      addEventListener("online", () => void this.check());
+    }
+  }
+
+  /** Ask the server whether it can be reached: the list of files, kept as the last seen. */
+  async check(): Promise<boolean> {
+    await this.list().catch(() => {});
+    return this.online;
+  }
 
   /** Be told when unsent changes or reachability change. */
   onChange(fn: () => void): void {
