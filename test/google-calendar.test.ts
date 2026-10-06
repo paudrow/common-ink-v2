@@ -758,7 +758,7 @@ test("when Google cancelled an occurrence an edit of it waited for, the source s
 test("an occurrence Google cancelled while its first edit here waited stays cancelled, and the source says so", async () => {
   let down = false;
   const id = "standup_20261009T160000Z";
-  const { fake, store } = googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  const { fake, store } = await googleWith((_url, method) => (down && method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
   await op(store, "sync_calendar", {});
   down = true;
   await op(store, "update_event", { address: `event:google/primary/${id}`, title: "Standup with Lee", scope: "this" });
