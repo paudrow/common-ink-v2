@@ -118,6 +118,19 @@ browserTest(h, "j visits every line of a note in order, through tables, math, co
   }
 });
 
+browserTest(h, "Tab on a line that isn't a list item indents it and keeps the keyboard in the note", { scenario: "lists", open: "Lists tour" }, async (app) => {
+  await app.call("cursor", 1, 1);
+  await app.keys("<Esc>jjj");
+  // A real keyboard: o opens a blank line above the list, and Tab is pressed there.
+  await app.page.keyboard.press("o");
+  await app.page.keyboard.press("Tab");
+  await app.page.keyboard.type("plain");
+  await app.page.keyboard.press("Escape");
+  assert.equal(await app.page.evaluate(() => !!document.activeElement?.closest(".cm-content")), true, "focus stays in the note");
+  await app.idle();
+  assert.match((await app.readFile("Lists tour.md")).split("\n")[4], /^\s+plain$/);
+});
+
 browserTest(h, "moving through lists and tasks with j and k shifts nothing on screen but the cursor", { scenario: "tasks" }, async (app) => {
   for (const [note, keys] of [["Chores", "jjjjjjjkkkkkkk"], ["Lists tour", ""]] as const) {
     if (!keys) {
