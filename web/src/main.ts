@@ -890,6 +890,50 @@ async function setOverride(id: string, value: Override | undefined) {
   extensionsChanged();
 }
 
+/** Something now off here that was on goes after a reload, as turning an extension off does: offer it. */
+const offAfterReload = (what: string) => workbench.notice(`${what} goes after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+
+// What Settings › This device and the Extensions view's On here do, as commands, so they're in the command
+// bar: for a phone or tablet with a keyboard the app didn't find, or a Vim user on one.
+commands.register(
+  {
+    id: "device.keyboardYes",
+    title: "Keyboard: this device has a keyboard",
+    run: async () => {
+      await device.setKeyboard("yes");
+      workbench.notice("This device has a keyboard: keys and Vim are on here. Settings › This device changes it.");
+    },
+  },
+  {
+    id: "device.keyboardNo",
+    title: "Keyboard: this device has no keyboard",
+    run: async () => {
+      const had = device.has("keyboard");
+      await device.setKeyboard("no");
+      if (had) offAfterReload("What needs a keyboard (Vim)");
+    },
+  },
+  { id: "device.keyboardAuto", title: "Keyboard: let the app tell whether this device has one", run: () => device.setKeyboard("auto") },
+  {
+    id: "vim.onHere",
+    title: "Vim: turn on for this device",
+    run: async () => {
+      await setOverride("vim", "on");
+      workbench.notice("Vim is on here, keyboard or not. Vim: turn off for this device, or Settings › This device, changes it.");
+    },
+  },
+  {
+    id: "vim.offHere",
+    title: "Vim: turn off for this device",
+    run: async () => {
+      const running = extensions.host.records.some((r) => r.id === "vim" && r.state === "active");
+      await setOverride("vim", "off");
+      if (running) offAfterReload("Vim");
+    },
+  },
+  { id: "vim.autoHere", title: "Vim: on here whenever this device has a keyboard", run: () => setOverride("vim", undefined) },
+);
+
 /** The extensions a settings file trusts, or null if it can't be read as JSON. */
 async function trustedIn(path: FilePath): Promise<string[] | null> {
   try {

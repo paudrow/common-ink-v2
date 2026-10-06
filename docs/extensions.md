@@ -63,6 +63,8 @@ Each browser you use Common Ink in is a device, with a file of its own: `.common
 
 A keyboard is assumed on a device with a mouse or trackpad that hovers (a desktop). Elsewhere it's found the first time a key arrives that a touch screen's keyboard doesn't send (any key outside a text field, or Escape, Tab, an arrow, or a ⌘ or Ctrl chord in one), and kept from then on.
 
+The command bar has the same switches, for a phone or tablet with a keyboard the app didn't find: "Keyboard: this device has a keyboard" (and "has no keyboard", and Auto), and "Vim: turn on for this device" (and turn off, and Auto). Turning something off here applies after a reload, and the app offers it.
+
 Whether an extension is on, on a device:
 
 1. `extensions.disabled` in settings turns it off everywhere.
