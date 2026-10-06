@@ -473,6 +473,15 @@ for (const [what, series, move] of moves) {
   }
 }
 
+test("a calendar list Google sends in pages comes in whole, so no calendar or its events go", async () => {
+  const { fake, store } = await google();
+  await op(store, "sync_calendar", {});
+  fake.calendarPage = 1;
+  await op(store, "sync_calendar", { force: true });
+  assert.deepEqual(((await op(store, "list_calendars", {})) as Array<{ id: string }>).map((c) => c.id), ["primary", "team@group.calendar.google.com"]);
+  assert.ok((await listed(store)).includes("2026-10-08 Offsite"), "the second page's calendar kept its events");
+});
+
 test("an edit of a whole series' fields reaches its changed occurrences where they still had the series' old value, here and in Google", async () => {
   const { fake, store } = await google();
   await op(store, "sync_calendar", {});
