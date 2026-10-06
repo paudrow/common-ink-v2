@@ -16,6 +16,7 @@ import { decidesTrust } from "./permissions.ts";
 import { leversOn } from "./levers.ts";
 import { leversApi, netFor, withLeversMeta } from "./levers-routes.ts";
 import { redirectFor } from "./hosts.ts";
+import { seedOnce, type SeedRun } from "./seed-once.ts";
 import { bytesUpTo } from "./body.ts";
 import { publicFile } from "./public-files.ts";
 
@@ -80,7 +81,8 @@ export default {
       return out;
     }
     const out = new Response(res.body, res);
-    out.headers.set("Content-Security-Policy", appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
+    // Whatever answers under /uploads/ (a refusal, a sign-in, a 405) is under the uploads' policy, never the app's.
+    out.headers.set("Content-Security-Policy", url.pathname.startsWith("/uploads/") ? UPLOAD_CSP : appCsp(url.origin, (res.headers.get(FRAME_HOSTS) ?? "").split(" ").filter(Boolean)));
     out.headers.delete(FRAME_HOSTS);
     return out;
   },
@@ -144,7 +146,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       const isPage = asset.headers.get("Content-Type")?.startsWith("text/html");
       const out = secure(asset, isPage ? await embedFrameHosts(workspace as unknown as Store, who.kind === "user" ? who.email : null) : []);
       if (!levers || !isPage) return out;
-      await seedOnce(env, workspace);
+      await seedPreview(env, workspace);
       const seeded = await workspace.scenario();
       return withLeversMeta(out, { scenario: seeded?.name ?? "", ...(seeded?.now ? { now: seeded.now } : {}) });
     }
@@ -170,12 +172,12 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       if (extensionAnswer) return secure(extensionAnswer);
     }
     if (levers && url.pathname.startsWith("/api/levers")) {
-      await seedOnce(env, workspace);
+      await seedPreview(env, workspace);
       const answer = await leversApi(req, url, env.ASSETS, workspace, env.DEV_RUN);
       if (answer) return secure(answer);
     }
     if (url.pathname === "/mcp") return secure(await mcp(req, store, authorFor(who, req.headers.get("X-Common-Ink-Agent") ?? url.searchParams.get("agent") ?? "MCP client")));
-    await seedOnce(env, workspace);
+    await seedPreview(env, workspace);
     return secure(await api(req, url, who, store));
   }
 }
@@ -208,10 +210,14 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/contacts": "list_contacts",
   "POST /api/diff": "diff",
   "GET /api/version": "read_version",
+  "GET /api/edit": "edit_applied",
   "POST /api/restore": "restore",
   "GET /api/labels": "labels",
   "POST /api/labels": "add_label",
 };
+
+/** An extension's id, as manifests and folders have it. */
+const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
@@ -225,11 +231,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
   // A second gate behind the app's: a change in an extension's name to the files that decide trust,
   // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  // Undo is by revision, so it could take back any file's change: none for an untrusted extension.
   const extension = req.headers.get("X-Common-Ink-Extension");
+  if (extension !== null && !EXTENSION_ID.test(extension)) return json({ error: "X-Common-Ink-Extension must be an extension's id" }, 400);
   const path = parseFilePath(args.path);
-  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+  const touchesTrust = name === "undo" || (path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension ?? ""));
+  if (extension && touchesTrust) {
     const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
-    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't ${name === "undo" ? "undo changes" : `change ${path}`}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, result.internal ? 500 : 400);
@@ -305,13 +314,15 @@ function decodedPath(url: URL): string {
   }
 }
 
-let seeded = false;
+const seedRun: SeedRun = { done: false, running: null };
 
-/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate. */
-async function seedOnce(env: Env, workspace: DurableObjectStub<Workspace>) {
-  if (seeded || env.SEED !== "1") return;
-  const res = await env.ASSETS.fetch("https://assets.local/seed.json");
-  // A missing file comes back as the web app's index.html, since the app handles its own routes.
-  if (res.headers.get("Content-Type")?.startsWith("application/json")) await workspace.seed((await res.json()) as Seed);
-  seeded = true;
+/** In a Preview, fill the workspace from this deploy's seed.json, once per isolate (seed-once.ts). */
+async function seedPreview(env: Env, workspace: DurableObjectStub<Workspace>) {
+  if (env.SEED !== "1") return;
+  const load = async () => {
+    const res = await env.ASSETS.fetch("https://assets.local/seed.json");
+    // A missing file comes back as the web app's index.html, since the app handles its own routes.
+    return res.headers.get("Content-Type")?.startsWith("application/json") ? ((await res.json()) as Seed) : null;
+  };
+  await seedOnce(seedRun, load, (seed) => workspace.seed(seed));
 }

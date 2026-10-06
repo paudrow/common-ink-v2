@@ -115,7 +115,9 @@ export class DataSources {
   /** The sync running now, and the one after it: syncs take turns, so an older page can't land after a newer one. */
   private syncing: Promise<SourceState> | null = null;
   private again: Promise<SourceState> | null = null;
-  /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
+  /** The outbox seqs whose edit is waiting on the flush to say how they went. */
+  private awaited = new Set<number>();
+  /** Why the source refused queued edits, by outbox seq, kept only while their edit waits to read it. */
   private refusals = new Map<number, string>();
   /** The record whose edit is being pushed now, if any. */
   private pushing: string | null = null;
@@ -364,9 +366,18 @@ export class DataSources {
         }
       },
     );
-    const error = await this.flush(source);
-    const refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
-    for (const seq of queued) this.refusals.delete(seq);
+    for (const seq of queued) this.awaited.add(seq);
+    let error: string | null;
+    let refusal: string | undefined;
+    try {
+      error = await this.flush(source);
+    } finally {
+      refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
+      for (const seq of queued) {
+        this.awaited.delete(seq);
+        this.refusals.delete(seq);
+      }
+    }
     if (refusal) return { status: "refused", error: refusal };
     return {
       status: error ? "queued" : "saved",
@@ -429,7 +440,8 @@ export class DataSources {
         // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
         const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
         if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
-          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone));
+          const reason = this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone);
+          if (this.awaited.has(row.seq)) this.refusals.set(row.seq, reason);
           continue;
         }
         const message = (err as Error).message;
@@ -771,16 +783,20 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
 /**
  * Whether a record changed after one of its revisions, but for changes being undone with it
  * (`undoing`). The source filling in its own address for the record (`link`), as a sync does after
- * an edit goes out, isn't a change.
+ * an edit goes out, isn't a change. Each sync change is judged by what it changed itself, since the
+ * record now also has the later edits being undone.
  */
 function changedSince(files: Files, path: FilePath, revision: Revision, undoing: ReadonlySet<Revision>): boolean {
   const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision && !undoing.has(c.revision));
-  if (!later.length) return false;
-  if (!later.every((c) => c.author.kind === "sync")) return true;
-  const before = files.recent({ path, before: Math.min(...later.map((c) => c.revision)), limit: 1 })[0];
+  return later.some((c) => c.author.kind !== "sync" || !onlyLinked(files, path, c.revision));
+}
+
+/** Whether a change to a record only filled in its `link`. */
+function onlyLinked(files: Files, path: FilePath, revision: Revision): boolean {
+  const before = files.recent({ path, before: revision, limit: 1 })[0];
   const was = readEvent(before ? (files.versionAt(path, before.revision) ?? "") : "");
-  const now = readEvent(files.read(path)?.text ?? "");
-  return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
+  const now = readEvent(files.versionAt(path, revision) ?? "");
+  return !!was && !!now && recordText({ ...was, link: undefined }) === recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */

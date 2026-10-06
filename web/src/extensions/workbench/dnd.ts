@@ -1,5 +1,6 @@
 // Dragging things into windows. Anything that opens in a window drags the same way: as an Openable (a
 // file or a view), plus where it came from when it's a tab, so dropping it moves the tab.
+import { isNote, parseFilePath } from "common-ink/files";
 import type { Direction, GroupId, Openable } from "common-ink/layout";
 
 export const DRAG_TYPE = "application/x-common-ink-openable";
@@ -25,16 +26,31 @@ export function endDrag(): void {
   current = null;
 }
 
-/** What's being dragged, if it's ours. */
+/**
+ * Whether a drag is one a window takes: one of this page's, or one marked as ours from outside it.
+ * While dragging, a browser shows what's dragged in from outside only on drop, so that's when it's read.
+ */
+export function droppable(e: DragEvent): boolean {
+  return !!current || !!e.dataTransfer?.types.includes(DRAG_TYPE);
+}
+
+/**
+ * What's being dragged, if it's ours. One of this page's is what it started (a tab moves). One from
+ * outside the page, another window of the app or any other site, says what it is in data anyone can
+ * write: a note in this workspace is all it may open, never a tab to move, a view, or a settings or
+ * code file.
+ */
 export function dragged(e: DragEvent): Dragged | null {
+  if (current) return current;
   if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return null;
-  const data = e.dataTransfer.getData(DRAG_TYPE);
-  if (!data) return current;
+  let item: unknown;
   try {
-    return JSON.parse(data) as Dragged;
+    item = (JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as { item?: unknown } | null)?.item;
   } catch {
-    return current;
+    return null;
   }
+  const file = item && typeof item === "object" ? parseFilePath((item as { file?: unknown }).file) : null;
+  return file && isNote(file) && !file.startsWith(".common-ink/") ? { item: { file } } : null;
 }
 
 export type Zone = Direction | "center";

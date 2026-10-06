@@ -159,10 +159,15 @@ export class Records {
     return this.db.all<{ source: SourceId; kind: RecordKind; count: number }>("SELECT source, kind, count(*) AS count FROM records GROUP BY source, kind ORDER BY source, kind");
   }
 
-  /** Make the index again from the files, as it would be if every record had just been written. */
+  /**
+   * Make the index again from the files, as it would be if every record had just been written. All of
+   * it or none: a workspace that stopped partway would find an index and never finish it.
+   */
   rebuild(files: Iterable<{ path: string; text: string }>): void {
-    this.db.run("DELETE FROM records");
-    for (const f of files) this.observe(f.path, f.text);
+    this.db.tx(() => {
+      this.db.run("DELETE FROM records");
+      for (const f of files) this.observe(f.path, f.text);
+    });
   }
 }
 
