@@ -5,7 +5,7 @@ Built-in features are extensions on the same manifest and API anyone else's use 
 - `extension.json`, the manifest: what the extension is, what it adds, when its code starts, and what it may ask for.
 - Its code: `main` (default `index.js`), an ES module whose default export has `activate(ctx)`, plus any modules `main` imports from the same folder. Everything else it needs comes through `ctx`, or, for trusted extensions that change editors, from the libraries below.
 
-A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from the Catalog in the Extensions view, or from where it's published with Install from URL, which copies its files in. Installing from a URL takes the id out of every trusted list first (the workspace's and each person's), so new code under an id someone trusted starts sandboxed, and the app says so. If a settings file that lists trusted extensions isn't valid JSON, the install waits until it's fixed.
+A workspace extension's folder is `.common-ink/extensions/<id>/`, edited like a note and kept in history. The folder's name is the id. Install one from the Catalog in the Extensions view, or from where it's published with Install from URL, which copies its files in. Installing from a URL takes the id out of every trusted list first (the workspace's and each person's), so new code under an id someone trusted starts sandboxed, and the app says so. If a settings file that lists trusted extensions isn't valid JSON, the install waits until it's fixed. Trust you give is kept in your settings; Stop trusting takes the id out of yours and the workspace's.
 
 ## Libraries
 
@@ -60,6 +60,7 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
 - `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
+- **A sandboxed extension's calls have limits.** Each carries at most 2,000,000 characters' worth (as JSON), and together at most 10,000,000 characters' worth and 2,000 calls every 10 seconds. Past that a call is refused with the reason, so an extension reading many notes at once (more than about 1,700 in 10 seconds) has to wait and try again. A webview's message to its extension is held to the same size; one that's too big is dropped, with the reason in the webview's console.
 - `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
