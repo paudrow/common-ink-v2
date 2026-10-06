@@ -361,9 +361,12 @@ export class DataSources {
         });
         this.setState(source, { error: undefined });
       } catch (err) {
-        if (err instanceof Conflict && row.attempts < 3) {
+        if (err instanceof Conflict) {
+          // Merged onto Google's version either way, so the next try has its etag. Three in a row and it waits for the next flush.
           this.resolve(source, row, op, err);
-          continue;
+          if (row.attempts < 3) continue;
+          this.setState(source, { error: err.message });
+          return err.message;
         }
         if (err instanceof Refusal) {
           this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, err.message));
