@@ -199,6 +199,7 @@ export class GoogleCalendar implements Adapter {
       throw this.conflict(e, now);
     }
     if (res.status === 409) return this.push({ op: "put", event: e, created: false }, null, calendar);
+    if (res.status === 404 || res.status === 410) throw new Refusal("It was deleted in Google");
     if (!res.ok) throw await failure(res, `saving ${e.title || e.id}`);
     return { etag: ((await res.json()) as GoogleEvent).etag };
   }
@@ -212,7 +213,8 @@ export class GoogleCalendar implements Adapter {
   private async current(e: CalendarEvent): Promise<GoogleEvent | null> {
     const res = await this.call("GET", this.path(e.calendar, e.id));
     if (res.status === 404 || res.status === 410) return null;
-    if (!res.ok) throw await failure(res, `reading ${e.title || e.id}`);
+    // Not knowing how Google has it isn't a reason to drop the edit: it waits and tries again.
+    if (!res.ok) throw new Error(`Google Calendar answered ${res.status} reading ${e.title || e.id}`);
     const g = (await res.json()) as GoogleEvent;
     return g.status === "cancelled" && !g.recurringEventId ? null : g;
   }

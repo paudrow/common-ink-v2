@@ -493,7 +493,9 @@ export class DataSources {
     try {
       const [{ since }] = this.db.all<{ since: number | null }>("SELECT max(revision) AS since FROM changes");
       await adapter.sync(this.syncIO(source, since ?? 0));
-      this.setState(source, { lastSync: this.now(), error: undefined, reconnect: false });
+      // Edits still waiting keep saying why, so the source doesn't look fine while they wait.
+      const waiting = this.db.all<{ error: string | null }>("SELECT error FROM outbox WHERE source = ? ORDER BY seq LIMIT 1", source)[0];
+      this.setState(source, { lastSync: this.now(), error: waiting?.error ?? undefined, reconnect: false });
     } catch (err) {
       this.setState(source, err instanceof ReconnectNeeded ? { reconnect: true } : { error: (err as Error).message });
     }

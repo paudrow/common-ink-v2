@@ -575,7 +575,7 @@ test("an edit Google answers 404 or 410 for says the event was deleted in Google
 });
 
 test("a sync that works doesn't hide edits still waiting for Google: the source keeps saying why", async () => {
-  const { store } = googleWith((url, method) => (method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
+  const { store } = googleWith((_url, method) => (method === "PATCH" ? new Response("{}", { status: 503 }) : undefined));
   await op(store, "sync_calendar", {});
   await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
   const state = (await op(store, "sync_calendar", { force: true })) as { state: string; pending: number; error?: string };
