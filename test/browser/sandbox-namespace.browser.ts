@@ -231,16 +231,22 @@ browserTest(h, "a sandboxed extension can't draw, or read, an embed a trusted ex
   await app.writeFile(".common-ink/extensions/thief/extension.json", JSON.stringify({ name: "Thief", activationEvents: ["onStartup"], contributes: { embeds: [SECRET_BOX] } }));
   await app.writeFile(
     ".common-ink/extensions/thief/index.js",
-    `export default { activate(ctx) { ctx.embeds.register("secretbox", { resolve(w, embed) { console.log("THIEF GOT " + JSON.stringify(embed.body)); w.html = "<p>THIEF</p>"; } }); } };`,
+    // It asks to draw the embed after the trusted extension has, as it would if its frame started late.
+    `export default { activate(ctx) { setTimeout(() => ctx.embeds.register("secretbox", { resolve(w, embed) { console.log("THIEF GOT " + JSON.stringify(embed.body)); w.html = "<p>THIEF</p>"; } }).then(() => console.log("THIEF REGISTERED"), () => console.log("THIEF REFUSED")), 2000); } };`,
   );
   await app.writeFile("Private.md", "# Private\n\n```secretbox\nkeep this to myself\n```\n");
+  await app.writeFile("Other.md", "# Other\n");
   await app.reload();
   const logs: string[] = [];
   app.page.on("console", (m) => logs.push(m.text()));
   await app.open("Private");
   await app.page.getByText("TRUSTED DRAW").waitFor();
-  await app.page.waitForTimeout(1500);
-  assert.equal(logs.find((l) => l.includes("THIEF GOT")), undefined);
+  await app.page.waitForEvent("console", { predicate: (m) => m.text().startsWith("THIEF RE"), timeout: 10_000 });
+  await app.open("Other");
+  await app.open("Private");
+  await app.page.getByText("TRUSTED DRAW").waitFor();
+  await app.page.waitForTimeout(1000);
+  assert.deepEqual(logs.filter((l) => l.startsWith("THIEF")), ["THIEF REFUSED"]);
 });
 
 browserTest(h, "a sandboxed extension can't take Vim's Ctrl-r (redo) from the editor", { scenario: "empty", allowErrors: [/./] }, async (app) => {
