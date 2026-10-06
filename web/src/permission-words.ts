@@ -39,9 +39,9 @@ export function fileWords(path: string): Phrase {
 
 /** How far a glob over paths reaches, in words: "all your notes", "everything in Journal". */
 export function filesWords(glob: string): Phrase {
-  if (glob === "**") return ["all your files, including settings"];
+  if (glob === "**") return ["all your files"];
   if (glob === "**/*.md") return ["all your notes"];
-  if (glob === ".common-ink/**") return ["your settings and the app's own files"];
+  if (glob === ".common-ink/**") return ["the app's own files"];
   const notesIn = /^([^*?]+)\/\*\*\/\*\.md$/.exec(glob);
   if (notesIn) return ["your notes in ", { name: notesIn[1] }];
   const allIn = /^([^*?]+)\/\*\*$/.exec(glob);
