@@ -43,7 +43,7 @@ export default {
             .fuzzyFilter(query, files.filter((f) => !shown.has(f.path)), (f) => ctx.util.label(f.path))
             .slice(0, PER_SECTION)
             .map((f) => ({ label: ctx.util.label(f.path), section: "By name", run: () => ctx.workbench.openPicked(f.path) }));
-          byName.push(...ctx.util.fuzzyFilter(query, views, (v) => v.label).map((v) => ({ label: v.label, section: "By name", run: () => ctx.commands.run(v.command) })));
+          byName.push(...ctx.util.fuzzyFilter(query, views, (v) => v.label).map((v) => ({ label: v.label, section: "By name", run: () => ctx.commands.run(v.command, v.by) })));
           const first = items.filter((i) => i.section === "Notes" || i.section === "Recent");
           const others = items.filter((i) => i.section !== "Notes" && i.section !== "Recent");
           return [...first, ...byName, ...others, ...commands, ...create];

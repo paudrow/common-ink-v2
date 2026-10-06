@@ -59,7 +59,7 @@ export default {
     const tabMenu = (): Array<MenuItem | null> => {
       const g = focused();
       const tab = g.tabs[g.active];
-      const item = (command: string, label: string, disabled = false): MenuItem => ({ label, detail: ctx.commands.shortcut(command), disabled, run: () => ctx.commands.run(command) });
+      const item = (command: string, label: string, disabled = false, by?: "sandbox"): MenuItem => ({ label, detail: ctx.commands.shortcut(command), disabled, run: () => ctx.commands.run(command, by) });
       return [
         item("tab.close", "Close"),
         item("tab.closeOthers", "Close Others", g.tabs.length < 2),
@@ -71,7 +71,7 @@ export default {
         item("tab.keepOpen", "Keep Open", !tab?.preview),
         item("tab.copyPath", "Copy Path", !tab || !("file" in tab)),
         // Other extensions' items, for the file on show.
-        ...ctx.commands.menu("tabMenu").map((i) => item(i.command, i.title, !tab || !("file" in tab))),
+        ...ctx.commands.menu("tabMenu").map((i) => item(i.command, i.title, !tab || !("file" in tab), i.by)),
         SEPARATOR,
         item("window.splitRight", "Split Right"),
         item("window.splitDown", "Split Down"),
@@ -167,6 +167,17 @@ export default {
         drop.hidden = true;
         editors.append(drop);
         el.prepend(tabs, marker);
+        // Shift-Tab out of a note lands on its tab, not on the close button that comes last in the bar,
+        // where Enter would close it. A press on the bar focuses what it pressed, as before.
+        let pressing = false;
+        tabs.addEventListener("pointerdown", () => {
+          pressing = true;
+          setTimeout(() => (pressing = false));
+        });
+        tabs.addEventListener("focusin", (e) => {
+          if (pressing || !editors.contains(e.relatedTarget as Node)) return;
+          tabs.querySelector<HTMLElement>('.tab[aria-selected="true"] .name')?.focus();
+        });
         const hide = () => {
           drop.hidden = true;
           marker.hidden = true;
