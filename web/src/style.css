@@ -916,6 +916,14 @@ button.status-item:hover {
   margin: 0;
 }
 
+/* On a phone, a notice is a bar at the bottom, as a snackbar is, clear of the note's top. */
+@media (max-width: 599.98px) {
+  .notice {
+    top: auto;
+    bottom: 1rem;
+  }
+}
+
 .notice button {
   font: inherit;
   color: var(--accent);
@@ -2235,10 +2243,6 @@ iframe.webview {
   background: var(--hover);
   color: var(--muted);
   font: 0.85rem var(--prose);
-}
-
-.archive-banner[hidden] {
-  display: none;
 }
 
 .archive-banner span {

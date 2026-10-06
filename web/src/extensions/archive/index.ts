@@ -5,7 +5,7 @@
 import type { FilePath } from "../../../../worker/src/files.ts";
 import { icon } from "common-ink/icons";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
-import { archiveBanner, refreshBanners } from "./banner.ts";
+import { archiveBanner, refreshBanners, type BannerEnv } from "./banner.ts";
 
 const ARCHIVE = ".common-ink/archive.json" as FilePath;
 
@@ -29,9 +29,10 @@ async function post<T>(route: string, body: unknown): Promise<T> {
 const extension: ExtensionModule = {
   async activate(ctx) {
     let archived = new Set<string>();
+    const banner: BannerEnv = { archived: (path) => archived.has(path), unarchive: (path) => void set([path], false) };
     const load = async () => {
       archived = new Set(archivedIn((await ctx.files.read(ARCHIVE).catch(() => null))?.text ?? ""));
-      refreshBanners();
+      refreshBanners(banner);
       ctx.views.refresh("archive");
     };
     ctx.events.onSaved((path) => path === ARCHIVE && void load());
@@ -42,7 +43,7 @@ const extension: ExtensionModule = {
       try {
         const done = await post<{ revision: number | null; archived: string[] }>(archive ? "/api/archive" : "/api/unarchive", { paths });
         archived = new Set(done.archived);
-        refreshBanners();
+        refreshBanners(banner);
         ctx.views.refresh("archive");
         if (done.revision === null) return;
         const revision = done.revision;
@@ -60,7 +61,7 @@ const extension: ExtensionModule = {
     ctx.commands.register("archive.archive", () => onFocused(true));
     ctx.commands.register("archive.unarchive", () => onFocused(false));
     ctx.commands.register("archive.show", () => ctx.views.open("archive", { newTab: true }));
-    ctx.editor.extend(archiveBanner({ archived: (path) => archived.has(path), unarchive: (path) => void set([path], false) }));
+    ctx.editor.extend(archiveBanner(banner));
     ctx.views.register("archive", { render: (root) => drawArchive(ctx, root, [...archived].sort(), (path) => void set([path], false)) });
     await load();
   },
