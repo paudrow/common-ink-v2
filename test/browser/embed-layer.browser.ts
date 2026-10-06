@@ -100,13 +100,21 @@ browserTest(h, "a tab dragged over an embed's box drops on the window under it",
   assert.equal(await app.page.evaluate(() => document.querySelector(".embed-layer")!.classList.contains("is-passing")), false);
 });
 
-browserTest(h, "a box takes the text styles of the editor's content, where its widget used to be", { scenario: "embeds", open: "Embeds tour" }, async (app) => {
+browserTest(h, "a box takes the text styles of the editor's scroller, where boxes were, line height scaling with each font size", { scenario: "embeds", open: "Embeds tour" }, async (app) => {
   await app.page.locator(".cm-embed[data-live]").first().waitFor();
   const styles = await app.page.evaluate(() => {
-    const props = ["font-family", "font-size", "line-height", "white-space", "word-break", "overflow-wrap", "tab-size", "letter-spacing"];
-    const of = (e: Element) => props.map((p) => getComputedStyle(e).getPropertyValue(p));
+    const props = ["font-family", "font-size", "line-height", "white-space", "letter-spacing"];
+    // A child in a bigger font, in each: its line height is the same in both.
+    const of = (parent: Element) => {
+      const probe = document.createElement("span");
+      probe.style.fontSize = "1.4em";
+      parent.append(probe);
+      const out = props.map((p) => getComputedStyle(probe).getPropertyValue(p));
+      probe.remove();
+      return out;
+    };
     const box = [...document.querySelectorAll(".cm-embed[data-live]")].find((b) => getComputedStyle(b).visibility === "visible")!;
-    return { content: of(document.querySelector(".tab-editor:not([hidden]) .cm-content")!), box: of(box) };
+    return { scroller: of(document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!), box: of(box.parentElement!) };
   });
-  assert.deepEqual(styles.box, styles.content);
+  assert.deepEqual(styles.box, styles.scroller);
 });

@@ -124,8 +124,8 @@ const owners = new WeakMap<HTMLElement, Lives>();
 /** How many frames the editor holds still after a change before its boxes stop being watched. */
 const STILL = 10;
 
-/** What a box inherited from the editor's content, where CodeMirror drew widgets: kept so it looks the same here. */
-const INHERITED = ["font-family", "font-size", "line-height", "color", "letter-spacing", "white-space", "word-break", "overflow-wrap", "tab-size"];
+/** What a box inherited from the editor's scroller, where boxes were before they moved to this layer: kept so it looks the same. */
+const INHERITED = ["font-family", "font-size", "color", "letter-spacing"];
 
 /** What the app does when an embed's box is used. main.ts sets it. */
 export const embedHooks: {
@@ -381,9 +381,13 @@ export class Lives {
       const themed = `embed-themes ${[...view.dom.classList].filter((c) => c !== "cm-editor" && c !== "cm-focused").join(" ")}`;
       if (this.themed.className !== themed) {
         this.themed.className = themed;
-        // And the text the editor's content gives what's in it (a widget's DOM was in it), as a box there had.
-        const font = getComputedStyle(view.contentDOM);
+        // And the text the editor's scroller gives what's in it, as a box had when it was in there.
+        const font = getComputedStyle(editor);
         for (const p of INHERITED) this.themed.style.setProperty(p, font.getPropertyValue(p));
+        // A line height given as a number scales with each element's own font size: kept as that number, not
+        // as the pixels it comes to here (or a time in a bigger font would be squeezed into a line of text's).
+        const [line, fontSize] = [parseFloat(font.lineHeight), parseFloat(font.fontSize)];
+        if (font.lineHeight !== "normal" && line && fontSize) this.themed.style.lineHeight = String(Math.round((line / fontSize) * 1000) / 1000);
       }
       const box = this.scroller.style;
       box.visibility = "";
