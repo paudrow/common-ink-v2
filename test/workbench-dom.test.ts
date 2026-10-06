@@ -27,6 +27,7 @@ async function workbench(layout: unknown, notes: Record<string, string> = {}) {
     read: async (path: string) => ({ path, ...(files.get(path) ?? { text: `# ${path}`, revision: 1 }) }),
     keptEdit: async () => undefined,
     keepDraft: async () => {},
+    landed: async () => {},
     dropDraft: async () => {},
     write: async (path: string, text: string, base: number) => {
       files.set(path, { text, revision: base + 1 });

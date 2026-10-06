@@ -36,6 +36,8 @@ interface OpenFile {
   startText: string;
   /** When the edit it opened with was kept, if that edit clashed: one that never reached the server. */
   keptAt?: number;
+  /** Its edits in this page were undone back to the text it's based on (so nothing of them is kept). */
+  cleaned?: boolean;
   /** An edit held offline that it opened with, before the server could say whether it has it. */
   unchecked?: Unsent;
 }
@@ -219,6 +221,11 @@ export class Workbench {
   /** When a note's clashing edit was kept, if it's one it opened with that never reached the server. */
   keptAt(path: FilePath): number | undefined {
     return this.files.get(path)?.keptAt;
+  }
+
+  /** Notes whose edits in this page were all undone, or typed back to the saved text: nothing of theirs is kept. */
+  cleaned(): FilePath[] {
+    return [...this.files.values()].flatMap((f) => (f.cleaned && !f.session.dirty && f.session.status !== "conflict" ? [f.path] : []));
   }
 
   /** Every file that isn't saved, for the page closing to send. Not one that clashes: it's held, to settle. */
@@ -575,12 +582,17 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
+    const clashed = file.session.status === "conflict";
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
-    // Back to the text the server has (an undo, say): the draft kept of an edit since is no edit now.
+    file.cleaned = !draft;
+    // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
+    // offline, is no edit now.
     if (draft) void this.net.keepDraft(draft);
-    else void this.net.dropDraft(file.path);
+    else void this.net.landed(file.path);
+    // A clash undone: the note takes in the server's latest, which it held off while it clashed.
+    if (clashed && file.session.status !== "conflict") void this.net.latest(file.path).then((latest) => file.session.absorb(latest), () => {});
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);

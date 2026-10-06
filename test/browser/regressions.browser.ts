@@ -342,6 +342,69 @@ browserTest(h, "an edit undone before it was saved isn't brought back by a reloa
   assert.equal(await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "Trip" }).count(), 1);
 });
 
+for (const when of ["back online", "still offline"] as const) {
+  browserTest(h, `an edit undone while offline, after its save was held, isn't saved by a reload ${when}`, { scenario: "empty", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::/] }, async (app) => {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 2, 1);
+    await app.page.context().setOffline(true);
+    await app.keys("dw");
+    // Long enough for its save to fail and the edit to be held, to send once back online.
+    await app.page.waitForFunction(() => document.querySelector("#unsent")?.textContent?.includes("1 unsent change"));
+    await app.keys("u");
+    await app.page.waitForTimeout(200);
+    if (when === "back online") await app.page.context().setOffline(false);
+    await app.page.reload().catch(() => {});
+    await app.page.waitForTimeout(1000);
+    await app.page.context().setOffline(false);
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(1500);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n");
+  });
+}
+
+browserTest(h, "leaving the page the moment after an edit is undone doesn't send the edit next time", { scenario: "empty" }, async (app) => {
+  for (let run = 0; run < 3; run++) {
+    await app.writeFile("Trip.md", "# Trip\nalpha beta gamma\n");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.call("cursor", 2, 1);
+    await app.call("slow", "^PUT /api/file", 60_000);
+    await app.keys("dw");
+    await app.page.waitForTimeout(run * 100);
+    await app.keys("u");
+    await app.page.goto("about:blank");
+    await app.goto({}, "Trip");
+    await app.idle();
+    await app.page.waitForTimeout(800);
+    await app.idle();
+    assert.equal(await app.readFile("Trip.md"), "# Trip\nalpha beta gamma\n", `run ${run}`);
+  }
+});
+
+browserTest(h, "a clash undone back to where it started is no clash, and the note takes in theirs", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Plan.md", "# Plan\n\nalpha\nbeta\ngamma\n");
+  await app.goto({}, "Plan");
+  await app.idle();
+  const { revision, text } = (await (await app.page.context().request.get(`${app.base}/api/file?path=Plan.md`)).json()) as { revision: number; text: string };
+  await app.call("cursor", 4, 1);
+  await app.keys("A mine<Esc>");
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Plan.md", text: text.replace("beta", "beta theirs"), base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "conflict");
+  await app.keys("u");
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "beta theirs" }).waitFor();
+  await app.reload();
+  await app.open("Plan");
+  await app.idle();
+  await app.page.waitForTimeout(800);
+  assert.equal(await app.page.locator("#save").getAttribute("data-status"), "saved");
+  assert.equal(await app.readFile("Plan.md"), "# Plan\n\nalpha\nbeta theirs\ngamma\n");
+});
+
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");
   await app.goto({}, "Trip");

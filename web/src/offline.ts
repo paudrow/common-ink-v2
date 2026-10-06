@@ -252,15 +252,36 @@ export class Offline {
     }
   }
 
+  /**
+   * Notes whose edits were all undone (or typed back to the saved text) in this page, said at once as
+   * the page goes: letting go of their kept edits in IndexedDB may not finish before it's gone.
+   */
+  keepCleanNow(paths: FilePath[]): void {
+    if (!this.account) return;
+    for (const path of paths) {
+      try {
+        localStorage.setItem(this.draftKey(path), JSON.stringify({ path, clean: true, time: Date.now() }));
+      } catch {
+        // Not allowed: the letting go as it happened is what there is.
+      }
+    }
+  }
+
+  /** What was kept in localStorage for a note as the page went: its draft, or that it had none. */
+  private keptAsWent(path: FilePath): (Unsent & { clean?: true }) | undefined {
+    try {
+      const kept = localStorage.getItem(this.draftKey(path));
+      return kept ? (JSON.parse(kept) as Unsent & { clean?: true }) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
   private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
-    try {
-      const kept = localStorage.getItem(this.draftKey(path));
-      if (kept) return JSON.parse(kept) as Unsent;
-    } catch {
-      // Not there, or not readable: the one kept as it was typed.
-    }
+    const went = this.keptAsWent(path);
+    if (went && !went.clean) return went;
     return this.kv.get<Unsent>("meta", this.draftKey(path));
   }
 
@@ -277,7 +298,13 @@ export class Offline {
   async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean; checked: boolean } | undefined> {
     const held = await this.unsentFor(latest.path);
     const edit = held ?? (await this.draftFor(latest.path));
-    if (!edit) return undefined;
+    const clean = this.account ? this.keptAsWent(latest.path) : undefined;
+    // Nothing kept: a mark that the page went with the note as saved has done its work.
+    if (!edit) return void (clean?.clean && (await this.dropDraft(latest.path)));
+    // The page that kept it went with the note as saved (its edits undone): it's no edit now.
+    if (clean?.clean && (edit.time ?? 0) <= clean.time!) return void (await this.landed(latest.path));
+    // A clash typed back to the server's own text is no clash.
+    if (held?.conflict && this.online && held.text === latest.text) return void (await this.landed(latest.path));
     if (held?.conflict) return { edit, clash: true, checked: true };
     const unknown = held ? { edit, clash: false, checked: false } : undefined;
     if (!this.online) return unknown;

@@ -235,3 +235,32 @@ test("a held edit that landed, for a note not open, isn't sent again by the back
   assert.equal(s.store.files.read(TRIP)?.text, "# Trip\n- a\n");
   assert.deepEqual(await s.offline.unsent(), []);
 });
+
+test("a note whose edits were undone as the page went: what was kept of them before isn't sent next time", async () => {
+  const items = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k) }, configurable: true });
+  try {
+    const s = await kept();
+    await s.offline.keepDraft({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw", time: Date.now() - 100 });
+    await s.offline.hold({ path: TRIP, text: "# Trip\n", base: 1, edit: "dw", time: Date.now() - 100 });
+    s.offline.keepCleanNow([TRIP]);
+    assert.equal(await opened(s), undefined);
+    assert.deepEqual(await s.offline.unsent(), [], "the held edit goes too");
+    assert.equal(items.size, 0, "and the mark with it");
+    // An edit made after the mark (another page, later) is kept as usual.
+    s.offline.keepCleanNow([TRIP]);
+    await new Promise((r) => setTimeout(r, 5));
+    await s.offline.keepDraft({ path: TRIP, text: "# Trip\n- a\n- later\n", base: 1, edit: "l" });
+    assert.equal((await opened(s))?.edit.text, "# Trip\n- a\n- later\n");
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
+test("a clash typed back to the server's own text is no clash when the note opens", async () => {
+  const s = await kept();
+  s.store.files.write({ path: TRIP, text: "# Trip\n- b\n", base: 1, author: you });
+  await s.offline.hold({ path: TRIP, text: "# Trip\n- b\n", base: 1, edit: "c", conflict: true });
+  assert.equal(await opened(s), undefined);
+  assert.deepEqual(await s.offline.unsent(), []);
+});

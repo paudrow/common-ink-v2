@@ -818,6 +818,8 @@ window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
+  // And notes whose edits were undone, so a draft or held edit not yet let go of isn't sent next time.
+  offline.keepCleanNow(workbench.cleaned());
   for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
 });
 
