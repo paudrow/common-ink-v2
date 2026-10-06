@@ -105,9 +105,11 @@ export function createState(
       history(),
       drawSelection(),
       // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
+      // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
       EditorState.allowMultipleSelections.of(true),
+      EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
-      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap]),
+      keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
@@ -141,6 +143,9 @@ function lineChanges(view: EditorView, text: string) {
 export function editText(view: EditorView, text: string) {
   view.dispatch({ changes: lineChanges(view, text).changes, userEvent: "input.replace" });
 }
+
+/** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
+const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
 export function replaceText(view: EditorView, text: string, flash = false) {

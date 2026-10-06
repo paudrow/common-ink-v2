@@ -135,6 +135,25 @@ browserTest(h, "Vim's visual block inserts, appends and deletes on every line it
   assert.equal(await app.readFile("V.md"), "# V\n\nbx c!\nex f!\nhx i!\n\n- * one\n- * two\n- * three\n");
 });
 
+browserTest(h, "a click with ⌘ or Ctrl, or ⌘⌥↓, doesn't leave a second cursor for the next dd", { scenario: "empty" }, async (app) => {
+  await app.writeFile("C.md", "# C\n\none\ntwo\nthree\n");
+  await app.goto({}, "C");
+  await app.idle();
+  const ranges = () => app.page.evaluate(async () => {
+    const { EditorView } = await (globalThis as unknown as { __commonInkLibrary(n: string): Promise<{ EditorView: { findFromDOM(e: Element): { state: { selection: { ranges: unknown[] } } } } }> }).__commonInkLibrary("@codemirror/view");
+    return EditorView.findFromDOM(document.querySelector(".tab-editor:not([hidden]) .cm-editor")!).state.selection.ranges.length;
+  });
+  await app.call("cursor", 3, 1);
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "three" }).click({ modifiers: ["ControlOrMeta"] });
+  assert.equal(await ranges(), 1, "the click moved the cursor, it didn't add one");
+  await app.page.keyboard.press("ControlOrMeta+Alt+ArrowDown");
+  assert.equal(await ranges(), 1, "⌘⌥↓ adds none");
+  await app.keys("<Esc>dd");
+  await app.idle();
+  for (let i = 0; i < 20 && (await app.readFile("C.md")).includes("three"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("C.md"), "# C\n\none\ntwo\n");
+});
+
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
   // Math, a table, a code block and math again, then a task and a table that ends the note.
   const text = "$$\nx^2\n$$\n| a | b |\n|--|--|\n| 1 | 2 |\n```js\nlet a = 1\n```\n$$\ny\n$$\n- [ ] task\n| c |\n|--|\n| 3 |";
