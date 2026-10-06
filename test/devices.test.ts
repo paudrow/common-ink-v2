@@ -268,7 +268,9 @@ test("extensions add places and keyboard toolbar buttons; the bottom bar's place
 
   assert.deepEqual(DEFAULT_BAR, ["feed", "daily.today", "calendar.calendar"]);
   assert.deepEqual(barOf(""), ["feed", "daily.today", "calendar.calendar"], "no file, the default");
-  assert.deepEqual(barOf('{"bar": ["tasks", "tasks", "feed", 3, "calendar", "today"]}'), ["tasks", "feed", "calendar"], "three, each once");
+  assert.deepEqual(barOf('{"bar": ["tasks", "tasks", "feed", 3, "calendar", "today"]}'), ["tasks.tasks", "feed", "calendar.calendar", "daily.today"], "each once, old names read as the new");
+  const { shownOnBar } = await import("../worker/src/places.ts");
+  assert.deepEqual(shownOnBar(["feed", "calendar.calendar", "daily.today", "tasks.tasks"], new Set(["feed", "daily.today", "tasks.tasks"])), ["feed", "daily.today", "tasks.tasks"], "a place that isn't there now takes no slot");
   assert.deepEqual(barOf('{"saved": {}}'), ["feed", "daily.today", "calendar.calendar"]);
 
   for (const id of ["daily", "calendar", "tasks", "data-sources", "contacts", "uploads", "lists"]) {

@@ -11,7 +11,21 @@ export const DEFAULT_BAR: readonly string[] = ["feed", "daily.today", "calendar.
 /** How many places the bottom bar holds, beside Search and Places. */
 export const BAR_SIZE = 3;
 
-/** The bottom bar's place ids, from places.json's text: its "bar", or the default. */
+/** Places' ids before they were named for their extensions, as places.json may still have them. */
+const RENAMED: Readonly<Record<string, string>> = {
+  today: "daily.today",
+  calendar: "calendar.calendar",
+  tasks: "tasks.tasks",
+  sources: "data-sources.sources",
+  contacts: "contacts.contacts",
+  uploads: "uploads.uploads",
+};
+
+/**
+ * The bottom bar's place ids, from places.json's text: its "bar", or the default. Every id it names is
+ * kept, in order, places that aren't there now (an extension turned off) included, so turning one back
+ * on puts its place back; the bar shows the first three that are places now.
+ */
 export function barOf(text: string): string[] {
   let data: unknown;
   try {
@@ -21,5 +35,8 @@ export function barOf(text: string): string[] {
   }
   const bar = (data as { bar?: unknown } | null)?.bar;
   if (!Array.isArray(bar)) return [...DEFAULT_BAR];
-  return [...new Set(bar.filter((id): id is string => typeof id === "string" && !!id))].slice(0, BAR_SIZE);
+  return [...new Set(bar.filter((id): id is string => typeof id === "string" && !!id).map((id) => RENAMED[id] ?? id))];
 }
+
+/** What the bar shows, of the ids it keeps: the first three that are places now. */
+export const shownOnBar = (bar: readonly string[], places: ReadonlySet<string>) => bar.filter((id) => places.has(id)).slice(0, BAR_SIZE);

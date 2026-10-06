@@ -223,6 +223,9 @@ const workbench = new Workbench(
       queueMicrotask(() => void renderUnsent());
     },
     navigated: (how, visit) => {
+      // On a phone, a note coming on show over a place's own entry (the Feed, Calendar) is a step of its own,
+      // even when it's where you were before (Navigation saw no jump): back comes back to the place.
+      if (how === "replace" && shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && workbench.focusedPath === visit.file) how = "push";
       browserHistory.follow(how, visit);
       // On a phone, a note opened shows over the place it was opened from.
       if (how === "push") shell?.showWindow();
@@ -453,12 +456,13 @@ function renderList() {
         e.preventDefault();
         void workbench.open(n.path, { newTab: true });
       });
-      a.addEventListener("click", (e) => {
+      a.addEventListener("click", async (e) => {
         e.preventDefault();
-        // On a phone, the note on show opened again from the list is a step of its own, for back to come back to the list.
-        const here = shell?.active && n.path === workbench.focusedPath ? workbench.navigation.here : null;
-        void workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
-        if (here) browserHistory.pushVisit(here);
+        await workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
+        // On a phone, the note on show opened again from the list moves nothing, so nothing made it an entry:
+        // it's a step of its own, for back to come back to the list.
+        const here = workbench.navigation.here;
+        if (shell?.active && (history.state as { shell?: unknown } | null)?.shell === true && here) browserHistory.pushVisit(here);
         shell?.showWindow();
       });
       const li = document.createElement("li");
@@ -1001,14 +1005,17 @@ async function setBar(ids: string[]) {
     }
   }
 }
+/** What the core's places are called, which no extension's place may pass for. */
+const CORE_PLACES = ["feed", "extensions", "settings"];
 /** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
   const on = extensions.host.on();
   const placed = new Set(on.flatMap((m) => m.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
-    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
-    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's;
+    // and one that calls itself what a core place is called says whose it is.
+    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: CORE_PLACES.includes(p.title.trim().toLowerCase()) ? `${p.title} (${m.name})` : p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
     ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },

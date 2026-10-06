@@ -119,6 +119,8 @@ browserTest(h, "F2 a sandboxed extension's place can't take over the core's Sett
   await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings$/ }).last().tap();
   await app.page.waitForTimeout(1000);
   assert.equal(await app.page.locator(".settings-editor").count(), 1, "the core's Settings row opens the settings editor");
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  assert.deepEqual(await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings/ }).allInnerTexts(), ["Settings (Spoof)", "Settings"], "the extension's says whose it is");
 });
 
 // The browser says so for each request it can't send offline; anything else the page logs fails the test.
@@ -132,7 +134,7 @@ browserTest(h, "F3 Done in Customize the bottom bar, offline, says why and logs 
   await app.page.locator(".shell-sheet .shell-primary").tap();
   await app.page.waitForTimeout(1500);
   await app.page.context().setOffline(false);
-    // Changed here, and said why it isn't saved yet; the page logs no error, and the change is sent once back.
+  // Changed here, and said why it isn't saved yet; the page logs no error, and the change is sent once back.
   assert.deepEqual(await bar(app), ["Feed", "Today", "Tasks", "Search", "Places"]);
   assert.ok((await app.state()).notices.some((n) => n.startsWith("You're offline: the bottom bar is changed here")));
   await app.page.waitForFunction(
@@ -157,4 +159,49 @@ browserTest(h, "opening a note from a place and coming back up, four times, leav
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   await app.page.goBack();
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
+});
+
+browserTest(h, "F4 a bar id that isn't a place now (old id, or an extension turned off) doesn't block Customize", { scenario: "lists", device: "phone" }, async (app) => {
+  await app.writeFile(".common-ink/places.json", JSON.stringify({ bar: ["feed", "today", "calendar"] }, null, 2) + "\n");
+  await app.reload();
+  await app.idle();
+  const shown = await app.page.evaluate(() => [...document.querySelectorAll("#shell-bar button")].map((b) => b.getAttribute("aria-label")));
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  await app.page.locator(".shell-sheet .shell-place", { hasText: "Customize" }).tap();
+  // The old ids are read as the new: the bar shows all three, so Tasks can be ticked once one is let go.
+  assert.deepEqual(shown, ["Feed", "Today", "Calendar", "Search", "Places"]);
+  const tasks = app.page.locator(".shell-sheet label", { hasText: "Tasks" }).locator("input");
+  await app.page.locator(".shell-sheet label", { hasText: "Calendar" }).locator("input").uncheck();
+  assert.equal(await tasks.isDisabled(), false, `with the bar showing ${JSON.stringify(shown)}, Tasks can be ticked`);
+});
+
+browserTest(h, "F5 after a view place, opening the note you had open gets its own entry: back goes to the Feed, a reload keeps the note", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Calendar"]');
+  await app.page.locator("#workbench .cal-page").first().waitFor();
+  await tap(app, '#shell-bar [aria-label="Feed"]');
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
+  const before = await len(app);
+  await tap(app, '#notes a:text("Lists tour")');
+  await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
+  await app.page.waitForTimeout(600);
+  assert.equal(await len(app), before + 1, "the note has an entry of its own");
+  await app.reload();
+  await app.page.waitForTimeout(800);
+  assert.equal(await app.page.locator("#shell-top h1").innerText(), "Lists tour", "a reload keeps the note on show");
+  await app.page.goBack();
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
+});
+
+browserTest(h, "an extension turned off frees its slot on the bar, and its place comes back with it", { scenario: "lists", device: "phone" }, async (app) => {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", JSON.stringify({ "extensions.disabled": ["calendar"] }));
+  await app.reload();
+  await app.idle();
+  assert.deepEqual(await bar(app), ["Feed", "Today", "Search", "Places"]);
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  await app.page.locator(".shell-sheet .shell-place", { hasText: "Customize" }).tap();
+  await app.page.locator(".shell-sheet label", { hasText: "Tasks" }).locator("input").check();
+  await app.page.locator(".shell-sheet .shell-primary").tap();
+  await app.idle();
+  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")).bar, ["feed", "daily.today", "tasks.tasks", "calendar.calendar"], "Calendar's id kept, after the three");
+  assert.deepEqual(await bar(app), ["Feed", "Today", "Tasks", "Search", "Places"]);
 });

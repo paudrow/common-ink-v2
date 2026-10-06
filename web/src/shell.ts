@@ -6,6 +6,7 @@
 // Sheets are modals (modal.ts), so focus, Escape and the scrim work as everywhere else.
 import { icon, isIcon, type IconName } from "./icons.ts";
 import { openModal, type Modal } from "./modal.ts";
+import { shownOnBar } from "../../worker/src/places.ts";
 import type { Device } from "./device.ts";
 
 /** Somewhere to go: listed in the Places sheet, and maybe on the bottom bar. */
@@ -281,7 +282,7 @@ export class Shell {
 
   private drawBar(): void {
     const places = this.deps.places();
-    const onBar = this.deps.bar().flatMap((id) => places.filter((p) => p.id === id));
+    const onBar = shownOnBar(this.deps.bar(), new Set(places.map((p) => p.id))).map((id) => places.find((p) => p.id === id)!);
     const button = (name: IconName, label: string, current: boolean, run: () => void) => {
       const b = iconButton(name, label, run, true);
       if (current) b.setAttribute("aria-current", "page");
@@ -374,7 +375,11 @@ export class Shell {
   private openBarChoice(): void {
     this.openSheet("The bottom bar", (body, sheet) => {
       const places = this.deps.places();
-      const chosen = new Set(this.deps.bar());
+      // Three of the places there are now. Ids the bar keeps for places that aren't (an extension turned
+      // off) take no slot here, and stay in the file after them, for when they're back.
+      const ids = new Set(places.map((p) => p.id));
+      const chosen = new Set(shownOnBar(this.deps.bar(), ids));
+      const absent = this.deps.bar().filter((id) => !ids.has(id));
       const note = el("p", { className: "shell-note", textContent: "Pick three. Search and Places are always there." });
       const boxes = places.map((p) => {
         const box = el("input", { type: "checkbox", checked: chosen.has(p.id) });
@@ -388,7 +393,7 @@ export class Shell {
       for (const [i, b] of boxes.entries()) b.disabled = !b.checked && chosen.size >= 3 && !chosen.has(places[i].id);
       const save = el("button", { type: "button", className: "shell-primary", textContent: "Done" });
       save.addEventListener("click", async () => {
-        await this.deps.setBar(places.filter((p) => chosen.has(p.id)).map((p) => p.id));
+        await this.deps.setBar([...places.filter((p) => chosen.has(p.id)).map((p) => p.id), ...absent]);
         sheet.close();
         this.update();
       });
