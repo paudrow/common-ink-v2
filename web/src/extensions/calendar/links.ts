@@ -9,6 +9,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import { livePreview, type Preview } from "common-ink/live-preview";
 import type { EventFound } from "../../../../worker/src/operations.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
+import { dayOf } from "./model.ts";
 
 /** A link to an event: its text and its address. */
 export const EVENT_LINK = /\[([^\]\n]*)\]\((event:[a-z]+\/[^)\s/]+\/[^)\s/]+)\)/g;
@@ -28,9 +29,11 @@ export function whenLabel(found: EventFound): string {
 export function dayOfEvent(found: EventFound): string {
   const e = found.event;
   if (e.allDay) return e.start;
-  const at = new Date(instantOf(e.start, e.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone));
-  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+  return dayOf(new Date(instantOf(e.start, e.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)));
 }
+
+/** The same for an occurrence as the calendar drew it, when its event can't be read. */
+export const dayOfOccurrence = (o: Pick<Occurrence, "allDay" | "start">): string => (o.allDay ? o.start : dayOf(new Date(o.start)));
 
 export class EventLinks {
   private known = new Map<string, Known>();

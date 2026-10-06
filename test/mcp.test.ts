@@ -112,3 +112,20 @@ test("the same tick sent twice at once, as a client's retry does, ticks once and
   assert.equal(files.files.read("Chores.md" as never)?.text, "# Chores\n\n- [ ] Water the plants due:2026-10-08 rec:3d last:2026-10-05\n");
   assert.equal(files.files.read("Journal/2026-10-05.md" as never)!.text.split("\n").filter((l) => l.includes("Water the plants")).length, 1);
 });
+
+test("an operation that fails unexpectedly says so in a sentence, logs why, and leaks no stack", async () => {
+  const files = memoryStore();
+  const broken = { ...files, read: () => { throw new Error("SQLITE_IOERR: disk I/O error at /var/do/123"); } };
+  const logged: unknown[] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => void logged.push(args);
+  try {
+    assert.deepEqual(await runOperation("read_file", { path: "Plan.md" }, broken, agent), { ok: false, internal: true, error: "Something went wrong running read_file. It's been logged; try again." });
+    const { body } = await call(broken, "tools/call", { name: "read_file", arguments: { path: "Plan.md" } });
+    assert.deepEqual(body.result, { content: [{ type: "text", text: "Something went wrong running read_file. It's been logged; try again." }], isError: true });
+    assert.equal(logged.length, 2);
+    assert.match(String((logged[0] as unknown[])[1]), /read_file/);
+  } finally {
+    console.error = log;
+  }
+});

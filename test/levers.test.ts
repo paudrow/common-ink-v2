@@ -26,10 +26,19 @@ test("levers last in a cookie, and come back out of a Cookie header among others
 });
 
 test("levers are on only with LEVERS and a dev user, so a production Worker never honours them", () => {
-  assert.equal(leversOn({ LEVERS: "1", DEV_USER: "dev@localhost" }), true);
-  assert.equal(leversOn({ LEVERS: "1" }), false);
-  assert.equal(leversOn({ DEV_USER: "dev@localhost" }), false);
-  assert.equal(leversOn({ LEVERS: "true", DEV_USER: "dev@localhost" }), false);
+  const local = new URL("http://localhost:8787/");
+  assert.equal(leversOn({ LEVERS: "1", DEV_USER: "dev@localhost" }, local), true);
+  assert.equal(leversOn({ LEVERS: "1" }, local), false);
+  assert.equal(leversOn({ DEV_USER: "dev@localhost" }, local), false);
+  assert.equal(leversOn({ LEVERS: "true", DEV_USER: "dev@localhost" }, local), false);
+});
+
+test("levers are on only where the dev user is: this machine and a pull request's Preview, never commonink.app", () => {
+  const env = { LEVERS: "1", DEV_USER: "dev@localhost" };
+  assert.equal(leversOn(env, new URL("http://127.0.0.1:53058/api/levers")), true);
+  assert.equal(leversOn(env, new URL("https://pr-42-common-ink-v2.example.workers.dev/")), true);
+  assert.equal(leversOn(env, new URL("https://commonink.app/api/levers/reset")), false);
+  assert.equal(leversOn(env, new URL("https://abc123-common-ink-v2.example.workers.dev/")), false);
 });
 
 test("a date alone is local midnight; real and no lever are the real clock", () => {
