@@ -21,32 +21,91 @@ const hosts = () => {
   return box;
 };
 
-/**
- * Whether a value from a frame is plain data: text, numbers, booleans, null, and lists and objects of
- * them. A structured clone also keeps String and Number objects, Dates and the like, which compare
- * unlike the text they turn into, so a check on one could pass where the use of it wouldn't.
- */
-export function plainValue(v: unknown, depth = 0): boolean {
-  if (v === null || v === undefined || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return true;
-  if (depth > 32 || typeof v !== "object") return false;
-  if (Array.isArray(v)) return v.every((x) => plainValue(x, depth + 1));
-  return Object.getPrototypeOf(v) === Object.prototype && Object.values(v).every((x) => plainValue(x, depth + 1));
-}
-
 /** The most one call to or answer from a frame may carry, in characters as JSON would write it: twice what a file may hold. */
 const MAX_CALL = 2_000_000;
-/** How much a frame's calls may carry together in a moment, and how long that moment is. */
-const SHARE = 10_000_000;
-const SHARE_MS = 10_000;
+/** What a frame's calls may carry together in a moment, how many there may be, and how long that moment is. */
+const SHARE = { size: 10_000_000, calls: 2_000, ms: 10_000 };
+/** How deep a value from a frame may nest. */
+const MAX_DEPTH = 32;
 
 const counted = (n: number) => n.toLocaleString("en-US");
 
-/** About how many characters a plain value takes as JSON, its keys, numbers and commas included. */
-export function payloadSize(v: unknown): number {
-  if (typeof v === "string") return v.length + 2;
-  if (Array.isArray(v)) return v.reduce((n: number, x) => n + payloadSize(x) + 1, 2);
-  if (v && typeof v === "object") return Object.entries(v).reduce((n, [k, x]) => n + k.length + 4 + payloadSize(x), 2);
-  return String(v).length;
+/** How much longer JSON writes a string than its length: two for its quotes, and its escapes. */
+function escapes(s: string): number {
+  let extra = 2;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 0x22 || c === 0x5c || c === 0x08 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d) extra += 1;
+    else if (c < 0x20) extra += 5;
+  }
+  return extra;
+}
+
+/**
+ * A value from a frame, measured once, as JSON would write it: its size, Infinity as soon as it's past
+ * `limit` (without walking the rest), or null if it isn't plain data (text, numbers, booleans, null,
+ * and lists and plain objects of them, nested at most 32 deep). A structured clone also keeps String
+ * objects, Dates, cycles and the like, which compare unlike the text they'd turn into.
+ */
+export function measure(v: unknown, limit: number): number | null {
+  let size = 0;
+  /** False if `x` isn't plain data; true otherwise, or once the size is past the limit. */
+  const walk = (x: unknown, depth: number): boolean => {
+    if (x === null || x === undefined) size += 4;
+    else if (typeof x === "boolean") size += x ? 4 : 5;
+    else if (typeof x === "number") size += Number.isFinite(x) ? JSON.stringify(x).length : 4;
+    else if (typeof x === "string") size += x.length + (x.length > limit ? 2 : escapes(x));
+    else if (typeof x !== "object" || depth >= MAX_DEPTH) return false;
+    else if (Array.isArray(x)) {
+      // Brackets and commas, and at least a character an item (a hole is "null"): a list too long is too much whatever's in it.
+      size += 1 + Math.max(x.length, 1);
+      if (size + x.length > limit) return (size = Infinity), true;
+      for (let i = 0; i < x.length; i++) {
+        if (!(i in x)) size += 4;
+        else if (!walk(x[i], depth + 1)) return false;
+        if (size > limit) return true;
+      }
+    } else {
+      if (Object.getPrototypeOf(x) !== Object.prototype) return false;
+      // JSON leaves out a key whose value is undefined.
+      const entries = Object.entries(x).filter(([, item]) => item !== undefined);
+      size += 1 + Math.max(entries.length, 1);
+      for (const [k, item] of entries) {
+        size += k.length + escapes(k) + 1;
+        if (!walk(item, depth + 1)) return false;
+        if (size > limit) return true;
+      }
+    }
+    return true;
+  };
+  if (!walk(v, 0)) return null;
+  return size > limit ? Infinity : size;
+}
+
+/** A frame's share of a moment: what its calls carried and how many there were, kept as a running total. */
+export class CallShare {
+  private calls: Array<{ at: number; size: number }> = [];
+  private first = 0;
+  private total = 0;
+
+  constructor(private limits: { size: number; calls: number; ms: number }) {}
+
+  /** Whether a call of `size` fits in what's left of the moment at `now`; if it does, it's counted. */
+  take(size: number, now: number): boolean {
+    while (this.first < this.calls.length && now - this.calls[this.first].at >= this.limits.ms) this.total -= this.calls[this.first++].size;
+    if (this.first > 1024 && this.first * 2 > this.calls.length) [this.calls, this.first] = [this.calls.slice(this.first), 0];
+    if (this.calls.length - this.first >= this.limits.calls || this.total + size > this.limits.size) return false;
+    this.calls.push({ at: now, size });
+    this.total += size;
+    return true;
+  }
+
+  /** Why a call didn't fit, in words: too many, or too much. */
+  why(name: string): string {
+    return this.calls.length - this.first >= this.limits.calls
+      ? `${name} is calling too often: it can make ${counted(this.limits.calls)} calls every ${this.limits.ms / 1000} seconds`
+      : `${name} is sending too much at once: it can send ${counted(this.limits.size)} characters' worth every ${this.limits.ms / 1000} seconds`;
+  }
 }
 
 /** A frame's MessagePort, once its shell has loaded: the only way the app and the frame talk. */
@@ -71,8 +130,8 @@ export class SandboxHost {
   private frame: HTMLIFrameElement | null = null;
   private pending = new Map<string, Pending>();
   private next = 0;
-  /** What its calls carried lately, and when: its share of a moment. */
-  private sent: Array<{ at: number; size: number }> = [];
+  /** Its share of a moment. */
+  private share = new CallShare(SHARE);
 
   constructor(
     private extension: ExtensionManifest,
@@ -106,7 +165,9 @@ export class SandboxHost {
         else if (m.t === "result" || m.t === "reject") {
           const p = this.pending.get(m.id!);
           this.pending.delete(m.id!);
-          if (m.t === "result" && payloadSize(m.value) > MAX_CALL) p?.reject(new Error(`${this.extension.name} answered with more than ${counted(MAX_CALL)} characters' worth`));
+          const size = m.t === "result" ? measure(m.value, MAX_CALL) : 0;
+          if (size === null) p?.reject(new Error(`${this.extension.name} can answer only with plain values (text, numbers, lists and objects)`));
+          else if (size > MAX_CALL) p?.reject(new Error(`${this.extension.name} answered with more than ${counted(MAX_CALL)} characters' worth`));
           else if (m.t === "result") p?.resolve(m.value);
           else p?.reject(new Error(m.message));
         }
@@ -118,13 +179,10 @@ export class SandboxHost {
 
   private async answer(id: string, method: string, args: unknown[]) {
     try {
-      if (typeof method !== "string" || !Array.isArray(args) || !args.every(plainValue)) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
-      const size = payloadSize(args);
+      const size = typeof method === "string" && Array.isArray(args) ? measure(args, MAX_CALL) : null;
+      if (size === null) throw new Error(`${this.extension.name} can pass only plain values (text, numbers, lists and objects)`);
       if (size > MAX_CALL) throw new Error(`${this.extension.name} sent more than ${counted(MAX_CALL)} characters' worth in one call`);
-      const now = Date.now();
-      this.sent = this.sent.filter((s) => now - s.at < SHARE_MS);
-      if (this.sent.reduce((n, s) => n + s.size, size) > SHARE) throw new Error(`${this.extension.name} is sending too much at once: it can send ${counted(SHARE)} characters' worth every ${SHARE_MS / 1000} seconds`);
-      this.sent.push({ at: now, size });
+      if (!this.share.take(size, Date.now())) throw new Error(this.share.why(this.extension.name));
       this.port!.postMessage({ t: "result", id, value: (await this.dispatch(method, args)) ?? null });
     } catch (err) {
       this.port!.postMessage({ t: "reject", id, message: (err as Error).message });
@@ -225,7 +283,7 @@ export class Webview {
       port.onmessage = (e) => {
         const m = e.data as { type: string; data?: unknown; id?: number; height?: number; drawn?: WebviewStatus["drawn"] };
         // A webview's page is the extension's too: what it sends its extension is held to the size of a call.
-        if (m.type === "message" && payloadSize(m.data) <= MAX_CALL) onMessage(m.data);
+        if (m.type === "message" && (measure(m.data, MAX_CALL) ?? Infinity) <= MAX_CALL) onMessage(m.data);
         if (m.type === "height" && typeof m.height === "number") onHeight?.(m.height);
         if (m.type === "loaded") {
           this.status.loaded = true;
