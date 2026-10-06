@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Author } from "../worker/src/files.ts";
+import { Files, type Author } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
-import { cleanName, parseUploads, placeName, sha256, showsInline, typeFor, UPLOADS_PATH, uploadsText, type Upload } from "../worker/src/uploads.ts";
+import { addUpload, cleanName, parseUploads, placeName, sha256, showsInline, typeFor, UPLOADS_PATH, uploadsText, type Blobs, type Upload } from "../worker/src/uploads.ts";
 import { memoryStore } from "./store.ts";
+import { memoryDb } from "./sqlite.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
 const bytes = (text: string) => new TextEncoder().encode(text).buffer as ArrayBuffer;
@@ -82,6 +83,14 @@ test("agents upload through the operations with base64, and list uploads with th
   assert.ok(list.ok && (list.value as Array<{ url: string }>)[0].url === "/uploads/chart.svg");
   const bad = await runOperation("upload_file", { name: "x.txt", data: "" }, store, agent);
   assert.deepEqual(bad, { ok: false, error: "x.txt is empty" });
+});
+
+test("an upload while the bytes' store is down is refused, says so, and records nothing", async () => {
+  const files = new Files(memoryDb());
+  const down: Blobs = { has: async () => { throw new Error("R2: 503 Service Unavailable"); }, put: async () => { throw new Error("R2: 503"); } };
+  const result = await addUpload(files, down, "photo.png", new Uint8Array([1, 2, 3]).buffer, { kind: "user", email: "ada@example.com" });
+  assert.deepEqual(result, { status: "refused", error: "photo.png wasn't uploaded: uploads can't be stored right now. Try again in a minute." });
+  assert.equal(files.read(UPLOADS_PATH), null);
 });
 
 test("an upload's bytes are read only up to the limit, however the body comes", async () => {

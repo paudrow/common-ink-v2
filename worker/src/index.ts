@@ -246,7 +246,11 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
     return out;
   };
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash));
+  const blob = await env.UPLOADS.get(blobKey(upload.hash)).catch((err) => {
+    console.error("Reading an upload's bytes failed:", err);
+    return undefined;
+  });
+  if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
   const type = typeFor(upload.name);
   return sandboxed(
