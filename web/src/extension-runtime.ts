@@ -5,13 +5,16 @@
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
-import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { inGlobs } from "../../worker/src/globs.ts";
+import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
 import { PermissionBroker, PermissionDenied } from "./broker.ts";
 import { fileWords, plain, type Trigger } from "./permission-words.ts";
 import type { CommandBar, Item } from "./commandbar.ts";
+import type { Search } from "./search.ts";
+import type { Query } from "../../worker/src/query.ts";
 import { keyFor, type Commands } from "./commands.ts";
 import { docLabel } from "./describe.ts";
 import { addMarkdownSyntax } from "./editor.ts";
@@ -40,6 +43,7 @@ export interface RuntimeApp {
   me: string | undefined;
   commands: Commands;
   bar: CommandBar;
+  search: Search;
   panels: Panels;
   workbench: Workbench;
   offline: Offline;
@@ -110,6 +114,12 @@ interface Services {
   write(path: FilePath, text: string, base: number): ReturnType<typeof api.writeAs>;
   /** Files it may read, of all there are. Asks for each declared scope it needs, once. */
   list(): Promise<FileSummary[]>;
+  /**
+   * What it may read, as globs for search's `within`: its declared files:read scopes in order, those
+   * not allowed as "!scope", since the first scope that covers a path decides (coveringKey). None if
+   * it may read nothing.
+   */
+  readable(): Promise<string[]>;
   fetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string }): Promise<ExtensionResponse>;
   card(url: string): ReturnType<typeof api.extensionCard>;
   check(ask: Ask): Promise<void>;
@@ -594,6 +604,12 @@ export class ExtensionRuntime {
   private services(m: ExtensionManifest): Services {
     const app = this.app;
     const check = (ask: Ask) => this.broker.check(m, ask);
+    // Each declared scope is asked about as a whole, all at once, so they're one prompt.
+    const readable = async () => {
+      const scopes = m.permissions["files:read"]?.paths ?? [];
+      const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
+      return answers.some((a) => a.status === "fulfilled") ? scopes.map((scope, i) => (answers[i].status === "fulfilled" ? scope : `!${scope}`)) : [];
+    };
     return {
       check,
       read: async (path) => {
@@ -605,12 +621,11 @@ export class ExtensionRuntime {
         // In history, the change is the extension's, acting for you.
         return api.writeAs(m.id, path, text, base);
       },
+      readable,
+      // The files `readable` admits, as files.read decides each.
       list: async () => {
-        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
-        const scopes = m.permissions["files:read"]?.paths ?? [];
-        const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
-        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
-        return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
+        const may = inGlobs(await readable());
+        return app.files().filter((f) => may(f.path));
       },
       fetch: async (url, init) => {
         const host = hostOf(url);
@@ -738,8 +753,16 @@ export class ExtensionRuntime {
       },
       statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {
-        provide: (p) => app.bar.provide({ ...p, items: guard((q: string) => p.items(q), []) }),
+        provide: (p) => app.bar.provide({ ...p, items: guard((q: string, update?: (items: Item[]) => void) => p.items(q, update && guard(update)), []) }),
         open: (text) => app.bar.open(text),
+      },
+      search: {
+        provide: (type, p) => {
+          if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+          app.search.provide(type, { search: guard((q: Query, limit: number, within?: readonly string[]) => p.search(q, limit, within), []) }, m.id);
+        },
+        find: (text, limit = 20, progress) => app.search.find(text, limit, progress && guard(progress)),
+        filterKeys: () => app.search.extraKeys(),
       },
       views: {
         register: (id, renderer) => {
@@ -963,6 +986,42 @@ export class ExtensionRuntime {
             return;
           case "commandBar.open":
             return app.bar.open(a);
+          case "search.provide": {
+            const type = String(a);
+            if (!m.contributes.search.types.some((t) => t.type === type)) throw new Error(`Search type "${type}" isn't declared in ${m.id}'s contributes.search.types`);
+            const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+            app.search.provide(
+              type,
+              {
+                search: async (query, limit, within) => {
+                  const results = (await host.invoke(`search:${type}`, query, limit, within).catch(() => [])) as unknown[];
+                  return (Array.isArray(results) ? results : []).flatMap((r) => {
+                    const o = (r ?? {}) as Record<string, unknown>;
+                    if (typeof o.title !== "string" || typeof o.run !== "string") return [];
+                    const path = parseFilePath(o.path) ?? undefined;
+                    return [{ title: o.title, path, detail: text(o.detail), aside: text(o.aside), dim: o.dim === true, run: () => host.invoke(`item:${o.run}`).catch(failed) }];
+                  });
+                },
+              },
+              m.id,
+            );
+            return;
+          }
+          case "search.find": {
+            // What search finds is what the extension could read itself, and it's scoped to that before
+            // anything is ranked, limited or counted, so what it can't read never takes a place in its
+            // results or says it's there: notes and tasks in the files:read scopes it's allowed (asked
+            // about as a whole, as files.list does), events with data:calendar:read, contacts with
+            // data:contacts:read, and its own kinds; of other kinds, results in files it may read.
+            const may = (ask: Ask) => services.check(ask).then(() => true, () => false);
+            const readable = await services.readable();
+            const [calendar, contacts] = await Promise.all([m.permissions["data:calendar:read"] ? may({ kind: "data:calendar:read" }) : false, m.permissions["data:contacts:read"] ? may({ kind: "data:contacts:read" }) : false]);
+            const whole = (type: string) => app.search.ownerOf(type) === m.id || (type === "event" && calendar) || (type === "contact" && contacts);
+            const sections = await app.search.find(String(a), typeof b === "number" ? Math.min(b, 100) : 20, undefined, (type) => (whole(type) ? null : readable));
+            return sections.map(({ results, note: _note, ...s }) => ({ ...s, results: results.map(({ run: _run, ...r }) => r) }));
+          }
+          case "search.filterKeys":
+            return app.search.extraKeys();
           case "views.register":
             if (!declaresView(a)) throw new Error(`View "${a}" isn't declared in ${m.id}'s contributes.views`);
             this.renderers.set(a, {

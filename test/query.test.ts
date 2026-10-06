@@ -160,3 +160,7 @@ test("has:task reads a note of many blank lines in linear time", () => {
   assert.equal(matches(parse("has:task"), note({ text: `${"\n".repeat(50_000)}x` }), ctx), false);
   assert.ok(performance.now() - start < 50, `took ${Math.round(performance.now() - start)} ms`);
 });
+
+test("a negated sort asks for no order", () => {
+  assert.deepEqual([sortOf(parse("launch -sort:title")), sortOf(parse("-sort:title")), sortOf(parse("sort:title -sort:edited"))], ["relevance", "edited", "title"]);
+});

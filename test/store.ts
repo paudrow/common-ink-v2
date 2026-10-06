@@ -16,7 +16,7 @@ export function memoryBlobs(): Blobs & { data: Map<string, ArrayBuffer> } {
 /** A workspace the way the Durable Object offers it, on in-memory SQLite, with recorded data sources unless told otherwise. */
 export function memoryStore(settings: SourceSettings = { fixtures: true, google: null }, fetcher?: typeof fetch, adapters: Adapter[] = [], now?: () => number) {
   const db = memoryDb();
-  const { files, sources } = openWorkspace(db, settings, undefined, fetcher, adapters, now);
+  const { files, sources, search } = openWorkspace(db, settings, undefined, fetcher, adapters, now);
   const blobs = memoryBlobs();
   const store: Store & { files: Files; sources: DataSources; blobs: typeof blobs; db: typeof db } = {
     files,
@@ -44,6 +44,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     contacts: (e, q) => sources.contacts(e, q),
     upload: (n, d, a) => addUpload(files, blobs, n, d, a),
     completeTask: (args, a) => completeTaskIn(files, args, a),
+    search: (q, options) => search.search(q, options),
   };
   return store;
 }

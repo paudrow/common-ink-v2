@@ -38,6 +38,8 @@ export interface BrowserTestOptions {
   /** The note to open first, by name or path. */
   open?: string;
   viewport?: { width: number; height: number };
+  /** A touch screen, as a phone has: taps, and no mouse to hover. */
+  touch?: boolean;
   /** Stand in for a phone, a tablet or a laptop: its size (unless `viewport` says), touch, and the `device` lever. */
   device?: Preset;
   dark?: boolean;
@@ -62,7 +64,7 @@ const tracing = !!(process.env.CI || process.env.TRACE);
 export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
   test(name, o.todo ? { todo: o.todo } : {}, async (t) => {
     const preset = o.device && PRESETS[o.device];
-    const touch = !!preset?.touch;
+    const touch = !!preset?.touch || !!o.touch;
     const viewport = o.viewport ?? (preset ? { width: preset.width, height: preset.height } : { width: 1200, height: 800 });
     const context = await h.browser.newContext({ viewport, colorScheme: o.dark ? "dark" : "light", hasTouch: touch, isMobile: touch, ...(o.timezone ? { timezoneId: o.timezone } : {}) });
     // TypeScript run by the test runner names functions with a helper that pages passed them don't have.
