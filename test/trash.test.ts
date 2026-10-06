@@ -95,3 +95,45 @@ test("a Preview's seed can delete a note it adds, so Trash has something to show
   store.files.seed({ id: "t", notes: [{ path: "Untitled 3.md", text: "# Untitled 3\nscratch", replace: false }], edits: [{ path: "Untitled 3.md", text: "", agent: "Claude", delete: true }] });
   assert.deepEqual((await run(store, "trash")).map((t) => [t.path, t.title, (t.author as { name: string }).name]), [["Untitled 3.md", "Untitled 3", "Claude"]]);
 });
+
+test("only a person can delete a note forever: its text leaves history, and one change says who and when", async () => {
+  const { store, write, remove } = workspace();
+  write("Secret.md", "# Secret\nthe code is 1234");
+  remove("Secret.md");
+  assert.deepEqual(await run(store, "purge", { paths: ["Secret.md"] }, claude), { error: "Only a person can delete notes forever, in the app. Agents and extensions can restore them instead." });
+  assert.deepEqual(await run(store, "purge", { paths: ["Secret.md"] }, { kind: "extension", id: "tasks", by: "ada@example.com" }), { error: "Only a person can delete notes forever, in the app. Agents and extensions can restore them instead." });
+  const done = await run(store, "purge", { paths: ["Secret.md"] });
+  assert.deepEqual((done.purged as Array<{ path: string }>).map((p) => p.path), ["Secret.md"]);
+  assert.deepEqual(store.files.history("Secret.md" as FilePath).map((c) => ({ author: c.author, purged: c.purged, diff: c.diff })), [{ author: ada, purged: true, diff: [] }]);
+  assert.deepEqual(await run(store, "trash"), []);
+  assert.deepEqual(await run(store, "restore", { path: "Secret.md" }), { error: "Secret.md isn't in Trash" });
+  assert.deepEqual(await run(store, "purge", { paths: ["Secret.md"] }), { error: "Nothing to delete forever: Secret.md isn't in Trash" });
+});
+
+test("agents aren't offered purge over MCP", async () => {
+  const { mcp } = await import("../worker/src/mcp.ts");
+  const { store, write, remove } = workspace();
+  write("Gone.md", "# Gone");
+  remove("Gone.md");
+  const call = async (method: string, params: unknown) => (await (await mcp(new Request("http://x/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) }), store, claude)).json()) as { result?: { tools: Array<{ name: string }> }; error?: { message: string } };
+  assert.equal((await call("tools/list", {})).result!.tools.some((t) => t.name === "purge"), false);
+  assert.deepEqual((await call("tools/call", { name: "purge", arguments: { paths: ["Gone.md"] } })).error, { code: -32602, message: "No tool named purge" });
+  assert.equal(store.files.read("Gone.md" as FilePath), null);
+  assert.equal(store.files.history("Gone.md" as FilePath).length, 2, "nothing purged");
+});
+
+test("each day, notes in Trash longer than trash.retentionDays are purged by Trash retention", async () => {
+  const { purgeExpired } = await import("../worker/src/trash.ts");
+  const { store, age, write, remove } = workspace();
+  for (const p of ["Old.md", "Recent.md", "Projects/Older.md"]) write(p, `# ${p}`);
+  write(".common-ink/old.json", "{}");
+  for (const p of ["Old.md", "Recent.md", "Projects/Older.md", ".common-ink/old.json"]) remove(p);
+  age("Old.md", 31);
+  age("Projects/Older.md", 45);
+  age(".common-ink/old.json", 90);
+  age("Recent.md", 29);
+  assert.deepEqual(purgeExpired(store.files, Date.now()).map((p) => p.path).sort(), ["Old.md", "Projects/Older.md"]);
+  assert.deepEqual(store.files.history("Old.md" as FilePath).map((c) => [c.author, c.purged]), [[{ kind: "retention" }, true]]);
+  assert.deepEqual((await run(store, "trash")).map((t) => t.path), ["Recent.md"]);
+  assert.deepEqual(purgeExpired(store.files, Date.now()), [], "a second run that day has nothing to do");
+});

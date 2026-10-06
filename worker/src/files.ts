@@ -37,7 +37,10 @@ export const isExtensionScript = (path: FilePath) => EXTENSION_SCRIPT.test(path)
  * extension acting for the person using it, or a data source's sync bringing in what changed there
  * ("google-calendar").
  */
-export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string };
+export type Author = { kind: "user"; email: string } | { kind: "agent"; name: string; by?: string } | { kind: "extension"; id: string; by: string } | { kind: "sync"; source: string } | { kind: "retention" };
+
+/** Trash retention: who purges notes that have been in Trash longer than trash.retentionDays. */
+export const RETENTION: Author = { kind: "retention" };
 
 /** One string per author, for filtering history by who made a change. */
 export function authorKey(a: Author): string {
@@ -50,6 +53,8 @@ export function authorKey(a: Author): string {
       return `sync:${a.source}`;
     case "agent":
       return `agent:${a.name}${a.by ? `:${a.by}` : ""}`;
+    case "retention":
+      return "retention";
   }
 }
 
@@ -81,6 +86,11 @@ export interface Change {
   undoneBy?: Revision | null;
   /** The change deleted the file. Undoing it brings the file back. */
   deleted?: true;
+  /**
+   * The file's history was purged here: every change to it before this one is gone, text and all, and
+   * this one says who purged it and when. It has no text, and undo can't reach it.
+   */
+  purged?: true;
 }
 
 /** A file in Trash: its delete change, and its text just before. */
@@ -210,6 +220,10 @@ const SCHEMA: Array<(db: Db) => void> = [
     db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
     db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
   },
+  // 5. A change can say a file's history was purged.
+  (db) => {
+    if (!hasColumn(db, "changes", "purges")) db.run("ALTER TABLE changes ADD COLUMN purges INTEGER NOT NULL DEFAULT 0");
+  },
 ];
 
 /** How long an edit's id is kept: a page that went asks about it when its note next opens there. */
@@ -229,8 +243,14 @@ function editHash(text: string): string {
   return `${(h2 >>> 0).toString(16).padStart(8, "0")}${(h1 >>> 0).toString(16).padStart(8, "0")}:${text.length}`;
 }
 
-type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number };
-const toChange = ({ deletes, ...row }: ChangeRow): Change => ({ ...row, author: JSON.parse(row.author), diff: JSON.parse(row.diff), ...(deletes ? { deleted: true as const } : {}) });
+type ChangeRow = { revision: number; path: FilePath; author: string; base: number; diff: string; time: number; undoes: number | null; deletes: number; purges: number };
+const toChange = ({ deletes, purges, ...row }: ChangeRow): Change => ({
+  ...row,
+  author: JSON.parse(row.author),
+  diff: JSON.parse(row.diff),
+  ...(deletes ? { deleted: true as const } : {}),
+  ...(purges ? { purged: true as const } : {}),
+});
 const invert = (diff: Diff): Diff => diff.map(({ buffer1, buffer2 }) => ({ buffer1: buffer2, buffer2: buffer1 }));
 
 /** What clients hear about each change, as it happens: enough to know whether to fetch the file again. */
@@ -368,6 +388,8 @@ export class Files {
           const [row] = this.db.all<ChangeRow>("SELECT * FROM changes WHERE revision = ?", revision);
           if (!row) return { revision, status: "missing" as const };
           const change = toChange(row);
+          // A purge took the text it would need, on purpose.
+          if (change.purged) return { revision, status: "missing" as const };
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
@@ -424,6 +446,27 @@ export class Files {
         const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
         return { path, revision, author, time, before: before?.r ?? 0, text: before?.r ? (this.textAt(path, before.r) ?? "") : "" };
       });
+  }
+
+  /**
+   * Take deleted files' text out of history: every change to each goes, with the ids of edits to it,
+   * and one change takes their place, with no text, saying who purged it and when. Only a file that's
+   * deleted is purged, and only its own changes are touched: other files' histories don't refer to
+   * them. Says which were purged, by the purge change's revision; a path that isn't deleted, or has
+   * nothing left to purge, is left out.
+   */
+  purge(paths: readonly FilePath[], author: Author): Array<{ path: FilePath; revision: Revision }> {
+    return this.tx(() =>
+      [...new Set(paths)].flatMap((path) => {
+        if (this.read(path) || !this.db.all("SELECT 1 FROM changes WHERE path = ? AND purges = 0 LIMIT 1", path).length) return [];
+        this.db.run("DELETE FROM changes WHERE path = ? AND purges = 0", path);
+        this.db.run("DELETE FROM edits WHERE path = ?", path);
+        this.db.run("INSERT INTO changes(path, author, base, diff, time, undoes, deletes, purges) VALUES (?, ?, 0, '[]', ?, NULL, 0, 1)", path, JSON.stringify(author), this.now());
+        const [{ revision }] = this.db.all<{ revision: number }>("SELECT max(revision) AS revision FROM changes");
+        this.heard.push({ path, revision, author });
+        return [{ path, revision }];
+      }),
+    );
   }
 
   /** A file's text at one of its revisions, or null if it never had that revision. */

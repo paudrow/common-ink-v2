@@ -83,7 +83,7 @@ function occurrenceLine(o: Occurrence) {
 }
 
 function changeLine(c: Change) {
-  return `${String(c.revision).padStart(5)}  ${ago(c.time).padEnd(11)} ${c.path}  ${c.deleted ? "deleted" : diffStat(c)}  ${describeAuthor(c.author)}${c.undoes ? `  (undoes ${c.undoes})` : ""}`;
+  return `${String(c.revision).padStart(5)}  ${ago(c.time).padEnd(11)} ${c.path}  ${c.purged ? "deleted forever" : c.deleted ? "deleted" : diffStat(c)}  ${describeAuthor(c.author)}${c.undoes ? `  (undoes ${c.undoes})` : ""}`;
 }
 
 async function readStdin(): Promise<string> {

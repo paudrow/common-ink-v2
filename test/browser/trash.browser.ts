@@ -78,3 +78,58 @@ browserTest(h, ":trash moves the note on show to Trash, and Undo brings it back"
   await page.waitForFunction(async () => (await fetch("/api/file?path=Draft.md")).ok);
   assert.deepEqual(await page.evaluate(async () => (await (await fetch("/api/trash")).json()) as unknown[]), []);
 });
+
+const historyOf = (page: Page, path: string) =>
+  page.evaluate(async (path) => ((await (await fetch(`/api/history?path=${encodeURIComponent(path)}`)).json()) as Array<{ purged?: true; deleted?: true; author: { kind: string } }>).map((c) => `${c.purged ? "purged" : c.deleted ? "deleted" : "written"} by ${c.author.kind}`), path);
+
+browserTest(h, "D deletes a note forever after asking: its text leaves history, and one line says who did it", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Secret.md", "# Secret\nthe code is 1234");
+  await deleteNote(app, "Secret.md");
+  await app.command("Open trash");
+  await rows(page).first().waitFor();
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("Shift+D");
+  await page.locator(".dialog-actions button", { hasText: "Cancel" }).click();
+  assert.equal(await rows(page).count(), 1, "Cancel keeps it");
+  await page.locator(".trash-view").focus();
+  await page.keyboard.press("Shift+D");
+  await page.locator(".dialog-actions button", { hasText: "Delete forever" }).click();
+  await page.locator(".trash-empty").waitFor();
+  assert.deepEqual(await historyOf(page, "Secret.md"), ["purged by user"]);
+  const old = await page.context().request.get(new URL("/api/version?path=Secret.md&revision=1", page.url()).href);
+  assert.equal(old.status(), 404, "its old text can't be read");
+});
+
+browserTest(h, "Empty Trash deletes every note in it forever, after asking", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  for (const name of ["One", "Two"]) {
+    await app.writeFile(`${name}.md`, `# ${name}`);
+    await deleteNote(app, `${name}.md`);
+  }
+  await app.command("Open trash");
+  await rows(page).nth(1).waitFor();
+  await page.locator(".trash-empty-all").click();
+  await page.locator(".dialog-actions button", { hasText: "Empty Trash" }).click();
+  await page.locator(".trash-empty").waitFor();
+  assert.deepEqual([await historyOf(page, "One.md"), await historyOf(page, "Two.md")], [["purged by user"], ["purged by user"]]);
+});
+
+browserTest(h, "on a phone, a swipe left asks, then deletes forever", { scenario: "empty", viewport: { width: 375, height: 812 }, touch: true }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Groceries.md", "# Groceries\nEggs");
+  await deleteNote(app, "Groceries.md");
+  await app.command("Open trash");
+  const row = rows(page).first();
+  await row.waitFor();
+  const box = (await row.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  const at = (x: number) => [{ x, y: box.y + box.height / 2 }];
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(330) });
+  for (let x = 300; x >= 60; x -= 30) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(x) });
+  assert.match((await row.getAttribute("data-swipe")) ?? "", /delete armed/, "red, and ready to delete");
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.locator(".dialog-actions button", { hasText: "Delete forever" }).tap();
+  await page.locator(".trash-empty").waitFor();
+  assert.deepEqual(await historyOf(page, "Groceries.md"), ["purged by user"]);
+});

@@ -50,6 +50,19 @@ export class SearchIndex {
     db.run("CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(words, tokenize = 'unicode61 remove_diacritics 2')");
   }
 
+  /**
+   * Make deletes take a note's words out of the index at once (FTS5's secure-delete), so a purged note
+   * leaves nothing in it. An index made before had deletes leave words behind, so it's made again from
+   * the notes it holds.
+   */
+  secure(): void {
+    if (this.db.all("SELECT 1 FROM search_config WHERE k = 'secure-delete' AND v = 1").length) return;
+    this.db.tx(() => {
+      this.db.run("INSERT INTO search(search, rank) VALUES ('secure-delete', 1)");
+      this.db.run("INSERT INTO search(search) VALUES ('rebuild')");
+    });
+  }
+
   /** A file was written (text) or deleted (null): keep its words, if it's a note. */
   observe(path: string, text: string | null): void {
     if (!isNotePath(path)) return;

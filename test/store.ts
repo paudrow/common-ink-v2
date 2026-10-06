@@ -46,6 +46,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     completeTask: (args, a) => completeTaskIn(files, args, a),
     search: (q, options) => search.search(q, options),
     deleted: (since) => files.deleted(since),
+    purge: (paths, author) => files.purge(paths, author),
   };
   return store;
 }

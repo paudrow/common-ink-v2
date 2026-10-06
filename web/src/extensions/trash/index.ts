@@ -1,6 +1,7 @@
 // Trash: the notes deleted lately, from history (worker/src/files.ts, `deleted`). Restoring one undoes
-// its delete, so it comes back where it was with its whole history. After trash.retentionDays it's
-// purged. Links to a note in Trash say so.
+// its delete, so it comes back where it was with its whole history. Deleting one forever purges it: its
+// text leaves history, which can't be undone, so it asks first. After trash.retentionDays the Worker
+// purges it anyway. Links to a note in Trash say so.
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionModule } from "../../extension-api.ts";
 import { refreshTrashLinks, trashLinks } from "./links.ts";
@@ -41,10 +42,29 @@ const extension: ExtensionModule = {
       }
     };
 
+    /** Purge notes, once the person says so: nothing about this can be undone. */
+    const purge = async (paths: string[], ask: { title: string; text: string; yes: string }) => {
+      if (!paths.length || !(await ctx.workbench.confirm(ask.title, ask.text, ask.yes))) return;
+      try {
+        const done = await call<{ purged: Array<{ path: string }> }>("POST", "/api/purge", { paths });
+        await load();
+        ctx.workbench.notice(`Deleted ${done.purged.length === 1 ? `"${ctx.util.label(done.purged[0].path as FilePath)}"` : `${done.purged.length} notes`} forever`);
+      } catch (err) {
+        ctx.workbench.notice(`Couldn't delete forever: ${(err as Error).message}`);
+      }
+    };
+
     const view = new TrashView({
       me: ctx.me,
       retentionDays,
       restore: (item) => restore(item.path),
+      deleteForever: (item) =>
+        purge([item.path], { title: `Delete "${item.title}" forever?`, text: "Its text leaves history, and this can't be undone. History keeps a line saying you deleted it.", yes: "Delete forever" }),
+      empty: () =>
+        purge(
+          items.map((i) => i.path),
+          { title: "Empty Trash?", text: `${items.length === 1 ? "The note in Trash is" : `All ${items.length} notes in Trash are`} deleted forever: their text leaves history, and this can't be undone.`, yes: "Empty Trash" },
+        ),
       lastVersion: async (item) => (await call<{ text: string } | null>("GET", `/api/version?${new URLSearchParams({ path: item.path, revision: String(item.before) })}`))?.text ?? "",
     });
     ctx.views.register("trash", { render: (root) => view.render(root) });

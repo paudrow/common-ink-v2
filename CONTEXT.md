@@ -60,7 +60,7 @@ One recorded edit to the workspace, with its author, a diff and the revision it 
 _Avoid_: Commit, event, op
 
 **Author**:
-Who made a change: the user, a named agent, an extension or sync.
+Who made a change: the user, a named agent, an extension, sync, or Trash retention (which purges notes that have been in Trash too long).
 
 **Label**:
 A name given to a note's state at one revision, so it can be found, opened and restored later.
@@ -114,3 +114,7 @@ _Avoid_: Hide, move to archive
 **Trash**:
 The notes deleted in the last `trash.retentionDays` days (30 by default). It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history.
 _Avoid_: Bin, recycle
+
+**Purge**:
+Removing a deleted note's text from history, after its time in Trash or on Delete forever. Only the person can purge, never an agent, and each purge leaves a change saying who purged what and when.
+_Avoid_: Hard delete, permanent delete (in code)

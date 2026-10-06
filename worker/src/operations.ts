@@ -6,7 +6,8 @@ import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
 import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
-import { DEFAULT_SETTINGS, defaultsText, isReadOnly, parseSettings, SETTINGS, WORKSPACE_SETTINGS } from "./settings.ts";
+import { DEFAULT_SETTINGS, defaultsText, isReadOnly, WORKSPACE_SETTINGS } from "./settings.ts";
+import { DAY, inTrash, retentionDays } from "./trash.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
@@ -38,6 +39,8 @@ export interface Store {
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
   /** Files deleted since a time and not there now, newest first: what's in Trash. */
   deleted(since: number): Promise<Deleted[]> | Deleted[];
+  /** Take deleted files' text out of history (Files.purge). */
+  purge(paths: FilePath[], author: Author): Promise<Array<{ path: FilePath; revision: Revision }>> | Array<{ path: FilePath; revision: Revision }>;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -53,7 +56,7 @@ export interface EventFound {
 
 /** The person whose data sources an author reads: themselves, or whoever an agent works for. */
 function personOf(author: Author): string {
-  const email = author.kind === "user" ? author.email : author.kind === "sync" ? undefined : author.by;
+  const email = author.kind === "user" ? author.email : author.kind === "sync" || author.kind === "retention" ? undefined : author.by;
   if (!email) throw new Error("Data sources belong to a person, and this agent isn't working for one");
   return email;
 }
@@ -73,6 +76,8 @@ type Parsed<T> = { ok: true; value: T } | { ok: false; error: string; internal?:
 
 export interface Operation<T = unknown> {
   description: string;
+  /** Only the app offers it, to a person: not MCP, and not agents by any route. */
+  appOnly?: true;
   /** JSON Schema for the arguments, as MCP lists it. */
   input: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   parse(args: Args): Parsed<T>;
@@ -530,7 +535,7 @@ export const OPERATIONS = {
       const ctx = { now: Date.now(), zone };
       // Notes in Trash aren't in the index: they're searched only when the query asks for them.
       const found = asksFor(q, "trashed")
-        ? present(q, (await inTrash(store, ctx.now)).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        ? present(q, (await notesInTrash(store, ctx.now)).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
         : await store.search(q, { ctx, limit, archived: await archivedIn(store) });
       return { query: format(q), problems: problems(q), ...found };
     },
@@ -542,8 +547,21 @@ export const OPERATIONS = {
     parse: () => ok({}),
     run: async (store) => {
       const now = Date.now();
-      const days = await retentionDays(store);
-      return (await inTrash(store, now)).map(({ text, ...d }) => ({ ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)) }));
+      const days = await retentionOf(store);
+      return (await notesInTrash(store, now)).map(({ text, ...d }) => ({ ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)) }));
+    },
+  }),
+  purge: op<{ paths: FilePath[] }>({
+    appOnly: true,
+    description:
+      "Delete notes in Trash forever: each one's text leaves history, and one change says who purged it and when. It can't be undone. Only a person can, in the app, after it asks; agents and extensions can't (decision 18).",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      if (author.kind !== "user") throw new OperationError("Only a person can delete notes forever, in the app. Agents and extensions can restore them instead.");
+      const purged = await store.purge(paths, author);
+      if (!purged.length) throw new OperationError(`Nothing to delete forever: ${paths.join(", ")} ${paths.length === 1 ? "isn't" : "aren't"} in Trash`);
+      return { purged };
     },
   }),
   archive: op<{ paths: FilePath[] }>({
@@ -632,18 +650,15 @@ function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
   return ok({ paths: [...new Set(paths)] });
 }
 
-const DAY = 86_400_000;
-
 /** How long deleted notes stay in Trash: the workspace's trash.retentionDays. */
-async function retentionDays(store: Store): Promise<number> {
-  const text = (await store.read(WORKSPACE_SETTINGS))?.text ?? "";
-  return (parseSettings(text).settings["trash.retentionDays"] as number | undefined) ?? SETTINGS["trash.retentionDays"].default;
+async function retentionOf(store: Store): Promise<number> {
+  return retentionDays((await store.read(WORKSPACE_SETTINGS))?.text ?? "");
 }
 
-/** Notes in Trash now: deleted within the retention period, newest first. */
-async function inTrash(store: Store, now: number): Promise<Deleted[]> {
-  const since = now - (await retentionDays(store)) * DAY;
-  return (await store.deleted(since)).filter((d) => d.path.endsWith(".md"));
+/** Notes in Trash now, newest first. */
+async function notesInTrash(store: Store, now: number): Promise<Deleted[]> {
+  const days = await retentionOf(store);
+  return inTrash(await store.deleted(now - days * DAY), days, now);
 }
 
 async function archivedIn(store: Store): Promise<Set<string>> {
@@ -669,6 +684,9 @@ export class OperationError extends Error {}
 export type OperationName = keyof typeof OPERATIONS;
 
 export const isOperation = (name: string): name is OperationName => Object.hasOwn(OPERATIONS, name);
+
+/** Whether agents may be offered an operation over MCP: all but the app's own, like purge. */
+export const offeredToAgents = (name: OperationName) => !(OPERATIONS[name] as Operation).appOnly;
 
 /** Parse and run an operation. */
 export async function runOperation(name: OperationName, args: Args, store: Store, author: Author): Promise<Parsed<unknown>> {

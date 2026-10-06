@@ -2399,7 +2399,9 @@ iframe.webview {
   background: linear-gradient(to right, currentColor calc(var(--left) * 100%), var(--line) 0);
 }
 
-.trash-restore {
+.trash-restore,
+.trash-delete,
+.trash-empty-all {
   display: inline-flex;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -2422,6 +2424,27 @@ iframe.webview {
 
 .trash-empty {
   color: var(--muted);
+}
+
+.trash-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.25rem 0.5rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.trash-empty-all {
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+}
+
+.trash-delete {
+  color: var(--bad-ink);
 }
 
 .trash-link {

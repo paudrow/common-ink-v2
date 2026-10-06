@@ -752,7 +752,8 @@ export function openWorkspace(
     search.observe(path, text);
   });
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  // Workspaces from before search get their index here, once.
+  // Workspaces from before search get their index here, once, as do indexes from before secure deletes.
+  search.secure();
   if (!search.complete()) search.rebuild(files.under(""));
   return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
 }

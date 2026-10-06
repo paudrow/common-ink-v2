@@ -292,6 +292,8 @@ export interface ExtensionContext {
     refreshFromServer(paths: FilePath[]): Promise<void>;
     /** A short message over the focused window, with buttons. */
     notice(message: string, actions?: Array<{ label: string; run(): unknown }>): void;
+    /** Ask before something that can't be undone: true if the person said `yes`. Trusted extensions only. */
+    confirm(title: string, text: string, yes: string): Promise<boolean>;
     /** Whether there's a place to go back (-1) or forward (1) to: what Go back and Go forward would do. */
     canGo(by: -1 | 1): boolean;
   };
