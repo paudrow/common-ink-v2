@@ -10,7 +10,8 @@ import { decide, parseGrants } from "./permissions.ts";
 import { linkCard } from "./link-card.ts";
 import { FetchRefused, safeFetch, type SafeFetchOptions } from "./safe-fetch.ts";
 import { SANDBOX_PREFIX, sandboxScriptHeaders, shellPage, signCodeToken, TOKEN_LIFETIME_MS, verifyCodeToken } from "./sandbox.ts";
-import { userSettingsPath } from "./settings.ts";
+import { userSettingsPath, WORKSPACE_SETTINGS } from "./settings.ts";
+import { setTopLevelKey } from "../../web/src/json-edit.ts";
 import { LIBRARY_NAMES, libraryUrl } from "../../web/src/library-names.ts";
 
 /**
@@ -178,5 +179,26 @@ async function install(store: Store, raw: string, author: Author, catalog: strin
     const current = await store.read(path);
     await store.write({ path, text, base: current?.revision ?? 0, author });
   }
+  await untrust(store, id, author);
   return { id, name: manifest.name, files: files.map(([f]) => f) };
+}
+
+/**
+ * Take `id` out of every extensions.trusted list, the workspace's and each person's: whoever trusted
+ * an extension by that id trusted other code, so what's just been installed starts sandboxed.
+ */
+async function untrust(store: Store, id: string, author: Author): Promise<void> {
+  for (const { path } of await store.list()) {
+    if (path !== WORKSPACE_SETTINGS && !/^\.common-ink\/users\/[^/]+\/settings\.json$/.test(path)) continue;
+    const file = await store.read(path);
+    let trusted: unknown;
+    try {
+      trusted = JSON.parse(file?.text || "{}")["extensions.trusted"];
+    } catch {
+      continue;
+    }
+    if (!file || !Array.isArray(trusted) || !trusted.includes(id)) continue;
+    const text = setTopLevelKey(file.text, "extensions.trusted", trusted.filter((x) => x !== id));
+    if (text !== null) await store.write({ path, text, base: file.revision, author });
+  }
 }
