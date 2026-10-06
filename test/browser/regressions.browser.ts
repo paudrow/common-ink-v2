@@ -356,7 +356,7 @@ browserTest(h, "a sign-out typed in the address bar straight after typing leaves
   await app.goto({}, "Trip");
   await app.idle();
   await app.call("cursor", 1, 7);
-  await app.call("slow", "^PUT /api/file", 60_000);
+  await app.call("slow", "^(PUT /api/file|POST /api/file/beacon)", 60_000);
   await app.keys("o- private<Esc>");
   // The page can't see where it's going: it keeps its draft as it goes, after sign-out cleared storage.
   await app.page.goto(`${app.base}/auth/sign-out`);
