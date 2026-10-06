@@ -152,6 +152,13 @@ function filePath(value: unknown): FilePath {
   return path;
 }
 
+/** A file a sandboxed extension may open in a window: any but the app's own (settings, extensions, records), which you'd edit as yourself. */
+function openable(m: ExtensionManifest, value: unknown): FilePath {
+  const path = filePath(value);
+  if (path.startsWith(".common-ink/")) throw new Error(`${m.name} can't open ${plain(fileWords(path))}: it runs sandboxed`);
+  return path;
+}
+
 /** An address a sandboxed extension passed, as text: anything else is refused here, at the frame's edge. */
 function address(value: unknown): string {
   if (typeof value !== "string") throw new Error("An address has to be text");
@@ -746,6 +753,8 @@ export class ExtensionRuntime {
             this.handlers.set(a, () => host.invoke(`command:${a}`).catch(failed));
             return;
           case "commands.run":
+            // Only its own: an app command acts as you, on whatever is open.
+            if (!m.contributes.commands.some((x) => x.command === a)) throw new Error(`${m.name} can run only its own commands`);
             return app.commands.run(a);
           case "commands.all":
             return app.commands.all().map((x) => ({ id: x.id, title: x.title }));
@@ -856,13 +865,16 @@ export class ExtensionRuntime {
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
-            return app.workbench.open(a as FilePath, b as { newTab?: boolean });
+          {
+            const how = (b && typeof b === "object" ? b : {}) as { newTab?: unknown; line?: unknown };
+            return app.workbench.open(openable(m, a), { newTab: how.newTab === true, ...(Number.isInteger(how.line) ? { line: how.line as number } : {}) });
+          }
           case "workbench.focusedPath":
             return app.workbench.focusedPath ?? app.lastFile();
           case "workbench.hasUnsavedChanges":
             return !!app.workbench.focusedSession?.dirty;
           case "workbench.split":
-            return this.split(a as "left" | "right" | "up" | "down", (b ?? undefined) as FilePath | undefined);
+            return this.split(a as "left" | "right" | "up" | "down", b === null || b === undefined ? undefined : openable(m, b));
           case "workbench.tabs":
             return this.tabs();
           case "workbench.moveTab":

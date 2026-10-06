@@ -59,7 +59,7 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 
 `ctx` is an `ExtensionContext` (`web/src/extension-api.ts`):
 
-- `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those).
+- `ctx.commands.register(id, run)`, `run(id)`, `all()`, `shortcut(id)`, and `keybindings()`: every binding in effect, with the Vim sequences extensions declare (the Vim extension maps those). A sandboxed extension's `run` takes only commands its own manifest declares, since an app command acts as you on whatever is open. Its `ctx.workbench.open` and `split` open any note or file but the app's own under `.common-ink/`.
 - `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with.
