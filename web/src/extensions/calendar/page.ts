@@ -65,12 +65,28 @@ function inZone(day: Day, minutes: number, zone: string | undefined): string {
 
 const minutesOf = (time: string) => +time.slice(0, 2) * 60 + +time.slice(3, 5);
 
+/** An event's times, which change together: a new start alone would keep its length instead of its end. */
+const TIMES = ["allDay", "start", "end", "timeZone"];
+
+/**
+ * What a save changes: the fields that differ from the event as the editor opened it, and its times
+ * together if any of them did. Sending the rest as they were would undo what someone else changed
+ * meanwhile, while the editor was open or the save waited offline.
+ */
+function changedFrom<T extends Record<string, unknown>>(opened: T, saved: T): Partial<T> {
+  const differs = (key: string) => JSON.stringify(opened[key]) !== JSON.stringify(saved[key]);
+  const timesMoved = TIMES.some(differs);
+  return Object.fromEntries(Object.entries(saved).filter(([key]) => (TIMES.includes(key) ? timesMoved : differs(key)))) as Partial<T>;
+}
+
 export class CalendarPage {
   readonly root: HTMLElement;
   private body: HTMLElement;
   private heading: HTMLElement;
   private switcher: HTMLElement;
   private renderer: CalendarView | null = null;
+  /** The env of the view shown now: one a view that's gone still holds says nothing. */
+  private live: ViewEnv | null = null;
   private view: View;
   private anchor: Day;
   /** Where a glide the keys or buttons asked for is going, until it's there: so h and l pressed quickly add up. */
@@ -198,9 +214,12 @@ export class CalendarPage {
       const opening = this.openWhenLoaded && this.cache?.events.find((o) => o.address === this.openWhenLoaded);
       if (opening) {
         this.openWhenLoaded = null;
-        this.renderer?.reveal(opening.address);
-        const node = this.root.querySelector<HTMLElement>(`[data-address="${CSS.escape(opening.address)}"]`);
-        void this.open(opening, (node ?? this.root).getBoundingClientRect());
+        // A frame on: the view lays itself out on its first frame, and the event and its editor go where that puts them.
+        requestAnimationFrame(() => {
+          this.renderer?.reveal(opening.address);
+          const node = this.root.querySelector<HTMLElement>(`[data-address="${CSS.escape(opening.address)}"]`);
+          void this.open(opening, (node ?? this.root).getBoundingClientRect());
+        });
       }
     })();
   }
@@ -222,7 +241,7 @@ export class CalendarPage {
   // ---------------------------------------------------------------- views
 
   private env(): ViewEnv {
-    return {
+    const env: ViewEnv = {
       weekStart: this.weekStart,
       startHour: this.startHour,
       today: () => this.today(),
@@ -234,12 +253,15 @@ export class CalendarPage {
       create: (slot, at, ghost) => this.create(slot, at, ghost),
       move: (o, to, at) => void this.move(o, to, at),
       scrolled: (anchor) => {
+        // A scroll the browser queued for a view can come after it's gone.
+        if (this.live !== env) return;
         this.anchor = anchor;
         if (anchor === this.gliding) this.gliding = null;
         this.heading.textContent = title(this.view, this.gliding ?? anchor, this.weekStart);
       },
       show: (view, day) => this.show(view, day),
     };
+    return env;
   }
 
   /** Show a view at a day. */
@@ -248,7 +270,7 @@ export class CalendarPage {
     this.view = view;
     this.anchor = day;
     this.renderer?.destroy();
-    const env = this.env();
+    const env = (this.live = this.env());
     this.renderer = view === "agenda" ? new Agenda(env, day, this.embedded?.days) : view === "month" ? new MonthView(env, day) : view === "year" ? new YearView(env, day) : new TimeGrid(env, view, day);
     this.body.replaceChildren(this.renderer.root);
     this.heading.textContent = title(view, day, this.weekStart);
@@ -256,10 +278,18 @@ export class CalendarPage {
       ...VIEWS.map((v) => el("button", { type: "button", "aria-pressed": String(v === view), title: `${VIEW_NAMES[v].label} (${VIEW_NAMES[v].key})`, onclick: () => this.show(v, this.anchor) }, VIEW_NAMES[v].label)),
     );
     if (this.embedded) return;
-    void this.ctx.state.get().then((s) => {
-      const kept = (s ?? {}) as PageState;
-      if (kept.view !== view) void this.ctx.state.set({ ...kept, view });
-    });
+    this.keep({ view });
+  }
+
+  /** The state's changes, each read and written after the last, so quick switches keep the last one. */
+  private keeping = Promise.resolve();
+  private keep(change: PageState) {
+    this.keeping = this.keeping
+      .then(async () => {
+        const kept = ((await this.ctx.state.get()) ?? {}) as PageState;
+        if (Object.entries(change).some(([k, v]) => JSON.stringify(kept[k as keyof PageState]) !== JSON.stringify(v))) await this.ctx.state.set({ ...kept, ...change });
+      })
+      .catch(() => {});
   }
 
   private goto(day: Day, smooth: boolean) {
@@ -395,13 +425,14 @@ export class CalendarPage {
     const draft = this.draftOf(o);
     draft.recurrence = found?.series?.recurrence ?? found?.event.recurrence ?? [];
     const repeating = !!(o.series ?? found?.event.recurrence);
+    const opened = this.fields(draft, zoneFor(o));
     openEditor(at, draft, {
       calendars: this.calendars,
       repeating,
       readOnly: !this.writable(o),
       link: o.link,
       extra: await this.extra(o, found),
-      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, zoneFor(o)), scope)),
+      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, changedFrom(opened, this.fields(d, zoneFor(o))), scope)),
       remove: async (scope) => this.wrote(await this.ctx.data.calendar.remove(o.address, scope), `Deleted ${o.title || "the event"}`),
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
@@ -438,9 +469,11 @@ export class CalendarPage {
   private async move(o: Occurrence, to: Moved, at: DOMRect) {
     const scope: Scope | null | undefined = o.series ? await chooseScope(at, "Save") : undefined;
     if (scope === null) return this.renderer?.redraw();
+    // Dragged late, a timed event runs past midnight: its end is that many minutes into the next day.
+    const roll = (day: Day, minutes: number) => inZone(addDays(day, Math.floor(minutes / (24 * 60))), minutes % (24 * 60), o.timeZone);
     const change = to.allDay
       ? { allDay: true, start: to.startDay, end: to.endDay }
-      : { allDay: false, start: inZone(to.startDay, to.start, o.timeZone), end: inZone(to.endDay, to.end, o.timeZone), timeZone: zoneFor(o) };
+      : { allDay: false, start: roll(to.startDay, to.start), end: roll(to.endDay, to.end), timeZone: zoneFor(o) };
     try {
       this.wrote(await this.ctx.data.calendar.update(o.address, change, scope));
     } catch (err) {
@@ -482,7 +515,7 @@ export class CalendarPage {
           this.hidden ??= new Set();
           if (box.checked) this.hidden.delete(c.id);
           else this.hidden.add(c.id);
-          void this.ctx.state.get().then((s) => this.ctx.state.set({ ...((s ?? {}) as PageState), hidden: [...this.hidden!] }));
+          this.keep({ hidden: [...this.hidden!] });
           this.renderer?.redraw();
         });
         return el("label", { class: "fp-item" }, box, el("span", { class: "cal-swatch", style: { "--calendar": c.color } }), el("span", {}, c.title), c.writable ? null : el("span", { class: "cal-muted" }, "read-only"));

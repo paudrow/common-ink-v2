@@ -1,0 +1,7 @@
+{
+  "pr": 91,
+  "title": "Revisions keep counting up across resets",
+  "steps": [
+    "⌘⇧P, Test levers: Reset the workspace to a scenario…, and pick empty. Do it again, then make a note: History shows its change after every revision this Preview gave before, not as revision 1."
+  ]
+}

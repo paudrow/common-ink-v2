@@ -16,7 +16,9 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.origin !== location.origin) return;
+  // Sign-in and sign-out pages go straight to the network: signing out clears this cache, and keeping
+  // its page would put the cache back.
+  if (event.request.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/auth/")) return;
   // Built scripts and styles never change under their hashed names: the kept copy is always right.
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(

@@ -10,7 +10,7 @@ function key(secret: string): Promise<CryptoKey> {
   return k;
 }
 
-const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+export const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
 /** `data`, signed, valid for `seconds`. */
@@ -37,7 +37,13 @@ export async function verify<T extends Record<string, unknown>>(value: string | 
 export function cookie(req: Request, name: string): string | null {
   for (const part of (req.headers.get("Cookie") ?? "").split(/;\s*/)) {
     const at = part.indexOf("=");
-    if (at > 0 && part.slice(0, at) === name) return decodeURIComponent(part.slice(at + 1));
+    if (at > 0 && part.slice(0, at) === name) {
+      try {
+        return decodeURIComponent(part.slice(at + 1));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
