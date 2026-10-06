@@ -25,13 +25,17 @@ export function endDrag(): void {
   current = null;
 }
 
-/** What's being dragged, if it's ours. */
+/**
+ * What's being dragged, if it's ours. A tab dragged in from another window of the app is just what it
+ * shows: where it came from is that window's tab, not one of this one's to move.
+ */
 export function dragged(e: DragEvent): Dragged | null {
   if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return null;
   const data = e.dataTransfer.getData(DRAG_TYPE);
   if (!data) return current;
   try {
-    return JSON.parse(data) as Dragged;
+    const what = JSON.parse(data) as Dragged;
+    return current ? what : { item: what.item };
   } catch {
     return current;
   }
