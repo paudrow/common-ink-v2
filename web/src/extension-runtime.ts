@@ -259,7 +259,10 @@ export class ExtensionRuntime {
 
   private declareOne(m: ExtensionManifest): void {
     this.app.statusItems.declare(m.contributes.statusBarItems.map((item) => ({ ...item, owner: m.id })));
-    for (const c of m.contributes.commands)
+    // A sandboxed extension never takes a command id the app or another extension has already.
+    const sandboxed = this.host.records.some((r) => r.manifest === m && r.tier === "sandbox");
+    for (const c of m.contributes.commands) {
+      if (sandboxed && this.app.commands.has(c.command)) continue;
       this.app.commands.register({
         id: c.command,
         title: c.title,
@@ -270,6 +273,7 @@ export class ExtensionRuntime {
           return handler ? handler() : this.runCommand(c.command);
         },
       });
+    }
     for (const view of Object.values(m.contributes.views).flat()) {
       const declared = {
         id: view.id,
@@ -743,6 +747,10 @@ export class ExtensionRuntime {
     const webviews = new Map<string, Webview>();
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    const ownView = (id: unknown): string => {
+      if (typeof id !== "string" || !declaresView(id)) throw new Error(`${m.name} can show only its own views`);
+      return id;
+    };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -810,14 +818,14 @@ export class ExtensionRuntime {
           case "state.set":
             return this.writeState(m, args[0]);
           case "views.show":
-            return app.panels.show(a);
+            return app.panels.show(ownView(a));
           case "views.toggle":
-            return app.panels.toggle(a);
+            return app.panels.toggle(ownView(a));
           case "views.refresh":
-            app.panels.refresh(a);
+            app.panels.refresh(ownView(a));
             return app.workbench.refreshView(a);
           case "views.open":
-            return app.workbench.openView(a, b as { newTab?: boolean });
+            return app.workbench.openView(ownView(a), { newTab: (b as { newTab?: unknown } | null)?.newTab === true });
           case "webview.html":
             return webviews.get(a)?.setHtml(String(b));
           case "webview.post":

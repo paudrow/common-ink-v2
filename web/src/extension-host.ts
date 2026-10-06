@@ -5,6 +5,7 @@
 // throws, so one broken extension can't take the others down.
 import { extensionFileOf, manifestPath, parseManifest, STATE_FILE, type ActivationEvent, type ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { FilePath, FileSummary, WorkspaceFile } from "../../worker/src/files.ts";
+import { DEFAULT_KEYBINDINGS } from "../../worker/src/settings.ts";
 import type { ExtensionContext, ExtensionModule } from "./extension-api.ts";
 
 /** An extension that ships with Common Ink, with its source to show, and the JavaScript to copy. */
@@ -97,6 +98,38 @@ export function findWorkspaceExtensions(files: readonly FileSummary[]): Workspac
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** A key as "ctrl-shift-s": Mod and Ctrl are the same key off a Mac, so they count as one, and modifiers in any order. */
+function keyId(key: string): string {
+  const parts = key.split(/-(?=.)/);
+  const last = parts.pop()!;
+  return [...parts.map((p) => (p === "Mod" ? "ctrl" : p.toLowerCase())).sort(), last.toLowerCase()].join("-");
+}
+
+/**
+ * What a sandboxed extension may add, of what its manifest declares: commands in its own namespace (its
+ * id, or its id in camelCase: "word-count." or "wordCount."), views named the same way, and keys, status
+ * items and menu entries for those commands only. A key the app or a built-in already uses stays theirs.
+ * Anything else would let it stand in for the app's own commands, which act as you.
+ */
+export function confined(m: ExtensionManifest, takenKeys: ReadonlySet<string>): ExtensionManifest {
+  const names = new Set([m.id, m.id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase())]);
+  const ownName = (id: string) => [...names].some((n) => id === n || id.startsWith(`${n}.`));
+  const c = m.contributes;
+  const commands = c.commands.filter((x) => ownName(x.command) && x.command.includes("."));
+  const own = new Set(commands.map((x) => x.command));
+  return {
+    ...m,
+    contributes: {
+      ...c,
+      commands,
+      keybindings: c.keybindings.filter((k) => own.has(k.command) && !("key" in k && takenKeys.has(keyId(k.key)))),
+      statusBarItems: c.statusBarItems.map((i) => (i.command === undefined || own.has(i.command) ? i : { ...i, command: undefined })),
+      menus: Object.fromEntries(Object.entries(c.menus).map(([id, items]) => [id, (items ?? []).filter((i) => own.has(i.command))])),
+      views: Object.fromEntries(Object.entries(c.views).map(([where, list]) => [where, list.filter((v) => ownName(v.id))])),
+    },
+  };
+}
+
 /** A manifest for a folder whose extension.json can't be read, so it can still be listed and fixed. */
 const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   id,
@@ -126,6 +159,8 @@ export class ExtensionHost {
   records: ExtensionRecord[] = [];
   private modules = new Map<string, () => Promise<ExtensionModule>>();
   private activations = new Map<string, Promise<void>>();
+  /** Keys the app and built-ins bind, which a sandboxed extension can't take. */
+  private takenKeys = new Set(DEFAULT_KEYBINDINGS.map((k) => keyId(k.key)));
 
   constructor(private o: HostOptions) {}
 
@@ -140,6 +175,7 @@ export class ExtensionHost {
   ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
     const records: ExtensionRecord[] = [];
+    for (const b of builtIns) for (const k of b.manifest.contributes.keybindings) if ("key" in k) this.takenKeys.add(keyId(k.key));
     for (const b of builtIns) {
       const copy = workspace.get(b.manifest.id);
       // The workspace's copy runs instead, below; in safe mode the built-in runs as it shipped.
@@ -154,7 +190,8 @@ export class ExtensionHost {
       const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
-      const record: ExtensionRecord = { id: w.id, tier, manifest: typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest, builtIn, workspace: w, state: "inactive" };
+      const parsed = typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest;
+      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.takenKeys) : parsed, builtIn, workspace: w, state: "inactive" };
       if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
       records.push(record);
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
@@ -182,7 +219,7 @@ export class ExtensionHost {
     if (existing?.builtIn || (existing && existing.state !== "off")) return null;
     const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
     if (typeof manifest === "string") return null;
-    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest, workspace: w, state: "inactive" };
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.takenKeys), workspace: w, state: "inactive" };
     if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
     this.records = [...this.records.filter((r) => r.id !== w.id), record];
     const main = manifest.main;
