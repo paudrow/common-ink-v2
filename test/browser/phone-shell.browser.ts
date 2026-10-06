@@ -48,7 +48,7 @@ browserTest(h, "the Places sheet lists what there is, and the bottom bar's place
   await app.page.waitForFunction(() => !document.querySelector(".shell-sheet"));
   assert.deepEqual(await bar(app), ["Feed", "Today", "Tasks", "Search", "Places"]);
   await app.idle();
-  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")), { bar: ["feed", "today", "tasks"] });
+  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")), { bar: ["feed", "daily.today", "tasks.tasks"] });
 
   await tap(app, '#shell-bar [aria-label="Places"]');
   await app.page.locator(".shell-sheet .shell-place", { hasText: "Settings" }).tap();
@@ -85,4 +85,76 @@ browserTest(h, "on a laptop there's no shell: the notes list, tabs and status ba
   assert.equal(await app.page.locator("#shell-bar").isVisible(), false);
   assert.equal(await app.page.locator("#shell-top").isVisible(), false);
   assert.equal(await app.page.locator("#notes").isVisible(), true);
+});
+
+// The verifier's cases for #161: history that doesn't pile up, a core place no extension can take, and the bar offline.
+const len = (app: App) => app.page.evaluate(() => history.length);
+
+browserTest(h, "F1 re-tapping the place you're on, and ‹ back, don't pile up history entries", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Feed"]');
+  const start = await len(app);
+  for (let i = 0; i < 3; i++) await tap(app, '#shell-bar [aria-label="Feed"]');
+  assert.equal(await len(app), start, "tapping Feed while on Feed adds no entries");
+  await tap(app, '#notes a:text("Lists tour")');
+  await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
+  await tap(app, '#shell-top [aria-label="Back to Feed"]');
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
+  // System back after ‹ shouldn't land on the note again: the Feed is the first entry, so back leaves the app.
+  await app.page.goBack();
+  await app.page.waitForTimeout(300);
+  const left = !app.page.url().startsWith(app.base);
+  assert.ok(left || (await app.page.locator("#shell-top h1").innerText()) !== "Lists tour", "back after ‹ goes behind the Feed, not into the note again");
+  assert.ok(left, "and the Feed was the app's first entry");
+});
+
+browserTest(h, "F2 a sandboxed extension's place can't take over the core's Settings row", { scenario: "lists", device: "phone", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(
+    ".common-ink/extensions/spoof/extension.json",
+    JSON.stringify({ name: "Spoof", version: "1.0.0", activationEvents: ["onStartup"], contributes: { views: { sidebar: [{ id: "spoof.view", name: "Spoof view" }] }, places: [{ id: "settings", title: "Settings", icon: "settings", view: "spoof.view" }] } }),
+  );
+  await app.writeFile(".common-ink/extensions/spoof/index.js", `export default { activate() {} };`);
+  await app.reload();
+  await app.idle();
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  await app.page.locator(".shell-sheet .shell-place", { hasText: /^Settings$/ }).last().tap();
+  await app.page.waitForTimeout(1000);
+  assert.equal(await app.page.locator(".settings-editor").count(), 1, "the core's Settings row opens the settings editor");
+});
+
+// The browser says so for each request it can't send offline; anything else the page logs fails the test.
+browserTest(h, "F3 Done in Customize the bottom bar, offline, says why and logs no error", { scenario: "lists", device: "phone", allowErrors: [/net::ERR_INTERNET_DISCONNECTED/] }, async (app) => {
+  await app.page.context().setOffline(true);
+  await app.page.waitForTimeout(500);
+  await tap(app, '#shell-bar [aria-label="Places"]');
+  await app.page.locator(".shell-sheet .shell-place", { hasText: "Customize" }).tap();
+  await app.page.locator(".shell-sheet label", { hasText: "Calendar" }).locator("input").uncheck();
+  await app.page.locator(".shell-sheet label", { hasText: "Tasks" }).locator("input").check();
+  await app.page.locator(".shell-sheet .shell-primary").tap();
+  await app.page.waitForTimeout(1500);
+  await app.page.context().setOffline(false);
+    // Changed here, and said why it isn't saved yet; the page logs no error, and the change is sent once back.
+  assert.deepEqual(await bar(app), ["Feed", "Today", "Tasks", "Search", "Places"]);
+  assert.ok((await app.state()).notices.some((n) => n.startsWith("You're offline: the bottom bar is changed here")));
+  await app.page.waitForFunction(
+    () => fetch("/api/file?path=.common-ink%2Fplaces.json").then((r) => r.json()).then((f: { text: string }) => f.text.includes("tasks.tasks")),
+    null,
+    { timeout: 20_000, polling: 1000 },
+  );
+});
+
+browserTest(h, "opening a note from a place and coming back up, four times, leaves one entry for the note", { scenario: "lists", device: "phone" }, async (app) => {
+  await tap(app, '#shell-bar [aria-label="Feed"]');
+  const start = await len(app);
+  for (let i = 0; i < 4; i++) {
+    await tap(app, '#notes a:text("Lists tour")');
+    await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
+    await tap(app, '#shell-top [aria-label="Back to Feed"]');
+    await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
+  }
+  assert.ok((await len(app)) <= start + 1, `${(await len(app)) - start} entries more than the Feed's`);
+  // Forward goes to the note again, and back from it to the Feed.
+  await app.page.goForward();
+  await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
+  await app.page.goBack();
+  await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
 });

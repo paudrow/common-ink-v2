@@ -50,8 +50,20 @@ export interface ShellDeps {
   kept(): { windows: number; tabs: number };
   search(): void;
   newNote(): void;
-  /** A new entry in the browser's history for a place, so the system's back gesture comes back to it. */
-  push(state: { shell: string }): void;
+  /** The browser's history, for the place shown: a new entry, the one you're on in its place, or back `n` entries. */
+  push(state: ShellEntry): void;
+  replace(state: ShellEntry): void;
+  back(n: number): void;
+}
+
+/**
+ * What the shell keeps in a browser history entry: the place it's at, and how many entries it is above
+ * that place's own (0 is the place's own). A place's entry has `shell`, and shows the place itself.
+ */
+export interface ShellEntry {
+  place: string;
+  above: number;
+  shell?: true;
 }
 
 type Child = Node | string | null | false | "";
@@ -83,6 +95,8 @@ export class Shell {
   private root: string | null = null;
   /** A place's command went somewhere: what shows next is the place. */
   private awaitingRoot = false;
+  /** How many history entries the one you're on is above the place's own: -1 while the place has none. */
+  private depth = -1;
   private sheet: Modal | null = null;
   private on = false;
 
@@ -95,13 +109,16 @@ export class Shell {
     document.addEventListener("focusout", editing);
     // The on-screen keyboard: the page is as tall as what's left above it (visualViewport), so the
     // toolbar sits on top of the keyboard and the note scrolls above both.
+    // On iOS the keyboard covers the page rather than shrinking it, and the page may be panned (offsetTop)
+    // to keep the caret in sight: the page sits where the visible part is, as tall as it.
     const vv = window.visualViewport;
-    const fit = () => document.documentElement.style.setProperty("--app-height", `${Math.round(vv?.height ?? innerHeight)}px`);
+    const fit = () => {
+      const root = document.documentElement.style;
+      root.setProperty("--app-height", `${Math.round(vv?.height ?? innerHeight)}px`);
+      root.setProperty("--app-top", `${Math.round(vv?.offsetTop ?? 0)}px`);
+    };
     vv?.addEventListener("resize", fit);
-    vv?.addEventListener("scroll", () => {
-      // iOS scrolls the page to keep the caret in sight; the page already fits above the keyboard.
-      if (this.on && scrollY) scrollTo(0, 0);
-    });
+    vv?.addEventListener("scroll", fit);
     fit();
   }
 
@@ -126,11 +143,19 @@ export class Shell {
     this.drawToolbar();
   }
 
-  /** Go to a place: its screen, and an entry in the browser's history unless that's how you came. */
+  /**
+   * Go to a place: its screen, and its entry in the browser's history unless that's how you came. The
+   * place you're on, from a note over it, is back down the history to its entry; tapped again on it,
+   * nothing. Another place takes the place of the entry you're on if it's a place's, and is a new one
+   * over a note, so back comes back to the note.
+   */
   go(id: string, how: { push?: boolean } = {}): void {
     const place = this.deps.places().find((p) => p.id === id);
     if (!place) return;
     this.sheet?.close();
+    const fromHistory = how.push === false || !this.on;
+    if (!fromHistory && id === this.place && this.depth > 0) return this.deps.back(this.depth);
+    if (!fromHistory && id === this.place && this.depth === 0 && !("command" in place.open)) return this.update();
     this.place = id;
     this.root = null;
     this.awaitingRoot = false;
@@ -144,8 +169,51 @@ export class Shell {
       this.awaitingRoot = true;
       this.deps.run(place.open.command);
     }
-    // A command's place (Today) goes to a note, and opening it makes the entry.
-    if (how.push !== false && this.on && !("command" in place.open)) this.deps.push({ shell: id });
+    if (!fromHistory) {
+      const entry: ShellEntry = { place: id, above: 0, shell: true };
+      // A command's place (Today) goes to a note, whose opening makes the place's entry (showWindow).
+      if ("command" in place.open) this.depth = this.depth === 0 ? -2 : -1;
+      else {
+        if (this.depth === 0) this.deps.replace(entry);
+        else this.deps.push(entry);
+        this.depth = 0;
+      }
+    }
+    this.update();
+  }
+
+  /**
+   * What goes in the entry for a note being opened, with a jump, while the shell is on: its place, and
+   * how far above the place's entry it is. Undefined when the shell is off.
+   */
+  entryFor(): ShellEntry | undefined {
+    if (!this.on) return undefined;
+    // A command's place: the note it went to is the place's own entry. Over a place's entry (-2), in its place.
+    if (this.depth < -1) return { place: this.place, above: (this.depth = 0) };
+    this.depth = this.depth < 0 ? 0 : this.depth + 1;
+    return { place: this.place, above: this.depth };
+  }
+
+  /** A command's place replaced the entry it was on (-2: it was on a place's): say so, for the app's history to replace rather than push. */
+  get replacing(): boolean {
+    return this.on && this.depth === -2;
+  }
+
+  /** The app started on a note: under the shell it shows over the Feed, so back goes to the Feed and then leaves. */
+  started(state: unknown, hereEntry: (entry: ShellEntry) => void): void {
+    if (!this.on) return;
+    const kept = state as Partial<ShellEntry> | null;
+    if (kept && typeof kept.place === "string" && typeof kept.above === "number") {
+      // A reload: where it was.
+      if (kept.shell) return this.go(kept.place, { push: false });
+      [this.place, this.depth, this.screen] = [kept.place, kept.above, "window"];
+      return this.update();
+    }
+    this.deps.replace({ place: this.place, above: 0, shell: true });
+    this.depth = 0;
+    // Nothing on show: the Feed itself.
+    if (!this.deps.showing()) this.screen = "list";
+    else hereEntry(this.entryFor()!);
     this.update();
   }
 
@@ -156,16 +224,32 @@ export class Shell {
     this.update();
   }
 
-  /** The browser went back or forward to an entry: one of a place's, which the shell shows. Says whether it was. */
+  /** The browser went back or forward to an entry. A place's own, the shell shows, and says so; a note's, it notes where it is. */
   popped(state: unknown): boolean {
-    const id = (state as { shell?: unknown } | null)?.shell;
-    if (typeof id !== "string" || !this.on) return false;
-    this.go(id, { push: false });
-    return true;
+    const entry = state as Partial<ShellEntry> | null;
+    if (!this.on || !entry || typeof entry.place !== "string" || typeof entry.above !== "number") {
+      this.depth = -1;
+      return false;
+    }
+    if (entry.shell) {
+      this.go(entry.place, { push: false });
+      this.depth = 0;
+      return true;
+    }
+    if (entry.place !== this.place) [this.place, this.root, this.awaitingRoot] = [entry.place, null, false];
+    this.depth = entry.above;
+    return false;
   }
 
-  /** Back, up to the place the note is over. */
+  /** Back, up to the place the note is over: down the history to its entry, or, without one below, to the place in this entry's stead. */
   private back(): void {
+    if (this.depth > 0) return this.deps.back(this.depth);
+    const place = this.deps.places().find((p) => p.id === this.place);
+    if (place && !("command" in place.open)) {
+      this.deps.replace({ place: this.place, above: 0, shell: true });
+      this.depth = 0;
+      return this.go(this.place, { push: false });
+    }
     this.go(this.place);
   }
 

@@ -5,8 +5,8 @@ import { parseFilePath } from "./files.ts";
 
 export const PLACES_PATH = parseFilePath(".common-ink/places.json")!;
 
-/** The bottom bar's places when places.json doesn't say (decision 6). */
-export const DEFAULT_BAR: readonly string[] = ["feed", "today", "calendar"];
+/** The bottom bar's places when places.json doesn't say (decision 6): the Feed, then Daily notes' Today and Calendar's. An extension's place is named `<extension id>.<place id>`. */
+export const DEFAULT_BAR: readonly string[] = ["feed", "daily.today", "calendar.calendar"];
 
 /** How many places the bottom bar holds, beside Search and Places. */
 export const BAR_SIZE = 3;

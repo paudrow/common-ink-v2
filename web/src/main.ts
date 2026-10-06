@@ -33,7 +33,7 @@ import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.t
 import { activityView } from "./activity.ts";
 import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
-import { idbKV, Offline } from "./offline.ts";
+import { idbKV, Offline, unreachable } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
@@ -42,7 +42,7 @@ import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
-import { Shell, type Action, type Place } from "./shell.ts";
+import { Shell, type Action, type Place, type ShellEntry } from "./shell.ts";
 import { isIcon } from "./icons.ts";
 import { barOf, PLACES_PATH } from "../../worker/src/places.ts";
 import { setTopLevelKey } from "./json-edit.ts";
@@ -141,6 +141,8 @@ const offHere = () => Object.entries(device.file.extensions).flatMap(([id, o]) =
 const name = docLabel;
 /** The phone shell, made once the app's parts are (below). */
 let shell: Shell | undefined;
+/** What the window showed last, to tell when something new comes on show. */
+let lastShowing: string | null | undefined;
 
 /** Where you've been, kept for this tab's session, so a reload keeps it (navigation.ts). */
 const NAVIGATION_KEY = "common-ink.navigation";
@@ -161,7 +163,8 @@ const browserHistory = (() => {
   let timer = 0;
   let saveTimer = 0;
   const write = () => {
-    if (pending) history.replaceState({ nav: pending.id }, "", addressFor(pending.file));
+    // What the phone shell keeps in the entry (its place) stays with it.
+    if (pending) history.replaceState({ ...history.state, nav: pending.id }, "", addressFor(pending.file));
     pending = null;
   };
   const keep = () => {
@@ -184,19 +187,23 @@ const browserHistory = (() => {
       }
       // The entry being left gets its last update first.
       write();
-      history.pushState({ nav: visit.id }, "", addressFor(visit.file));
+      this.pushVisit(visit);
     },
-    /** A new entry for the place you're at again (a note opened from the phone's list while it's on show). */
+    /** A new entry for a place, with where it is to the phone shell; or, for the note a shell's place went to, the entry you're on. */
     pushVisit(visit: Visit) {
       clearTimeout(timer);
       write();
-      history.pushState({ nav: visit.id }, "", addressFor(visit.file));
+      const replace = shell?.replacing;
+      const state = { nav: visit.id, ...shell?.entryFor() };
+      if (replace) history.replaceState(state, "", addressFor(visit.file));
+      else history.pushState(state, "", addressFor(visit.file));
     },
-    /** A new entry for a place the phone shell shows, after the one being left gets its last update. */
-    push(state: { shell: string }) {
+    /** An entry of a place the phone shell shows: a new one, or the one you're on in its place. */
+    place(state: ShellEntry, replace: boolean) {
       clearTimeout(timer);
       write();
-      history.pushState(state, "", location.href);
+      if (replace) history.replaceState(state, "", location.href);
+      else history.pushState(state, "", location.href);
     },
     /** The browser moved to another entry: an update meant for the one it left is dropped. */
     moved() {
@@ -227,7 +234,12 @@ const workbench = new Workbench(
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
       renderList();
-      shell?.update();
+      // Something new on show in the window (a view a command opened, say) shows over the place on a phone.
+      const tab = L.activeTab(workbench.focusedGroup);
+      const showing = tab && L.openableKey(tab);
+      if (showing !== lastShowing && lastShowing !== undefined) shell?.showWindow();
+      else shell?.update();
+      lastShowing = showing;
     },
     created: () => void refreshList(),
     saved(path) {
@@ -968,15 +980,24 @@ async function loadPlaces() {
   barIds = barOf((await offline.read(PLACES_PATH).catch(() => ({ text: "" }))).text);
   shell?.update();
 }
-/** Write places.json's bar: just that key, the rest of the file as it was (saved searches, order). */
+/**
+ * Write places.json's bar: just that key, the rest of the file as it was (saved searches, order). The
+ * bar changes at once; offline, the write is held like any edit and sent once the server's back.
+ */
 async function setBar(ids: string[]) {
+  barIds = ids;
   for (let tries = 0; tries < 3; tries++) {
     const now = await offline.read(PLACES_PATH);
     const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", "bar", ids);
     if (text === null) return workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.");
-    if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") break;
+    try {
+      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
+    } catch (err) {
+      if (!unreachable(err)) return workbench.notice(`The bottom bar couldn't be saved: ${(err as Error).message}`);
+      await offline.hold({ path: PLACES_PATH, text, base: now.revision });
+      return workbench.notice("You're offline: the bottom bar is changed here, and saved once you're back.");
+    }
   }
-  barIds = ids;
 }
 /** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
@@ -984,7 +1005,8 @@ function places(): Place[] {
   const placed = new Set(on.flatMap((m) => m.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
-    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: p.id, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
+    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: `${m.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
     ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
@@ -1019,7 +1041,9 @@ shell = new Shell({
   kept: () => workbench.kept(),
   search: () => bar.open(),
   newNote: () => void commands.run("note.new"),
-  push: (state) => browserHistory.push(state),
+  push: (state) => browserHistory.place(state, false),
+  replace: (state) => browserHistory.place(state, true),
+  back: (n) => history.go(-n),
 });
 workbench.focusOnOpen = () => device.has("keyboard") || !device.has("touch");
 // Without room beside the windows, a panel opens in the window instead.
@@ -1143,6 +1167,12 @@ try {
   });
   await loadPlaces();
   const { missing } = await workbench.start(asked);
+  // On a phone the note the app opens on shows over the Feed: an entry for the Feed below it, so back goes there first.
+  shell.update();
+  shell.started(history.state, (entry) => {
+    const here = workbench.navigation.here;
+    if (here) history.pushState({ nav: here.id, ...entry }, "", location.href);
+  });
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {
     workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [

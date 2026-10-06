@@ -266,10 +266,10 @@ test("extensions add places and keyboard toolbar buttons; the bottom bar's place
   assert.equal(parseManifest({ contributes: { places: [{ id: "x", title: "X" }] } }, "w"), 'contributes.places[0] needs a "view" or a "command": where it goes');
   assert.equal(parseManifest({ contributes: { toolbar: [{ command: "x", title: "X" }] } }, "w"), 'contributes.toolbar[0] needs a "label" or an "icon" to show');
 
-  assert.deepEqual(DEFAULT_BAR, ["feed", "today", "calendar"]);
-  assert.deepEqual(barOf(""), ["feed", "today", "calendar"], "no file, the default");
+  assert.deepEqual(DEFAULT_BAR, ["feed", "daily.today", "calendar.calendar"]);
+  assert.deepEqual(barOf(""), ["feed", "daily.today", "calendar.calendar"], "no file, the default");
   assert.deepEqual(barOf('{"bar": ["tasks", "tasks", "feed", 3, "calendar", "today"]}'), ["tasks", "feed", "calendar"], "three, each once");
-  assert.deepEqual(barOf('{"saved": {}}'), ["feed", "today", "calendar"]);
+  assert.deepEqual(barOf('{"saved": {}}'), ["feed", "daily.today", "calendar.calendar"]);
 
   for (const id of ["daily", "calendar", "tasks", "data-sources", "contacts", "uploads", "lists"]) {
     const built = parseManifest(JSON.parse(readFileSync(`web/src/extensions/${id}/extension.json`, "utf8")), id, { builtIn: true }) as ExtensionManifest;

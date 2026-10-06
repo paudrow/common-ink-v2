@@ -2233,10 +2233,16 @@ iframe.webview {
 }
 html[data-shell] body {
   height: var(--app-height, 100dvh);
+  /* Where the visible part of the page is when iOS pans it to keep the caret in sight above its keyboard. */
+  translate: 0 var(--app-top, 0px);
   grid-template: "top" auto "editor" minmax(0, 1fr) "panel" auto "status" auto "toolbar" auto "bar" auto / minmax(0, 1fr);
 }
 html[data-shell] #notes,
 html[data-shell] #panel {
+  display: none;
+}
+/* No status bar on a phone (decision 23): what isn't saved is said where it matters. */
+html[data-shell][data-width="compact"] #status {
   display: none;
 }
 html[data-shell][data-screen="list"] #workbench {
