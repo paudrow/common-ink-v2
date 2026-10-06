@@ -167,3 +167,15 @@ test("an event lists the notes that link to it, and to its series", async () => 
   assert.equal(store.files.read("Trips.md" as FilePath)?.text, "# Fall break\n\n[Fall break](event:sample/holidays/fall)\n");
   assert.deepEqual(((await op(store, "read_event", { address: "event:sample/holidays/fall" })) as { notes: Array<{ path: string }> }).notes.map((n) => n.path), ["Other.md", "Trips.md"]);
 });
+
+test("update_event writes each field it's given as given, so a client sends only the fields it changed", async () => {
+  const store = sampleWorkspace();
+  const made = (await op(store, "create_event", { title: "Dentist", start: "2026-10-06T14:30", calendar: "work" })) as { address: string };
+  await op(store, "update_event", { address: made.address, title: "Dentist (Dr Lee)" }, claude);
+  await op(store, "update_event", { address: made.address, location: "14 High Street" });
+  const kept = (await op(store, "read_event", { address: made.address })) as { event: { title: string; location?: string } };
+  assert.deepEqual([kept.event.title, kept.event.location], ["Dentist (Dr Lee)", "14 High Street"], "a field left out is left as it is");
+  await op(store, "update_event", { address: made.address, title: "Dentist", location: "15 High Street" });
+  const sent = (await op(store, "read_event", { address: made.address })) as { event: { title: string } };
+  assert.equal(sent.event.title, "Dentist", "a field sent as it was when the client read it undoes a change made since");
+});

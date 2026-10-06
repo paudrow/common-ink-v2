@@ -65,6 +65,20 @@ function inZone(day: Day, minutes: number, zone: string | undefined): string {
 
 const minutesOf = (time: string) => +time.slice(0, 2) * 60 + +time.slice(3, 5);
 
+/** An event's times, which change together: a new start alone would keep its length instead of its end. */
+const TIMES = ["allDay", "start", "end", "timeZone"];
+
+/**
+ * What a save changes: the fields that differ from the event as the editor opened it, and its times
+ * together if any of them did. Sending the rest as they were would undo what someone else changed
+ * meanwhile, while the editor was open or the save waited offline.
+ */
+function changedFrom<T extends Record<string, unknown>>(opened: T, saved: T): Partial<T> {
+  const differs = (key: string) => JSON.stringify(opened[key]) !== JSON.stringify(saved[key]);
+  const timesMoved = TIMES.some(differs);
+  return Object.fromEntries(Object.entries(saved).filter(([key]) => (TIMES.includes(key) ? timesMoved : differs(key)))) as Partial<T>;
+}
+
 export class CalendarPage {
   readonly root: HTMLElement;
   private body: HTMLElement;
@@ -395,13 +409,14 @@ export class CalendarPage {
     const draft = this.draftOf(o);
     draft.recurrence = found?.series?.recurrence ?? found?.event.recurrence ?? [];
     const repeating = !!(o.series ?? found?.event.recurrence);
+    const opened = this.fields(draft, zoneFor(o));
     openEditor(at, draft, {
       calendars: this.calendars,
       repeating,
       readOnly: !this.writable(o),
       link: o.link,
       extra: await this.extra(o, found),
-      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, this.fields(d, zoneFor(o)), scope)),
+      save: async (d, scope) => this.wrote(await this.ctx.data.calendar.update(o.address, changedFrom(opened, this.fields(d, zoneFor(o))), scope)),
       remove: async (scope) => this.wrote(await this.ctx.data.calendar.remove(o.address, scope), `Deleted ${o.title || "the event"}`),
       onClose: () => this.root.focus({ preventScroll: true }),
     }, false);
