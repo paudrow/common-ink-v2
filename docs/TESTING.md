@@ -105,7 +105,7 @@ With levers on, the page also checks what must always hold, and logs a console e
 
 | Call | Answer |
 | --- | --- |
-| `state()` | Everything below as plain data: `scenario`, `levers`, `clock`, `focus`, `cursor`, `vim` (mode and pending keys), `device` (what it has, why the app thinks so, and its file), `layout`, `windows` (with each one's tabs and size on screen), `pending` saves, `save`, `network` (online, socket, unsent edits), `extensions` (state and error), `permissions` (grants and prompts), `activity`, `history` (the latest 15 changes), `problems` (errors and broken invariants), `embeds`, `layoutShifts`, `notices` and `dialogs`. |
+| `state()` | Everything below as plain data: `scenario`, `levers`, `clock`, `focus`, `cursor`, `vim` (mode and pending keys), `device` (what it has, why the app thinks so, and its file), `layout`, `kept` (windows and tabs put away for want of width), `windows` (with each one's tabs and size on screen, and whether it's `suspended`: kept, but not shown at this width), `pending` saves, `save`, `network` (online, socket, unsent edits), `extensions` (state and error), `permissions` (grants and prompts), `activity`, `history` (the latest 15 changes), `problems` (errors and broken invariants), `embeds`, `layoutShifts`, `notices` and `dialogs`. |
 | `where()` | The focused note, line, column and Vim mode, without a request. |
 | `keys(seq)` | Presses keys where focus is, in Vim's notation (see below). |
 | `cursor(line, column)` | Puts the cursor in the focused note. |

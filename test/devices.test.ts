@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { deviceName, devicePath, here, hereText, needsText, parseDeviceFile, unmet, widthClassOf, type Facts } from "../worker/src/devices.ts";
 import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
@@ -112,7 +113,7 @@ async function runtimeOn(device: ReturnType<typeof fakeDevice>) {
   const { ExtensionRuntime } = await import("../web/src/extension-runtime.ts");
   const notices: string[] = [];
   const promoted: string[] = [];
-  const commands = new Commands();
+  const commands = new Commands((title, why) => void notices.push(`${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`));
   const runtime = new ExtensionRuntime({
     me: "you@example.com",
     commands,
@@ -215,4 +216,29 @@ test("a command that needs a wider screen is listed greyed with why, and running
   assert.equal(ctx.commands.all().find((c) => c.id === "windows.beside")!.off, undefined, "back when there's room");
   commands.run("windows.beside");
   assert.deepEqual(ran, ["beside"]);
+});
+
+test("Vim needs a keyboard, tabs 600px and windows side by side 840px; their commands say so", async () => {
+  const read = (id: string) => parseManifest(JSON.parse(readFileSync(`web/src/extensions/${id}/extension.json`, "utf8")), id, { builtIn: true }) as ExtensionManifest;
+  const vim = read("vim");
+  const workbench = read("workbench");
+  assert.deepEqual(vim.requires, { keyboard: true });
+  assert.deepEqual(
+    workbench.contributes.layout.map((p) => [p.id, p.requires]),
+    [
+      ["tabs", { width: "medium" }],
+      ["splits", { width: "expanded" }],
+    ],
+  );
+  assert.deepEqual(workbench.contributes.commands.find((c) => c.command === "window.splitRight")?.requires, { width: "expanded" });
+  assert.deepEqual(workbench.contributes.commands.find((c) => c.command === "tab.next")?.requires, { width: "medium" });
+
+  const tablet = fakeDevice({ width: "medium", px: 700, pointer: "coarse", touch: true, keyboard: false });
+  const { runtime } = await runtimeOn(tablet);
+  const builtIn = (m: ExtensionManifest): BuiltIn => ({ manifest: m, load: async () => ({ activate() {} }), files: [], source: async () => "", copy: async () => ({}), folder: "" });
+  await runtime.load([builtIn(vim), builtIn(workbench)], [], [], false, []);
+  assert.equal(runtime.host.records.find((r) => r.id === "vim")!.state, "unmet");
+  assert.equal(runtime.layoutPart("tabs"), null, "tabs show on a tablet");
+  assert.equal(runtime.layoutPart("splits"), "Off on this device · needs a screen 840px wide");
+  assert.equal(runtime.layoutPart("panels"), undefined, "a part no extension draws");
 });

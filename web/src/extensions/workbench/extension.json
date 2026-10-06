@@ -22,30 +22,64 @@
     }
   },
   "contributes": {
+    "layout": [
+      {
+        "id": "tabs",
+        "title": "Tabs",
+        "requires": {
+          "width": "medium"
+        }
+      },
+      {
+        "id": "splits",
+        "title": "Windows side by side",
+        "requires": {
+          "width": "expanded"
+        }
+      }
+    ],
     "commands": [
       {
         "command": "tab.closeOthers",
-        "title": "Close other tabs"
+        "title": "Close other tabs",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.closeRight",
-        "title": "Close tabs to the right"
+        "title": "Close tabs to the right",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.closeLeft",
-        "title": "Close tabs to the left"
+        "title": "Close tabs to the left",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.closeSaved",
-        "title": "Close saved tabs"
+        "title": "Close saved tabs",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.closeAll",
-        "title": "Close all tabs"
+        "title": "Close all tabs",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.keepOpen",
-        "title": "Keep tab open"
+        "title": "Keep tab open",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.copyPath",
@@ -53,95 +87,164 @@
       },
       {
         "command": "tab.next",
-        "title": "Next tab"
+        "title": "Next tab",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.previous",
-        "title": "Previous tab"
+        "title": "Previous tab",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "window.splitRight",
-        "title": "Split right"
+        "title": "Split right",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.splitDown",
-        "title": "Split down"
+        "title": "Split down",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.splitLeft",
-        "title": "Split left"
+        "title": "Split left",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.splitUp",
-        "title": "Split up"
+        "title": "Split up",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.only",
-        "title": "Close other windows"
+        "title": "Close other windows",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.next",
-        "title": "Focus next window"
+        "title": "Focus next window",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.left",
-        "title": "Focus window to the left"
+        "title": "Focus window to the left",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.right",
-        "title": "Focus window to the right"
+        "title": "Focus window to the right",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.up",
-        "title": "Focus window above"
+        "title": "Focus window above",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.down",
-        "title": "Focus window below"
+        "title": "Focus window below",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "tab.moveLeft",
-        "title": "Move tab to the window to the left"
+        "title": "Move tab to the window to the left",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "tab.moveRight",
-        "title": "Move tab to the window to the right"
+        "title": "Move tab to the window to the right",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "tab.moveUp",
-        "title": "Move tab to the window above"
+        "title": "Move tab to the window above",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "tab.moveDown",
-        "title": "Move tab to the window below"
+        "title": "Move tab to the window below",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "tab.moveEarlier",
-        "title": "Move tab earlier in its window"
+        "title": "Move tab earlier in its window",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "tab.moveLater",
-        "title": "Move tab later in its window"
+        "title": "Move tab later in its window",
+        "requires": {
+          "width": "medium"
+        }
       },
       {
         "command": "window.wider",
-        "title": "Make window wider"
+        "title": "Make window wider",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.narrower",
-        "title": "Make window narrower"
+        "title": "Make window narrower",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.taller",
-        "title": "Make window taller"
+        "title": "Make window taller",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.shorter",
-        "title": "Make window shorter"
+        "title": "Make window shorter",
+        "requires": {
+          "width": "expanded"
+        }
       },
       {
         "command": "window.equalize",
-        "title": "Make windows the same size"
+        "title": "Make windows the same size",
+        "requires": {
+          "width": "expanded"
+        }
       }
     ],
     "keybindings": [

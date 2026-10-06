@@ -42,7 +42,7 @@ import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
-import type { Override } from "../../worker/src/devices.ts";
+import { atLeast, deviceOfLayout, here, hereText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
 const dev = await bootLevers();
@@ -210,8 +210,9 @@ const workbench = new Workbench(
       for (const fn of savedListeners) fn(path);
       if (isSettingsFile(path)) void loadSettings();
     },
+    // Keys are hinted only where there's a keyboard to press them.
     shortcut: (command) => {
-      const key = keyFor(command, settings.keybindings);
+      const key = device.has("keyboard") ? keyFor(command, settings.keybindings) : undefined;
       return key && formatKeys(key);
     },
   },
@@ -472,7 +473,9 @@ function pick(how: typeof openHow) {
   bar.open();
 }
 
-const commands = new Commands();
+const commands = new Commands((title, why) => workbench.notice(`${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`));
+/** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
+const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
 commands.register(
   { id: "quickOpen", title: "Open note…", run: () => pick("here") },
   {
@@ -490,12 +493,12 @@ commands.register(
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
   { id: "go.back", title: "Go back", run: () => navigate(-1) },
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
-  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
+  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab"), off: needs({ width: "medium" }) },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
   { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
-  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
-  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
-  { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
+  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right"), off: needs({ width: "expanded" }) },
+  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down"), off: needs({ width: "expanded" }) },
+  { id: "window.close", title: "Close window", run: () => workbench.closeGroup(), off: needs({ width: "expanded" }) },
   {
     id: "account.signOut",
     title: "Sign out",
@@ -556,6 +559,7 @@ function askerOf(id: string): Asker {
 // The device changed: extensions that now have what they need go in, and views that say what's on here draw again.
 device.onChange((d, was) => {
   extensions.deviceChanged();
+  workbench.refreshParts();
   void extensions.promote().then((went) => {
     if (d.facts.keyboard && !was.keyboard && d.file.keyboard === "auto") {
       const on = went.length ? `${went.join(", ")} ${went.length === 1 ? "is" : "are"} on` : "shortcuts are on";
@@ -570,8 +574,45 @@ device.onChange((d, was) => {
     else if (went.length) workbench.notice(`${went.join(", ")} ${went.length === 1 ? "is" : "are"} on here now.`);
     extensionsChanged();
     workbench.refreshView(SETTINGS_VIEW);
+    // Shortcuts are hinted now there's a keyboard (or not, now there isn't).
+    if (d.facts.keyboard !== was.keyboard) workbench.applySettings(settings);
   });
 });
+
+// Tabs and windows side by side show where the Workbench says they fit; without it, windows need the width they'd need with it.
+workbench.parts = () => {
+  const tabs = extensions.layoutPart("tabs");
+  const splits = extensions.layoutPart("splits");
+  return { tabs: tabs !== undefined ? tabs === null : true, splits: splits !== undefined ? splits === null : device.atLeast("expanded") };
+};
+if (device.layoutPath) workbench.layoutPath = device.layoutPath;
+workbench.firstLayout = firstLayout;
+
+/**
+ * Where a device that has no layout of its own starts: a wide one from the layout of the wide device you
+ * used last (or the workspace's, from before layouts were per device); a narrow one with just what was
+ * on show there, since a phone keeps only what it needs.
+ */
+async function firstLayout(): Promise<L.Layout | null> {
+  const parse = (text: string) => {
+    try {
+      return L.parseLayout(JSON.parse(text));
+    } catch {
+      return null;
+    }
+  };
+  let from: L.Layout | null = null;
+  const layouts = me ? files.filter((f) => f.path !== device.layoutPath && deviceOfLayout(f.path, me)).sort((a, b) => b.revision - a.revision) : [];
+  for (const f of layouts) {
+    const seen = parseDeviceFile((await offline.read(f.path.replace(/layout\.json$/, "device.json") as FilePath)).text).seen;
+    if (seen && atLeast(seen.width, "expanded")) {
+      from = parse((await offline.read(f.path)).text);
+      if (from) break;
+    }
+  }
+  from ??= parse((await offline.read(L.LAYOUT_PATH)).text);
+  return from && (device.atLeast("expanded") ? from : L.onShow(from));
+}
 
 // This device's file changed: in another tab on this device, or by you or an agent. Its changes come in here.
 savedListeners.push((path) => path === device.path && void device.absorb());
