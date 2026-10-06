@@ -12,7 +12,8 @@ test("a YouTube link alone on its line plays from youtube-nocookie.com, which th
   const policy = async () => (await page.goto(`${h.base}/?file=${encodeURIComponent("Link embeds tour.md")}`))!.headers()["content-security-policy"];
   assert.match(await policy(), /frame-src [^;]*https:\/\/www\.youtube-nocookie\.com/);
   const video = await page.waitForSelector('.cm-url-embed[data-url-embed="youtube"] iframe');
-  assert.equal(await video.getAttribute("src"), "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ");
+  // With its IFrame API on, for our origin only: the app hears whether it plays (media.ts).
+  assert.equal(await video.getAttribute("src"), `https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ?enablejsapi=1&origin=${encodeURIComponent(h.base)}`);
   assert.match((await video.getAttribute("sandbox"))!, /allow-scripts/, "a frame of its own, that can't reach the app");
   await writeFile(page, ".common-ink/settings.json", JSON.stringify({ "extensions.disabled": ["link-embeds"] }));
   assert.doesNotMatch(await policy(), /youtube|twitter|bsky|spotify/);
