@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { deviceName, devicePath, here, hereText, needsText, parseDeviceFile, unmet, widthClassOf, type Facts } from "../worker/src/devices.ts";
 import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
-import { fromHardware } from "../web/src/device.ts";
+import { KeyEvidence } from "../web/src/device.ts";
 import { DEFAULTS } from "../worker/src/settings.ts";
 import type { ExtensionContext, ExtensionModule } from "../web/src/extension-api.ts";
 import type { BuiltIn } from "../web/src/extension-host.ts";
@@ -49,17 +49,29 @@ test("a device is named for its system and browser", () => {
   assert.deepEqual([iphone, mac, pixel].map(deviceName), ["iPhone · Safari", "Mac · Chrome", "Android phone · Chrome"]);
 });
 
-test("a keyboard is found from a key no touch screen's keyboard sends", () => {
-  const key = (k: string, more: { ctrlKey?: boolean; metaKey?: boolean } = {}) => ({ key: k, ctrlKey: false, metaKey: false, isComposing: false, ...more });
-  assert.equal(fromHardware(key("j"), false), true, "any key outside a text field");
-  assert.equal(fromHardware(key("j"), true), false, "a letter typed into a note may be the on-screen keyboard's");
-  assert.equal(fromHardware(key("Backspace"), true), false);
-  assert.equal(fromHardware(key("Escape"), true), true);
-  assert.equal(fromHardware(key("ArrowDown"), true), true);
-  assert.equal(fromHardware(key("k", { metaKey: true }), true), true, "a ⌘ or Ctrl chord");
-  assert.equal(fromHardware(key("Meta", { metaKey: true }), true), false, "not ⌘ alone");
-  assert.equal(fromHardware(key("Unidentified"), false), false, "Android's on-screen keyboard");
-  assert.equal(fromHardware({ ...key("a"), isComposing: true }, false), false);
+test("a keyboard is found from a character typed outside a text field, a chord, or two kinds of keys a phone's keyboard rarely sends", () => {
+  const key = (k: string, more: Partial<{ ctrlKey: boolean; metaKey: boolean; isComposing: boolean; isTrusted: boolean }> = {}) => ({ key: k, ctrlKey: false, metaKey: false, isComposing: false, isTrusted: true, ...more });
+  const found = (presses: Array<[ReturnType<typeof key>, boolean]>) => {
+    const evidence = new KeyEvidence();
+    return presses.map(([e, inText]) => evidence.note(e, inText));
+  };
+  assert.deepEqual(found([[key("j"), false]]), [true], "a character outside a text field: no keyboard is on screen there");
+  assert.deepEqual(found([[key("j"), true], [key("Backspace"), true], [key("Enter"), true]]), [false, false, false], "typing into a note may be the on-screen keyboard");
+  assert.deepEqual(found([[key("k", { metaKey: true }), true]]), [true], "a ⌘ or Ctrl chord");
+  assert.deepEqual(found([[key("Meta", { metaKey: true }), true]]), [false], "not ⌘ alone");
+  assert.deepEqual(
+    found([[key("ArrowLeft"), true], [key("ArrowRight"), true], [key("Home"), true], [key("Tab"), true]]),
+    [false, false, false, false],
+    "a phone's cursor keys, however many, are one kind",
+  );
+  assert.deepEqual(found([[key("ArrowDown"), true], [key("Escape"), true]]), [false, true], "two kinds: moving and Escape");
+  assert.deepEqual(
+    found([[key("AudioVolumeUp"), false], [key("MediaPlayPause"), false], [key("Power"), false], [key("BrowserBack"), false], [key("Unidentified"), false]]),
+    [false, false, false, false, false],
+    "a phone's own buttons, outside a text field too",
+  );
+  assert.deepEqual(found([[key("a", { isTrusted: false }), false]]), [false], "a script's key press");
+  assert.deepEqual(found([[key("a", { isComposing: true }), false]]), [false], "mid-composition");
 });
 
 test("a manifest says what an extension and each contribution need; anything a device can't have is refused", () => {
