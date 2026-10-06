@@ -204,14 +204,17 @@ export class GoogleCalendar implements Adapter {
   }
 
   /**
-   * The event as Google has it now, or null if Google deleted it. If Google can't say, that's a
-   * failure for now: the edit waits with the etag it has, so it never goes out without one.
+   * The event as Google has it now, or null if Google deleted it: Google answers a deleted event
+   * cancelled, or 404 or 410. An occurrence cancelled on its own is still its series', so it's
+   * merged with like any change. If Google can't say, that's a failure for now: the edit waits with
+   * the etag it has, so it never goes out without one.
    */
   private async current(e: CalendarEvent): Promise<GoogleEvent | null> {
     const res = await this.call("GET", this.path(e.calendar, e.id));
     if (res.status === 404 || res.status === 410) return null;
     if (!res.ok) throw await failure(res, `reading ${e.title || e.id}`);
-    return (await res.json()) as GoogleEvent;
+    const g = (await res.json()) as GoogleEvent;
+    return g.status === "cancelled" && !g.recurringEventId ? null : g;
   }
 
   /** Google's version of an event, for merging with ours. */
