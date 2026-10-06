@@ -68,8 +68,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
       // Sealed like production's, so the browser tests go through sealing, revoking and sealTokens too.
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.fake!.fetch(input, init));
-      this.fake ??= this.sampleFake();
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" }, tokenKey: "fake" }, announce, (input, init) => this.sampleFake().fetch(input, init));
       if (!sources.syncs) void this.ctx.blockConcurrencyWhile(() => sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES }));
       return [files, sources];
     }
@@ -78,9 +77,12 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return [files, sources];
   }
 
-  /** The fake Google's week, around the day the workspace's scenario starts on, or today where its calendars are. */
+  /**
+   * The fake Google, made the first time it's used, so after a seed has said the workspace's scenario:
+   * its week is around the day that scenario starts on, or today where its calendars are.
+   */
   private sampleFake(): FakeGoogle {
-    return sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10));
+    return (this.fake ??= sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10)));
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -94,8 +96,9 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   // Pages only listen; anything they send is ignored.
   webSocketMessage() {}
 
-  webSocketClose(ws: WebSocket, code: number) {
-    ws.close(code === 1005 ? 1000 : code, "closing");
+  // A page that went without a close frame comes as 1006, which can't be sent back, so the reply is always 1000.
+  webSocketClose(ws: WebSocket) {
+    ws.close(1000, "closing");
   }
 
   list() {
@@ -170,7 +173,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * load again. Running it twice ends the same way.
    */
   reset(seed: Seed, pinned: boolean) {
-    const [{ last }] = this.db.all<{ last: number | null }>("SELECT max(revision) AS last FROM changes");
+    const last = this.files.lastRevision();
     this.db.tx(() => {
       for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
         this.db.run(`DROP TABLE "${name}"`);
@@ -183,7 +186,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     }
     this.files.seed(seed);
     this.keepScenario(seed, pinned);
-    if (this.fake) this.fake = this.sampleFake();
+    this.fake = null;
     for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
@@ -192,10 +195,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    * give it again, as reconnecting does.
    */
   async fakeGoogle(change: { revoked: boolean }) {
-    if (!this.fake) return null;
-    this.fake.revoked = change.revoked;
+    if (this.env.FAKE_GOOGLE !== "1" || this.env.LEVERS !== "1") return null;
+    this.sampleFake().revoked = change.revoked;
     if (!change.revoked) await this.connectGoogle({ email: "tester@localhost", refreshToken: "fake-2", scopes: DATA_SCOPES });
-    return { revoked: this.fake.revoked };
+    return { revoked: this.sampleFake().revoked };
   }
 
   /** Keep Google's grant, then send what waited for it and sync, soon, without holding up sign-in. */
