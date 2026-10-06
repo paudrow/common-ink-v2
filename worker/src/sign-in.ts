@@ -63,11 +63,14 @@ async function pkce(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)))) };
 }
 
-/** Whether a sign-out came from the app (or was typed), not from another site: signing out also clears what this browser kept. */
+/**
+ * Whether a sign-out is you going there from the app (or typing it), not another site, and not a
+ * picture or a fetch on a page: signing out also clears what this browser kept.
+ */
 function fromHere(req: Request, url: URL): boolean {
   if (req.method === "POST") return req.headers.get("Origin") === url.origin;
   const site = req.headers.get("Sec-Fetch-Site");
-  return site === "same-origin" || site === "none";
+  return req.headers.get("Sec-Fetch-Mode") === "navigate" && (site === "same-origin" || site === "none");
 }
 
 /**
