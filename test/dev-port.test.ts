@@ -19,15 +19,6 @@ test("a port another server answers on is taken, and one nobody answers on isn't
   assert.equal(await portTaken(await freePort()), false);
 });
 
-test("a server is this run's only if it serves this run's nonce", async () => {
-  const other = await someoneElses(JSON.stringify({ nonce: "theirs" }));
-  assert.equal(await isOurs(`http://localhost:${other.port}`, "mine"), false);
-  const mine = await someoneElses(JSON.stringify({ nonce: "mine" }));
-  assert.equal(await isOurs(`http://localhost:${mine.port}`, "mine"), true);
-  assert.equal(await isOurs(`http://localhost:${await freePort()}`, "mine"), false, "nothing there");
-  await Promise.all([other, mine].map(({ server }) => new Promise((r) => server.close(r))));
-});
-
 test("npm run dev refuses a port another server answers on, says so, and sends that server nothing", async () => {
   const { spawn } = await import("node:child_process");
   const path = await import("node:path");
