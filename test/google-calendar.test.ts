@@ -271,8 +271,11 @@ test("undoing deleting one occurrence brings it back in Google too", async () =>
 
 type Edit = [Parameters<typeof runOperation>[0], Record<string, unknown>];
 
-/** Ada's own Google with one series, changed as `setup` says, then edited as `edit` says, and the edit's changes all undone together. */
-async function undoAll(series: (fake: FakeGoogle) => void, edit: Edit[], setup: Edit[] = []) {
+/**
+ * Ada's own Google with one series, changed as `setup` says, then edited as `edit` says, and the
+ * edit's changes undone in the batches `plan` makes of them (by default all together).
+ */
+async function undoAll(series: (fake: FakeGoogle) => void, edit: Edit[], setup: Edit[] = [], plan: (revisions: number[]) => number[][] = (r) => [r]) {
   const fake = new FakeGoogle();
   fake.addCalendar({ id: "ada@example.com", summary: "Ada", primary: true, accessRole: "owner", timeZone: LA });
   series(fake);
@@ -286,7 +289,8 @@ async function undoAll(series: (fake: FakeGoogle) => void, edit: Edit[], setup: 
   const since = store.files.recent({ limit: 1 })[0].revision;
   for (const [name, args] of edit) await op(store, name, args);
   const mine = store.files.recent({ limit: 100 }).filter((c) => c.revision > since && c.author.kind === "user").map((c) => c.revision);
-  const statuses = ((await op(store, "undo", { revisions: mine })) as Array<{ status: string }>).map((u) => u.status);
+  const statuses: string[] = [];
+  for (const batch of plan(mine)) statuses.push(...((await op(store, "undo", { revisions: batch })) as Array<{ status: string }>).map((u) => u.status));
   const here = await shown();
   await op(store, "sync_calendar", { force: true });
   return { before, statuses, here, synced: await shown() };
@@ -351,3 +355,44 @@ test("the sample fake Google's week is around the day it's given, in New York, w
     "2026-10-09T13:00 Standup",
   ]);
 });
+
+const daily = (fake: FakeGoogle) => {
+  fake.put("ada@example.com", { id: "d", summary: "Daily", start: at("05", "09:00"), end: at("05", "09:15"), recurrence: ["RRULE:FREQ=DAILY;COUNT=6"] });
+  fake.put("ada@example.com", { id: "d_20261006T160000Z", summary: "Daily (late)", recurringEventId: "d", originalStartTime: at("06", "09:00"), start: at("06", "10:00"), end: at("06", "10:15") });
+  fake.put("ada@example.com", { id: "d_20261007T160000Z", status: "cancelled", recurringEventId: "d", originalStartTime: at("07", "09:00") });
+  fake.put("ada@example.com", { id: "d_20261008T160000Z", summary: "Daily (renamed)", recurringEventId: "d", originalStartTime: at("08", "09:00"), start: at("08", "09:00"), end: at("08", "09:15") });
+};
+const weekly = (fake: FakeGoogle) => {
+  fake.put("ada@example.com", { id: "w", summary: "Weekly", start: at("05", "11:00"), end: at("05", "12:00"), recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4"] });
+  fake.put("ada@example.com", { id: "w_20261012T180000Z", summary: "Weekly (changed)", recurringEventId: "w", originalStartTime: at("12", "11:00"), start: at("12", "11:00"), end: at("12", "12:00") });
+  fake.put("ada@example.com", { id: "w_20261019T180000Z", status: "cancelled", recurringEventId: "w", originalStartTime: at("19", "11:00") });
+};
+const moves: Array<[string, (fake: FakeGoogle) => void, Edit]> = [
+  ["a daily series moved two hours", daily, ["update_event", { address: "event:google/primary/d_20261005T160000Z", start: "2026-10-05T11:00", scope: "all", zone: LA }]],
+  ["a weekly series moved a day", weekly, ["update_event", { address: "event:google/primary/w_20261005T180000Z", start: "2026-10-06T11:00", scope: "all", zone: LA }]],
+];
+const shuffled = (revisions: number[], seed: number) => {
+  const out = [...revisions];
+  for (let i = out.length - 1, s = seed; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const j = s % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+};
+const plans: Array<[string, (revisions: number[]) => number[][]]> = [
+  ["one at a time, newest first", (r) => [...r].sort((a, b) => b - a).map((x) => [x])],
+  ["one at a time, oldest first", (r) => [...r].sort((a, b) => a - b).map((x) => [x])],
+  ...[1, 2, 3].map((seed): [string, (r: number[]) => number[][]] => [`one at a time, shuffled (${seed})`, (r) => shuffled(r, seed).map((x) => [x])]),
+  ["its occurrences first, then the series", (r) => [r.filter((x) => x !== Math.min(...r)), [Math.min(...r)]]],
+];
+for (const [what, series, move] of moves) {
+  for (const [how, plan] of plans) {
+    test(`undoing ${what} ${how} leaves it as it was, here and in Google`, async () => {
+      const run = await undoAll(series, [move], [], plan);
+      assert.deepEqual(run.statuses.filter((s) => s !== "undone"), []);
+      assert.deepEqual(run.here, run.before);
+      assert.deepEqual(run.synced, run.before);
+    });
+  }
+}
