@@ -53,6 +53,14 @@ const FLOAT = "common-ink.media-float";
 /** Where a floating window goes first: above the mini player. Each more window floating goes this much above the last. */
 const HOME: Corner = { right: 16, bottom: 88 };
 const STACK = 220;
+/** A floating window's width and a gap: where the next column of them goes. */
+const COLUMN = 336;
+
+/** The `n`th floating window's spot from `base`: up the page while they fit, then a column to the left, so every bar shows. */
+function stacked(base: Corner, n: number): Corner {
+  const rows = Math.max(1, Math.floor((innerHeight - base.bottom) / STACK));
+  return { right: base.right + Math.floor(n / rows) * COLUMN, bottom: base.bottom + (n % rows) * STACK };
+}
 /** How far an arrow key moves a floating window (with Shift, four times as far). */
 const NUDGE = 16;
 
@@ -81,6 +89,33 @@ function keepCorner(c: Corner | null) {
  */
 export function onPage(c: Corner, size: { width: number; height: number }, page: { width: number; height: number }): Corner {
   return { right: Math.min(Math.max(c.right, 0), page.width - size.width), bottom: Math.min(Math.max(c.bottom, 0), page.height - size.height) };
+}
+
+/** A box's size as drawn, fractions included: rounded, a window pinned to the top would sit half a pixel above it. */
+const sizeOf = (el: HTMLElement) => {
+  const r = el.getBoundingClientRect();
+  return { width: r.width, height: r.height };
+};
+
+/** Says, politely, where a floating window moved by keys has reached: an edge or a corner. */
+let said: HTMLElement | null = null;
+function say(text: string) {
+  if (!said?.isConnected) {
+    said = document.createElement("div");
+    said.className = "media-float-said visually-hidden";
+    said.setAttribute("role", "status");
+    said.setAttribute("aria-live", "polite");
+    document.body.append(said);
+  }
+  if (said.textContent !== text) said.textContent = text;
+}
+
+/** Which edges of the page a box touches, in words, or "" if none. */
+function edgesOf(el: HTMLElement): string {
+  const r = el.getBoundingClientRect();
+  const v = r.top <= 0.5 ? "top" : r.bottom >= innerHeight - 0.5 ? "bottom" : "";
+  const h = r.left <= 0.5 ? "left" : r.right >= innerWidth - 0.5 ? "right" : "";
+  return v && h ? `In the ${v} ${h} corner` : v || h ? `At the ${v || h} edge` : "";
 }
 
 /** Every floating window, in the order they started floating: each new one goes above the last. */
@@ -152,6 +187,8 @@ function documentLayer(): HTMLElement {
     if (!e.relatedTarget && e.dataTransfer?.types.includes("Files")) through(false);
   }, true);
   for (const end of ["dragend", "drop"]) document.addEventListener(end, () => through(false), true);
+  // A drop in a frame (an extension's webview) never reaches the page, but no pointer event comes during a drag.
+  for (const after of ["pointerdown", "pointermove"]) document.addEventListener(after, () => layer.classList.contains("is-passing") && through(false), true);
   return layer;
 }
 
@@ -432,8 +469,7 @@ export class Lives {
     const el = live.el;
     if (!floating.has(el)) {
       // Each new window goes above the ones already floating.
-      const base = floatCorner();
-      live.corner = { right: base.right, bottom: base.bottom + [...floating].filter((f) => f.isConnected).length * STACK };
+      live.corner = stacked(floatCorner(), [...floating].filter((f) => f.isConnected).length);
       floating.add(el);
     }
     if (!live.bar) live.bar = this.floatBar(key, live);
@@ -451,7 +487,7 @@ export class Lives {
 
   /** Put a floating window where it was put, kept on the page. */
   private pin(live: Live) {
-    const at = onPage(live.corner!, { width: live.el.offsetWidth, height: live.el.offsetHeight }, { width: innerWidth, height: innerHeight });
+    const at = onPage(live.corner!, sizeOf(live.el), { width: innerWidth, height: innerHeight });
     const [r, b] = [`${at.right}px`, `${at.bottom}px`];
     if (live.el.style.right !== r) live.el.style.right = r;
     if (live.el.style.bottom !== b) live.el.style.bottom = b;
@@ -459,7 +495,7 @@ export class Lives {
 
   /** Move a floating window to a spot (kept on the page), and float the next one there. */
   private moveFloat(live: Live, to: Corner) {
-    live.corner = onPage(to, { width: live.el.offsetWidth, height: live.el.offsetHeight }, { width: innerWidth, height: innerHeight });
+    live.corner = onPage(to, sizeOf(live.el), { width: innerWidth, height: innerHeight });
     this.pin(live);
   }
 
@@ -467,7 +503,7 @@ export class Lives {
   resetFloats(n: { stacked: number }) {
     for (const live of this.lives.values()) {
       if (!live.floating) continue;
-      live.corner = { right: HOME.right, bottom: HOME.bottom + n.stacked++ * STACK };
+      live.corner = stacked(HOME, n.stacked++);
       this.pin(live);
     }
   }
@@ -545,6 +581,7 @@ export class Lives {
       const shown = live.el.getBoundingClientRect();
       this.moveFloat(live, { right: innerWidth - shown.right + step[0], bottom: innerHeight - shown.bottom + step[1] });
       keepCorner(live.corner!);
+      say(edgesOf(live.el));
     });
     return bar;
   }
