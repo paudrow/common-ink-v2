@@ -168,6 +168,14 @@ test("a next= too long for the sign-in cookie still signs you in, landing on the
   assert.equal(res.headers.get("Location"), "/");
 });
 
+test("a next= that only grows long once it's percent-encoded still signs you in, landing on the app", async () => {
+  for (const next of [`/${"é".repeat(1999)}`, `/${"😀".repeat(999)}`, `/?q=${'"'.repeat(1996)}`]) {
+    const { res, stateSetCookie } = await signIn(ada, false, {}, next);
+    assert.ok(stateSetCookie.length < 4096, `the sign-in cookie is ${stateSetCookie.length} characters`);
+    assert.equal(res.headers.get("Location"), "/");
+  }
+});
+
 test("declining at Google says so, with a way to try again", async () => {
   const startUrl = new URL(`${ORIGIN}/auth/google`);
   const start = await signInRoute(new Request(startUrl), startUrl, config, async () => true);
