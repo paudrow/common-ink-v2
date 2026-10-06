@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { providerFor, type Provider } from "../web/src/commandbar.ts";
-import { commandForKey, Commands, keyFor } from "../web/src/commands.ts";
+import { bindingForKey, commandForKey, Commands, keyFor } from "../web/src/commands.ts";
 import { fuzzyFilter, fuzzyScore } from "../web/src/fuzzy.ts";
 import { formatKeys, matchKeys } from "../web/src/keys.ts";
 
@@ -106,4 +106,31 @@ test("a binding the typed character matches wins over one matched by where the k
   } finally {
     await learnLayout({ getLayoutMap: async () => new Map() });
   }
+});
+
+test("an app-only command runs for the app, and a sandboxed extension's run of it is refused, and said so", () => {
+  let ran = 0;
+  const refused: string[] = [];
+  const commands = new Commands((title, why) => refused.push(`${title}: ${why}`));
+  commands.register({ id: "device.keyboardYes", title: "Keyboard", appOnly: true, run: () => ran++ }, { id: "note.save", title: "Save", run: () => ran++ });
+  assert.equal(commands.run("device.keyboardYes"), true);
+  assert.equal(commands.run("device.keyboardYes", "sandbox"), true);
+  assert.deepEqual(refused, ["Keyboard: An extension asked to run it, and only you can"]);
+  assert.equal(ran, 1);
+  assert.equal(commands.run("note.save", "sandbox"), true);
+  assert.equal(ran, 2);
+});
+
+test("a sandboxed extension's key for an app-only command is refused; the app's runs it", () => {
+  let ran = 0;
+  const refused: string[] = [];
+  const commands = new Commands((title) => refused.push(title));
+  commands.register({ id: "vim.onHere", title: "Vim", appOnly: true, run: () => ran++ });
+  const binding = bindingForKey({ key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent, [{ key: "x", command: "vim.onHere", by: "sandbox" }], false);
+  assert.deepEqual(binding, { key: "x", command: "vim.onHere", by: "sandbox" });
+  assert.equal(commands.runForKey(binding!.command!, binding!.by), true);
+  assert.deepEqual(refused, ["Vim"]);
+  assert.equal(ran, 0);
+  assert.equal(commands.runForKey("vim.onHere"), true);
+  assert.equal(ran, 1);
 });

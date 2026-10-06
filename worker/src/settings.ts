@@ -11,6 +11,8 @@ export interface Keybinding {
   key: string;
   /** The command to run, or null to unbind the key. */
   command: string | null;
+  /** Declared by a sandboxed extension: its command runs for it, not for the app (commands.ts, appOnly). */
+  by?: "sandbox";
 }
 
 interface Declared<T> {
