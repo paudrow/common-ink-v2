@@ -375,3 +375,13 @@ test("JavaScript is a file only as a workspace extension's code", () => {
   assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
   assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
 });
+
+test("open pages hear of changes only once they're kept: a write rolled back announces nothing", () => {
+  const heard: number[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => heard.push(n.revision));
+  files.write({ path: PLAN, text: "# Plan\n", base: 0, author: ada });
+  assert.throws(() => files.seed({ id: "s", notes: [{ path: "Good.md", text: "# Good\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+  assert.equal(files.read("Good.md" as FilePath), null, "the seed was rolled back");
+  const next = files.write({ path: PLAN, text: "# Plan\n\nMore\n", base: 1, author: ada });
+  assert.deepEqual(heard, [1, next.file!.revision]);
+});
