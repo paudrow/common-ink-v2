@@ -137,13 +137,25 @@ export class GoogleCalendar implements Adapter {
     private refreshToken: () => Promise<string | null>,
     private fetcher: typeof fetch = fetch,
     private now: () => number = Date.now,
+    /** How long one call to Google may take: pushes take turns, so a call that hangs would hold up every edit after it. */
+    private timeout = 30_000,
   ) {}
+
+  /** A fetch to Google that fails, as a failure for now, if Google doesn't answer in time. */
+  private async send(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetcher(url, { ...init, signal: AbortSignal.timeout(this.timeout) });
+    } catch (err) {
+      if ((err as Error)?.name === "TimeoutError") throw new Error(`Google didn't answer within ${this.timeout / 1000} seconds`);
+      throw err;
+    }
+  }
 
   private async access(fresh = false): Promise<string> {
     if (!fresh && this.token && this.token.until > this.now() + 60_000) return this.token.value;
     const refresh = await this.refreshToken();
     if (!refresh) throw new ReconnectNeeded("Google Calendar isn't connected");
-    const res = await this.fetcher("https://oauth2.googleapis.com/token", {
+    const res = await this.send("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: this.config.clientId, client_secret: this.config.clientSecret, refresh_token: refresh, grant_type: "refresh_token" }),
@@ -162,7 +174,7 @@ export class GoogleCalendar implements Adapter {
       const headers: Record<string, string> = { Authorization: `Bearer ${await this.access(attempt > 0)}` };
       if (init.body !== undefined) headers["Content-Type"] = "application/json";
       if (init.etag) headers["If-Match"] = init.etag;
-      const res = await this.fetcher(url, { method, headers, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}) });
+      const res = await this.send(url, { method, headers, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}) });
       if (res.status === 401 && attempt === 0) continue;
       if (res.status === 401 || res.status === 403) {
         const reason = ((await res.clone().json().catch(() => null)) as { error?: { errors?: Array<{ reason?: string }> } } | null)?.error?.errors?.[0]?.reason;
