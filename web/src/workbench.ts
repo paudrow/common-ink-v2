@@ -6,8 +6,8 @@
 // window says) is drawn by an extension, the default Workbench extension, through setChrome.
 import { Compartment, EditorSelection, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { isExtensionScript, isNote, type FilePath } from "../../worker/src/files.ts";
-import type { Offline } from "./offline.ts";
+import { isExtensionScript, isNote, merge, type FilePath, type Revision, type WriteResult } from "../../worker/src/files.ts";
+import type { Offline, Unsent } from "./offline.ts";
 import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
@@ -36,6 +36,8 @@ interface OpenFile {
   startText: string;
   /** When the edit it opened with was kept, if that edit clashed: one that never reached the server. */
   keptAt?: number;
+  /** An edit held offline that it opened with, before the server could say whether it has it. */
+  unchecked?: Unsent;
 }
 
 /** Something an extension draws in a window's tab, such as History. */
@@ -492,7 +494,7 @@ export class Workbench {
             else file.startText = text;
           },
         },
-        (path, text, base, edit) => this.net.write(path, text, base, edit),
+        (path, text, base, edit) => (file.unchecked ? this.firstSend(file, file.unchecked, path, text, base, edit) : this.net.write(path, text, base, edit)),
         (status) => this.statusChanged(file, status),
         kept?.clash ? "conflict" : "saved",
         held?.edit ? { id: held.edit, text: held.text } : null,
@@ -501,8 +503,28 @@ export class Workbench {
     this.files.set(path, file);
     if (held && !kept.clash) file.timer = window.setTimeout(() => void file.session.save(), 0);
     if (kept?.clash) file.keptAt = held?.time ?? Date.now();
+    if (kept && !kept.checked) file.unchecked = kept.edit;
     if (path === this.focusedPath) this.on.status(file.session.status, this.saying(file));
     return file;
+  }
+
+  /**
+   * The first save of a note opened offline with a held edit, once the server can be asked, goes by
+   * keptEdit's rule: on the server's latest revision, it's sent; there already, what's been typed
+   * since goes onto the note as it is now; and a note that's moved on without it is a clash.
+   */
+  private async firstSend(file: OpenFile, held: Unsent, path: FilePath, text: string, base: Revision, edit: string): Promise<WriteResult> {
+    const latest = await this.net.latest(path);
+    const verdict = await this.net.verdict(held, latest);
+    file.unchecked = undefined;
+    if (verdict === "send") return this.net.write(path, text, base, edit);
+    if (verdict === "clash") {
+      file.keptAt = held.time ?? Date.now();
+      return { status: "conflict", file: latest };
+    }
+    const typed = text === held.text ? latest.text : merge(text, held.text, latest.text);
+    if (typed === null) return { status: "conflict", file: latest };
+    return typed === latest.text ? { status: "saved", file: latest } : this.net.write(path, typed, latest.revision);
   }
 
   /** What the status bar says of a file's save, when it isn't the usual: an edit it opened with that never got there. */

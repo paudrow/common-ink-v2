@@ -3,7 +3,7 @@
 import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
@@ -338,17 +338,31 @@ async function resolveConflict(): Promise<boolean> {
     .then((r) => (r.ok ? (r.json() as Promise<Array<{ author: Parameters<typeof describeAuthor>[0] }>>) : []))
     .catch(() => []);
   const who = latest[0] ? describeAuthor(latest[0].author, me) : "Someone";
+  const mine = view.state.doc.toString();
+  const base = session.revision;
+  const show = (keptAt?: string) =>
+    showClash({
+      where: docLabel(path),
+      who: who.charAt(0).toUpperCase() + who.slice(1),
+      mine,
+      theirs: theirs.text,
+      keepMine: keptAt ? () => void restore() : () => void session.adopt(theirs).then(() => session.save(true)),
+      useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
+      returnTo: () => view.contentDOM,
+      keptAt,
+    });
+  // Restore: the kept edit, from the revision it was made on, onto the note as it is now. Where the
+  // two changed the same lines, it's a clash like any other, to keep yours or use theirs.
+  const restore = async () => {
+    const before = base === 0 ? "" : await api.version(path, base).catch(() => null);
+    const merged = before === null ? null : merge(mine, before, theirs.text);
+    if (merged === null) return show();
+    await session.adopt(theirs);
+    editText(view, merged);
+    await session.save(true);
+  };
   const kept = workbench.keptAt(path);
-  showClash({
-    where: docLabel(path),
-    who: who.charAt(0).toUpperCase() + who.slice(1),
-    mine: view.state.doc.toString(),
-    theirs: theirs.text,
-    keepMine: () => void session.adopt(theirs).then(() => session.save(true)),
-    useTheirs: () => void session.adopt(theirs).then(() => editText(view, theirs.text)),
-    returnTo: () => view.contentDOM,
-    keptAt: kept === undefined ? undefined : keptWhen(kept),
-  });
+  show(kept === undefined ? undefined : keptWhen(kept));
   return true;
 }
 

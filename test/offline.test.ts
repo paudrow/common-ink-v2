@@ -35,21 +35,31 @@ test("files read while online can be read offline, as last seen", async () => {
   assert.deepEqual(await offline.read("Never seen.md" as FilePath), { path: "Never seen.md", text: "", revision: 0 });
 });
 
-test("an edit held offline is sent on reconnect and merged with what changed meanwhile", async () => {
+test("an edit held offline is sent on reconnect when the note hasn't changed meanwhile", async () => {
   const { store, offline, setUp } = setup();
   store.files.write({ path: PLAN, text: "one\ntwo\n", base: 0, author: you });
   setUp(false);
   await assert.rejects(offline.write(PLAN, "one\ntwo\nthree\n", 1), TypeError);
-  await offline.hold({ path: PLAN, text: "one\ntwo\nthree\n", base: 1 });
-  // Someone else edits another line while this browser is offline.
-  store.files.write({ path: PLAN, text: "ONE\ntwo\n", base: 1, author: { kind: "agent", name: "Helper" } });
+  await offline.hold({ path: PLAN, text: "one\ntwo\nthree\n", base: 1, edit: "o" });
   assert.deepEqual(await offline.flush(), { sent: [], conflicts: [] }, "still offline: nothing sent, nothing lost");
   assert.equal((await offline.unsent()).length, 1);
   setUp(true);
   assert.deepEqual(await offline.flush(), { sent: [PLAN], conflicts: [] });
-  assert.equal(store.files.read(PLAN)?.text, "ONE\ntwo\nthree\n");
+  assert.equal(store.files.read(PLAN)?.text, "one\ntwo\nthree\n");
   assert.deepEqual(await offline.unsent(), []);
-  assert.equal((await offline.read(PLAN)).text, "ONE\ntwo\nthree\n");
+  assert.equal((await offline.read(PLAN)).text, "one\ntwo\nthree\n");
+});
+
+test("an edit held offline, on a note someone changed meanwhile, is held as a clash to restore, not merged unseen", async () => {
+  const { store, offline, setUp } = setup();
+  store.files.write({ path: PLAN, text: "one\ntwo\n", base: 0, author: you });
+  setUp(false);
+  await offline.hold({ path: PLAN, text: "one\ntwo\nthree\n", base: 1, edit: "o" });
+  store.files.write({ path: PLAN, text: "ONE\ntwo\n", base: 1, author: { kind: "agent", name: "Helper" } });
+  setUp(true);
+  assert.deepEqual(await offline.flush(), { sent: [], conflicts: [PLAN] });
+  assert.equal(store.files.read(PLAN)?.text, "ONE\ntwo\n");
+  assert.equal((await offline.unsentFor(PLAN))?.conflict, true);
 });
 
 test("an unsent edit that clashes with the server's stays, marked, and isn't sent again", async () => {
@@ -176,7 +186,7 @@ test("offline, a kept draft waits unused until the server can say, and a held ed
   assert.equal((await opened(s))?.edit.edit, "d", "still kept for when it's back");
   await s.offline.hold({ path: TRIP, text: "# Trip\n- a\n- held\n", base: 1, edit: "h" });
   s.setUp(false);
-  assert.deepEqual(await opened(s), { edit: { path: TRIP, text: "# Trip\n- a\n- held\n", base: 1, edit: "h", time: (await s.offline.unsentFor(TRIP))!.time }, clash: false });
+  assert.deepEqual(await opened(s), { edit: { path: TRIP, text: "# Trip\n- a\n- held\n", base: 1, edit: "h", time: (await s.offline.unsentFor(TRIP))!.time }, clash: false, checked: false });
 });
 
 test("a held edit sent twice, the first answer lost, writes once", async () => {
@@ -195,4 +205,15 @@ test("signing out forgets every kept draft, and none is kept after", async () =>
   await s.offline.keepDraft({ path: TRIP, text: "# Trip\n- more private\n", base: 1, edit: "q" });
   s.offline.account = "you@example.com";
   assert.equal(await opened(s), undefined);
+});
+
+test("a held edit that landed, for a note not open, isn't sent again by the background flush, though its line was deleted since", async () => {
+  const s = await kept("# Trip\n- a\n");
+  s.store.files.write({ path: TRIP, text: "# Trip\n- a\n- packed\n", base: 1, author: you, edit: "went" });
+  for (let i = 0; i < 60; i++) s.store.files.write({ path: TRIP, text: `# Trip ${i}\n- a\n- packed\n`, base: i + 2, author: you });
+  s.store.files.write({ path: TRIP, text: "# Trip\n- a\n", base: 62, author: you });
+  await s.offline.hold({ path: TRIP, text: "# Trip\n- a\n- packed\n", base: 1, edit: "went" });
+  assert.deepEqual(await s.offline.flush(), { sent: [TRIP], conflicts: [] });
+  assert.equal(s.store.files.read(TRIP)?.text, "# Trip\n- a\n");
+  assert.deepEqual(await s.offline.unsent(), []);
 });

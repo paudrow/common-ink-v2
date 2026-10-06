@@ -269,11 +269,32 @@ for (const choice of ["Restore", "Discard"] as const) {
     await dialog.locator("button", { hasText: choice }).click();
     await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
     await app.idle();
-    assert.equal(await app.readFile("Trip.md"), choice === "Restore" ? "# Trip\n- a\n- packed\n" : "# Trip to Rome\n- a\n");
+    // Restored, it goes onto the note as it is now: the other edit stays.
+    assert.equal(await app.readFile("Trip.md"), choice === "Restore" ? "# Trip to Rome\n- a\n- packed\n" : "# Trip to Rome\n- a\n");
     assert.equal(await app.page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("common-ink.draft:")).length), 0, "nothing's kept now");
     assert.equal(await app.page.locator("#unsent").textContent(), "");
   });
 }
+
+browserTest(h, "restoring a kept edit that changed the same line as the note since shows the two, to keep yours or use theirs", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Other.md", "# Other\n");
+  await app.writeFile("Trip.md", "# Trip\n- a\n");
+  const { revision: base } = await onServer(app);
+  await app.goto({}, "Other");
+  await leaveDraft(app, { text: "# Trip to Paris\n- a\n", base, edit: "lost" });
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "Trip.md", text: "# Trip to Rome\n- a\n", base }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.open("Trip");
+  await app.idle();
+  await app.command("Compare your edit with the one it clashes with, and keep yours or theirs");
+  await app.page.locator(".clash button", { hasText: "Restore" }).click();
+  const dialog = app.page.locator(".clash");
+  await dialog.locator("h2", { hasText: "Your version and theirs" }).waitFor();
+  assert.equal(await app.readFile("Trip.md"), "# Trip to Rome\n- a\n", "nothing's saved until you choose");
+  await dialog.locator("button", { hasText: "Keep mine" }).click();
+  await app.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "saved");
+  await app.idle();
+  assert.equal(await app.readFile("Trip.md"), "# Trip to Paris\n- a\n");
+});
 
 browserTest(h, "signing out forgets this browser's kept edits, so the next account can't get them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   await app.writeFile("Trip.md", "# Trip\n");

@@ -182,3 +182,20 @@ test("after a clash, adopting the server's version keeps the editor's text, and 
   assert.deepEqual(notes.read(PATH), { path: PATH, text: "a\nb mine\nc\n", revision: 3 });
   assert.equal(statuses.at(-1), "saved");
 });
+
+test("text put back after it was saved is a new edit, with a new id: the server doesn't take it for the old one", async () => {
+  const editor = { text: "a" };
+  const sent: string[] = [];
+  const session = new Session({ path: PATH, text: "a", revision: 1 }, { text: () => editor.text, replace: (t) => (editor.text = t) }, async (path, text, base, edit) => {
+    sent.push(edit);
+    return { status: "saved", file: { path, text, revision: base + 1 } };
+  });
+  editor.text = "ab";
+  await session.save();
+  editor.text = "a";
+  await session.save();
+  editor.text = "ab";
+  await session.save();
+  assert.equal(sent.length, 3);
+  assert.equal(new Set(sent).size, 3);
+});

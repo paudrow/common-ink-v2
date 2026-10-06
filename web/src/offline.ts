@@ -56,6 +56,9 @@ export const unreachable = (err: unknown) => err instanceof TypeError || (err as
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 
+/** What a kept edit is, against the server's latest: there already, to send, or a clash to show. */
+type Verdict = "landed" | "send" | "clash";
+
 /** Where a note's unsaved edit is kept, by path, as the page goes. */
 const DRAFT = "common-ink.draft:";
 
@@ -265,30 +268,53 @@ export class Offline {
    * - otherwise it's a clash, kept and shown for you to restore or discard.
    * Offline, a held edit is used as it was; a draft waits, unused, until the server can say.
    */
-  async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean } | undefined> {
+  async keptEdit(latest: WorkspaceFile): Promise<{ edit: Unsent; clash: boolean; checked: boolean } | undefined> {
     const held = await this.unsentFor(latest.path);
     const edit = held ?? (await this.draftFor(latest.path));
     if (!edit) return undefined;
-    if (held?.conflict) return { edit, clash: true };
-    const unknown = held ? { edit, clash: false } : undefined;
+    if (held?.conflict) return { edit, clash: true, checked: true };
+    const unknown = held ? { edit, clash: false, checked: false } : undefined;
     if (!this.online) return unknown;
-    if (edit.text === latest.text) return void (await this.landed(latest.path));
-    if (edit.base === latest.revision) return { edit, clash: false };
-    let applied = false;
+    let verdict: Verdict;
     try {
-      applied = !!edit.edit && (await this.net.editApplied(latest.path, edit.edit));
+      verdict = await this.verdict(edit, latest);
     } catch {
       return unknown;
     }
-    if (applied) return void (await this.landed(latest.path));
+    if (verdict === "landed") return void (await this.landed(latest.path));
+    if (verdict === "send") return { edit, clash: false, checked: true };
     const clash = { ...edit, conflict: true };
     await this.hold(clash);
     await this.dropDraft(latest.path);
-    return { edit: clash, clash: true };
+    return { edit: clash, clash: true, checked: true };
+  }
+
+  /**
+   * A kept edit against the server's latest: "landed" if the server has it (its text, or its id
+   * applied), "send" if nothing has changed since its base, and otherwise "clash". Throws offline.
+   */
+  async verdict(edit: Unsent, latest: WorkspaceFile): Promise<Verdict> {
+    if (edit.text === latest.text) return "landed";
+    if (edit.base === latest.revision) return "send";
+    if (edit.edit && (await this.net.editApplied(latest.path, edit.edit))) return "landed";
+    return "clash";
+  }
+
+  /** A file as the server has it now. Not reaching the server throws, as fetch does. */
+  async latest(path: FilePath): Promise<WorkspaceFile> {
+    try {
+      const file = await this.net.read(path);
+      this.reached(true);
+      await this.kv.set("files", path, file);
+      return file;
+    } catch (err) {
+      if (unreachable(err)) this.reached(false);
+      throw err;
+    }
   }
 
   /** A kept edit the server has: held or drafted, it goes. */
-  private async landed(path: FilePath): Promise<void> {
+  async landed(path: FilePath): Promise<void> {
     await this.release(path);
     await this.dropDraft(path);
   }
@@ -315,8 +341,9 @@ export class Offline {
   }
 
   /**
-   * Send held edits, except those an open editor is sending itself. Each is merged on the server
-   * against its base revision; one that can't be merged stays, marked as a conflict.
+   * Send held edits, except those an open editor is sending itself, by keptEdit's rule: one the server
+   * has goes, one on the server's latest revision is sent, and one the note has moved on from without
+   * it is held as a clash, never merged unseen. One the server can't merge stays, as a clash too.
    */
   async flush(skip: (path: FilePath) => boolean = () => false): Promise<{ sent: FilePath[]; conflicts: FilePath[] }> {
     const sent: FilePath[] = [];
@@ -325,7 +352,9 @@ export class Offline {
       if (skip(u.path) || u.conflict) continue;
       let result: WriteResult;
       try {
-        result = await this.write(u.path, u.text, u.base, u.edit);
+        const latest = await this.latest(u.path);
+        const verdict = await this.verdict(u, latest);
+        result = verdict === "send" ? await this.write(u.path, u.text, u.base, u.edit) : verdict === "landed" ? { status: "saved", file: latest } : { status: "conflict", file: latest };
       } catch (err) {
         if (unreachable(err)) break;
         throw err;

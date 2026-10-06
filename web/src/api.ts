@@ -83,6 +83,11 @@ export const api = {
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
     return data as { id: string; name: string; files: string[] };
   },
+  /** A file's text at one of its revisions, or null if it has none there. */
+  async version(path: FilePath, revision: Revision): Promise<string | null> {
+    const res = await fetch(`/api/version?${new URLSearchParams({ path, revision: String(revision) })}`);
+    return res.status === 404 ? null : (((await (await ok(res)).json()) as { text?: string } | null)?.text ?? null);
+  },
   /** Whether the edit sent with this id was applied, for a page that never heard back. */
   async editApplied(path: FilePath, edit: string): Promise<boolean> {
     return ((await (await ok(await fetch(`/api/edit?${new URLSearchParams({ path, edit })}`))).json()) as { applied: boolean }).applied;

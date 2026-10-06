@@ -137,6 +137,8 @@ export class Session {
       return this.set("offline");
     }
     if (result.status === "conflict") return this.set("conflict");
+    // It's in: the next text is a new edit, even if it's this one again (put back after someone changed it).
+    this.edit = null;
     const { file } = result;
     const now = this.editor.text();
     const caughtUp = now === text ? file.text : merge(now, text, file.text);
