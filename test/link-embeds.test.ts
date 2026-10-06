@@ -38,6 +38,10 @@ test("a link's card is what its page says about itself, its picture fetched too"
   await assert.rejects(linkCard("http://127.0.0.1/admin", { fetcher }), /Private and local addresses/);
 });
 
+test("a card from a page with a character reference past Unicode is still a card", () => {
+  assert.equal(cardFromHtml("<title>Big &#99999999; numbers &#65;</title>", "https://odd.example/").title, "Big \uFFFD numbers A");
+});
+
 test("the page may frame only the hosts of link embeds that are on, and drawn in the page", async () => {
   assert.match(appCsp("https://app.example", ["www.youtube-nocookie.com", "evil.example; script-src *"]), /frame-src https:\/\/app\.example\/sandbox\/ https:\/\/www\.youtube-nocookie\.com;/);
   const s = memoryStore();

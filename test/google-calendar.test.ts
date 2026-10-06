@@ -2,7 +2,7 @@
 // sync, 410 Gone, pushes with etags, the three scopes on a series, conflicts, and invalid_grant.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FakeGoogle } from "../worker/src/fake-google.ts";
+import { FakeGoogle, sampleGoogle } from "../worker/src/fake-google.ts";
 import { authorKey, type Author } from "../worker/src/files.ts";
 import { DATA_SCOPES } from "../worker/src/google.ts";
 import { runOperation } from "../worker/src/operations.ts";
@@ -229,9 +229,60 @@ test("an edit that keeps meeting Google's newer versions waits, then goes once G
   await op(store, "sync_calendar", {});
   const first = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
   assert.equal(first.status, "queued");
+  assert.equal(store.sources.outbox("google")[0].error, "The source has a newer version of this event", "the waiting edit says why");
   await op(store, "update_event", { address: "event:google/primary/standup_20261005T160000Z", title: "Kickoff", scope: "this" });
   await store.sources.flush("google");
   assert.deepEqual(store.sources.outbox("google"), []);
   assert.equal(fake.event("ada@example.com", "dentist")?.summary, "Dentist (Dr Lee)");
   assert.equal(fake.event("ada@example.com", "standup_20261005T160000Z")?.summary, "Kickoff");
+});
+
+test("the sample fake Google's week is around the day it's given, in New York, whatever the clock says", async () => {
+  const fake = sampleGoogle("2026-10-05");
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, fake.fetch);
+  store.sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
+  await store.sources.sync();
+  const week = (await runOperation("list_events", { from: "2026-10-05T00:00:00-04:00", to: "2026-10-10T00:00:00-04:00", zone: "America/New_York" }, store, ada)) as { ok: true; value: Occurrence[] };
+  assert.deepEqual(week.value.map((o) => `${o.start.slice(0, 16)} ${o.title}`), [
+    "2026-10-05T13:00 Standup",
+    "2026-10-06T13:00 Standup",
+    "2026-10-06T18:30 Dentist",
+    "2026-10-07T13:00 Standup",
+    "2026-10-08 Offsite",
+    "2026-10-08T13:00 Standup",
+    "2026-10-09T13:00 Standup",
+  ]);
+});
+
+test("when Google can't say how an event is after a 412, the edit waits with its etag, so it never overwrites Google's newer version", async () => {
+  const { fake } = google();
+  let failing = 1;
+  const store = memoryStore({ fixtures: false, google: { clientId: "c", clientSecret: "s" } }, async (input, init) => {
+    if ((init?.method ?? "GET") === "GET" && String(input).endsWith("/events/dentist") && failing-- > 0) return new Response("{}", { status: 503 });
+    return fake.fetch(input, init);
+  });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh", scopes: DATA_SCOPES });
+  await op(store, "sync_calendar", {});
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  const edit = (await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" })) as { status: string };
+  assert.equal(edit.status, "queued");
+  await store.sources.flush("google");
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
+});
+
+test("an edit that failed for a while, then meets one 412 once Google is back, merges and goes in the same flush", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  fake.revoked = true;
+  await op(store, "update_event", { address: "event:google/primary/dentist", title: "Dentist (Dr Lee)" });
+  await store.sources.flush("google");
+  await store.sources.flush("google");
+  assert.ok(store.sources.outbox("google")[0].attempts >= 3);
+  fake.revoked = false;
+  fake.put("ada@example.com", { ...fake.event("ada@example.com", "dentist")!, location: "14 High Street" });
+  store.sources.connect({ email: "ada@example.com", refreshToken: "refresh-2", scopes: DATA_SCOPES });
+  assert.equal(await store.sources.flush("google"), null);
+  const g = fake.event("ada@example.com", "dentist")!;
+  assert.deepEqual([g.summary, g.location], ["Dentist (Dr Lee)", "14 High Street"]);
 });
