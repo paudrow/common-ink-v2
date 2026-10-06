@@ -237,34 +237,44 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
  * plain text downloads instead of opening.
  */
 async function serveUpload(req: Request, url: URL, env: Env, store: Store): Promise<Response> {
+  // Every answer under /uploads/ carries the upload's policy, a 404 or 503 too: what the browser shows at
+  // an upload's address is never a page of this site.
+  const underPolicy = (res: Response) => {
+    const out = secure(res);
+    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    return out;
+  };
+  const notFound = () => underPolicy(new Response("Not found\n", { status: 404 }));
   let name: string;
   try {
     name = decodeURIComponent(url.pathname.slice("/uploads/".length));
   } catch {
-    return secure(new Response("Not found\n", { status: 404 }));
+    return notFound();
   }
   const upload = findUpload((await store.read(UPLOADS_PATH))?.text ?? "", name);
-  if (!upload) return secure(new Response("Not found\n", { status: 404 }));
+  if (!upload) return notFound();
   // The same policy on every answer, a 304 too: a browser keeps the headers of the answer that
   // revalidated its copy, so a 304 with the app's policy would let a cached SVG run this site's scripts.
   const sandboxed = (res: Response) => {
-    const out = secure(res);
-    out.headers.set("Content-Security-Policy", UPLOAD_CSP);
+    const out = underPolicy(res);
     out.headers.set("ETag", `"${upload.hash}"`);
     // A name can come to mean other bytes after an undo, so it's checked again each time, cheaply, by ETag.
     out.headers.set("Cache-Control", "private, no-cache");
     return out;
   };
   if (req.headers.get("If-None-Match") === `"${upload.hash}"`) return sandboxed(new Response(null, { status: 304 }));
-  const blob = await env.UPLOADS.get(blobKey(upload.hash)).catch((err) => {
+  // A HEAD asks only whether the bytes are there; it doesn't read them.
+  const key = blobKey(upload.hash);
+  const read: Promise<R2Object | R2ObjectBody | null> = req.method === "HEAD" ? env.UPLOADS.head(key) : env.UPLOADS.get(key);
+  const blob = await read.catch((err) => {
     console.error("Reading an upload's bytes failed:", err);
     return undefined;
   });
   if (blob === undefined) return sandboxed(new Response("Uploads can't be read right now. Try again in a minute.\n", { status: 503, headers: { "Retry-After": "60" } }));
-  if (!blob) return secure(new Response("Not found\n", { status: 404 }));
+  if (!blob) return notFound();
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(req.method === "HEAD" ? null : blob.body, {
+    new Response("body" in blob ? blob.body : null, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
