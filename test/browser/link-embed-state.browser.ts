@@ -89,6 +89,9 @@ browserTest(h, "a link embed's iframe never loads again, has its src written or 
   assert.deepEqual(await watched(app), untouched, "the cursor on its line and off");
   await app.page.locator("#notes a", { hasText: "Welcome" }).click({ modifiers: ["ControlOrMeta"] });
   await app.page.waitForFunction(() => document.title.startsWith("Welcome"));
+  // As painted: the title changes as the tab does, and the box goes when the frame lays the tab out (its
+  // editor's size observed), after the frame callbacks a check made then would run in.
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   assert.equal(await app.page.evaluate((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility, FRAME), "hidden", "hidden with its tab");
   await app.page.locator(".tab", { hasText: "Video" }).first().click();
   await app.page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)!.closest(".cm-embed")!).visibility === "visible", FRAME);
