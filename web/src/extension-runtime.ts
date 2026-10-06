@@ -765,6 +765,12 @@ export class ExtensionRuntime {
     const webviews = new Map<string, Webview>();
     const providers = new Map<string, string>();
     const declaresView = (id: string) => Object.values(m.contributes.views).flat().some((v) => v.id === id);
+    // An edit's answer names the events it wrote: only for an extension that may read them already.
+    const readAsk: Ask = { kind: "data:calendar:read" };
+    const mayRead = (r: EditResult): Partial<EditResult> =>
+      decide(m, readAsk, parseGrants(app.settings()["extensions.permissions"]), { builtIn: false }).outcome === "allow" || this.broker.allowedOnce(m, readAsk)
+        ? r
+        : { status: r.status, address: r.address, ...(r.error ? { error: r.error } : {}) };
     const host: SandboxHost = new SandboxHost(
       m,
       async (method, args) => {
@@ -867,6 +873,7 @@ export class ExtensionRuntime {
           case "notifications.show":
             return this.notify(services, a, String(b ?? ""));
           case "data.status":
+            await services.check({ kind: "data:calendar:read" });
             return data.status();
           case "data.sync":
             return data.sync(a === "force");
@@ -877,11 +884,11 @@ export class ExtensionRuntime {
           case "data.event":
             return data.calendar.event(a);
           case "data.create":
-            return data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]);
+            return mayRead(await data.calendar.create(eventInput(b) as Parameters<DataApi["calendar"]["create"]>[0]));
           case "data.update":
-            return data.calendar.update(address(a), eventInput(b), scopeOf(c));
+            return mayRead(await data.calendar.update(address(a), eventInput(b), scopeOf(c)));
           case "data.remove":
-            return data.calendar.remove(address(a), scopeOf(b));
+            return mayRead(await data.calendar.remove(address(a), scopeOf(b)));
           case "data.contacts":
             return data.contacts.search(a);
           case "workbench.open":
