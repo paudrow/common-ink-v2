@@ -1,0 +1,8 @@
+{
+  "pr": 90,
+  "title": "Renaming a whole series renames its moved occurrences too",
+  "steps": [
+    "⌘⇧P, Show calendar. Move one Standup an hour later and choose This event. Then rename the Standup to Daily sync and choose All events: the moved one is Daily sync too, at its own time.",
+    "Rename one Standup to Kickoff (This event), then give the series a place (All events): Kickoff keeps its name and gets the place."
+  ]
+}
