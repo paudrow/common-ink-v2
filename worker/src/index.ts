@@ -119,7 +119,7 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       return secure(new Response(pointAtLibraries(file.text), { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }));
     }
     // An uploaded file, by name, from R2.
-    if (url.pathname.startsWith("/uploads/") && req.method === "GET") return serveUpload(req, url, env, workspace as unknown as Store);
+    if (url.pathname.startsWith("/uploads/") && (req.method === "GET" || req.method === "HEAD")) return serveUpload(req, url, env, workspace as unknown as Store);
     const levers = leversOn(env, url);
     if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       const asset = await env.ASSETS.fetch(req);
@@ -250,7 +250,7 @@ async function serveUpload(req: Request, url: URL, env: Env, store: Store): Prom
   if (!blob) return secure(new Response("Not found\n", { status: 404 }));
   const type = typeFor(upload.name);
   return sandboxed(
-    new Response(blob.body, {
+    new Response(req.method === "HEAD" ? null : blob.body, {
       headers: {
         "Content-Type": type,
         "Content-Length": String(upload.size),
