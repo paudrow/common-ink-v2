@@ -10,6 +10,7 @@
     "data:contacts:read": { "why": "Search your contacts, which the Common Ink server reads from Google" }
   },
   "contributes": {
+    "places": [{ "id": "contacts", "title": "Contacts", "view": "contacts", "icon": "users" }],
     "commands": [{ "command": "contacts.show", "title": "Show contacts" }],
     "views": { "sidebar": [{ "id": "contacts", "name": "Contacts" }] },
     "dataSources": [{ "id": "contacts", "kind": "contacts", "title": "Contacts", "description": "People from Google Contacts, read when you search." }]

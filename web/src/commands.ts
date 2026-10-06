@@ -23,6 +23,10 @@ export class Commands {
     for (const c of commands) this.byId.set(c.id, c);
   }
 
+  get(id: string): Command | undefined {
+    return this.byId.get(id);
+  }
+
   all(): Command[] {
     return [...this.byId.values()].sort((a, b) => a.title.localeCompare(b.title));
   }

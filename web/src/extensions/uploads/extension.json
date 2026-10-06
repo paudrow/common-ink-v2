@@ -11,6 +11,7 @@
     "editor": { "why": "Upload files pasted or dropped into a note" }
   },
   "contributes": {
+    "places": [{ "id": "uploads", "title": "Uploads", "view": "uploads", "icon": "upload" }],
     "commands": [
       { "command": "uploads.file", "title": "Upload a file…" },
       { "command": "uploads.show", "title": "Show uploads" }

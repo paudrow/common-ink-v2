@@ -10,6 +10,11 @@
     "editor": { "why": "Edit and draw lists in notes" }
   },
   "contributes": {
+    "toolbar": [
+      { "command": "lists.toBullets", "title": "Make bullets", "icon": "list" },
+      { "command": "lists.indent", "title": "Indent", "icon": "list-indent-increase" },
+      { "command": "lists.dedent", "title": "Outdent", "icon": "list-indent-decrease" }
+    ],
     "commands": [
       { "command": "lists.indent", "title": "Indent list item" },
       { "command": "lists.dedent", "title": "Dedent list item" },

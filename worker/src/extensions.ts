@@ -213,6 +213,22 @@ export interface LayoutContribution {
   requires?: Requires;
 }
 
+/**
+ * A place the extension adds to Places (the sheet on a phone, the sidebar on a wide screen): one of its
+ * views, or a command that goes somewhere (Daily notes' Today). Order, and which three are on a phone's
+ * bottom bar, are yours, in .common-ink/places.json.
+ */
+export type PlaceContribution = { id: string; title: string; icon?: string } & ({ view: string } | { command: string });
+
+/** A button on the keyboard toolbar, over a touch screen's keyboard while you edit: a command, by an icon or a short label. */
+export interface ToolbarContribution {
+  command: string;
+  title: string;
+  label?: string;
+  icon?: string;
+  requires?: Requires;
+}
+
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -226,6 +242,8 @@ export interface Contributions {
   urlEmbeds: UrlEmbedContribution[];
   dataSources: DataSourceContribution[];
   layout: LayoutContribution[];
+  places: PlaceContribution[];
+  toolbar: ToolbarContribution[];
 }
 
 export interface ExtensionManifest {
@@ -357,6 +375,21 @@ function contributions(v: unknown, id: string): Contributions {
         priority: typeof o.priority === "number" ? o.priority : 0,
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
+    }),
+    places: list(c.places, "contributes.places", (item, at) => {
+      const o = object(item, at);
+      const icon = typeof o.icon === "string" ? { icon: o.icon } : {};
+      const base = { id: text(o.id, `${at}.id`), title: text(o.title, `${at}.title`), ...icon };
+      if (typeof o.view === "string" && o.view) return { ...base, view: o.view };
+      if (typeof o.command === "string" && o.command) return { ...base, command: o.command };
+      throw new ManifestError(`${at} needs a "view" or a "command": where it goes`);
+    }),
+    toolbar: list(c.toolbar, "contributes.toolbar", (item, at) => {
+      const o = object(item, at);
+      const label = typeof o.label === "string" && o.label ? { label: o.label } : {};
+      const icon = typeof o.icon === "string" && o.icon ? { icon: o.icon } : {};
+      if (!("label" in label) && !("icon" in icon)) throw new ManifestError(`${at} needs a "label" or an "icon" to show`);
+      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`), ...label, ...icon, ...requires(o.requires, `${at}.requires`) };
     }),
     layout: list(c.layout, "contributes.layout", (item, at) => {
       const o = object(item, at);

@@ -101,6 +101,10 @@ One that runs in the app's page, with access to note editors: the built-ins, and
 **Safe mode**:
 The app with only built-in extensions running, for when a workspace extension breaks it. Open the app with `?safe=1`.
 
+**Place**:
+Somewhere you can go in the app: the Feed, Today, Tasks, Calendar, a pinned note, a saved search, Sources, Archive, Trash, Extensions or Settings. Places are a sheet on a phone and a sidebar on a wide screen.
+_Avoid_: Activity, section, tab (a tab holds an open window)
+
 **Device**:
 One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
 

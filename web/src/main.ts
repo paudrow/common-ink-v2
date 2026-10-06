@@ -42,6 +42,11 @@ import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
+import { Shell, type Action, type Place } from "./shell.ts";
+import { isIcon } from "./icons.ts";
+import { barOf, PLACES_PATH } from "../../worker/src/places.ts";
+import { setTopLevelKey } from "./json-edit.ts";
+import { undo as undoTyping } from "@codemirror/commands";
 import { atLeast, deviceOfLayout, here, hereText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
@@ -134,6 +139,8 @@ const device = new Device({ me, preset: dev?.levers.device ?? null });
 /** Extensions you turned off on this device, which apply after a reload like turning one off. */
 const offHere = () => Object.entries(device.file.extensions).flatMap(([id, o]) => (o === "off" ? [id] : []));
 const name = docLabel;
+/** The phone shell, made once the app's parts are (below). */
+let shell: Shell | undefined;
 
 /** Where you've been, kept for this tab's session, so a reload keeps it (navigation.ts). */
 const NAVIGATION_KEY = "common-ink.navigation";
@@ -179,6 +186,18 @@ const browserHistory = (() => {
       write();
       history.pushState({ nav: visit.id }, "", addressFor(visit.file));
     },
+    /** A new entry for the place you're at again (a note opened from the phone's list while it's on show). */
+    pushVisit(visit: Visit) {
+      clearTimeout(timer);
+      write();
+      history.pushState({ nav: visit.id }, "", addressFor(visit.file));
+    },
+    /** A new entry for a place the phone shell shows, after the one being left gets its last update. */
+    push(state: { shell: string }) {
+      clearTimeout(timer);
+      write();
+      history.pushState(state, "", location.href);
+    },
     /** The browser moved to another entry: an update meant for the one it left is dropped. */
     moved() {
       clearTimeout(timer);
@@ -196,7 +215,11 @@ const workbench = new Workbench(
       resolveButton.hidden = status !== "conflict";
       queueMicrotask(() => void renderUnsent());
     },
-    navigated: (how, visit) => browserHistory.follow(how, visit),
+    navigated: (how, visit) => {
+      browserHistory.follow(how, visit);
+      // On a phone, a note opened shows over the place it was opened from.
+      if (how === "push") shell?.showWindow();
+    },
     focus(path) {
       // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
       if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
@@ -204,6 +227,7 @@ const workbench = new Workbench(
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
       renderList();
+      shell?.update();
     },
     created: () => void refreshList(),
     saved(path) {
@@ -239,6 +263,9 @@ function navigate(by: -1 | 1) {
 // An entry from before the app kept places, or one it no longer keeps, opens the file its address names.
 addEventListener("popstate", (e) => {
   browserHistory.moved();
+  // One of the places the phone shell showed: it shows it again.
+  if (shell?.popped(e.state)) return;
+  shell?.showWindow();
   const id = (e.state as { nav?: unknown } | null)?.nav;
   void (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then((went) => {
     const file = went ? null : fileFromUrl(location.search);
@@ -415,7 +442,11 @@ function renderList() {
       });
       a.addEventListener("click", (e) => {
         e.preventDefault();
+        // On a phone, the note on show opened again from the list is a step of its own, for back to come back to the list.
+        const here = shell?.active && n.path === workbench.focusedPath ? workbench.navigation.here : null;
         void workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
+        if (here) browserHistory.pushVisit(here);
+        shell?.showWindow();
       });
       const li = document.createElement("li");
       li.append(a);
@@ -903,6 +934,108 @@ window.addEventListener(
 window.addEventListener("focus", () => void learnLayout());
 void learnLayout();
 
+// The phone shell (shell.ts): places, the bottom bar, sheets and the keyboard toolbar, under 840px.
+/** The bottom bar's places, from places.json, kept up to date as it changes. */
+let barIds = barOf("");
+async function loadPlaces() {
+  barIds = barOf((await offline.read(PLACES_PATH).catch(() => ({ text: "" }))).text);
+  shell?.update();
+}
+/** Write places.json's bar: just that key, the rest of the file as it was (saved searches, order). */
+async function setBar(ids: string[]) {
+  for (let tries = 0; tries < 3; tries++) {
+    const now = await offline.read(PLACES_PATH);
+    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", "bar", ids);
+    if (text === null) return workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.");
+    if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") break;
+  }
+  barIds = ids;
+}
+/** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
+function places(): Place[] {
+  const on = extensions.host.on();
+  const placed = new Set(on.flatMap((m) => m.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
+  return [
+    { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
+    ...on.flatMap((m) => m.contributes.places.map((p): Place => ({ id: p.id, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command } }))),
+    ...on.flatMap((m) => (m.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v): Place => ({ id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
+    { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
+    { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
+  ];
+}
+/** A command as the shell shows it, with why it's off here. */
+const action = (command: string, more: Partial<Action> = {}): Action => {
+  const c = commands.get(command);
+  return { command, title: c?.title ?? command, off: c?.off?.() ?? null, ...more };
+};
+shell = new Shell({
+  device,
+  places,
+  bar: () => barIds,
+  setBar,
+  openView: (id) => workbench.openView(id),
+  run: (command) => void commands.run(command),
+  showing: () => {
+    const tab = L.activeTab(workbench.focusedGroup);
+    return tab && { key: L.openableKey(tab), title: workbench.title(tab), note: "file" in tab && isNote(tab.file) };
+  },
+  contextViews: () => extensions.host.on().flatMap((m) => (m.contributes.views.context ?? []).map((v) => ({ id: v.id, title: v.name }))),
+  drawView: (id, el) => workbench.drawInto(id, el),
+  menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title })), action("tab.open"), action("window.openRight"), action("tab.close")],
+  // Extensions' buttons, then the core's: a heading, a link, undo.
+  toolbar: () => [
+    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off }))),
+    action("editor.heading", { icon: "heading" }),
+    action("editor.link", { icon: "link", label: "[[" }),
+    action("editor.undo", { icon: "undo-2" }),
+  ],
+  kept: () => workbench.kept(),
+  search: () => bar.open(),
+  newNote: () => void commands.run("note.new"),
+  push: (state) => browserHistory.push(state),
+});
+workbench.focusOnOpen = () => device.has("keyboard") || !device.has("touch");
+// Without room beside the windows, a panel opens in the window instead.
+panels.elsewhere = (id) => {
+  if (!shell?.active) return false;
+  workbench.openView(id);
+  shell.showWindow();
+  return true;
+};
+device.onChange(() => shell?.update());
+savedListeners.push((path) => path === PLACES_PATH && void loadPlaces());
+
+/** The note in focus's editor, for the keyboard toolbar's core buttons. */
+const onNote = (run: (view: EditorView) => unknown) => () => {
+  const view = workbench.focusedView;
+  if (!view) return false;
+  run(view);
+  view.focus();
+  return true;
+};
+commands.register(
+  {
+    id: "editor.heading",
+    title: "Make this line a heading, or a smaller one",
+    run: onNote((view) => {
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const hashes = /^#{1,6}\s/.exec(line.text)?.[0] ?? "";
+      // # to ## to ### and back to none.
+      const next = hashes.length >= 4 ? "" : hashes ? `#${hashes}` : "# ";
+      view.dispatch({ changes: { from: line.from, to: line.from + hashes.length, insert: next }, userEvent: "input" });
+    }),
+  },
+  {
+    id: "editor.link",
+    title: "Link to a note",
+    run: onNote((view) => {
+      const at = view.state.selection.main;
+      view.dispatch({ changes: { from: at.from, to: at.to, insert: "[[]]" }, selection: { anchor: at.from + 2 }, userEvent: "input" });
+    }),
+  },
+  { id: "editor.undo", title: "Undo typing", run: onNote((view) => undoTyping(view)) },
+);
+
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
@@ -981,6 +1114,7 @@ try {
     workbench.applySettings(settings);
     extensionsChanged();
   });
+  await loadPlaces();
   const { missing } = await workbench.start(asked);
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {

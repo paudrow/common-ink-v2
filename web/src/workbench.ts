@@ -131,6 +131,8 @@ export class Workbench {
   firstLayout: () => Promise<L.Layout | null> = async () => null;
   /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
   parts: () => Parts = () => ({ tabs: true, splits: true });
+  /** Whether a note that opens takes focus, so you can type at once. */
+  focusOnOpen: () => boolean = () => true;
   private shown: Parts = { tabs: true, splits: true };
 
   constructor(
@@ -762,6 +764,11 @@ export class Workbench {
     return view.dom.parentElement!;
   }
 
+  /** Draw a view somewhere outside the windows (the phone's sheet of views about the note). */
+  drawInto(id: string, box: HTMLElement): void {
+    this.drawView(id, box);
+  }
+
   /** Draw a view in its box; one that throws says so there, and the windows carry on. */
   private drawView(id: string, box: HTMLElement) {
     const view = this.viewFor(id);
@@ -878,6 +885,8 @@ export class Workbench {
     const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
     this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
+    // On a touch screen with no keyboard, a note opens to read: focus would bring the on-screen keyboard up. A tap edits.
+    if (view && !this.focusOnOpen()) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }

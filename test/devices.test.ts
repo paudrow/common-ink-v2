@@ -230,3 +230,38 @@ test("Vim needs a keyboard, tabs 600px and windows side by side 840px; their com
   assert.equal(runtime.layoutPart("splits"), "Off on this device · needs a screen 840px wide");
   assert.equal(runtime.layoutPart("panels"), undefined, "a part no extension draws");
 });
+
+test("extensions add places and keyboard toolbar buttons; the bottom bar's places come from places.json", async () => {
+  const { barOf, DEFAULT_BAR } = await import("../worker/src/places.ts");
+  const { ICONS } = await import("../web/src/icons.ts");
+  const m = parseManifest(
+    {
+      contributes: {
+        places: [
+          { id: "today", title: "Today", command: "daily.today", icon: "sun" },
+          { id: "cal", title: "Calendar", view: "calendar" },
+        ],
+        toolbar: [{ command: "lists.indent", title: "Indent", icon: "list-indent-increase", requires: { keyboard: true } }],
+      },
+    },
+    "w",
+  ) as ExtensionManifest;
+  assert.deepEqual(m.contributes.places, [
+    { id: "today", title: "Today", command: "daily.today", icon: "sun" },
+    { id: "cal", title: "Calendar", view: "calendar" },
+  ]);
+  assert.deepEqual(m.contributes.toolbar, [{ command: "lists.indent", title: "Indent", icon: "list-indent-increase", requires: { keyboard: true } }]);
+  assert.equal(parseManifest({ contributes: { places: [{ id: "x", title: "X" }] } }, "w"), 'contributes.places[0] needs a "view" or a "command": where it goes');
+  assert.equal(parseManifest({ contributes: { toolbar: [{ command: "x", title: "X" }] } }, "w"), 'contributes.toolbar[0] needs a "label" or an "icon" to show');
+
+  assert.deepEqual(DEFAULT_BAR, ["feed", "today", "calendar"]);
+  assert.deepEqual(barOf(""), ["feed", "today", "calendar"], "no file, the default");
+  assert.deepEqual(barOf('{"bar": ["tasks", "tasks", "feed", 3, "calendar", "today"]}'), ["tasks", "feed", "calendar"], "three, each once");
+  assert.deepEqual(barOf('{"saved": {}}'), ["feed", "today", "calendar"]);
+
+  for (const id of ["daily", "calendar", "tasks", "data-sources", "contacts", "uploads", "lists"]) {
+    const built = parseManifest(JSON.parse(readFileSync(`web/src/extensions/${id}/extension.json`, "utf8")), id, { builtIn: true }) as ExtensionManifest;
+    for (const p of [...built.contributes.places, ...built.contributes.toolbar]) if (p.icon) assert.ok(p.icon in ICONS, `${id}'s ${p.icon} is one of the app's icons`);
+    for (const t of built.contributes.toolbar) assert.ok(built.contributes.commands.some((c) => c.command === t.command), `${id} declares ${t.command}`);
+  }
+});
