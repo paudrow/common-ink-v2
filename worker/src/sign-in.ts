@@ -32,10 +32,12 @@ export async function sessionEmail(req: Request, config: SignInConfig | null): P
 
 /** A page of our own, for the few moments the app isn't on screen. */
 export function page(title: string, body: string, status = 200, headers: HeadersInit = {}): Response {
+  const out = new Headers(headers);
+  out.set("Content-Type", "text/html; charset=utf-8");
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Common Ink</title>
 <style>:root{color-scheme:light dark;font-family:ui-sans-serif,system-ui,sans-serif}body{max-width:28rem;margin:20vh auto;padding:0 1.5rem;line-height:1.5}a{color:#2f5fd0}</style></head>
 <body><h1 style="font-size:1.25rem">${title}</h1>${body}</body></html>`;
-  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8", ...headers } });
+  return new Response(html, { status, headers: out });
 }
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -47,7 +49,8 @@ const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
  */
 function safeNext(next: string | null): string {
   const base = "https://next.invalid";
-  if (!next?.startsWith("/")) return "/";
+  // Longer, and the sign-in cookie carrying it would be past what a browser keeps.
+  if (!next?.startsWith("/") || next.length > 2000) return "/";
   try {
     const u = new URL(next, base);
     const path = `${u.pathname}${u.search}${u.hash}`;
@@ -86,7 +89,12 @@ export async function signInRoute(req: Request, url: URL, config: SignInConfig |
       return page("Sign out", `<form method="post" action="/auth/sign-out"><button>Sign out of Common Ink</button></form>`);
     }
     // The browser's copy of the workspace (offline cache, unsent edits, the app's code) goes too.
-    return page("Signed out", `<p><a href="/auth/google">Sign in again</a></p>`, 200, { "Set-Cookie": setCookie(SESSION_COOKIE, "", 0), "Clear-Site-Data": '"cache", "storage"' });
+    return page("Signed out", `<p><a href="/auth/google">Sign in again</a></p>`, 200, [
+      ["Set-Cookie", setCookie(SESSION_COOKIE, "", 0)],
+      // v1's session cookie from when it was at this address.
+      ["Set-Cookie", setCookie("ci_session", "", 0)],
+      ["Clear-Site-Data", '"cache", "storage"'],
+    ]);
   }
   if (url.pathname === "/auth/google") {
     if (!config) return page("Google sign-in isn't set up", "<p>Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and SESSION_SECRET for this Worker.</p>", 503);
@@ -101,6 +109,9 @@ export async function signInRoute(req: Request, url: URL, config: SignInConfig |
   }
   if (url.pathname === "/auth/google/callback") {
     if (!config) return page("Google sign-in isn't set up", "", 503);
+    if (url.searchParams.get("error")) {
+      return page("You didn't allow sign-in", `<p>Google says you didn't allow Common Ink to know who you are, so you aren't signed in. <a href="/auth/google">Try again</a>.</p>`, 400);
+    }
     const state = await verify<{ nonce: string; verifier: string; next: string; data: boolean }>(cookie(req, STATE_COOKIE), config.sessionSecret);
     const code = url.searchParams.get("code");
     if (!state || !code || typeof state.verifier !== "string" || url.searchParams.get("state") !== state.nonce) {
