@@ -63,3 +63,18 @@ browserTest(h, "on a phone, a swipe right restores a note from Trash", { scenari
   await page.locator(".trash-empty").waitFor();
   assert.equal(await exists(page, "Groceries.md"), true);
 });
+
+browserTest(h, ":trash moves the note on show to Trash, and Undo brings it back", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Draft.md", "# Draft\nhalf an idea");
+  await app.open("Draft");
+  await app.call("idle");
+  await page.locator(".tab-editor:not([hidden]) .cm-content").first().focus();
+  await app.keys("<Esc>:trash<CR>");
+  await page.locator(".notice", { hasText: 'Moved "Draft" to Trash' }).waitFor();
+  assert.equal(await exists(page, "Draft.md"), false);
+  assert.deepEqual(await page.evaluate(async () => ((await (await fetch("/api/trash")).json()) as Array<{ title: string }>).map((t) => t.title)), ["Draft"]);
+  await page.locator(".notice button", { hasText: "Undo" }).click();
+  await page.waitForFunction(async () => (await fetch("/api/file?path=Draft.md")).ok);
+  assert.deepEqual(await page.evaluate(async () => (await (await fetch("/api/trash")).json()) as unknown[]), []);
+});

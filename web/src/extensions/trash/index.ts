@@ -48,6 +48,24 @@ const extension: ExtensionModule = {
       lastVersion: async (item) => (await call<{ text: string } | null>("GET", `/api/version?${new URLSearchParams({ path: item.path, revision: String(item.before) })}`))?.text ?? "",
     });
     ctx.views.register("trash", { render: (root) => view.render(root) });
+    // Deleting is a change like any other: Undo takes it back, and so does Restore, for 30 days.
+    ctx.commands.register("trash.note", async () => {
+      const path = ctx.workbench.focusedPath();
+      if (!path?.endsWith(".md")) return ctx.workbench.notice("Open a note to move it to Trash");
+      const name = ctx.util.label(path);
+      if (ctx.workbench.hasUnsavedChanges()) return ctx.workbench.notice(`"${name}" has changes that aren't saved yet: try again once it's saved`);
+      try {
+        const file = await ctx.files.read(path);
+        const res = await fetch("/api/file", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, base: file.revision }) });
+        const done = (await res.json()) as { status: string; file: { revision: number } | null };
+        if (done.status === "conflict" || !done.file) throw new Error("it changed meanwhile; try again");
+        const revision = done.file.revision;
+        await load();
+        ctx.workbench.notice(`Moved "${name}" to Trash`, [{ label: "Undo", run: () => call("POST", "/api/undo", { revisions: [revision] }).then(load) }]);
+      } catch (err) {
+        ctx.workbench.notice(`Couldn't move "${name}" to Trash: ${(err as Error).message}`);
+      }
+    });
     ctx.commands.register("trash.show", () => {
       ctx.views.open("trash", { newTab: true });
       void load();

@@ -8,14 +8,16 @@
   "activationEvents": ["onStartup"],
   "permissions": {
     "history:read": { "why": "List deleted notes, and show their last version" },
-    "files:write": { "paths": ["**/*.md"], "why": "Restore deleted notes, as changes by you" },
+    "files:read": { "paths": ["**/*.md"], "why": "Know which version of a note you're moving to Trash" },
+    "files:write": { "paths": ["**/*.md"], "why": "Move notes to Trash and restore them, as changes by you" },
     "editor": { "why": "Say so on links to a note that's in Trash" }
   },
   "contributes": {
     "commands": [
-      { "command": "trash.show", "title": "Open trash" }
+      { "command": "trash.show", "title": "Open trash" },
+      { "command": "trash.note", "title": "Move this note to Trash" }
     ],
-    "menus": { "quickOpen": [{ "command": "trash.show" }] },
+    "menus": { "quickOpen": [{ "command": "trash.show" }], "tabMenu": [{ "command": "trash.note" }] },
     "views": { "sidebar": [{ "id": "trash", "name": "Trash" }] }
   }
 }
