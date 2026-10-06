@@ -25,3 +25,11 @@ test("written again, attributes keep their order and quotes; new ones go before 
   assert.equal(directiveText("::", { name: "timer", attrs: [] }), "::timer");
   assert.equal(directiveText(":::", { name: "kanban", attrs: parseAttrs("done=Shipped") }), ":::kanban{done=Shipped}");
 });
+
+test("a value with braces in it, as an embed's form may write one, reads back as written", () => {
+  for (const label of ["a}b", "{x}", "set {a, b}"]) {
+    const line = directiveText("::", { name: "timer", attrs: withValues(parseAttrs("duration=25m"), { label }) });
+    assert.deepEqual(attrsRecord(parseDirectiveLine(line)?.attrs ?? []), { duration: "25m", label }, line);
+  }
+  assert.deepEqual(attrsRecord(parseDirectiveLine(`:::kanban{done='Done }'}`)?.attrs ?? []), { done: "Done }" });
+});
