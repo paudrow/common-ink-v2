@@ -601,3 +601,22 @@ for (const [how, answer] of [
     assert.equal(await op(store, "read_event", { address: "event:google/primary/dentist" }), null);
   });
 }
+
+test("undoing everything an agent did undoes its several edits of one event together, here and in Google", async () => {
+  const { fake, store } = google();
+  await op(store, "sync_calendar", {});
+  const agent: Author = { kind: "agent", name: "Planner", by: "ada@example.com" };
+  const since = store.files.recent({ limit: 1 })[0].revision;
+  for (const args of [{ title: "Dentist (Dr Lee)" }, { location: "14 High Street" }]) {
+    const r = await runOperation("update_event", { address: "event:google/primary/dentist", ...args }, store, agent);
+    assert.equal(r.ok, true);
+  }
+  await op(store, "sync_calendar", { force: true });
+  const its = store.files.recent({ author: authorKey(agent) }).filter((c) => c.revision > since).map((c) => c.revision);
+  assert.equal(its.length, 2);
+  const undone = (await op(store, "undo", { revisions: its })) as Array<{ status: string }>;
+  assert.deepEqual(undone.map((u) => u.status), ["undone", "undone"]);
+  const here = ((await op(store, "read_event", { address: "event:google/primary/dentist" })) as { event: { title: string; location?: string } }).event;
+  assert.deepEqual([here.title, here.location], ["Dentist", "12 High Street"]);
+  assert.deepEqual([fake.event("ada@example.com", "dentist")?.summary, fake.event("ada@example.com", "dentist")?.location], ["Dentist", "12 High Street"]);
+});
