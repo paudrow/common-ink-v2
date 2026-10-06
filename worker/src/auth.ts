@@ -52,7 +52,8 @@ export async function identify(req: Request, config: AuthConfig, keys = accessKe
 export function authorFor(who: Identity, agent: string | null, extension: string | null = null): Author {
   // An extension acting in the app, for the person using it. Its id is checked like any extension id.
   if (extension && who.kind !== "service" && /^[a-zA-Z0-9][\w.-]{0,63}$/.test(extension)) return { kind: "extension", id: extension, by: who.email };
-  const name = agent?.trim().slice(0, 60) || null;
+  // A header that's there names an agent, even an empty one: only no header at all is the person.
+  const name = agent === null ? null : agent.trim().slice(0, 60) || "Unnamed agent";
   if (who.kind === "service") return { kind: "agent", name: name ?? who.id };
   return name ? { kind: "agent", name, by: who.email } : { kind: "user", email: who.email };
 }
