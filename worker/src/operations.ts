@@ -4,7 +4,7 @@ import { timingFrom, type EditResult, type EventEdit, type LinkingNote, type Ref
 import { isTimeZone, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type Scope } from "./calendar.ts";
 import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
-import { completeTaskIn, TaskError } from "./complete-task.ts";
+import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
 import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
 import type { Contact } from "./sources.ts";
@@ -28,8 +28,10 @@ export interface Store {
   contacts(email: string, query: string): Promise<Contact[]>;
   combined(revisions: Revision[]): Promise<FileDiff[]> | FileDiff[];
   versionAt(path: FilePath, revision: Revision): Promise<string | null> | string | null;
+  editApplied(path: FilePath, id: string): Promise<boolean> | boolean;
   restore(path: FilePath, at: { revision: Revision } | { before: Revision }, author: Author): Promise<WriteResult | null> | WriteResult | null;
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
+  completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -81,6 +83,8 @@ function count(v: unknown): number | undefined {
 }
 
 const PATH = { type: "string", description: 'A file\'s path, like "Projects/Plan.md" or ".common-ink/layout.json"' };
+const EDIT = { type: "string", description: "An id you give this edit, to ask later (edit_applied) whether it was applied, when you couldn't hear the answer" };
+const isEditId = (v: unknown): v is string => typeof v === "string" && /^[\w-]{1,64}$/.test(v);
 const ADDRESS = { type: "string", description: "An event's address, like event:google/primary/abc123, from list_events" };
 const ZONE = { type: "string", description: "An IANA time zone, like America/New_York" };
 const TIME = { type: "string", description: "A wall time like 2026-10-05T09:00, or a day like 2026-10-05 for all day" };
@@ -172,7 +176,7 @@ export const OPERATIONS = {
       "Write a file's whole text, given the revision you read (`base`, or 0 for a new file). If it changed since, your edit is merged in; if it can't be, nothing is saved and you get the current file back.",
     input: {
       type: "object",
-      properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 } },
+      properties: { path: PATH, text: { type: "string" }, base: { type: "integer", minimum: 0 }, edit: EDIT },
       required: ["path", "text", "base"],
     },
     parse: (a) => {
@@ -183,7 +187,8 @@ export const OPERATIONS = {
       if (isReadOnly(path)) return fail(`${path} is written by Common Ink and can't be changed`);
       if (typeof a.text !== "string" || new TextEncoder().encode(a.text).length > MAX_FILE_BYTES) return fail('"text" must be a string under 1 MB');
       if (base === undefined) return fail('"base" must be the revision you started from, or 0 for a new file');
-      return ok({ path, text: a.text, base });
+      if (a.edit !== undefined && !isEditId(a.edit)) return fail('"edit" must be an id of letters, digits, - and _, up to 64');
+      return ok({ path, text: a.text, base, ...(a.edit !== undefined ? { edit: a.edit as string } : {}) });
     },
     run: async (store, w, author) => store.write({ ...w, author }),
   }),
@@ -430,6 +435,15 @@ export const OPERATIONS = {
       return text === null ? null : { path, revision, text };
     },
   }),
+  edit_applied: op<{ path: FilePath; edit: string }>({
+    description: "Whether an edit you gave an id (write_file's `edit`) was applied to a file: for when you couldn't hear write_file's answer.",
+    input: { type: "object", properties: { path: PATH, edit: EDIT }, required: ["path", "edit"] },
+    parse: (a) => {
+      const path = parseFilePath(a.path);
+      return path && isEditId(a.edit) ? ok({ path, edit: a.edit }) : fail('"path" must be a file\'s path and "edit" an id you gave write_file');
+    },
+    run: async (store, { path, edit }) => ({ path, edit, applied: await store.editApplied(path, edit) }),
+  }),
   restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } }>({
     description:
       "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone.",
@@ -487,9 +501,9 @@ export const OPERATIONS = {
     parse: () => ok({}),
     run: async (store, _, author) => listEmbeds(store, author.kind === "user" ? author.email : author.kind === "agent" ? (author.by ?? null) : null),
   }),
-  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today?: string }>({
+  complete_task: op<{ path: FilePath; line: number; text?: string; done: boolean; today: string }>({
     description:
-      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. Pass `today` (YYYY-MM-DD) as the person's day; it's UTC's otherwise. Both changes are yours; undo them together with both revisions.",
+      "Tick a task (a `- [ ]` line), or untick it with done=false, the way the app does. A plain task gets `done:` and the day. A repeating one (`rec:`) moves on to its next date on the same line, with `last:` set to the day, and its completion is logged under ## Done in today's daily note (Journal/YYYY-MM-DD.md), unless the person's settings say otherwise. Use this rather than editing the line yourself. `today` is the person's day (YYYY-MM-DD) where they are, which is what done: and last: say. Both changes are yours; undo them together with both revisions.",
     input: {
       type: "object",
       properties: {
@@ -497,25 +511,22 @@ export const OPERATIONS = {
         line: { type: "integer", minimum: 1, description: "The task's line number, from 1" },
         text: { type: "string", description: "The task's line as you read it, so a note that changed meanwhile isn't ticked in the wrong place" },
         done: { type: "boolean", description: "false to untick it" },
-        today: { type: "string", description: "The person's day, YYYY-MM-DD" },
+        today: { type: "string", description: "The person's day where they are, YYYY-MM-DD" },
       },
-      required: ["path", "line"],
+      required: ["path", "line", "today"],
     },
     parse: (a) => {
       const path = parseFilePath(a.path);
       const line = count(a.line);
       if (!path || !path.endsWith(".md")) return fail('"path" must be a note\'s path, ending in .md');
       if (!line) return fail('"line" must be the task\'s line number, from 1');
-      if (a.today !== undefined && (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today))) return fail('"today" must be a day like 2026-10-05');
-      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today as string | undefined });
+      if (typeof a.today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.today)) return fail('"today" must be the person\'s local date, as YYYY-MM-DD: the tick writes it as done: and last:');
+      return ok({ path, line, text: typeof a.text === "string" ? a.text : undefined, done: a.done !== false, today: a.today });
     },
     run: async (store, args, author) => {
-      try {
-        return await completeTaskIn(store, args, author);
-      } catch (err) {
-        if (err instanceof TaskError) throw new OperationError(err.message);
-        throw err;
-      }
+      const ticked = await store.completeTask(args, author);
+      if ("refused" in ticked) throw new OperationError(ticked.refused);
+      return ticked;
     },
   }),
   list_uploads: op<Record<string, never>>({

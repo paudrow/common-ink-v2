@@ -81,6 +81,15 @@ export interface Refused {
 
 class EditError extends Error {}
 
+/** An etag that matches no version, so a PATCH sent with it meets the source's version first. */
+const UNKNOWN_ETAG = '"common-ink:unknown"';
+
+/**
+ * Kept as a record's etag once our own delete of it went: the version the source holds is the one that
+ * delete made, whose etag it didn't say. Never sent; the echo of that delete a sync brings isn't a change.
+ */
+const DELETED_HERE = '"common-ink:deleted-here"';
+
 /** How long an edit waits for the source to say how its record is, before it's refused. */
 const UNREADABLE_FOR = 30 * 60_000;
 
@@ -106,7 +115,9 @@ export class DataSources {
   /** The sync running now, and the one after it: syncs take turns, so an older page can't land after a newer one. */
   private syncing: Promise<SourceState> | null = null;
   private again: Promise<SourceState> | null = null;
-  /** Why the source refused queued edits, by outbox seq, until the edit that queued them reads it. */
+  /** The outbox seqs whose edit is waiting on the flush to say how they went. */
+  private awaited = new Set<number>();
+  /** Why the source refused queued edits, by outbox seq, kept only while their edit waits to read it. */
   private refusals = new Map<number, string>();
   /** The record whose edit is being pushed now, if any. */
   private pushing: string | null = null;
@@ -355,9 +366,18 @@ export class DataSources {
         }
       },
     );
-    const error = await this.flush(source);
-    const refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
-    for (const seq of queued) this.refusals.delete(seq);
+    for (const seq of queued) this.awaited.add(seq);
+    let error: string | null;
+    let refusal: string | undefined;
+    try {
+      error = await this.flush(source);
+    } finally {
+      refusal = queued.map((seq) => this.refusals.get(seq)).find(Boolean);
+      for (const seq of queued) {
+        this.awaited.delete(seq);
+        this.refusals.delete(seq);
+      }
+    }
     if (refusal) return { status: "refused", error: refusal };
     return {
       status: error ? "queued" : "saved",
@@ -389,7 +409,8 @@ export class DataSources {
       if (!row) return null;
       if (!adapter) return "Google Calendar isn't connected";
       const op = JSON.parse(row.op) as RecordOp;
-      const etag = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", row.path)[0]?.etag ?? null;
+      const etag = known === DELETED_HERE ? null : known;
       try {
         this.pushing = row.path;
         let pushed: Pushed;
@@ -401,7 +422,7 @@ export class DataSources {
         }
         this.db.tx(() => {
           this.db.run("DELETE FROM outbox WHERE seq = ?", row.seq);
-          if (op.op === "delete") this.db.run("DELETE FROM etags WHERE path = ?", row.path);
+          if (op.op === "delete") this.setEtag(row.path, DELETED_HERE);
           else if (pushed.etag) this.setEtag(row.path, pushed.etag);
         });
         this.setState(source, { error: undefined });
@@ -419,7 +440,9 @@ export class DataSources {
         // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
         const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
         if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
-          this.refusals.set(row.seq, this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone));
+          for (const [seq, reason] of this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone)) {
+            if (this.awaited.has(seq)) this.refusals.set(seq, reason);
+          }
           continue;
         }
         const message = (err as Error).message;
@@ -438,11 +461,12 @@ export class DataSources {
    */
   private resolve(source: SourceId, row: { seq: number; path: string; base: string | null }, op: RecordOp, conflict: Conflict) {
     const bookkeeping = () => {
-      this.db.run("UPDATE outbox SET attempts = attempts + 1 WHERE seq = ?", row.seq);
+      this.db.run("UPDATE outbox SET attempts = attempts + 1, unreadable = NULL WHERE seq = ?", row.seq);
       if (conflict.etag) this.setEtag(row.path, conflict.etag);
       else this.db.run("DELETE FROM etags WHERE path = ?", row.path);
     };
     if (op.op === "delete" || !conflict.remote) return this.db.tx(bookkeeping);
+    let named = "";
     const queued = this.db.all<{ seq: number; op: string; base: string | null }>("SELECT seq, op, base FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", row.path, row.seq);
     let theirs = conflict.remote;
     const lost = new Set<string>();
@@ -451,10 +475,13 @@ export class DataSources {
       const o = JSON.parse(r.op) as RecordOp;
       // A delete waiting after them wins, whatever they merge to.
       if (o.op === "delete") break;
-      const merged = mergeEvents(r.base ? readEvent(r.base) : null, o.event, theirs);
-      for (const field of merged.lost) lost.add(field);
+      // An occurrence's first edit started from the occurrence as its series makes it.
+      const merged = mergeEvents(r.base ? readEvent(r.base) : o.event.series !== undefined ? this.asSeriesMakes(source, o.event) : null, o.event, theirs);
       // Cancelled isn't a field an edit makes, so it's never among what's lost: say so when it beat one.
+      // A cancellation comes without the occurrence's fields, so they aren't counted against it.
       if (theirs.status === "cancelled" && o.event.status !== "cancelled") lost.add("cancellation");
+      else for (const field of merged.lost) lost.add(field);
+      named ||= o.event.title;
       rebased.push({ seq: r.seq, op: { ...o, event: merged.event, created: false }, base: recordText(theirs) });
       theirs = merged.event;
     }
@@ -465,25 +492,46 @@ export class DataSources {
       bookkeeping();
       for (const r of rebased) this.db.run("UPDATE outbox SET op = ?, base = ? WHERE seq = ?", JSON.stringify(r.op), r.base, r.seq);
     });
-    if (lost.size) this.setState(source, { conflict: `${theirs.title || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
+    if (lost.size) this.setState(source, { conflict: `${theirs.title || named || "An event"}: Google's ${[...lost].join(" and ")} replaced yours, which is still in its history` });
   }
 
   /**
    * The source won't take an edit. Drop it and the record's edits queued after it (they build on it,
    * and are sent whole), and put the record back as it was before them, as the sync's change: what the
-   * source has. History keeps the edits. Returns why, in words.
+   * source has. History keeps the edits. Returns why, in words, for each edit dropped, by outbox seq.
    */
-  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): string {
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): Map<number, string> {
     const path = row.path as FilePath;
     const current = this.files.read(path);
     const author = SYNC_AUTHOR[source];
     // Deleted in the source, it goes here too: put back, it would stay, as the sync already passed the deletion by while the edit waited.
     const restore: Write[] =
       row.base === null || gone ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    const dropped = this.db.all<{ seq: number; op: string }>("SELECT seq, op FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", path, row.seq);
     this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
-    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
-    this.setState(source, { conflict: message, error: undefined });
-    return message;
+    const named = (o: RecordOp) => o.event.title || "an event";
+    const why = reason.replace(/\.$/, "");
+    const after = gone ? "It's gone here too" : "It's back as it was";
+    const later = dropped.length - 1;
+    this.setState(source, {
+      conflict: later
+        ? `${title} refused the change to ${named(op)} and the ${later} after it: ${why}. ${after}, and the changes are in its history.`
+        : `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`,
+      error: undefined,
+    });
+    return new Map(
+      dropped.map(({ seq, op: queued }) =>
+        seq === row.seq
+          ? [seq, `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`]
+          : [seq, `${title} refused the change to ${named(op)}, which ${named(JSON.parse(queued) as RecordOp)} built on: ${why}. ${after}, and the changes are in its history.`],
+      ),
+    );
+  }
+
+  /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
+  private asSeriesMakes(source: SourceId, e: CalendarEvent): CalendarEvent | null {
+    const found = findTarget(this.family(source, e.calendar, e.id).filter((o) => o.id !== e.id), e.id);
+    return found?.kind === "occurrence" ? found.occurrence : null;
   }
 
   private setEtag(path: string, etag: string) {
@@ -582,7 +630,16 @@ export class DataSources {
     };
     const put = (event: CalendarEvent, etag: string | null) => {
       const path = eventPath(event.calendar, event.id);
-      if (pending(path)) return;
+      if (pending(path)) {
+        const waiting = this.db.all("SELECT 1 FROM outbox WHERE path = ?", path).length > 0;
+        const known = this.db.all<{ etag: string }>("SELECT etag FROM etags WHERE path = ?", path)[0]?.etag;
+        // Our own delete, heard back: that version is ours, so the edit waiting goes on from it.
+        if (etag && waiting && known === DELETED_HERE && event.status === "cancelled") this.setEtag(path, etag);
+        // Google changed it while an edit here waits, and with no etag of ours the edit's PATCH couldn't
+        // tell. One that can't match makes it meet Google's version (a 412) and merge with it.
+        else if (etag && waiting && (!known || known === DELETED_HERE)) this.setEtag(path, UNKNOWN_ETAG);
+        return;
+      }
       write(path, recordText(event));
       if (etag) this.setEtag(path, etag);
     };
@@ -715,12 +772,13 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
   const plain = revisions.filter((r) => !isRecord(r));
   const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
+  const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]
     .sort((a, b) => b - a)
     .map((r) => {
       const { path } = change(r)!;
-      if (changedSince(files, path, r)) return { r, path, text: null };
+      if (changedSince(files, path, r, chosen)) return { r, path, text: null };
       const previous = files.recent({ path, before: r, limit: 1 })[0];
       return { r, path, text: previous ? (files.versionAt(path, previous.revision) ?? "") : "" };
     });
@@ -739,16 +797,22 @@ export async function undoChanges(files: Files, sources: DataSources, revisions:
 }
 
 /**
- * Whether a record changed after one of its revisions. The source filling in its own address for
- * the record (`link`), as a sync does after an edit goes out, isn't a change.
+ * Whether a record changed after one of its revisions, but for changes being undone with it
+ * (`undoing`). The source filling in its own address for the record (`link`), as a sync does after
+ * an edit goes out, isn't a change. Each sync change is judged by what it changed itself, since the
+ * record now also has the later edits being undone.
  */
-function changedSince(files: Files, path: FilePath, revision: Revision): boolean {
-  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision);
-  if (!later.length) return false;
-  if (!later.every((c) => c.author.kind === "sync")) return true;
-  const was = readEvent(files.versionAt(path, revision) ?? "");
-  const now = readEvent(files.read(path)?.text ?? "");
-  return !was || !now || recordText({ ...was, link: undefined }) !== recordText({ ...now, link: undefined });
+function changedSince(files: Files, path: FilePath, revision: Revision, undoing: ReadonlySet<Revision>): boolean {
+  const later = files.recent({ path, limit: 500 }).filter((c) => c.revision > revision && !undoing.has(c.revision));
+  return later.some((c) => c.author.kind !== "sync" || !onlyLinked(files, path, c.revision));
+}
+
+/** Whether a change to a record only filled in its `link`. */
+function onlyLinked(files: Files, path: FilePath, revision: Revision): boolean {
+  const before = files.recent({ path, before: revision, limit: 1 })[0];
+  const was = readEvent(before ? (files.versionAt(path, before.revision) ?? "") : "");
+  const now = readEvent(files.versionAt(path, revision) ?? "");
+  return !!was && !!now && recordText({ ...was, link: undefined }) === recordText({ ...now, link: undefined });
 }
 
 /** Put a file back as it was at a revision (or just before one); a record goes back through its data source. */

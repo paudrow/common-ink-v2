@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ReconnectNeeded, type Adapter } from "../worker/src/adapter.ts";
+import { openWorkspace } from "../worker/src/data-sources.ts";
 import { authorKey, type Author, type FilePath } from "../worker/src/files.ts";
 import { runOperation } from "../worker/src/operations.ts";
 import { addressOf, keyOfPath, parseAddress, recordPath, recordText } from "../worker/src/records.ts";
@@ -139,6 +140,24 @@ test("the records index is made from the files, the same however often", () => {
   store.sources.records.rebuild(store.files.under(".common-ink/records/"));
   assert.deepEqual(store.db.all("SELECT * FROM records ORDER BY path"), before);
   assert.equal(before.length, 4);
+});
+
+test("a records index made from the files that stops partway is made whole the next time the workspace opens", () => {
+  const store = sampleWorkspace();
+  const whole = store.db.all("SELECT * FROM records ORDER BY path");
+  store.db.run("DELETE FROM records");
+  // The workspace stops (an eviction, a CPU limit) after indexing two records.
+  let indexed = 0;
+  const stopping = {
+    ...store.db,
+    run: (sql: string, ...params: Array<string | number | null>) => {
+      if (sql.startsWith("INSERT INTO records") && ++indexed > 2) throw new Error("The workspace stopped");
+      store.db.run(sql, ...params);
+    },
+  };
+  assert.throws(() => openWorkspace(stopping, { fixtures: true, google: null }), /stopped/);
+  openWorkspace(store.db, { fixtures: true, google: null });
+  assert.deepEqual(store.db.all("SELECT * FROM records ORDER BY path"), whole);
 });
 
 test("a create sent again with its id makes one event, and a bad id says what one is", async () => {

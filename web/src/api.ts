@@ -77,14 +77,24 @@ export const api = {
     return (data as { entries: CatalogEntry[] }).entries;
   },
   /** Install an extension from where it's published; `catalog` names the catalog that listed it, if one did. */
-  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[] }> {
+  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[]; untrusted: boolean }> {
     const res = await fetch("/api/extensions/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, catalog }) });
     const data = await res.json();
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
-    return data as { id: string; name: string; files: string[] };
+    return data as { id: string; name: string; files: string[]; untrusted: boolean };
   },
-  async write(path: FilePath, text: string, base: Revision, keepalive = false): Promise<WriteResult> {
-    const body = JSON.stringify({ path, text, base });
+  /** A file's text at one of its revisions, or null if it has none there. */
+  async version(path: FilePath, revision: Revision): Promise<string | null> {
+    const res = await fetch(`/api/version?${new URLSearchParams({ path, revision: String(revision) })}`);
+    return res.status === 404 ? null : (((await (await ok(res)).json()) as { text?: string } | null)?.text ?? null);
+  },
+  /** Whether the edit sent with this id was applied, for a page that never heard back. */
+  async editApplied(path: FilePath, edit: string): Promise<boolean> {
+    return ((await (await ok(await fetch(`/api/edit?${new URLSearchParams({ path, edit })}`))).json()) as { applied: boolean }).applied;
+  },
+  /** `edit` names the text, to ask later whether it landed; `keepalive` sends it as the page goes. */
+  async write(path: FilePath, text: string, base: Revision, edit?: string, keepalive = false): Promise<WriteResult> {
+    const body = JSON.stringify({ path, text, base, ...(edit ? { edit } : {}) });
     const res = await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
     return (res.status === 409 ? res : await ok(res)).json();
   },
