@@ -287,7 +287,7 @@ test("starting twice, or from an empty database, ends in the same shape", () => 
   const first = tables();
   new Files(db);
   assert.deepEqual(tables(), first);
-  assert.deepEqual(first, ["changes", "connections", "files", "meta"]);
+  assert.deepEqual(first, ["changes", "connections", "edits", "files", "meta"]);
 });
 
 test("a Preview database with an undo column already, and no record of it, starts fine", () => {
@@ -498,4 +498,60 @@ test("a one-line save to a long note, and a merge into one from a stale base, ta
   assert.deepEqual(merged.file?.text, edit(100, "mine", edit(9_000, "theirs")).join("\n"));
   assert.ok(save < 1000, `a one-line save took ${Math.round(save)} ms`);
   assert.ok(merge < 1000, `a merge from a stale base took ${Math.round(merge)} ms`);
+});
+
+test("an edit's id is kept once it's saved or merged, not when it clashes, so a page that went can ask", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "one\ntwo\nthree\n", base: 0, author: ada, edit: "first" });
+  assert.equal(notes.editApplied(PLAN, "first"), true);
+  notes.write({ path: PLAN, text: "one\ntwo\nthree!\n", base: 1, author: bot });
+  // A stale base merged in is applied.
+  assert.equal(notes.write({ path: PLAN, text: "one!\ntwo\nthree\n", base: 1, author: ada, edit: "merged" }).status, "merged");
+  assert.equal(notes.editApplied(PLAN, "merged"), true);
+  // A clash saves nothing, so it isn't.
+  assert.equal(notes.write({ path: PLAN, text: "uno\ntwo\nthree\n", base: 1, author: ada, edit: "clashed" }).status, "conflict");
+  assert.equal(notes.editApplied(PLAN, "clashed"), false);
+  assert.equal(notes.editApplied(PLAN, "never"), false);
+  assert.equal(notes.editApplied("Other.md" as FilePath, "first"), false);
+});
+
+test("an edit id is kept for 30 days, however many edits come after it", () => {
+  let clock = 0;
+  const notes = new Files(memoryDb(), () => clock);
+  notes.write({ path: PLAN, text: "0\n", base: 0, author: ada, edit: "first" });
+  for (let i = 1; i <= 200; i++) notes.write({ path: PLAN, text: `${i}\n`, base: i, author: ada, edit: `e${i}` });
+  assert.equal(notes.editApplied(PLAN, "first"), true, "after 200 more");
+  clock = 31 * 86_400_000;
+  notes.write({ path: PLAN, text: "later\n", base: 201, author: ada, edit: "later" });
+  assert.equal(notes.editApplied(PLAN, "first"), false, "a month on");
+  assert.equal(notes.editApplied(PLAN, "later"), true);
+});
+
+test("an edit id is for one text: sent again with other text, it's refused, not said to be saved", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada });
+  notes.write({ path: PLAN, text: "# Trip\n- A\n", base: 1, author: bot, edit: "edit-1" });
+  const again = notes.write({ path: PLAN, text: "# Trip\n- A\n- B\n", base: 2, author: bot, edit: "edit-1" });
+  assert.equal(again.status, "conflict");
+  assert.equal(again.status === "conflict" && again.reason, "This edit id was already used for different text");
+  assert.equal(notes.read(PLAN)?.text, "# Trip\n- A\n");
+});
+
+test("an edit sent again after its file was deleted doesn't bring the file back", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada, edit: "made" });
+  notes.write({ path: PLAN, text: "", base: 1, author: bot, delete: true });
+  assert.equal(notes.write({ path: PLAN, text: "# Trip\n", base: 0, author: ada, edit: "made" }).status, "conflict");
+  assert.equal(notes.read(PLAN), null);
+});
+
+test("an edit sent again with its id, after the file moved on, is in already: it isn't merged in a second time", () => {
+  const notes = workspace();
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 0, author: ada });
+  notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  // Someone deletes the line it added; then the same edit arrives again, on its old base.
+  notes.write({ path: PLAN, text: "# Trip\n- a\n", base: 2, author: bot });
+  const again = notes.write({ path: PLAN, text: "# Trip\n- a\n- packed\n", base: 1, author: ada, edit: "went" });
+  assert.deepEqual(again, { status: "saved", file: { path: PLAN, text: "# Trip\n- a\n", revision: 3 } });
+  assert.equal(notes.history(PLAN).length, 3);
 });
