@@ -83,6 +83,18 @@ export interface Change {
   deleted?: true;
 }
 
+/** A file in Trash: its delete change, and its text just before. */
+export interface Deleted {
+  path: FilePath;
+  /** The delete's revision: undoing it restores the file. */
+  revision: Revision;
+  author: Author;
+  time: number;
+  /** The file's last revision before the delete, whose text is `text`. */
+  before: Revision;
+  text: string;
+}
+
 /** What undoing one change did. "conflict": the file has changed since in the same lines, so nothing was done. */
 export interface UndoResult {
   revision: Revision;
@@ -138,8 +150,8 @@ export interface Write {
 export interface Seed {
   id: string;
   notes: Array<{ path: string; text: string; replace: boolean }>;
-  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. */
-  edits?: Array<{ path: string; text: string; agent: string; label?: string }>;
+  /** With `label`, the note's state after the edit gets that label, so a Preview has labels to show. With `delete`, the agent deletes the note instead, so Trash has something in it. */
+  edits?: Array<{ path: string; text: string; agent: string; label?: string; delete?: true }>;
   /** The scenario it was made from (docs/TESTING.md), and the clock that scenario starts at. */
   scenario?: { name: string; now?: string };
 }
@@ -396,6 +408,24 @@ export class Files {
     });
   }
 
+  /**
+   * Files deleted since a time and not there now: each one's delete, the latest change to it, newest
+   * first. This is what's in Trash; restoring one undoes its delete.
+   */
+  deleted(since: number): Deleted[] {
+    return this.db
+      .all<ChangeRow>(
+        `SELECT * FROM changes c WHERE c.deletes = 1 AND c.time >= ? AND c.path NOT IN (SELECT path FROM files)
+          AND c.revision = (SELECT max(revision) FROM changes WHERE path = c.path) ORDER BY c.revision DESC`,
+        since,
+      )
+      .map((row) => {
+        const { revision, path, author, time } = toChange(row);
+        const [before] = this.db.all<{ r: number | null }>("SELECT max(revision) AS r FROM changes WHERE path = ? AND revision < ?", path, revision);
+        return { path, revision, author, time, before: before?.r ?? 0, text: before?.r ? (this.textAt(path, before.r) ?? "") : "" };
+      });
+  }
+
   /** A file's text at one of its revisions, or null if it never had that revision. */
   versionAt(path: FilePath, revision: Revision): string | null {
     return this.textAt(path, revision);
@@ -476,10 +506,10 @@ export class Files {
         this.db.run("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, textHash(text));
       }
       const labels: Array<{ name: string; path: FilePath; revision: Revision }> = [];
-      for (const { path, text, agent, label } of seed.edits ?? []) {
+      for (const { path, text, agent, label, delete: deleting } of seed.edits ?? []) {
         const current = added.has(path) ? this.read(path as FilePath) : null;
         if (!current) continue;
-        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent } });
+        const result = this.apply({ path: current.path, text, base: current.revision, author: { kind: "agent", name: agent }, ...(deleting ? { delete: true as const } : {}) });
         if (label && result.file) labels.push({ name: label, path: current.path, revision: result.file.revision });
       }
       if (labels.length) {

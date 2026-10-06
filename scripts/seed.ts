@@ -14,7 +14,7 @@ export interface Section {
   title: string;
   steps: string[];
   /** Later versions of the section's notes, by named agents, so history has something to show. */
-  edits: Array<{ path: string; text: string; agent: string; label?: string }>;
+  edits: Array<{ path: string; text: string; agent: string; label?: string; delete?: true }>;
   notes: Array<{ path: string; text: string }>;
 }
 
@@ -44,10 +44,10 @@ export function readSections(dir: string, catalog = path.join(dir, "../../web/pu
         throw new Error(`${file}: "install" must be a list of the Catalog's extension ids`);
       const valid = Number.isInteger(pr) && typeof title === "string" && Array.isArray(steps) && steps.every((s) => typeof s === "string");
       if (!valid) throw new Error(`${file} must look like {"pr": 1, "title": "...", "steps": ["..."]}`);
-      const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && typeof e.text === "string" && typeof e.agent === "string");
-      if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}`);
+      const editsValid = Array.isArray(edits) && edits.every((e) => e && typeof e.path === "string" && (typeof e.text === "string" || e.delete === true) && typeof e.agent === "string");
+      if (!editsValid) throw new Error(`${file}: "edits" must be a list of {"agent": "...", "path": "...", "text": "..."}, or {"agent": "...", "path": "...", "delete": true}`);
       const notes = folderFiles(path.join(dir, slug));
-      return { slug, pr, title, steps, notes: [...notes, ...catalogFiles(catalog, install as string[])], edits };
+      return { slug, pr, title, steps, notes: [...notes, ...catalogFiles(catalog, install as string[])], edits: (edits as Section["edits"]).map((e) => (e.delete ? { ...e, text: "" } : e)) };
     });
 }
 

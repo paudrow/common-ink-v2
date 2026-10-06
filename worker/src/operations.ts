@@ -6,14 +6,14 @@ import { isRecordPath, parseAddress } from "./records.ts";
 import { parseRule, toRRule } from "./recurrence.ts";
 import type { TaskArgs, Ticked } from "./complete-task.ts";
 import { listEmbeds } from "./embed-list.ts";
-import { DEFAULT_SETTINGS, defaultsText, isReadOnly } from "./settings.ts";
+import { DEFAULT_SETTINGS, defaultsText, isReadOnly, parseSettings, SETTINGS, WORKSPACE_SETTINGS } from "./settings.ts";
 import type { Contact } from "./sources.ts";
 import { LABELS_PATH, labelsText, parseLabels } from "./labels.ts";
 import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uploads.ts";
-import { format, parse, problems, type Query } from "./query.ts";
+import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
 import { ARCHIVE_PATH, archiveText, parseArchive, withArchived } from "./archive.ts";
-import type { SearchOptions, SearchResults } from "./search.ts";
-import { parseFilePath, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
+import { present, type SearchOptions, type SearchResults } from "./search.ts";
+import { parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
 /** The workspace, as the Durable Object's stub offers it. */
 export interface Store {
@@ -36,6 +36,8 @@ export interface Store {
   upload(name: string, data: ArrayBuffer, author: Author): Promise<UploadResult>;
   completeTask(args: TaskArgs, author: Author): Promise<Ticked> | Ticked;
   search(query: Query, options: SearchOptions): Promise<SearchResults> | SearchResults;
+  /** Files deleted since a time and not there now, newest first: what's in Trash. */
+  deleted(since: number): Promise<Deleted[]> | Deleted[];
 }
 
 /** An event as read_event finds it: as stored, or worked out from its series, with the series. */
@@ -451,9 +453,9 @@ export const OPERATIONS = {
     },
     run: async (store, { path, edit }) => ({ path, edit, applied: await store.editApplied(path, edit) }),
   }),
-  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } }>({
+  restore: op<{ path: FilePath; at: { revision: Revision } | { before: Revision } | "trash" }>({
     description:
-      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone.",
+      "Put a file back the way it was at one of its revisions (`revision`, such as a label's), or just before one of its changes (`before`), as a new change by you. The changes since stay in history, and this can be undone. With neither, a deleted note comes back from Trash, with its history: its delete is undone.",
     input: { type: "object", properties: { path: PATH, revision: { type: "integer", minimum: 0 }, before: { type: "integer", minimum: 1 } }, required: ["path"] },
     parse: (a) => {
       const path = parseFilePath(a.path);
@@ -461,9 +463,17 @@ export const OPERATIONS = {
       const before = count(a.before);
       if (!path) return fail('"path" must be a path ending in .md or .json');
       if (revision !== undefined) return ok({ path, at: { revision } });
-      return before ? ok({ path, at: { before } }) : fail('Say which version: "revision", or "before" a change');
+      if (a.before !== undefined) return before ? ok({ path, at: { before } }) : fail('"before" must be a change\'s revision');
+      return ok({ path, at: "trash" });
     },
-    run: async (store, { path, at }, author) => store.restore(path, at, author),
+    run: async (store, { path, at }, author) => {
+      if (at !== "trash") return store.restore(path, at, author);
+      const deleted = (await store.deleted(0)).find((d) => d.path === path);
+      if (!deleted) throw new OperationError((await store.read(path)) ? `${path} isn't deleted` : `${path} isn't in Trash`);
+      const [undone] = await store.undo([deleted.revision], author);
+      if (undone.status !== "undone") throw new OperationError(`${path} couldn't be restored: ${undone.status}`);
+      return { status: "restored", file: undone.file };
+    },
   }),
   labels: op<{ path?: FilePath }>({
     description: "Labels: names given to a note's state at one revision. All of them, or one file's.",
@@ -517,7 +527,23 @@ export const OPERATIONS = {
     },
     run: async (store, { query, limit, zone }) => {
       const q = parse(query);
-      return { query: format(q), problems: problems(q), ...(await store.search(q, { ctx: { now: Date.now(), zone }, limit, archived: await archivedIn(store) })) };
+      const ctx = { now: Date.now(), zone };
+      // Notes in Trash aren't in the index: they're searched only when the query asks for them.
+      const found = asksFor(q, "trashed")
+        ? present(q, (await inTrash(store, ctx.now)).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        : await store.search(q, { ctx, limit, archived: await archivedIn(store) });
+      return { query: format(q), problems: problems(q), ...found };
+    },
+  }),
+  trash: op<Record<string, never>>({
+    description:
+      "What's in Trash: notes deleted in the last trash.retentionDays days (a workspace setting, 30 by default) and not restored, newest first. Each has its path, title, who deleted it and when, the delete's `revision`, and `daysLeft` before it's purged. Restore one with restore and its path.",
+    input: { type: "object", properties: {} },
+    parse: () => ok({}),
+    run: async (store) => {
+      const now = Date.now();
+      const days = await retentionDays(store);
+      return (await inTrash(store, now)).map(({ text, ...d }) => ({ ...d, title: titleOf(d.path, text), daysLeft: Math.max(0, Math.ceil((d.time + days * DAY - now) / DAY)) }));
     },
   }),
   archive: op<{ paths: FilePath[] }>({
@@ -604,6 +630,20 @@ function notePaths(v: unknown): Parsed<{ paths: FilePath[] }> {
   const paths = Array.isArray(v) ? v.map(parseFilePath) : [];
   if (!paths.length || paths.length > 500 || !paths.every((p): p is FilePath => !!p && p.endsWith(".md"))) return fail('"paths" must be a list of notes\' paths, ending in .md');
   return ok({ paths: [...new Set(paths)] });
+}
+
+const DAY = 86_400_000;
+
+/** How long deleted notes stay in Trash: the workspace's trash.retentionDays. */
+async function retentionDays(store: Store): Promise<number> {
+  const text = (await store.read(WORKSPACE_SETTINGS))?.text ?? "";
+  return (parseSettings(text).settings["trash.retentionDays"] as number | undefined) ?? SETTINGS["trash.retentionDays"].default;
+}
+
+/** Notes in Trash now: deleted within the retention period, newest first. */
+async function inTrash(store: Store, now: number): Promise<Deleted[]> {
+  const since = now - (await retentionDays(store)) * DAY;
+  return (await store.deleted(since)).filter((d) => d.path.endsWith(".md"));
 }
 
 async function archivedIn(store: Store): Promise<Set<string>> {

@@ -45,6 +45,7 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     upload: (n, d, a) => addUpload(files, blobs, n, d, a),
     completeTask: (args, a) => completeTaskIn(files, args, a),
     search: (q, options) => search.search(q, options),
+    deleted: (since) => files.deleted(since),
   };
   return store;
 }

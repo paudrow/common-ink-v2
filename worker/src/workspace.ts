@@ -148,6 +148,10 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return this.files.secret("sandbox-key");
   }
 
+  deleted(since: number) {
+    return this.files.deleted(since);
+  }
+
   search(query: Query, options: SearchOptions) {
     return this.index.search(query, options);
   }

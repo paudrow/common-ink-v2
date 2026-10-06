@@ -110,3 +110,7 @@ _Avoid_: Filter (that's one part of a query), search string
 **Archive**:
 A state a note can be in: kept, out of the Feed, shown last in search, still in place and still linked. Its path is listed in `.common-ink/archive.json`; archiving doesn't move or change the note.
 _Avoid_: Hide, move to archive
+
+**Trash**:
+The notes deleted in the last `trash.retentionDays` days (30 by default). It's a view over history, not a folder: restoring a note undoes its delete, so it comes back where it was with its history.
+_Avoid_: Bin, recycle

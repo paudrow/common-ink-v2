@@ -12,6 +12,8 @@ export interface NoteResult {
   edited: number;
   author: Author;
   archived?: true;
+  /** Deleted, and in Trash: only with is:trashed. */
+  trashed?: true;
   line?: { number: number; text: string };
 }
 
@@ -92,22 +94,28 @@ export class SearchIndex {
       author: JSON.parse(r.author) as Author,
       ...(archived.has(r.path) ? { archived: true } : {}),
     }));
-    const found = select(query, notes, ctx);
-    const wanted = query.terms.flatMap((t) => (t.kind === "words" && !t.negated && tokens(t.text).length ? [tokens(t.text)] : []));
-    return {
-      total: found.length,
-      results: found.slice(0, limit).map((n) => {
-        const lines = n.text.split("\n");
-        const at = wanted.length ? lines.findIndex((l) => wanted.some((w) => holds(tokens(l), w))) : -1;
-        return {
-          path: n.path,
-          title: n.title,
-          edited: n.edited,
-          author: n.author,
-          ...(n.archived ? { archived: true as const } : {}),
-          ...(at >= 0 ? { line: { number: at + 1, text: lines[at].trim().slice(0, 200) } } : {}),
-        };
-      }),
-    };
+    return present(query, notes, { ctx, limit });
   }
+}
+
+/** The notes that match, in the query's order, the first `limit` of them, each with the first line that has a word searched for. */
+export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit }: Pick<SearchOptions, "ctx" | "limit">): SearchResults {
+  const found = select(query, notes, ctx);
+  const wanted = query.terms.flatMap((t) => (t.kind === "words" && !t.negated && tokens(t.text).length ? [tokens(t.text)] : []));
+  return {
+    total: found.length,
+    results: found.slice(0, limit).map((n) => {
+      const lines = n.text.split("\n");
+      const at = wanted.length ? lines.findIndex((l) => wanted.some((w) => holds(tokens(l), w))) : -1;
+      return {
+        path: n.path,
+        title: n.title,
+        edited: n.edited,
+        author: n.author,
+        ...(n.archived ? { archived: true as const } : {}),
+        ...(n.trashed ? { trashed: true as const } : {}),
+        ...(at >= 0 ? { line: { number: at + 1, text: lines[at].trim().slice(0, 200) } } : {}),
+      };
+    }),
+  };
 }
