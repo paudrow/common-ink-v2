@@ -12,6 +12,8 @@ export interface KV {
   set(store: Store, key: string, value: unknown): Promise<void>;
   del(store: Store, key: string): Promise<void>;
   all<T>(store: Store): Promise<T[]>;
+  /** Whether what's kept outlives the page (IndexedDB), rather than only this page (memory). */
+  durable?(): Promise<boolean>;
   keys(store: Store): Promise<string[]>;
 }
 
@@ -182,6 +184,11 @@ export class Offline {
     this.changed();
   }
 
+  /** Whether unsent edits outlive the page: false when this browser keeps them in memory only. */
+  async durable(): Promise<boolean> {
+    return (await this.kv.durable?.()) ?? true;
+  }
+
   unsent(): Promise<Unsent[]> {
     return this.kv.all<Unsent>("unsent");
   }
@@ -268,13 +275,17 @@ export class Offline {
   /** The note's edit that wasn't saved as the page went: kept then, or else as it was typed. */
   private async draftFor(path: FilePath): Promise<Unsent | undefined> {
     if (!this.account) return undefined;
+    let went: Unsent | undefined;
     try {
       const kept = localStorage.getItem(this.draftKey(path));
-      if (kept) return JSON.parse(kept) as Unsent;
+      if (kept) went = JSON.parse(kept) as Unsent;
     } catch {
       // Not there, or not readable: the one kept as it was typed.
     }
-    return this.kv.get<Unsent>("meta", this.draftKey(path));
+    const typed = await this.kv.get<Unsent>("meta", this.draftKey(path));
+    // The newer of the two: a page that went and came back (the browser's back-forward cache) kept on
+    // typing after the one kept as it went.
+    return went && typed ? ((typed.time ?? 0) > (went.time ?? 0) ? typed : went) : (went ?? typed);
   }
 
   /**
@@ -409,20 +420,47 @@ export function memoryKV(): KV {
   };
 }
 
-/** The browser's IndexedDB, as a KV. If IndexedDB isn't there (a private window, say), a memory store stands in. */
-export function idbKV(name = "common-ink"): KV {
-  if (typeof indexedDB === "undefined") return memoryKV();
-  const db = new Promise<IDBDatabase>((resolve, reject) => {
-    // Version 2 adds "ops"; upgrading makes whichever stores are missing.
-    const open = indexedDB.open(name, 2);
-    open.onupgradeneeded = () => {
-      for (const store of ["files", "unsent", "meta", "ops"]) if (!open.result.objectStoreNames.contains(store)) open.result.createObjectStore(store);
+/**
+ * The browser's IndexedDB, as a KV. If IndexedDB isn't there, or won't open (a private window, or
+ * storage blocked for this site), a memory store stands in: the app works, keeping nothing past the page.
+ */
+export function idbKV(name = "common-ink", openTimeout = 4000): KV {
+  const memory = memoryKV();
+  if (typeof indexedDB === "undefined") return { ...memory, durable: async () => false };
+  let db: IDBDatabase | null = null;
+  const opened = new Promise<IDBDatabase | null>((resolve) => {
+    // An open can wait without end: on another tab of an older version holding the database, say.
+    const late = setTimeout(() => resolve(null), openTimeout);
+    const done = (result: IDBDatabase | null) => {
+      clearTimeout(late);
+      resolve(result);
     };
-    open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error);
+    try {
+      // Version 2 adds "ops"; upgrading makes whichever stores are missing.
+      const open = indexedDB.open(name, 2);
+      open.onupgradeneeded = () => {
+        for (const store of ["files", "unsent", "meta", "ops"]) if (!open.result.objectStoreNames.contains(store)) open.result.createObjectStore(store);
+      };
+      open.onsuccess = () => {
+        const result = open.result;
+        // Opened after the page gave up on it: memory is what's kept now.
+        void opened.then((used) => used !== result && result.close());
+        // A newer page needs the database to upgrade it: let it go, and keep to memory from here.
+        result.onversionchange = () => {
+          result.close();
+          db = null;
+        };
+        db = result;
+        done(result);
+      };
+      open.onerror = () => done(null);
+    } catch {
+      done(null);
+    }
   });
-  const run = async <T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest): Promise<T> => {
-    const tx = (await db).transaction(store, mode);
+  const run = async <T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest, instead: (kv: KV) => Promise<T>): Promise<T> => {
+    if (!(await opened) || !db) return instead(memory);
+    const tx = db.transaction(store, mode);
     const req = fn(tx.objectStore(store));
     return new Promise<T>((resolve, reject) => {
       tx.oncomplete = () => resolve(req.result as T);
@@ -430,10 +468,11 @@ export function idbKV(name = "common-ink"): KV {
     });
   };
   return {
-    get: (store, key) => run(store, "readonly", (s) => s.get(key)),
-    set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key)),
-    del: (store, key) => run(store, "readwrite", (s) => s.delete(key)),
-    all: (store) => run(store, "readonly", (s) => s.getAll()),
-    keys: async (store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys())).map(String),
+    get: <T>(store: Store, key: string) => run<T | undefined>(store, "readonly", (s) => s.get(key), (kv) => kv.get<T>(store, key)),
+    set: (store, key, value) => run(store, "readwrite", (s) => s.put(value, key), (kv) => kv.set(store, key, value)),
+    del: (store, key) => run(store, "readwrite", (s) => s.delete(key), (kv) => kv.del(store, key)),
+    all: <T>(store: Store) => run<T[]>(store, "readonly", (s) => s.getAll(), (kv) => kv.all<T>(store)),
+    durable: async () => !!(await opened) && !!db,
+    keys: async (store: Store) => (await run<IDBValidKey[]>(store, "readonly", (s) => s.getAllKeys(), (kv) => kv.keys(store))).map(String),
   };
 }
