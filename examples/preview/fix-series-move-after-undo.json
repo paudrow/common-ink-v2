@@ -1,0 +1,7 @@
+{
+  "pr": 86,
+  "title": "Undo works after a sync, and moves leave no stale cancellations",
+  "steps": [
+    "⌘⇧P, Show calendar. Move a whole repeating series, wait for the calendar to sync, then undo the move from History: it goes back. Make an event, let the calendar sync, then undo making it: it goes."
+  ]
+}
