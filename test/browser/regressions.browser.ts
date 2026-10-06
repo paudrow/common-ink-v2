@@ -547,6 +547,23 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+browserTest(h, "a click in the Extensions panel lands though the panel is drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+  await button.waitFor();
+  const pressed = await button.elementHandle();
+  const box = (await button.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  // A file changes while the button is held: the panel would be drawn again under the pointer.
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForTimeout(800);
+  const same = await pressed!.evaluate((b) => b.isConnected);
+  await app.page.mouse.up();
+  await app.page.getByText("Install an extension from a URL").waitFor({ timeout: 3000 });
+  assert.ok(same, "the button held is still the one on the page");
+});
+
 browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, A, a block's I and a . each go in one step", { scenario: "empty" }, async (app) => {
   const START = "# U\n\nabcd\nefgh\nijkl\nmnop\n";
   // Each key more than half a second after the last: further apart than edits are joined otherwise.
@@ -714,6 +731,39 @@ browserTest(h, "a tab dropped on another window's editor opens there, and its na
   assert.deepEqual((await tabFiles(app)).filter((f) => f === "Chores.md" || f === "Welcome.md").sort(), ["Chores.md", "Welcome.md"]);
   assert.equal(await app.readFile("Welcome.md"), welcome);
   assert.equal(await app.readFile("Chores.md"), chores);
+});
+
+browserTest(h, "a click in an extension's details lands though they're drawn again while the button is held", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  await app.page.locator(".extensions-view .extension-open", { hasText: /^Lists/ }).first().click();
+  const source = app.page.locator(".extension-details button", { hasText: "Source" });
+  await source.waitFor();
+  const pressed = await source.elementHandle();
+  const box = (await source.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForTimeout(800);
+  const same = await pressed!.evaluate((b) => b.isConnected);
+  await app.page.mouse.up();
+  assert.ok(same, "the button held is still the one on the page");
+  // Source closes the details and opens the extension's code.
+  await app.page.locator(".extension-details").waitFor({ state: "detached", timeout: 3000 });
+});
+
+browserTest(h, "a press whose release the page never hears (another tab took it) doesn't hold the Extensions panel back", { scenario: "empty" }, async (app) => {
+  await app.command("Show extensions");
+  const button = app.page.locator(".extensions-view button", { hasText: "Install from URL…" });
+  await button.waitFor();
+  const pressed = await button.elementHandle();
+  const box = (await button.boundingBox())!;
+  await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await app.page.mouse.down();
+  // The page loses focus mid-press, as switching tabs does; the release goes elsewhere.
+  await app.page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await app.writeFile("Other.md", "# Other\n");
+  await app.page.waitForFunction((b) => !b.isConnected, pressed, { timeout: 3000 });
+  await app.page.mouse.up();
 });
 
 browserTest(h, "j and k go a line at a time through blocks side by side, at the very start and end of a note too", { scenario: "empty" }, async (app) => {
