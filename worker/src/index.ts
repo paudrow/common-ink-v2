@@ -184,6 +184,9 @@ const ROUTES: Record<string, OperationName> = {
   "POST /api/labels": "add_label",
 };
 
+/** An extension's id, as manifests and folders have it. */
+const EXTENSION_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
+
 /** Operations that change a file named by `path`. */
 const CHANGES = new Set<OperationName>(["write_file", "delete_file", "restore"]);
 
@@ -196,11 +199,14 @@ async function api(req: Request, url: URL, who: Identity, store: Store): Promise
   const args = { ...Object.fromEntries(url.searchParams), ...(body && typeof body === "object" ? body : {}) };
   // A second gate behind the app's: a change in an extension's name to the files that decide trust,
   // other than its own state, only from an extension you trust (a sandboxed one can't reach here at all).
+  // Undo is by revision, so it could take back any file's change: none for an untrusted extension.
   const extension = req.headers.get("X-Common-Ink-Extension");
+  if (extension !== null && !EXTENSION_ID.test(extension)) return json({ error: "X-Common-Ink-Extension must be an extension's id" }, 400);
   const path = parseFilePath(args.path);
-  if (extension && path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension)) {
+  const touchesTrust = name === "undo" || (path && CHANGES.has(name) && decidesTrust(path) && path !== statePath(extension ?? ""));
+  if (extension && touchesTrust) {
     const trusted = await idsIn(store, "extensions.trusted", who.kind === "user" ? who.email : null);
-    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't change ${path}` }, 403);
+    if (!trusted.has(extension)) return json({ error: `${extension} isn't trusted, so it can't ${name === "undo" ? "undo changes" : `change ${path}`}` }, 403);
   }
   const result = await runOperation(name, args, store, authorFor(who, req.headers.get("X-Common-Ink-Agent"), req.headers.get("X-Common-Ink-Extension")));
   if (!result.ok) return json({ error: result.error }, 400);
