@@ -261,19 +261,21 @@ test("Google's ID token is checked for this app and a confirmed email", async ()
   assert.equal((await exchange(google, "c", "r", "v", answer({ aud: "client-1", iss: "accounts.google.com", email: "A@B.C", email_verified: true }))).email, "a@b.c");
 });
 
-test("sign-in, a fresh access token and contacts each give up on a Google that doesn't answer, and say so", { timeout: 5000 }, async () => {
+test("sign-in, a fresh access token and contacts each give up on a Google that doesn't answer, or stops partway, and say so", { timeout: 5000 }, async (t) => {
   // Google, hanging: it answers only by failing once the request is given up.
   const hanging: typeof fetch = (_input, init) =>
     new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
-  // AbortSignal.timeout's timer doesn't keep Node waiting, so something else has to.
+  // Google, stalling: it sends the headers, then nothing of the body until the request is given up.
+  const stalling: typeof fetch = async (_input, init) =>
+    new Response(new ReadableStream({ start: (body) => init?.signal?.addEventListener("abort", () => body.error(init.signal!.reason)) }), { headers: { "Content-Type": "application/json" } });
+  // AbortSignal.timeout's timer doesn't keep Node waiting, so something else has to, until the test ends however it ends.
   const waiting = setInterval(() => {}, 1000);
-  try {
-    const config = { clientId: "c", clientSecret: "s" };
-    const said = "Google didn't answer within 0.05 seconds";
-    await assert.rejects(exchange(config, "code", "https://example.com/auth/google/callback", "verifier", hanging, 50), { message: said });
-    await assert.rejects(accessToken(config, "refresh", hanging, 50), { message: said });
-    await assert.rejects(contacts("token", hanging, 50), { message: said });
-  } finally {
-    clearInterval(waiting);
+  t.after(() => clearInterval(waiting));
+  const config = { clientId: "c", clientSecret: "s" };
+  const said = "Google didn't answer within 0.05 seconds";
+  for (const google of [hanging, stalling]) {
+    await assert.rejects(exchange(config, "code", "https://example.com/auth/google/callback", "verifier", google, 50), { message: said });
+    await assert.rejects(accessToken(config, "refresh", google, 50), { message: said });
+    await assert.rejects(contacts("token", google, 50), { message: said });
   }
 });
