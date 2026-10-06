@@ -547,6 +547,87 @@ browserTest(h, "Vim's > over a paragraph and the list after it shifts every line
   assert.equal((await where(app)).line, 4);
 });
 
+browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, A, a block's I and a . each go in one step", { scenario: "empty" }, async (app) => {
+  const START = "# U\n\nabcd\nefgh\nijkl\nmnop\n";
+  // Each key more than half a second after the last: further apart than edits are joined otherwise.
+  const slowly = async (keys: string[]) => {
+    for (const k of keys) {
+      await app.keys(k);
+      await app.page.waitForTimeout(600);
+    }
+  };
+  for (const [name, keys, after] of [
+    ["cw", ["cw", "Z", "Y", "<Esc>", "u"], START],
+    ["o", ["o", "H", "i", "<Esc>", "u"], START],
+    ["A", ["A", "!", "?", "<Esc>", "u"], START],
+    ["a block's I", ["<C-v>jjI", "X", "Y", "<Esc>", "u"], START],
+    // Enter in insert mode is typing too.
+    ["A…<CR>…", ["A", "x", "<CR>", "y", "<Esc>", "u"], START],
+    ["cw…<CR>…", ["cw", "Z", "<CR>", "Y", "<Esc>", "u"], START],
+    ["o…<CR>…", ["o", "H", "<CR>", "i", "<Esc>", "u"], START],
+    ["S with two Enters", ["S", "a", "<CR>", "b", "<CR>", "c", "<Esc>", "u"], START],
+    // The second change, made by ., is the step u takes back.
+    [".", ["cwZ<Esc>", "j", ".", "u"], "# U\n\naZ\nefgh\nijkl\nmnop\n"],
+    // An arrow in insert mode starts a new step, as in Vim.
+    ["an arrow inside", ["A", "x", "<Left>", "y", "<Esc>", "u"], "# U\n\nabcdx\nefgh\nijkl\nmnop\n"],
+    // Each normal-mode change is its own step.
+    ["x, x", ["x", "x", "u"], "# U\n\nacd\nefgh\nijkl\nmnop\n"],
+  ] as const) {
+    await app.writeFile("U.md", START);
+    await app.open("U");
+    await app.idle();
+    await app.call("cursor", 3, 2);
+    await app.keys("<Esc>");
+    await slowly([...keys]);
+    await app.idle();
+    for (let i = 0; i < 20 && (await app.readFile("U.md")) !== after; i++) await app.page.waitForTimeout(250);
+    assert.equal(await app.readFile("U.md"), after, name);
+  }
+});
+
+browserTest(h, "in a list, Enter continuing it and Enter ending it are part of the change u takes back", { scenario: "empty" }, async (app) => {
+  const START = "# L\n\n- one\n- two\n";
+  for (const [name, keys] of [
+    ["a bullet continued", ["A", "<CR>", "t", "h", "r", "e", "e", "<Esc>", "u"]],
+    ["the list ended", ["A", "<CR>", "<CR>", "a", "f", "t", "e", "r", "<Esc>", "u"]],
+  ] as const) {
+    await app.writeFile("L.md", START);
+    await app.open("L");
+    await app.idle();
+    await app.call("cursor", 4, 1);
+    await app.keys("<Esc>");
+    for (const k of keys) {
+      await app.keys(k);
+      await app.page.waitForTimeout(600);
+    }
+    await app.idle();
+    for (let i = 0; i < 20 && (await app.readFile("L.md")) !== START; i++) await app.page.waitForTimeout(250);
+    assert.equal(await app.readFile("L.md"), START, name);
+  }
+});
+
+browserTest(h, "someone else's change arriving while you type isn't part of your undo step", { scenario: "empty" }, async (app) => {
+  await app.writeFile("U.md", "# U\n\nabcd\nefgh\nijkl\nmnop\n");
+  await app.open("U");
+  await app.idle();
+  await app.call("cursor", 3, 1);
+  await app.keys("<Esc>A");
+  await app.keys("x");
+  await app.idle();
+  const { revision } = (await (await app.page.context().request.get(`${app.base}/api/file?path=U.md`)).json()) as { revision: number };
+  await app.page.context().request.put(`${app.base}/api/file`, { data: { path: "U.md", text: "# U\n\nabcdx\nefgh\nijkl\nMNOP\n", base: revision }, headers: { "X-Common-Ink-Agent": "Claude" } });
+  await app.page.locator(".tab-editor:not([hidden]) .cm-line", { hasText: "MNOP" }).waitFor();
+  await app.page.waitForTimeout(600);
+  await app.keys("y<Esc>u");
+  await app.idle();
+  for (let i = 0; i < 20 && !(await app.readFile("U.md")).startsWith("# U\n\nabcd\n"); i++) await app.page.waitForTimeout(250);
+  assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "yours went in one step; theirs stays");
+  await app.keys("u");
+  await app.idle();
+  await app.page.waitForTimeout(500);
+  assert.equal(await app.readFile("U.md"), "# U\n\nabcd\nefgh\nijkl\nMNOP\n", "and u has nothing of theirs to take back");
+});
+
 /** The files every window's tabs show, in order. */
 async function tabFiles(app: App): Promise<string[]> {
   const state = (await app.state()) as { layout: { root: unknown } };
