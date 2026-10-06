@@ -5,6 +5,8 @@ import { matchKeys } from "./keys.ts";
 export interface Item {
   label: string;
   detail?: string;
+  /** Off on this device: listed greyed, its detail saying why. */
+  off?: boolean;
   run(): unknown;
 }
 
@@ -106,6 +108,7 @@ export class CommandBar {
         const li = document.createElement("li");
         li.id = `command-bar-item-${i}`;
         li.setAttribute("role", "option");
+        if (item.off) li.classList.add("off");
         const label = document.createElement("span");
         label.textContent = item.label;
         li.append(label);
