@@ -58,6 +58,10 @@ const calendar: ExtensionModule = {
       void ctx.data.sync().catch(() => {});
     };
     const pages = new Set<CalendarPage>();
+    /** Let go of the pages of tabs that have closed or drawn something else; a note's calendars are kept for when it shows again. */
+    const prune = () => {
+      for (const p of pages) if (!document.contains(p.root) && ![...embedded.values()].includes(p)) (p.destroy(), pages.delete(p));
+    };
     /** An event a chip's click asked the next Calendar tab to show. */
     let reveal: { address: string; day: string } | undefined;
     ctx.views.register("calendar", {
@@ -65,7 +69,7 @@ const calendar: ExtensionModule = {
         sync();
         if (!root.closest("#panel")) {
           // In a tab: the whole calendar. One page per tab, kept until the tab draws something else.
-          for (const p of pages) if (!document.contains(p.root) && ![...embedded.values()].includes(p)) (p.destroy(), pages.delete(p));
+          prune();
           const { CalendarPage } = await import("./page.ts");
           const page = new CalendarPage(ctx, ((await ctx.state.get()) ?? {}) as PageState, reveal);
           reveal = undefined;
@@ -192,6 +196,7 @@ const calendar: ExtensionModule = {
     });
     ctx.data.calendar.onChange(() => {
       links.refresh();
+      prune();
       for (const p of pages) p.refresh();
       // The side panel draws again; a tab's page loads what changed without drawing from nothing.
       if (ctx.views.shown() === "calendar") ctx.views.show("calendar");
