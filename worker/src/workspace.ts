@@ -6,7 +6,8 @@ import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
 import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
-import { sampleGoogle, type FakeGoogle } from "./fake-google.ts";
+import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
+import { wallTimeAt } from "./calendar.ts";
 import { addUpload, type Blobs } from "./uploads.ts";
 import { RESET_CLOSE } from "./levers.ts";
 
@@ -66,14 +67,19 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       }
     };
     if (this.env.FAKE_GOOGLE === "1" && this.env.LEVERS === "1") {
-      this.fake ??= sampleGoogle(Date.now());
-      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, this.fake.fetch);
+      const { files, sources } = openWorkspace(this.db, { fixtures: false, google: { clientId: "fake", clientSecret: "fake" } }, announce, (input, init) => this.fake!.fetch(input, init));
+      this.fake ??= this.sampleFake();
       if (!sources.syncs) void sources.connect({ email: "tester@localhost", refreshToken: "fake", scopes: DATA_SCOPES });
       return [files, sources];
     }
     const google = this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : null;
     const { files, sources } = openWorkspace(this.db, { fixtures: this.env.DATA_FIXTURES === "1", google, tokenKey: this.env.SESSION_SECRET }, announce);
     return [files, sources];
+  }
+
+  /** The fake Google's week, around the day the workspace's scenario starts on, or today where its calendars are. */
+  private sampleFake(): FakeGoogle {
+    return sampleGoogle(this.scenario()?.now?.slice(0, 10) ?? wallTimeAt(Date.now(), SAMPLE_ZONE).slice(0, 10));
   }
 
   /** A page's live connection: a WebSocket that hears of every change. */
@@ -176,6 +182,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     }
     this.files.seed(seed);
     this.keepScenario(seed, pinned);
+    if (this.fake) this.fake = this.sampleFake();
     for (const ws of this.ctx.getWebSockets()) ws.close(RESET_CLOSE, "The workspace was reset");
   }
 
