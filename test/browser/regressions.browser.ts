@@ -559,7 +559,8 @@ browserTest(h, "an edit undone while its failed save is still being held isn't s
     });
     await app.page.context().setOffline(true);
     await a.keys("dw");
-    await a.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "offline");
+    // Polled by time, not by frame: a page behind another draws no frames.
+    await a.page.waitForFunction(() => document.querySelector("#save")?.getAttribute("data-status") === "offline", undefined, { polling: 20 });
     // `u` while the failed save is still being held; the page goes the moment it's held.
     await a.keys("u");
     await a.page.evaluate(() => (window as unknown as { open: () => void }).open());
