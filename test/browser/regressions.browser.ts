@@ -75,13 +75,13 @@ browserTest(h, "a tab click lands even when the tabs redraw between the press an
 });
 
 browserTest(h, "one answer to a permission prompt is enough, however many times the extension asks while it's up or being kept", { scenario: "extensions" }, async (app) => {
-  await app.command("Show word count");
+  await app.command("Show line count");
   await app.prompt.waitFor();
-  // A note saved while the prompt is up: Word count counts again, and that ask joins the prompt on screen.
+  // A note saved while the prompt is up: Line count counts again, and that ask joins the prompt on screen.
   await app.writeFile("Extension ideas.md", "# Extension ideas\n\nOne more.\n");
   await app.page.waitForTimeout(800);
   assert.equal(await app.prompt.dialog().count(), 1);
-  // Keeping the answer in settings takes a while here, and another save makes Word count ask in that while.
+  // Keeping the answer in settings takes a while here, and another save makes Line count ask in that while.
   await app.call("slow", "^PUT /api/file", 2500);
   await app.prompt.answer("Don't allow");
   await app.writeFile("Extension ideas.md", "# Extension ideas\n\nAnd another.\n");
@@ -91,8 +91,8 @@ browserTest(h, "one answer to a permission prompt is enough, however many times 
   await app.page.frameLocator("iframe.webview").locator("body", { hasText: "you don't allow it" }).waitFor();
   await app.idle();
   const shown = await app.prompt.shown();
-  assert.deepEqual(shown.map(({ extension, answer }) => ({ extension, answer })), [{ extension: "word-count", answer: "deny" }]);
-  assert.deepEqual((await app.state()).permissions.grants, { "word-count": { "files:read:**/*.md": "deny" } });
+  assert.deepEqual(shown.map(({ extension, answer }) => ({ extension, answer })), [{ extension: "line-count", answer: "deny" }]);
+  assert.deepEqual((await app.state()).permissions.grants, { "line-count": { "files:read:**/*.md": "deny" } });
 });
 
 browserTest(h, "j visits every line of a note in order, through tables, math, code blocks and embeds, and k comes back the same way", { scenario: "embeds" }, async (app) => {
@@ -990,7 +990,7 @@ browserTest(h, "a drag from outside the page opens a note at most: crafted drops
     for (const payload of [
       { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
       { item: { file: ".common-ink/layout.json" } },
-      { item: { file: ".common-ink/extensions/word-count/main.js" } },
+      { item: { file: ".common-ink/extensions/line-count/main.js" } },
       { item: { view: "extensions" } },
       { item: { file: "../x.md" } },
       { item: "Shopping.md" },

@@ -19,30 +19,30 @@ Built-ins and extensions you mark **trusted** (Trust… in the Extensions view) 
 
 ## Permissions
 
-The manifest's `permissions` are the most an extension may ever ask for, each with why. The first time it asks, you see "Word count wants to read your notes · Count the words in the note on show", and choose Allow once, Always allow, or Don't allow. Your answers are kept in your settings, under `extensions.permissions`, and the Extensions view lets you change them. Built-ins have what they declare until you deny it. Every check and every network request shows in Extension activity, and a dot in the status bar shows while a request is in flight.
+The manifest's `permissions` are the most an extension may ever ask for, each with why. The first time it asks, you see "Reading time wants to read your notes · Say how long the note on show takes to read", and choose Allow once, Always allow, or Don't allow. Your answers are kept in your settings, under `extensions.permissions`, and the Extensions view lets you change them. Built-ins have what they declare until you deny it. Every check and every network request shows in Extension activity, and a dot in the status bar shows while a request is in flight.
 
 ## The manifest
 
 ```json
 {
-  "id": "word-count",
-  "name": "Word count",
+  "id": "reading-time",
+  "name": "Reading time",
   "version": "1.0.0",
-  "description": "A Word count view for the note on show.",
+  "description": "A Reading time view for the note on show.",
   "main": "index.js",
-  "activationEvents": ["onView:wordCount", "onCommand:wordCount.show"],
+  "activationEvents": ["onView:readingTime", "onCommand:readingTime.show"],
   "permissions": {
-    "files:read": { "paths": ["**"], "why": "Count the words in the note on show" }
+    "files:read": { "paths": ["**"], "why": "Say how long the note on show takes to read" }
   },
   "contributes": {
-    "commands": [{ "command": "wordCount.show", "title": "Show word count" }],
-    "keybindings": [{ "key": "Mod-Shift-c", "command": "wordCount.show" }, { "vim": "gC", "command": "wordCount.show" }],
-    "menus": { "tabMenu": [{ "command": "wordCount.show" }] },
-    "views": { "sidebar": [{ "id": "wordCount", "name": "Word count" }] },
+    "commands": [{ "command": "readingTime.show", "title": "Show reading time" }],
+    "keybindings": [{ "key": "Mod-Shift-c", "command": "readingTime.show" }, { "vim": "gC", "command": "readingTime.show" }],
+    "menus": { "tabMenu": [{ "command": "readingTime.show" }] },
+    "views": { "sidebar": [{ "id": "readingTime", "name": "Reading time" }] },
     "configuration": {
-      "title": "Word count",
+      "title": "Reading time",
       "properties": {
-        "word-count.includeCode": { "type": "boolean", "default": false, "description": "Count words in code blocks too." }
+        "reading-time.wordsPerMinute": { "type": "number", "default": 230, "description": "How fast you read." }
       }
     }
   }
@@ -86,6 +86,7 @@ An extension whose requirements aren't met doesn't start, and the Extensions vie
 - **A sandboxed extension's calls have limits.** Each carries at most 2,000,000 characters' worth (as JSON), and together at most 10,000,000 characters' worth and 2,000 calls every 10 seconds. Past that a call is refused with the reason, so an extension reading many notes at once (more than about 1,700 in 10 seconds) has to wait and try again. A webview's message to its extension is held to the same size; one that's too big is dropped, with the reason in the webview's console.
 - `ctx.device` is the device, for code that adapts to it rather than requiring something: `has("keyboard")` and `has("touch")`, `width` (its width class) and `atLeast("expanded")`, `pointer` (`"fine"` or `"coarse"`), `touch`, `why("keyboard")` (what the app went by, in words) and `onChange(fn)`, which runs when the width class, the pointer, touch or the keyboard changes. Sandboxed extensions get it too.
 - `ctx.statusBar.set(id, text, tooltip?)` shows text in a status bar item the manifest declares (`contributes.statusBarItems`: `id`, `alignment` left or right, `priority`, and a `command` a click runs). Empty text hides it.
+- `ctx.statusBar.onShown(fn)` calls `fn(shown)` now and each time the status bar shows or goes: a phone has none. An item that costs something to keep up (Words' count) does that work only while it can be seen. In the page only.
 - `ctx.views.register(id, { resolve(webview) })` draws a view as a webview: set `webview.html`, and `webview.post()` and `webview.onMessage()` talk to its page. Trusted extensions may use `{ render(el) }` to draw into the page instead. Also `provide(prefix, make)` for views made from their id (like History's `version:<rev>:<path>`), `show`, `toggle`, `refresh`, `open`.
 - `ctx.commandBar.provide({ prefix, placeholder, items(query) })` adds a command bar provider. The bar picks the provider with the longest prefix the query starts with. A sandboxed extension's prefix starts with its own name, as a word (`word-count ` or `wordCount:`). Items may say their `section`, an `aside` (a few words at the row's end) and `dim`.
 - `ctx.search.provide(type, { search(query, limit, within) })` answers a kind of result the manifest declares in `contributes.search.types`. `query` is already read with `common-ink/query`, without its `type:` filters; match its words with `matchesWords`, and find nothing for a filter your results don't have. Each result has a `title`, and may have a `path`, `detail`, `aside` and `dim`, and `run()` opens it. When `within` is given (path globs), answer only with results in files that match one (`inGlobs` from `common-ink/query`), before the limit; results outside it are taken out anyway. `ctx.search.find(text, limit, progress?)` searches as the search screen does, a section per kind, and `progress` hears the sections found so far; a section with `more` stopped before it read every note it might find. A sandboxed extension searches only what it could read itself, as if nothing else were there, so what it can't read never takes a place in its results: notes and tasks in the `files:read` scopes it's allowed, events with `data:calendar:read`, and its own kinds. `ctx.search.filterKeys()` are the filter keys extensions add, for `parse`. One kind of result has one provider, its owner, and a sandboxed extension can't declare one the app or a built-in answers for, or a filter key not named for it (`word-count:` or `word-count-done:` for `word-count`); a provider that takes longer than half a second is left out of that search. Tasks answers `type:task` and Calendar `type:event` this way.
@@ -122,7 +123,9 @@ In the Extensions view, Customize copies a built-in's folder into the workspace 
 
 The core is the file store and sync, history, the layout, commands and the command bar, settings, the Extensions view, permissions, safe mode, and a plain editor with markdown highlighting and standard keys. On by default, as extensions: Workbench (tab bars, splits, dragging, borders and the tab menu), Vim, Live preview, GFM, Code blocks, LaTeX, Lists (outliner editing, bullets, numbers and folding), Daily notes, Tasks, Timers (timer, stopwatch and alarm embeds), Media (background noise and the mini player), Link embeds (videos, posts, music and link cards), History, Archive, Trash, Calendar, Contacts, Uploads, and the command bar's Search and Command list. Each loads only when one of its activation events happens, so it isn't in the app's first download.
 
-The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default (Word count, Boards, Pomodoro, HTML app), from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed, at once: a sandboxed extension needs no reload to start, and a note's blocks for its embeds draw. A block for an embed only an uninstalled Catalog extension draws offers to install it. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
+The Catalog, at the bottom of the Extensions view, lists first-party extensions that aren't on by default (Boards, Pomodoro, HTML app), from `/catalog/index.json` (`web/public/catalog/`). Install copies one's files into the workspace, where it runs sandboxed, at once: a sandboxed extension needs no reload to start, and a note's blocks for its embeds draw. A block for an embed only an uninstalled Catalog extension draws offers to install it. Other catalogs plug in with the `extensions.catalogs` setting: the address of each one's `index.json`, read through the Worker's safe fetch. Their extensions are other people's code, installed at your own risk. An index is `{"name": "…", "extensions": [{"id", "name", "version", "description", "path"}]}`, where `path` is the extension's folder, relative to the index.
+
+Word count left the Catalog when Words, built in, began counting as you type. A copy installed from the Catalog no longer runs or shows; one of that id you wrote yourself does.
 
 ## Turning extensions off, and safe mode
 

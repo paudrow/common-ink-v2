@@ -90,6 +90,13 @@ function installedFrom(text: string): { installedFrom?: string; catalog?: string
   }
 }
 
+/**
+ * Extensions taken out of the Catalog. A copy installed from it no longer runs or shows: Word count
+ * gave way to Words, built in. One of the same id you wrote yourself isn't touched.
+ */
+const RETIRED = new Set(["word-count"]);
+const retired = (id: string, from: { catalog?: string }) => RETIRED.has(id) && from.catalog === "Common Ink";
+
 /** The workspace extensions among the files: a folder with an extension.json. */
 export function findWorkspaceExtensions(files: readonly FileSummary[]): WorkspaceExtension[] {
   const byId = new Map<string, FileSummary[]>();
@@ -266,6 +273,8 @@ export interface HostOptions {
 /** Every extension, and starting them as their activation events happen. */
 export class ExtensionHost {
   records: ExtensionRecord[] = [];
+  /** Copies of retired Catalog extensions found at the last load, for the app to clear away. */
+  retired: WorkspaceExtension[] = [];
   private modules = new Map<string, () => Promise<ExtensionModule>>();
   private activations = new Map<string, Promise<void>>();
   /** What the app, the built-ins and trusted extensions have, which a sandboxed extension can't take. */
@@ -283,6 +292,7 @@ export class ExtensionHost {
     trusted: readonly string[] = [],
   ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
+    this.retired = [];
     const manifests = new Map<string, ExtensionManifest | string>();
     for (const w of workspace.values()) {
       // extension.json is only data, so it's read even in safe mode, for the extension's name.
@@ -309,14 +319,18 @@ export class ExtensionHost {
       this.modules.set(b.manifest.id, () => b.load());
     }
     for (const w of workspace.values()) {
+      const from = w.files.includes(installedPath(w.id)) ? installedFrom((await read(installedPath(w.id))).text) : {};
+      if (retired(w.id, from)) {
+        this.retired.push(w);
+        continue;
+      }
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
       if (builtIn && (safe || !trusted.includes(w.id))) continue;
       const manifest = manifests.get(w.id)!;
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
       const parsed = typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest;
-      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive" };
-      if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
+      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive", ...from };
       records.push(record);
       const reserved = tier === "sandbox" ? reservedName(w.id, this.claimed) : null;
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
@@ -343,10 +357,11 @@ export class ExtensionHost {
   async add(w: WorkspaceExtension, read: (path: FilePath) => Promise<WorkspaceFile>): Promise<ExtensionRecord | null> {
     const existing = this.records.find((r) => r.id === w.id);
     if (existing?.builtIn || (existing && existing.state !== "off")) return null;
+    const from = w.files.includes(installedPath(w.id)) ? installedFrom((await read(installedPath(w.id))).text) : {};
+    if (retired(w.id, from)) return null;
     const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
     if (typeof manifest === "string") return null;
-    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.claimed), workspace: w, state: "inactive" };
-    if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.claimed), workspace: w, state: "inactive", ...from };
     this.records = [...this.records.filter((r) => r.id !== w.id), record];
     const reserved = reservedName(w.id, this.claimed);
     if (reserved) {

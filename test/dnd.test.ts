@@ -54,7 +54,7 @@ test("a drop from outside the page opens a note at most: never a settings or cod
   for (const payload of [
     { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
     { item: { file: ".common-ink/layout.json" } },
-    { item: { file: ".common-ink/extensions/word-count/main.js" } },
+    { item: { file: ".common-ink/extensions/reading-time/main.js" } },
     { item: { file: ".common-ink/users/x/notes.md" } },
     { item: { view: "extensions" } },
     { item: { file: 123 } },

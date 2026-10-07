@@ -75,7 +75,7 @@ test("every scenario builds: its sections exist, its dates follow its clock, and
   assert.deepEqual(JSON.parse(tasks.notes.find((n) => n.path === ".common-ink/layout.json")!.text).root.tabs, [{ file: "Chores.md" }]);
   assert.deepEqual(scenarioSeed(scenarios.find((s) => s.name === "empty")!, sections).notes, []);
   const extensions = scenarioSeed(scenarios.find((s) => s.name === "extensions")!, sections);
-  assert.ok(extensions.notes.some((n) => n.path === ".common-ink/extensions/word-count/extension.json"), "installs Word count");
+  assert.ok(extensions.notes.some((n) => n.path === ".common-ink/extensions/line-count/extension.json"), "has Line count, the tests' extension");
 });
 
 test("replayed network: a recorded page makes its card without the network, and an unrecorded one says how to record it", async () => {

@@ -177,7 +177,7 @@ export type Refusal =
   /** Its manifest doesn't ask for it: the scopes of that kind it does ask for, if any. */
   | { reason: "undeclared"; scopes: string[] };
 
-/** "Word count can't read User settings: it only asked to read all your notes." */
+/** "Boards can't read User settings: it only asked to read all your notes." */
 export function refusedWords(name: string, ask: Ask, refusal: Refusal): Phrase {
   const tried: Phrase = [name, " can't ", ...askWords(ask)];
   switch (refusal.reason) {
@@ -196,5 +196,5 @@ function joined(phrases: Phrase[], and: string): Phrase {
   return phrases.flatMap((p, i) => [...(i === 0 ? [] : [i === phrases.length - 1 ? and : ", "]), ...p]);
 }
 
-/** Where to change what an extension may do: "Extensions → Word count". */
+/** Where to change what an extension may do: "Extensions → Boards". */
 export const changeIn = (name: string) => `Extensions → ${name}`;

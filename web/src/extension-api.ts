@@ -158,6 +158,8 @@ export interface ExtensionContext {
   statusBar: {
     /** Show `text` in one of them, or hide it with "". */
     set(id: string, text: string, tooltip?: string): void;
+    /** Be told whether the status bar shows, now and each time that changes: a phone has none. In the page only. */
+    onShown(fn: (shown: boolean) => void): void;
   };
   commandBar: {
     provide(provider: Provider): void;
