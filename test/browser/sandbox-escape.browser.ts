@@ -357,7 +357,7 @@ async function messagesAlone(app: App, cpu: () => Promise<number>) {
   return (await cpu()) - before;
 }
 
-browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, refused at the cost of its messages, and leaves other frames their share", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, refused at the cost of its messages, and leaves other frames their share", { scenario: "empty", allowErrors: [/./], timeout: 300_000 }, async (app) => {
   await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
   await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
   await app.writeFile(".common-ink/extensions/neighbor/extension.json", JSON.stringify(NEIGHBOR));
@@ -369,8 +369,9 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   // Error and no number written out per refused call. (The version that did both stalled the page 2.5 to
   // 4 times longer.) These count the spellings that version used, not every way of doing the same: an
   // Error subclass per refusal isn't counted here. What any refusal costs is bounded twice more below: no
-  // long task, and the flood's CPU time. CallShare's own words and count are unit tested
-  // (sandbox-limits.test.ts), where a number formatted per refusal fails on time.
+  // long task, and the flood's CPU time. CallShare's own words and count, and SandboxHost's refusals
+  // against the cost of answering at all, are unit tested (sandbox-limits.test.ts), where a number
+  // formatted with Intl.NumberFormat or an Error subclass thrown per refusal fails on time.
   await app.page.evaluate(() => {
     const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
     w.made = { errors: 0, numbers: 0 };

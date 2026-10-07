@@ -182,8 +182,7 @@ browserTest(h, "a note deleted forever is gone from this browser too: not kept t
     return (await (await fetch("/api/file", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "Diary.md", base: f.revision }) })).json()).file.revision as number;
   });
   assert.equal(await page.evaluate(async (d) => (await fetch("/api/purge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deleted: [d] }) })).status, d), 200);
-  await page.reload();
-  await page.waitForFunction(() => !!(window as unknown as { __commonInk?: unknown }).__commonInk);
+  await app.reload();
   await app.call("idle");
   await page.context().setOffline(true);
   const kept = await page.evaluate(() => new Promise<string>((done) => {
@@ -281,8 +280,7 @@ browserTest(h, "a sandboxed extension that asks for ctx.events.onChange is told 
   const { page } = app;
   await app.writeFile(".common-ink/extensions/listener/extension.json", JSON.stringify({ name: "Listener", activationEvents: ["onCommand:listener.run"], contributes: { commands: [{ command: "listener.run", title: "Run listener" }] } }));
   await app.writeFile(".common-ink/extensions/listener/index.js", LISTENER);
-  await page.reload();
-  await page.waitForFunction(() => (window as unknown as { __commonInk?: unknown }).__commonInk);
+  await app.reload();
   await app.command("Run listener");
   await page.locator(".notice", { hasText: "LISTENER ctx.events.onChange isn't available to sandboxed extensions" }).waitFor();
 });

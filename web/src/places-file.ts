@@ -9,7 +9,7 @@ import { unreachable, type Offline } from "./offline.ts";
  * Set one top-level key of places.json to what `value` makes of the text as it is (null: it can't be
  * read, so nothing's written), and say what happened through `notice` when it's worth saying.
  */
-export async function writePlacesKey(offline: Offline, key: string, value: (now: string) => unknown, what: string, notice: (message: string) => void): Promise<void> {
+export async function writePlacesKey(offline: Offline, key: string, value: (now: string) => unknown, what: string, notice: (message: string, alert?: boolean) => void): Promise<void> {
   const What = `${what[0].toUpperCase()}${what.slice(1)}`;
   for (let tries = 0; tries < 3; tries++) {
     // A change held here and not yet sent (made offline) comes first: this one builds on it, not on the
@@ -17,21 +17,21 @@ export async function writePlacesKey(offline: Offline, key: string, value: (now:
     const held = await offline.unsentFor(PLACES_PATH);
     const now = held ? { text: held.text, revision: held.base } : await offline.read(PLACES_PATH);
     const next = value(now.text);
-    if (next === null) return notice(`places.json can't be read: fix it to change ${what}.`);
+    if (next === null) return notice(`places.json can't be read: fix it to change ${what}.`, true);
     const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", key, next);
-    if (text === null) return notice(`places.json isn't a JSON object: fix it to change ${what}.`);
+    if (text === null) return notice(`places.json isn't a JSON object: fix it to change ${what}.`, true);
     try {
       if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") {
         if (held) await offline.release(PLACES_PATH);
         return;
       }
     } catch (err) {
-      if (!unreachable(err)) return notice(`${What} couldn't be saved: ${(err as Error).message}`);
+      if (!unreachable(err)) return notice(`${What} couldn't be saved: ${(err as Error).message}`, true);
       await offline.hold({ path: PLACES_PATH, text, base: now.revision });
       return notice(`You're offline: ${what} is changed here, and saved once you're back.`);
     }
   }
-  notice(`${What} couldn't be saved: places.json kept changing as it was written. Try again.`);
+  notice(`${What} couldn't be saved: places.json kept changing as it was written. Try again.`, true);
 }
 
 /**

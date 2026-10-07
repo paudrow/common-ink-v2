@@ -3,7 +3,7 @@
 // kept as a running total, by size and by count.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CallShare, measure } from "../web/src/sandbox.ts";
+import { CallShare, SandboxHost, measure } from "../web/src/sandbox.ts";
 
 const LIMIT = 2_000_000;
 
@@ -51,4 +51,60 @@ test("a frame's share takes tiny calls in constant time each, and stops them by 
   assert.equal(share.take(8, 11_001), null, "the moment passed, so there's room again");
   const big = new CallShare("Big", { size: 10_000_000, calls: 2_000, ms: 10_000 });
   assert.deepEqual([big.take(6_000_000, 0), big.take(6_000_000, 5_000), big.take(6_000_000, 10_001)], [null, "Big is sending too much at once: it can send 10,000,000 characters' worth every 10 seconds", null]);
+});
+
+const TOO_OFTEN = "Spammer is calling too often: it can make 2,000 calls every 10 seconds";
+
+/** A port standing in for a frame's: what it was sent, counted, and the calls it gets, made up front. */
+function framePort() {
+  const sent = { results: 0, refusals: 0, other: [] as unknown[] };
+  const port = {
+    onmessage: null as ((e: { data: unknown }) => void) | null,
+    postMessage(m: { t: string; id?: string; message?: string }) {
+      if (m.t === "result") sent.results++;
+      else if (m.message === TOO_OFTEN) sent.refusals++;
+      else sent.other.push(m);
+    },
+  };
+  const calls = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ data: { t: "call", id: `${prefix}${i}`, method: "commands.shortcut", args: ["nope"] } }));
+  return { port, sent, calls };
+}
+
+/**
+ * The main thread's CPU time in ms, not the clock's: on a busy machine the clock also counts this process
+ * waiting its turn, and the whole process's CPU time counts the garbage collector's helper threads.
+ */
+function cpu(work: () => void) {
+  const before = process.threadCpuUsage();
+  work();
+  const { user, system } = process.threadCpuUsage(before);
+  return (user + system) / 1000;
+}
+
+test("a frame's flood of tiny calls past its share is refused at about the cost of answering each at all", async () => {
+  // What answering a call costs with nothing done for it: an async answer with words made once.
+  const bare = framePort();
+  bare.port.onmessage = (e) => void (async (id: string) => bare.port.postMessage({ t: "reject", id, message: TOO_OFTEN }))((e.data as { id: string }).id);
+  const { port, sent, calls } = framePort();
+  void new SandboxHost({ name: "Spammer" } as never, async () => null, () => {}).talk(port as unknown as MessagePort);
+  calls(2_000, "w").forEach((m) => port.onmessage!(m));
+  await new Promise((r) => setTimeout(r, 0));
+  for (const p of [bare, { port }]) calls(20_000, "warm").forEach((m) => p.port.onmessage!(m));
+
+  // Taken in turns, seven times each, and the least of each compared: a collection or a neighbour's
+  // burst slows one turn, not all seven.
+  const alone: number[] = [];
+  const flood: number[] = [];
+  for (let round = 0; round < 7; round++) {
+    const [answering, flooding] = [bare.calls(20_000, `a${round}-`), calls(20_000, `f${round}-`)];
+    const turns = [() => alone.push(cpu(() => answering.forEach((m) => bare.port.onmessage!(m)))), () => flood.push(cpu(() => flooding.forEach((m) => port.onmessage!(m))))];
+    for (const turn of round % 2 ? turns.reverse() : turns) turn();
+  }
+
+  // The share's moment is 10 seconds: on a machine slow enough, a later one takes another 2,000.
+  assert.equal(sent.other.length, 0, `the first others: ${JSON.stringify(sent.other.slice(0, 3))}`);
+  assert.equal(sent.results + sent.refusals, 2_000 + 20_000 + 7 * 20_000);
+  assert.ok(sent.results >= 2_000 && sent.refusals >= 7 * 20_000, `${sent.results} answered, ${sent.refusals} refused`);
+  const [least, leastAlone] = [Math.min(...flood), Math.min(...alone)];
+  assert.ok(least < 3 * leastAlone + 10, `refusing 20,000 calls took at least ${least.toFixed(1)} ms of CPU, against ${leastAlone.toFixed(1)} ms to answer them at all`);
 });

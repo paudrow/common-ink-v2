@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Occurrence } from "common-ink/calendar";
 import { addMonths, dragRange, monthWeeks, period, placeDay, snap, startOfWeek, step, title } from "../web/src/extensions/calendar/model.ts";
+import { dropped } from "../web/src/extensions/calendar/views.ts";
 
 const MONDAY = 0;
 const SUNDAY = 6;
@@ -69,4 +71,48 @@ test("the event editor goes beside its event, and stays on screen when the event
   assert.deepEqual(placed(at(900, 200)), ["526px", "200px"], "to its left, with no room on the right");
   assert.deepEqual(placed(at(2480, 200)), ["826px", "200px"], "an event off to the right: at the right edge");
   assert.deepEqual(placed(at(-900, 700)), ["8px", "337px"], "an event off to the left and low: at the left edge, all of it on screen");
+});
+
+function inNewYork(check: () => void) {
+  const was = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    check();
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
+  }
+}
+
+const timed = (start: string, end: string): Occurrence => ({ address: "event:sample/personal/x", id: "x", calendar: "personal", title: "X", status: "confirmed", allDay: false, start, end });
+
+test("a dropped event keeps its wall-clock times across a month's end and the nights the clocks change", () => {
+  inNewYork(() => {
+    // 14:30–15:15 on Saturday 31 October, the night before the clocks go back, dropped on Sunday at 16:15.
+    const halloween = timed("2026-10-31T18:30:00.000Z", "2026-10-31T19:15:00.000Z");
+    assert.deepEqual(dropped(halloween, { kind: "move", startDay: "2026-10-31", day: "2026-11-01", start: 975, end: 1020 }), { allDay: false, startDay: "2026-11-01", start: 975, endDay: "2026-11-01", end: 1020 });
+    // Dragged late on the same day, it ends past midnight, on the next day.
+    assert.deepEqual(dropped(halloween, { kind: "move", startDay: "2026-10-31", day: "2026-10-31", start: 1410, end: 1455 }), { allDay: false, startDay: "2026-10-31", start: 1410, endDay: "2026-11-01", end: 15 });
+    // 01:30–03:30 on 8 March, across the hour the clocks skip, moved a day on: the same times on the clock.
+    const springForward = timed("2026-03-08T06:30:00.000Z", "2026-03-08T07:30:00.000Z");
+    assert.deepEqual(dropped(springForward, { kind: "move", startDay: "2026-03-08", day: "2026-03-09", start: 90, end: 210 }), { allDay: false, startDay: "2026-03-09", start: 90, endDay: "2026-03-09", end: 210 });
+    // 22:30–23:30 on Saturday 7 March, already Sunday in UTC, moved on to the night the clocks go forward.
+    const saturdayNight = timed("2026-03-08T03:30:00.000Z", "2026-03-08T04:30:00.000Z");
+    assert.deepEqual(dropped(saturdayNight, { kind: "move", startDay: "2026-03-07", day: "2026-03-08", start: 1350, end: 1410 }), { allDay: false, startDay: "2026-03-08", start: 1350, endDay: "2026-03-08", end: 1410 });
+    // 09:00–10:00 on 28 February: its end dragged to 11:30, and the event moved over the month's end.
+    const february = timed("2026-02-28T14:00:00.000Z", "2026-02-28T15:00:00.000Z");
+    assert.deepEqual(dropped(february, { kind: "resize", startDay: "2026-02-28", day: "2026-02-28", start: 540, end: 690 }), { allDay: false, startDay: "2026-02-28", start: 540, endDay: "2026-02-28", end: 690 });
+    assert.deepEqual(dropped(february, { kind: "move", startDay: "2026-02-28", day: "2026-03-01", start: 540, end: 600 }), { allDay: false, startDay: "2026-03-01", start: 540, endDay: "2026-03-01", end: 600 });
+  });
+});
+
+test("an event that runs past midnight keeps its length when it's moved, and a resize changes only its end", () => {
+  inNewYork(() => {
+    // 22:00 on Monday 5 October to 02:00 on Tuesday: drawn as a part on each day.
+    const late = timed("2026-10-06T02:00:00.000Z", "2026-10-06T06:00:00.000Z");
+    assert.deepEqual(dropped(late, { kind: "resize", startDay: "2026-10-06", day: "2026-10-06", start: 0, end: 180 }), { allDay: false, startDay: "2026-10-05", start: 1320, endDay: "2026-10-06", end: 180 }, "Tuesday's end dragged to 03:00");
+    assert.deepEqual(dropped(late, { kind: "resize", startDay: "2026-10-05", day: "2026-10-05", start: 1320, end: 1380 }), { allDay: false, startDay: "2026-10-05", start: 1320, endDay: "2026-10-05", end: 1380 }, "Monday's end dragged to 23:00");
+    assert.deepEqual(dropped(late, { kind: "move", startDay: "2026-10-05", day: "2026-10-05", start: 1380, end: 1440 }), { allDay: false, startDay: "2026-10-05", start: 1380, endDay: "2026-10-06", end: 180 }, "Monday's part an hour later");
+    assert.deepEqual(dropped(late, { kind: "move", startDay: "2026-10-06", day: "2026-10-07", start: 60, end: 180 }), { allDay: false, startDay: "2026-10-06", start: 1380, endDay: "2026-10-07", end: 180 }, "Tuesday's part to Wednesday at 01:00");
+  });
 });

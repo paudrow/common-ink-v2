@@ -69,7 +69,7 @@ const extension: ExtensionModule = {
           ctx.workbench.notice(`${pinned ? "Pinned" : "Unpinned"} ${name(paths)}`, revision === null ? [] : [{ label: "Undo", run: () => undo([revision], what) }]);
           return true;
         } catch (err) {
-          ctx.workbench.notice(`Couldn't ${pinned ? "pin" : "unpin"} ${name(paths)}: ${(err as Error).message}`);
+          ctx.workbench.notice(`Couldn't ${pinned ? "pin" : "unpin"} ${name(paths)}: ${(err as Error).message}`, [], "alert");
           return false;
         }
       },
@@ -89,7 +89,7 @@ const extension: ExtensionModule = {
           ctx.workbench.notice(`Archived ${name(paths)}`, revision === null ? [] : [{ label: "Undo", run: () => undo([revision], `archiving ${name(paths)}`) }]);
           return true;
         } catch (err) {
-          ctx.workbench.notice(`Couldn't archive ${name(paths)}: ${(err as Error).message}`);
+          ctx.workbench.notice(`Couldn't archive ${name(paths)}: ${(err as Error).message}`, [], "alert");
           return false;
         }
       },
@@ -124,7 +124,7 @@ const extension: ExtensionModule = {
         const results = await call<Array<{ status: string }>>("POST", "/api/undo", { revisions });
         if (results.some((r) => r.status !== "undone" && r.status !== "unchanged")) throw new Error("it changed since in a way that can't be taken back");
       } catch (err) {
-        ctx.workbench.notice(`Couldn't undo ${what}: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't undo ${what}: ${(err as Error).message}`, [], "alert");
       }
       await view.reload();
     };
@@ -133,7 +133,7 @@ const extension: ExtensionModule = {
       try {
         for (const g of gone) await call("POST", "/api/restore", { path: g.path, deleted: g.revision });
       } catch (err) {
-        ctx.workbench.notice(`Couldn't restore ${what}: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't restore ${what}: ${(err as Error).message}`, [], "alert");
       }
       await view.reload();
     };
