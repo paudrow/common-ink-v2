@@ -98,8 +98,21 @@ browserTest(h, "offline, two searches saved one after the other both reach place
     await page.locator(".dialog input").fill(name);
     await page.keyboard.press("Enter");
     await item(page, name).waitFor();
-    await page.locator(".notice", { hasText: "You're offline" }).waitFor();
   }
+  // Both are held here, in the one edit waiting to be sent for places.json.
+  await page.waitForFunction(
+    () =>
+      new Promise((done) => {
+        const open = indexedDB.open("common-ink");
+        open.onsuccess = () => {
+          const all = open.result.transaction("unsent").objectStore("unsent").getAll();
+          all.onsuccess = () => done((all.result as Array<{ path: string; text: string }>).some((u) => u.path === ".common-ink/places.json" && u.text.includes('"Garden"') && u.text.includes('"Launch"')));
+        };
+        open.onerror = () => done(false);
+      }),
+    undefined,
+    { timeout: 10_000 },
+  );
   await page.context().setOffline(false);
   await page.waitForFunction(async () => {
     const saved = JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved ?? {};
