@@ -1,0 +1,25 @@
+{
+  "id": "feed",
+  "name": "Feed",
+  "version": "1.0.0",
+  "description": "Every note that isn't archived, newest change first, as cards grouped by day: its title, a few lines, and who changed it and when. Embeds in a card are a quiet line saying what they are. By touch, swipe a card right to archive it and left to move it to Trash (the feed.swipe settings), long-press to select several, and Undo on the notice takes it back. New changes while you're scrolled down wait under a pill. On a phone it's the Feed on the bottom bar, and what the app opens on.",
+  "main": "index.ts",
+  "files": ["index.ts", "view.ts", "cards.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "files:read": { "paths": ["**/*.md"], "why": "Show a few lines of each note in its card" },
+    "files:write": { "paths": ["**/*.md", ".common-ink/archive.json"], "why": "Archive notes and move them to Trash when you swipe them, as changes by you that Undo takes back" }
+  },
+  "contributes": {
+    "commands": [{ "command": "feed.show", "title": "Open the Feed" }],
+    "menus": { "quickOpen": [{ "command": "feed.show" }] },
+    "views": { "sidebar": [{ "id": "feed", "name": "Feed" }] },
+    "configuration": {
+      "title": "Feed",
+      "properties": {
+        "feed.swipe.right": { "type": "string", "enum": ["archive", "trash", "none"], "default": "archive", "description": "What swiping a card right does, by touch: archive it (green), move it to Trash (red), or nothing." },
+        "feed.swipe.left": { "type": "string", "enum": ["archive", "trash", "none"], "default": "trash", "description": "What swiping a card left does, by touch: move it to Trash (red), archive it (green), or nothing." }
+      }
+    }
+  }
+}
