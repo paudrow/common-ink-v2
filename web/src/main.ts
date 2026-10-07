@@ -1193,6 +1193,8 @@ async function setBar(ids: string[]) {
     }
   }
 }
+/** Whether an extension owns a view (ownership.ts): what names a view reaches only its owner's. */
+const ownsView = (extension: string, view: string) => extensions.ownership.owns(extension, "view", view);
 /** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
   const on = extensions.host.records.filter((r) => r.state === "inactive" || r.state === "active");
@@ -1213,9 +1215,10 @@ function places(): Place[] {
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
     // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
-    // A sandboxed extension's place that runs a command runs one still its own (the runtime's bindable), as its keys and menu items do.
-    ...on.flatMap((r) => r.manifest.contributes.places.filter((p) => "view" in p || extensions.bindable(r.manifest)(p.command)).map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
-    ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
+    // A place runs a command, or shows a view, still the extension's own (the runtime's bindable, and who owns
+    // the view), as its keys and menu items do: none reaches another extension's.
+    ...on.flatMap((r) => r.manifest.contributes.places.filter((p) => ("view" in p ? ownsView(r.id, p.view) : extensions.bindable(r.manifest)(p.command))).map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
+    ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id) && ownsView(r.id, v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
   ];
@@ -1246,7 +1249,7 @@ shell = new Shell({
     const tab = L.activeTab(workbench.focusedGroup);
     return tab && { key: L.openableKey(tab), title: workbench.title(tab), note: "file" in tab && isNote(tab.file) };
   },
-  contextViews: () => extensions.host.on().flatMap((m) => (m.contributes.views.context ?? []).map((v) => ({ id: v.id, title: v.name }))),
+  contextViews: () => extensions.host.on().flatMap((m) => (m.contributes.views.context ?? []).filter((v) => ownsView(m.id, v.id)).map((v) => ({ id: v.id, title: v.name }))),
   drawView: (id, el) => workbench.drawInto(id, el),
   menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title, ...(i.by ? { by: i.by } : {}) })), action("tab.open"), action("window.openRight"), action("tab.close")],
   // Extensions' buttons, then the core's: a heading, a link, undo.

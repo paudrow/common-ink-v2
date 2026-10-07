@@ -175,6 +175,7 @@ test("a sandboxed extension's places and toolbar buttons keep only its own comma
         { id: "core", title: "Core", command: "settings.workspaceJson" },
         { id: "other", title: "Other", command: "lists.indent" },
         { id: "theirs", title: "Theirs", view: "settings" },
+        { id: "undeclared", title: "Undeclared", view: "sneaky.nothere" },
       ],
       toolbar: [
         { command: "sneaky.hello", title: "Own", label: "O" },

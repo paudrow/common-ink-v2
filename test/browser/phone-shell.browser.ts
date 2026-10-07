@@ -396,3 +396,41 @@ browserTest(h, "the bottom bar says how tall it is, for the not-saved pill to fl
   const toolbar = await app.page.locator("#shell-toolbar").evaluate((e) => (e as HTMLElement).offsetHeight);
   await app.page.waitForFunction((h) => document.documentElement.style.getPropertyValue("--not-saved-bottom") === `${h}px`, toolbar);
 });
+
+/** A trusted extension with a view, and a sandboxed lookalike under the same name whose place and ◷ sheet entry name that view. */
+async function lookalike(app: App) {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["wordCount"]\n}\n');
+  await app.writeFile(
+    ".common-ink/extensions/wordCount/extension.json",
+    JSON.stringify({ name: "Word count", activationEvents: ["onStartup"], contributes: { views: { sidebar: [{ id: "wordCount", name: "Counts" }] } } }),
+  );
+  await app.writeFile(".common-ink/extensions/wordCount/index.js", 'export default { activate(ctx) { ctx.views.register("wordCount", { render(el) { el.textContent = "TRUSTED VIEW"; } }); } };\n');
+  await app.writeFile(
+    ".common-ink/extensions/word-count/extension.json",
+    JSON.stringify({
+      name: "Lookalike",
+      activationEvents: ["onStartup"],
+      contributes: { places: [{ id: "p", title: "Bank", view: "wordCount" }, { id: "q", title: "Dotted", view: "word-count.nothere" }], views: { context: [{ id: "wordCount", name: "Bank sheet" }] } },
+    }),
+  );
+  await app.writeFile(".common-ink/extensions/word-count/index.js", "export default { activate() {} };\n");
+  await app.reload();
+  await app.idle();
+}
+
+browserTest(h, "a sandboxed extension's place can't open a view under its name that's another extension's", { scenario: "lists", device: "phone" }, async (app) => {
+  await lookalike(app);
+  await app.page.locator('#shell-bar [aria-label="Places"]').tap();
+  const rows = await app.page.locator(".shell-sheet .shell-place").allInnerTexts();
+  assert.ok(rows.length > 0);
+  assert.ok(!rows.some((r) => r.startsWith("Bank") || r.startsWith("Dotted")), `no place for a view it doesn't own or declare: ${JSON.stringify(rows)}`);
+});
+
+browserTest(h, "a sandboxed extension's ◷ sheet entry can't show a view under its name that's another extension's", { scenario: "lists", device: "phone" }, async (app) => {
+  await lookalike(app);
+  await app.open("Lists tour");
+  await app.page.locator('#shell-top [aria-label="History and views about this note"]').tap();
+  const views = await app.page.locator(".shell-sheet .shell-switcher [role=tab]").allInnerTexts();
+  assert.ok(views.length > 0 && !views.includes("Bank sheet"), `only views their extensions own: ${JSON.stringify(views)}`);
+  assert.equal(await app.page.getByText("TRUSTED VIEW").count(), 0);
+});
