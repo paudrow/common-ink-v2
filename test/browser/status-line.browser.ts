@@ -274,7 +274,7 @@ browserTest(h, "on a phone, an edit the server fails to take says it isn't saved
   assert.equal(await app.readFile("Trip.md"), "# Trip\n- packed\n", "the pill went once the server had the edit");
 });
 
-browserTest(h, "typing in a 20,000-line note makes no long tasks: the count reads only the lines an edit touches", { scenario: "empty" }, async (app) => {
+browserTest(h, "typing in a 20,000-line note, each edit's count reads only the line it touches, and none takes long", { scenario: "empty" }, async (app) => {
   const line = (i: number) => (i % 10 === 0 ? `## Heading ${i}` : i % 7 === 0 ? `- [ ] task ${i} [a link](https://ex.com/${i}) **bold**` : `The quick brown fox jumps over the dog, line ${i}.`);
   await app.writeFile("Big.md", Array.from({ length: 20_000 }, (_, i) => line(i)).join("\n") + "\n");
   // No save while it types: sending a megabyte isn't what this measures.
@@ -285,17 +285,22 @@ browserTest(h, "typing in a 20,000-line note makes no long tasks: the count read
   const before = await words(app).textContent();
   await app.call("cursor", 3, 1);
   await app.keys("A");
+  // Each of Words' counts is a performance measure, with how many lines it read (words/index.ts).
   await app.page.evaluate(() => {
-    const w = window as unknown as { longTasks: number[] };
-    w.longTasks = [];
-    new PerformanceObserver((list) => w.longTasks.push(...list.getEntries().map((e) => Math.round(e.duration)))).observe({ type: "longtask" });
+    const w = window as unknown as { counts: Array<{ lines: number; ms: number }> };
+    w.counts = [];
+    new PerformanceObserver((list) => w.counts.push(...list.getEntries().filter((e) => e.name === "Words: count").map((e) => ({ lines: (e as PerformanceMeasure).detail.lines as number, ms: e.duration })))).observe({ type: "measure" });
   });
-  for (const key of " one two three") {
-    await app.page.waitForTimeout(150);
+  const typed = " one two three";
+  for (const key of typed) {
+    await app.page.waitForTimeout(100);
     await app.page.keyboard.press(key === " " ? "Space" : key);
   }
-  await app.page.waitForTimeout(500);
   await app.keys("<Esc>");
-  assert.deepEqual(await app.page.evaluate(() => (window as unknown as { longTasks: number[] }).longTasks), []);
+  await app.page.waitForTimeout(300);
+  const counts = await app.page.evaluate(() => (window as unknown as { counts: Array<{ lines: number; ms: number }> }).counts);
+  assert.deepEqual(counts.map((c) => c.lines), Array(typed.length).fill(1), "one count per key, of the one line it changed");
+  // Loose, as a busy machine is slow: counting a line is a fraction of a millisecond.
+  assert.ok(counts.every((c) => c.ms < 200), `no count took long: ${counts.map((c) => Math.round(c.ms)).join(", ")} ms`);
   assert.equal(Number((await words(app).textContent())!.replace(/\D/g, "")), Number(before!.replace(/\D/g, "")) + 3);
 });
