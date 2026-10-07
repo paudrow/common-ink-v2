@@ -222,6 +222,20 @@ browserTest(h, "after an event is dragged, the calendar's keys still work", { sc
   await until(app, "l goes to the next week", async () => (await heading.textContent()) === "Oct 12 – 18, 2026");
 });
 
+browserTest(h, "a timed event a day or longer, dragged a day on as a bar, keeps its times", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  const res = await app.page.context().request.post(`${app.base}/api/events`, { data: { title: "Conference", start: "2026-10-06T09:00", end: "2026-10-07T10:00", calendar: "work" } });
+  assert.ok(res.ok(), `made the conference: ${res.status()} ${await res.text()}`);
+  const { address } = (await res.json()) as { address: string };
+  await openCalendar(app);
+  const bar = app.page.locator(`.cal-bar[data-address="${address}"]`);
+  const b = await box(app, bar);
+  const col = (await box(app, app.page.locator('.cal-day[data-day="2026-10-06"]'))).width;
+  await drag(app, { x: b.x + 10, y: b.y + b.height / 2 }, { x: b.x + 10 + col, y: b.y + b.height / 2 });
+  await until(app, "the conference moved a day on", async () => (await event(app, address))?.start !== "2026-10-06T09:00:00");
+  const moved = await event(app, address);
+  assert.deepEqual([moved?.start, moved?.end], ["2026-10-07T09:00:00", "2026-10-08T10:00:00"]);
+});
+
 browserTest(h, "a repeating event's edits ask which ones: this event, this and following, all", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
   const standups = async () => (await titled(app, "2026-10-05T00:00:00Z", "2026-10-17T00:00:00Z")).filter((e) => e.address.includes("standup") || e.title.startsWith("Team") || e.title.startsWith("Sync"));
