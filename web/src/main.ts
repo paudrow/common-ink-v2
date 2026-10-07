@@ -48,7 +48,7 @@ import { Shell, type Action, type Place, type ShellEntry } from "./shell.ts";
 import { isIcon } from "./icons.ts";
 import { barOf, GO_KEYS, pinnedOf, PINS_PATH, PLACES_PATH, savedOf, type SavedSearch } from "../../worker/src/places.ts";
 import { GoKeys, Sidebar, type Chosen } from "./sidebar.ts";
-import { setTopLevelKey } from "./json-edit.ts";
+import { setTopLevelKey, topLevelKeys } from "./json-edit.ts";
 import { undo as undoTyping } from "@codemirror/commands";
 import { atLeast, deviceOfLayout, here, hereText, needsText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
@@ -1224,31 +1224,56 @@ async function loadPlaces() {
  * here at once; offline, the write is held like any edit and sent once the server's back.
  */
 async function writePlaces(key: string, value: (now: string) => unknown, what: string) {
+  const What = `${what[0].toUpperCase()}${what.slice(1)}`;
   for (let tries = 0; tries < 3; tries++) {
-    const now = await offline.read(PLACES_PATH);
-    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", key, value(now.text));
+    // A change held here and not yet sent (made offline) comes first: this one builds on it, not on the
+    // server's copy, which would drop it, as both are held under the one path.
+    const held = await offline.unsentFor(PLACES_PATH);
+    const now = held ? { text: held.text, revision: held.base } : await offline.read(PLACES_PATH);
+    const next = value(now.text);
+    if (next === null) return workbench.notice(`places.json can't be read: fix it to change ${what}.`);
+    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", key, next);
     if (text === null) return workbench.notice(`places.json isn't a JSON object: fix it to change ${what}.`);
     try {
-      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
+      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") {
+        if (held) await offline.release(PLACES_PATH);
+        return;
+      }
     } catch (err) {
-      if (!unreachable(err)) return workbench.notice(`${what[0].toUpperCase()}${what.slice(1)} couldn't be saved: ${(err as Error).message}`);
+      if (!unreachable(err)) return workbench.notice(`${What} couldn't be saved: ${(err as Error).message}`);
       await offline.hold({ path: PLACES_PATH, text, base: now.revision });
       return workbench.notice(`You're offline: ${what} is changed here, and saved once you're back.`);
     }
   }
+  workbench.notice(`${What} couldn't be saved: places.json kept changing as it was written. Try again.`);
 }
 async function setBar(ids: string[]) {
   barIds = ids;
   await writePlaces("bar", () => ids, "the bottom bar");
 }
-/** places.json's saved searches as written, with one set (or, with no query, taken out). */
-const withSaved = (text: string, name: string, query: string | null) => {
+/**
+ * places.json's saved searches as written, with one set (or, with no query, taken out). Read as
+ * setTopLevelKey reads the file, and a trailing comma forgiven: null if "saved" still can't be read,
+ * so it's never written over as if it were empty.
+ */
+const withSaved = (text: string, name: string, query: string | null): Record<string, unknown> | null => {
+  const keys = topLevelKeys(text.trim() ? text : "{}");
+  if (!keys) return null;
+  const at = keys.keys.findLast((k) => k.key === "saved");
   let saved: Record<string, unknown> = {};
-  try {
-    const was = JSON.parse(text).saved;
-    if (was && typeof was === "object" && !Array.isArray(was)) saved = { ...was };
-  } catch {
-    // None yet.
+  if (at) {
+    const raw = text.slice(at.valueStart, at.end);
+    let was: unknown;
+    for (const attempt of [raw, raw.replace(/,(\s*[}\]])/g, "$1")]) {
+      try {
+        was = JSON.parse(attempt);
+        break;
+      } catch {
+        // Try it without trailing commas.
+      }
+    }
+    if (!was || typeof was !== "object" || Array.isArray(was)) return null;
+    saved = { ...(was as Record<string, unknown>) };
   }
   if (query === null) delete saved[name];
   else saved[name] = query;
@@ -1465,9 +1490,11 @@ commands.register(
   {
     id: "places.toggle",
     title: "Show or hide Places",
-    // Under 840px Places is a sheet, from the bottom bar: the key does what it would have.
+    // Under 840px Places is a sheet, from the bottom bar: the key does what it would have. So it does off a
+    // Mac in a note with Vim, where Ctrl-b is Vim's page up.
     run: () => {
       if (!wide()) return false;
+      if (!IS_MAC && document.activeElement?.closest(".cm-editor") && extensions.host.records.find((r) => r.id === "vim")?.state === "active") return false;
       placesHidden = !placesHidden;
       try {
         localStorage.setItem(PLACES_HIDDEN, placesHidden ? "1" : "0");

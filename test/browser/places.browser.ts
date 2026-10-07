@@ -85,3 +85,24 @@ browserTest(h, "on a phone there's no sidebar: Places stays the sheet, and ⌘B 
   await page.keyboard.press("ControlOrMeta+b");
   assert.equal(await page.locator("#places").isVisible(), false);
 });
+
+browserTest(h, "offline, two searches saved one after the other both reach places.json once back", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch/] }, async (app) => {
+  const { page } = app;
+  await page.locator("#places .place-item").first().waitFor();
+  await page.context().setOffline(true);
+  for (const [query, name] of [["garden", "Garden"], ["launch", "Launch"]]) {
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.locator("#command-bar input").fill(query);
+    await page.keyboard.press("ControlOrMeta+s");
+    await page.locator(".dialog input").fill(name);
+    await page.keyboard.press("Enter");
+    await item(page, name).waitFor();
+    await page.locator(".notice", { hasText: "You're offline" }).waitFor();
+  }
+  await page.context().setOffline(false);
+  await page.waitForFunction(async () => {
+    const saved = JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved ?? {};
+    return saved.Garden === "garden" && saved.Launch === "launch" && saved.Tours === "tour";
+  }, undefined, { timeout: 20_000 });
+});
