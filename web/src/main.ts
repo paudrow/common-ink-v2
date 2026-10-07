@@ -554,8 +554,20 @@ const feedBox = document.createElement("div");
 feedBox.className = "list-feed";
 feedBox.hidden = true;
 $("#notes").append(feedBox);
-/** Whether the list column shows the Feed extension's view: on a wide screen, with the Feed on. */
-const feedInList = () => "feed" in listShows && device.atLeast("expanded") && extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+/**
+ * Whether the Feed is to be drawn in the list column again: at first, and when you go to it. Opened in a
+ * tab (Open the Feed), it's there instead, and the column lists the notes until you go to the Feed again.
+ */
+let drawFeed = true;
+/** Whether the list column shows the Feed extension's view: on a wide screen, with the Feed on, and it here. */
+function feedInList(): boolean {
+  if (!("feed" in listShows) || !device.atLeast("expanded") || !extensions.host.records.some((r) => r.id === "feed" && r.state === "active")) return false;
+  if (drawFeed) {
+    workbench.drawInto("feed", feedBox);
+    drawFeed = !feedBox.childElementCount;
+  }
+  return feedBox.childElementCount > 0;
+}
 
 function renderList() {
   const current = workbench.focusedPath;
@@ -563,11 +575,7 @@ function renderList() {
   document.documentElement.toggleAttribute("data-list-feed", feed);
   feedBox.hidden = !feed;
   listHead.hidden = list.hidden = feed;
-  if (feed) {
-    // Drawn once: the Feed keeps itself current, and keeps its scroll and selection while it's here.
-    if (!feedBox.childElementCount) workbench.drawInto("feed", feedBox);
-    return;
-  }
+  if (feed) return;
   if ("saved" in listShows) {
     const { saved, results, more, note } = listShows;
     listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: saved.name }), Object.assign(document.createElement("code"), { textContent: saved.query }));
@@ -1354,6 +1362,7 @@ async function countSaved() {
 let recount = 0;
 function showFeed() {
   listShows = { feed: true };
+  drawFeed = true;
   renderList();
 }
 /** Go to a place: the Feed in the list beside the note, a view in the window, or a command's place. */
