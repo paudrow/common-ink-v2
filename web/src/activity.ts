@@ -1,5 +1,5 @@
 // What extensions have done this session (ADR 0006): every brokered network request and every check
-// of a permission, newest first, in the words the prompts and the Extensions view use: "Word count read
+// of a permission, newest first, in the words the prompts and the Extensions view use: "Boards read
 // the note This week · 2 min ago". Their writes are in history too, by "extension:<id>". The status
 // bar's dot shows while a network request is in flight.
 import type { Activity, PermissionBroker } from "./broker.ts";

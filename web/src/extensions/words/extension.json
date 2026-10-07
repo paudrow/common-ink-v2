@@ -1,0 +1,15 @@
+{
+  "id": "words",
+  "name": "Words",
+  "version": "1.0.0",
+  "description": "How many words the note in focus has, in the status bar, counted as you type. List markers, checkboxes, link addresses, HTML tags, code, math and widget lines aren't words. It counts only while the count shows.",
+  "main": "index.ts",
+  "files": ["index.ts", "count.ts"],
+  "activationEvents": ["onStartup"],
+  "permissions": {
+    "editor": { "why": "Count the words in the note in focus as you type" }
+  },
+  "contributes": {
+    "statusBarItems": [{ "id": "words.count", "alignment": "right", "priority": 100 }]
+  }
+}
