@@ -97,7 +97,10 @@ const STEPS: Step[] = [
       await tap(app, '#shell-bar [aria-label="Search"]');
       await app.page.locator("#command-bar:not([hidden]) input").waitFor();
       await app.page.keyboard.insertText("Basil");
-      const hit = app.page.locator("#command-bar li", { hasText: "Lists tour" }).first();
+      // The search's own hit: until it answers, the list is still the empty query's (Recent, which has
+      // Lists tour too), and a tap on that as it's drawn again can land on nothing.
+      await app.page.locator("#command-bar-items:not([aria-busy])").waitFor();
+      const hit = app.page.locator("#command-bar li", { hasText: "Lists tour" }).filter({ hasText: "Basil" }).first();
       await hit.waitFor();
       await hit.tap();
     },
