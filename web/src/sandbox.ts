@@ -162,14 +162,22 @@ export class SandboxHost {
     frame.src = "/sandbox/host";
     const connecting = connect(frame);
     hosts().append(frame);
-    const port = (this.port = await connecting);
+    const port = await connecting;
     // Any later load means the frame navigated: the app's frame-src blocks leaving the sandbox route,
     // so it's on an error page now. Say so, and stop it.
     frame.addEventListener("load", () => {
       this.failed("It tried to navigate its frame away from the sandbox, so it was stopped.");
       this.stop();
     });
-    const started = new Promise<void>((resolve, reject) => {
+    const started = this.talk(port);
+    port.postMessage({ t: "start", extension: this.extension, code, settings, me, device });
+    await started;
+  }
+
+  /** Answer the frame's calls and settle its answers over `port`. Resolves once the frame says it's ready; rejects with its error. */
+  talk(port: MessagePort): Promise<void> {
+    this.port = port;
+    return new Promise<void>((resolve, reject) => {
       port.onmessage = (e) => {
         const m = e.data as { t: string; id?: string; method?: string; args?: unknown[]; value?: unknown; message?: string };
         if (m.t === "ready") resolve();
@@ -187,8 +195,6 @@ export class SandboxHost {
         }
       };
     });
-    port.postMessage({ t: "start", extension: this.extension, code, settings, me, device });
-    await started;
   }
 
   /** Why a call can't be made, or null: not plain data, too big, or past its share of the moment. */
