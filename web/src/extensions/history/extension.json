@@ -17,7 +17,7 @@
       { "command": "history.addLabel", "title": "Add label to this note…" }
     ],
     "menus": { "tabMenu": [{ "command": "history.addLabel" }] },
-    "views": { "sidebar": [{ "id": "history", "name": "History" }] },
+    "views": { "context": [{ "id": "history", "name": "History" }] },
     "configuration": {
       "title": "History",
       "properties": {
