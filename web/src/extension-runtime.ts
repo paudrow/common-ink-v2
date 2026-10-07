@@ -1016,7 +1016,7 @@ export class ExtensionRuntime {
         tabs: () => this.tabs(),
         moveTab: (by) => app.workbench.change((l) => L.shiftTab(l, by)),
         refreshFromServer: (paths) => app.workbench.refreshFromServer(paths),
-        notice: (message, actions) => void app.workbench.notice(message, actions),
+        notice: (message, actions, urgency) => void app.workbench.notice(message, actions, urgency),
         confirm: (title, text, yes, how) => confirmDialog(title, text, yes, how?.danger === true),
         canGo: (by) => !!app.workbench.navigation.step(by),
       },
