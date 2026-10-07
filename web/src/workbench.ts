@@ -795,13 +795,15 @@ export class Workbench {
       box.hidden = !showing;
       return box;
     });
-    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
+    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes, and so does a notice: a
+    // window drawn again (a note opened in it) isn't a reason for what it says to go unread.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
+    const kept = [...chrome, ...editors.querySelectorAll<HTMLElement>(":scope > .notice")];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
     // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
     // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
     const wanted = new Set<Node>([...empty, ...boxes]);
-    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const c of [...editors.children]) if (!wanted.has(c) && !kept.includes(c as HTMLElement)) c.remove();
     for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }

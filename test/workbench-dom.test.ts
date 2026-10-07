@@ -12,6 +12,7 @@ Object.assign(globalThis, {
   Window: window.Window,
   HTMLElement: window.HTMLElement,
   CSS: { escape: (s: string) => s },
+  matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
 });
 const { Workbench } = await import("../web/src/workbench.ts");
 const { LAYOUT_PATH, focusGroup } = await import("../web/src/layout.ts");
@@ -109,4 +110,16 @@ test("moving the cursor about isn't a place of its own; a jump of more than ten 
   assert.equal(places(), 2, "G or a search: a jump");
   await wb.go(-1);
   assert.equal(view.state.doc.lineAt(view.state.selection.main.head).number, 4, "back where the cursor was before the jump");
+});
+
+test("a notice stays as its window opens another note, or its tab changes: only its own close, its time or a newer notice takes it away", async () => {
+  const { wb, host } = await workbench({ root: group("g1", "A.md"), focus: "g1" });
+  wb.notice("Word count left the Catalog. A file you added in its folder stayed.");
+  const notices = () => [...host.querySelectorAll(".notice p")].map((p) => p.textContent);
+  assert.deepEqual(notices(), ["Word count left the Catalog. A file you added in its folder stayed."]);
+  await wb.open("B.md" as FilePath);
+  await wb.open("C.md" as FilePath, { newTab: true });
+  assert.deepEqual(notices(), ["Word count left the Catalog. A file you added in its folder stayed."], "opening notes leaves it");
+  wb.notice("Saved a copy");
+  assert.deepEqual(notices(), ["Saved a copy"], "a newer notice replaces it");
 });
