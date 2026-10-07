@@ -210,6 +210,18 @@ browserTest(h, "a new event dragged out as the keys jump weeks ahead keeps the d
   assert.deepEqual(await editor.locator('input[type="date"], input[type="time"]').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value)), ["2026-10-09", "14:00", "2026-10-09", "15:30"]);
 });
 
+browserTest(h, "after an event is dragged, the calendar's keys still work", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const to = await at(app, "2026-10-07", 16 * 60 + 15);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
+  await until(app, "the dentist moved to Wednesday 16:15", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T16:15:00");
+  const heading = app.page.locator(".cal-title-text");
+  assert.equal(await heading.textContent(), "Oct 5 – 11, 2026");
+  await app.page.keyboard.press("l");
+  await until(app, "l goes to the next week", async () => (await heading.textContent()) === "Oct 12 – 18, 2026");
+});
+
 browserTest(h, "a repeating event's edits ask which ones: this event, this and following, all", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
   const standups = async () => (await titled(app, "2026-10-05T00:00:00Z", "2026-10-17T00:00:00Z")).filter((e) => e.address.includes("standup") || e.title.startsWith("Team") || e.title.startsWith("Sync"));
