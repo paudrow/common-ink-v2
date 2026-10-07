@@ -2,9 +2,11 @@
 // tries every way out, and none works. Run with `npm run test:browser` after `npm run build`; it needs
 // Chrome (CHROME_PATH, or Chrome where it usually is).
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import type { Page } from "playwright-core";
-import { harness, runCommand, writeFile } from "./harness.ts";
+import { browserTest, harness, runCommand, writeFile } from "./harness.ts";
 
 const h = harness();
 
@@ -88,66 +90,101 @@ test("a sandboxed extension can't read the app's cookies, storage, page or notes
 const promptLines = (page: Page) =>
   page.evaluate(`[...document.querySelector(".dialog").querySelectorAll("h2, .dialog-asks li, .dialog-why-now, .dialog-why, .dialog-actions button, .dialog-note")].map((e) => e.textContent.replace(/\\s+/g, " ").trim())`) as Promise<string[]>;
 
-/** What Word count's status bar item says, or null while it's hidden. */
-const wordsInStatusBar = (page: Page) =>
+browserTest(h, "Boards installs from the catalog and goes in at once, listed as from the Catalog and no longer offered", { scenario: "empty" }, async (app) => {
+  const page = app.page;
+  await installFromCatalog(page, "Boards");
+  const files = await page.evaluate(() => fetch("/api/files").then((r) => r.json()));
+  assert.deepEqual(
+    (files.files ?? files).map((f: { path: string }) => f.path).filter((p: string) => p.startsWith(".common-ink/extensions/boards/")).sort(),
+    [".common-ink/extensions/boards/extension.json", ".common-ink/extensions/boards/index.js", ".common-ink/extensions/boards/installed.json"],
+    "its files are in the workspace, with where they came from",
+  );
+  // Installed, and listed so, with no reload: a sandboxed extension goes in at once.
+  await page.waitForSelector('.extension-section .extension-row[data-extension="boards"]');
+  assert.equal(await page.locator('.extension-row[data-extension="boards"] .badge').last().textContent(), "Catalog");
+  assert.equal(await page.locator(".catalog-entry", { hasText: "Boards" }).count(), 0, "it's no longer offered");
+  assert.equal(await page.locator(".banner", { hasText: "apply after reload" }).count(), 0);
+});
+
+/** Line count, the tests' sandboxed extension that reads the note on show (test/scenarios/extensions/). */
+const LINE_COUNT = path.join(import.meta.dirname, "../scenarios/extensions/.common-ink/extensions/line-count");
+
+/** What Line count's status bar item says, or null while it's hidden. */
+const linesInStatusBar = (page: Page) =>
   page.evaluate(() => {
-    const item = document.querySelector<HTMLElement>('.status-item[data-item="wordCount.status"]');
+    const item = document.querySelector<HTMLElement>('.status-item[data-item="lineCount.status"]');
     return item && !item.hidden ? item.textContent : null;
   });
 
-test("Word count installs from the catalog and runs at once, counting in the status bar once you allow it; Don't allow is kept", async () => {
-  const page = await h.browser.newPage();
-  await page.goto(`${h.base}/?file=Welcome.md`);
-  await page.waitForSelector(".cm-content");
-  await installFromCatalog(page, "Word count");
-  const files = await page.evaluate(() => fetch("/api/files").then((r) => r.json()));
-  assert.deepEqual(
-    (files.files ?? files).map((f: { path: string }) => f.path).filter((p: string) => p.includes("word-count")).sort(),
-    [".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"],
-    "its files are in the workspace, with where they came from",
-  );
-  // Installed, and listed so, with no reload: a sandboxed extension goes in at once, and starts.
-  await page.waitForSelector('.extension-section .extension-row[data-extension="word-count"]');
-  assert.equal(await page.locator('.extension-row[data-extension="word-count"] .badge').last().textContent(), "Catalog");
-  assert.equal(await page.locator(".catalog-entry", { hasText: "Word count" }).count(), 0, "it's no longer offered");
-  assert.equal(await page.locator(".banner", { hasText: "apply after reload" }).count(), 0);
-  // It asks before reading the note on show.
+browserTest(h, "a sandboxed extension starts with the app, asking before it reads the note on show; Don't allow is kept", { scenario: "empty" }, async (app) => {
+  const page = app.page;
+  await app.writeFile("Welcome.md", "# Welcome\n\nTwo lines.\n");
+  for (const f of ["extension.json", "index.js"]) await app.writeFile(`.common-ink/extensions/line-count/${f}`, fs.readFileSync(path.join(LINE_COUNT, f), "utf8"));
+  await app.goto({}, "Welcome");
   await page.waitForSelector(".dialog");
   const lines = await promptLines(page);
-  assert.equal(lines[2], "It's asking because you just installed it.");
+  assert.equal(lines[2], "It's asking as the app started.");
   assert.deepEqual(
     lines.filter((_, i) => i !== 2),
     [
-      "Word count Catalog by Common Ink wants to",
+      "Line count Workspace wants to",
       "Read the note Welcome",
-      "Word count says: “Count the words in the note on show”",
+      "Line count says: “Count the lines in the note on show”",
       "Allow this time",
-      "Always allow Word count to read all your notes",
+      "Always allow Line count to read all your notes",
       "Don't allow",
-      "You can change this anytime in Extensions → Word count.",
+      "You can change this anytime in Extensions → Line count.",
     ],
   );
   assert.equal(await page.textContent(".dialog-details code"), "files:read Welcome.md", "the technical scope is behind Details");
   await page.click("text=Allow this time");
-  await page.waitForFunction(() => /^\d[\d,]* words?$/.test(document.querySelector('.status-item[data-item="wordCount.status"]')?.textContent ?? ""));
+  await page.waitForFunction(() => /^\d+ lines?$/.test(document.querySelector('.status-item[data-item="lineCount.status"]')?.textContent ?? ""));
   // This time lasts until you reload; then it starts with the app.
   await page.reload();
   await page.waitForSelector(".dialog");
   assert.equal((await promptLines(page))[2], "It's asking as the app started.");
   await page.click("text=Don't allow");
   await page.waitForTimeout(1000);
-  assert.equal(await wordsInStatusBar(page), null, "nothing counted, nothing in the status bar");
-  // Keeping the answer saves your settings, which Word count hears of and counts again: it isn't asked twice.
+  assert.equal(await linesInStatusBar(page), null, "nothing counted, nothing in the status bar");
+  // Keeping the answer saves your settings, which Line count hears of and counts again: it isn't asked twice.
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "one Don't allow is enough");
   const settings = await page.evaluate(() => fetch("/api/file?path=.common-ink%2Fusers%2Ftester%40localhost%2Fsettings.json").then((r) => r.json()));
-  assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "word-count": { "files:read:**/*.md": "deny" } });
-  await runCommand(page, "Show word count");
+  assert.deepEqual(JSON.parse(settings.text)["extensions.permissions"], { "line-count": { "files:read:**/*.md": "deny" } });
+  await runCommand(page, "Show line count");
   const webview = await (await page.waitForSelector("iframe.webview")).contentFrame();
-  await webview!.waitForFunction(() => /^Word count can't read the note \S+: you don't allow it to read all your notes\. Change that in Extensions → Word count\.$/.test(document.getElementById("count")?.textContent ?? ""));
+  await webview!.waitForFunction(() => /^Line count can't read the note \S+: you don't allow it to read all your notes\. Change that in Extensions → Line count\.$/.test(document.getElementById("count")?.textContent ?? ""));
   await page.reload();
   await page.waitForSelector(".cm-content");
   await page.waitForTimeout(1500);
   assert.equal(await page.$(".dialog"), null, "not asked again");
-  await page.close();
+});
+
+browserTest(h, "Word count installed from the Catalog before it left: the app starts without it, without errors, and clears its files and your answer to it away, as changes undo can take back", { scenario: "empty" }, async (app) => {
+  const settingsPath = ".common-ink/users/tester@localhost/settings.json";
+  await app.writeFile(settingsPath, JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "allow" }, boards: { "files:read:**/*.md": "allow" } } }));
+  // Answers in the workspace's settings too: each file loses only its own answer to Word count.
+  await app.writeFile(".common-ink/settings.json", JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "deny" }, pomodoro: { notifications: "allow" } } }));
+  await app.writeFile(".common-ink/extensions/word-count/my-notes.md", "# Mine\n");
+  await app.writeFile("Note.md", "# Note\n\nSome words.\n");
+  await app.writeFile(".common-ink/extensions/word-count/extension.json", JSON.stringify({ id: "word-count", name: "Word count", version: "1.0.0", main: "index.js", activationEvents: ["onStartup"], permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" } }, contributes: { statusBarItems: [{ id: "wordCount.status", alignment: "left", priority: 10 }] } }));
+  await app.writeFile(".common-ink/extensions/word-count/index.js", 'export default { activate(ctx) { ctx.statusBar.set("wordCount.status", "counted"); } };\n');
+  await app.writeFile(".common-ink/extensions/word-count/installed.json", '{"catalog": "Common Ink"}\n');
+  await app.goto({}, "Note");
+  await app.idle();
+  await app.page.locator(".notice", { hasText: "A file you added in its folder stayed" }).waitFor();
+  assert.deepEqual((await app.state()).extensions.filter((e) => e.id === "word-count"), []);
+  await app.extensions.show();
+  assert.equal(await app.page.locator('.extension-row[data-extension="word-count"]').count(), 0);
+  assert.equal(await app.page.locator('[data-item="wordCount.status"]').count(), 0);
+  assert.equal(await app.page.locator(".dialog").count(), 0, "nothing asks to read a note");
+  for (const f of ["extension.json", "index.js", "installed.json"]) await app.page.waitForFunction(async (p) => (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).status === 404, `.common-ink/extensions/word-count/${f}`);
+  await app.page.waitForFunction(async (p) => !(await (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).json()).text.includes("word-count"), settingsPath);
+  assert.deepEqual(JSON.parse(await app.readFile(settingsPath))["extensions.permissions"], { boards: { "files:read:**/*.md": "allow" } }, "others' answers stay");
+  await app.page.waitForFunction(async () => !(await (await fetch("/api/file?path=.common-ink%2Fsettings.json")).json()).text.includes("word-count"));
+  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/settings.json"))["extensions.permissions"], { pomodoro: { notifications: "allow" } }, "the workspace's own others stay");
+  assert.equal(await app.readFile(".common-ink/extensions/word-count/my-notes.md"), "# Mine\n", "a file you added stays");
+  // Each file written by the test, then cleared away: two changes in History for each.
+  const changes = (await app.state()).history.filter((c) => (c.path.includes("word-count") && !c.path.endsWith(".md")) || c.path === settingsPath).map((c) => c.path).sort();
+  assert.deepEqual(changes, [settingsPath, settingsPath, ...[".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"].flatMap((p) => [p, p])].sort());
 });

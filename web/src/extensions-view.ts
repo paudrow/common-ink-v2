@@ -10,7 +10,7 @@ import type { EditorView } from "@codemirror/view";
 import type { CatalogEntry } from "../../worker/src/catalog.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { Answer } from "../../worker/src/permissions.ts";
-import type { BuiltIn, ExtensionRecord } from "./extension-host.ts";
+import { runsShipped, type BuiltIn, type ExtensionRecord } from "./extension-host.ts";
 import { openModal, type Modal } from "./modal.ts";
 import { ANSWER_WORDS, declaredPermissions, plain } from "./permission-words.ts";
 import { hereText, type Here, type Override, type Requires } from "../../worker/src/devices.ts";
@@ -297,6 +297,13 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     );
     // Failed to start, or started and then threw: its details say what happened.
     const state = r.state === "failed" ? "Failed" : r.error ? "Error" : r.state === "safe" ? "Not loaded" : "";
+    // Your customized copy waits for your trust, and the built-in runs as it shipped meanwhile.
+    const trustCopy = r.untrustedCopy
+      ? [
+          el("span", { className: "extension-state", textContent: "Not running · trust it to use your customized copy" }),
+          focusable(el("button", { textContent: "Trust…", title: "Run your customized copy in the app's page, in place of the built-in, after a reload", onclick: () => void deps.setTrusted(r, true) }), `row-trust:${id}`),
+        ]
+      : [];
     return el(
       "div",
       { className: `extension-row state-${r.state}${r.error ? " has-error" : ""}`, dataset: { search: `${name} ${id} ${description}`.toLowerCase(), extension: id } },
@@ -304,6 +311,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
       open,
       reloadNeeded && el("span", { className: "badge reload", textContent: "Reload needed" }),
       state && el("span", { className: "extension-state", textContent: state }),
+      ...trustCopy,
       el("span", { className: "badge", textContent: originOf(r) }),
     );
   }
@@ -348,7 +356,7 @@ export function extensionsView(deps: ExtensionsViewDeps) {
     ];
     const adds = contributionLines(r.manifest, deps.commandTitle);
     const asks = declaredPermissions(r.manifest);
-    const builtIn = !!b && !r.workspace;
+    const builtIn = runsShipped(r);
     const kept = asks.some((p) => deps.answer(r, p.key));
     return [
       el(

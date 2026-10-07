@@ -228,6 +228,22 @@ export interface LayoutContribution {
   requires?: Requires;
 }
 
+/**
+ * A place the extension adds to Places (the sheet on a phone, the sidebar on a wide screen): one of its
+ * views, or a command that goes somewhere (Daily notes' Today). Order, and which three are on a phone's
+ * bottom bar, are yours, in .common-ink/places.json.
+ */
+export type PlaceContribution = { id: string; title: string; icon?: string } & ({ view: string } | { command: string });
+
+/** A button on the keyboard toolbar, over a touch screen's keyboard while you edit: a command, by an icon or a short label. */
+export interface ToolbarContribution {
+  command: string;
+  title: string;
+  label?: string;
+  icon?: string;
+  requires?: Requires;
+}
+
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -242,6 +258,8 @@ export interface Contributions {
   dataSources: DataSourceContribution[];
   search: SearchContribution;
   layout: LayoutContribution[];
+  places: PlaceContribution[];
+  toolbar: ToolbarContribution[];
 }
 
 export interface ExtensionManifest {
@@ -392,6 +410,21 @@ function contributions(v: unknown, id: string): Contributions {
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
     }),
+    places: list(c.places, "contributes.places", (item, at) => {
+      const o = object(item, at);
+      const icon = typeof o.icon === "string" ? { icon: o.icon } : {};
+      const base = { id: text(o.id, `${at}.id`), title: text(o.title, `${at}.title`), ...icon };
+      if (typeof o.view === "string" && o.view) return { ...base, view: o.view };
+      if (typeof o.command === "string" && o.command) return { ...base, command: o.command };
+      throw new ManifestError(`${at} needs a "view" or a "command": where it goes`);
+    }),
+    toolbar: list(c.toolbar, "contributes.toolbar", (item, at) => {
+      const o = object(item, at);
+      const label = typeof o.label === "string" && o.label ? { label: o.label } : {};
+      const icon = typeof o.icon === "string" && o.icon ? { icon: o.icon } : {};
+      if (!("label" in label) && !("icon" in icon)) throw new ManifestError(`${at} needs a "label" or an "icon" to show`);
+      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`), ...label, ...icon, ...requires(o.requires, `${at}.requires`) };
+    }),
     search: searchContribution(c.search),
     layout: list(c.layout, "contributes.layout", (item, at) => {
       const o = object(item, at);
@@ -446,6 +479,9 @@ function contributions(v: unknown, id: string): Contributions {
   };
 }
 
+/** Text that shows something: not empty, and not only spaces, control and format characters (zero-width ones). */
+const visible = (name: string) => (/[^\s\p{Cc}\p{Cf}\p{Z}]/u.test(name) ? name : "");
+
 /**
  * An extension.json's manifest, or what's wrong with it. The folder names the extension; an "id" in the
  * file must match. Only built-ins, which the app's build compiles, may be written in TypeScript.
@@ -499,7 +535,8 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
     const publisher = text(m.publisher, '"publisher"', true);
     return {
       id: folderId,
-      name: text(m.name, '"name"', true) || folderId,
+      // A name with nothing to see (blank, or only spaces and invisible characters) is its folder's id.
+      name: visible(text(m.name, '"name"', true)) || folderId,
       version: text(m.version, '"version"', true) || "0.0.0",
       description: text(m.description, '"description"', true),
       ...(publisher ? { publisher } : {}),

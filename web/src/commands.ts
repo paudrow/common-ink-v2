@@ -28,6 +28,15 @@ export class Commands {
     for (const c of commands) this.byId.set(c.id, c);
   }
 
+  has(id: string): boolean {
+    return this.byId.has(id);
+  }
+
+  /** The command registered under an id now: a later registration replaces it. */
+  get(id: string): Command | undefined {
+    return this.byId.get(id);
+  }
+
   all(): Command[] {
     return [...this.byId.values()].sort((a, b) => a.title.localeCompare(b.title));
   }
@@ -40,6 +49,15 @@ export class Commands {
     if (off) this.refused(command.title, off);
     else void command.run();
     return true;
+  }
+
+  /** Run a command, and hand back what its run returns (a promise, for one that's done later); undefined if there's none, or it's refused (and said so). */
+  start(id: string, by: RunBy = "app"): unknown {
+    const command = this.byId.get(id);
+    if (!command) return undefined;
+    const off = this.refusal(command, by);
+    if (off) return void this.refused(command.title, off);
+    return command.run();
   }
 
   /** Why a command won't run for whoever asked: an app-only one a sandboxed extension asked for, or one off on this device. */

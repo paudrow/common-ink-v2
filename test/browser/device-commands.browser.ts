@@ -59,10 +59,16 @@ browserTest(h, "with Vim turned off in settings, the notices say it stays off", 
   assert.equal(await vim(app), "off");
 });
 
-browserTest(h, "a sandboxed extension can't run them: they're app-only", { scenario: "empty", device: "phone" }, async (app) => {
+browserTest(h, "a sandboxed extension can't run them: its call is refused, and it keeps running", { scenario: "empty", device: "phone" }, async (app) => {
   const before = await app.readFile(DEVICE);
-  // Its code asks for both as it starts: refused, and it starts all the same.
-  await sneaky(app, {}, 'export default { async activate(ctx) { await ctx.commands.run("vim.onHere"); await ctx.commands.run("device.keyboardYes"); } };\n');
+  const said = app.page.waitForEvent("console", { predicate: (m) => m.text().startsWith("SNEAKY ") });
+  // Its code asks for both as it starts: each call is refused, and it starts all the same.
+  await sneaky(
+    app,
+    {},
+    'export default { async activate(ctx) { const r = []; for (const id of ["vim.onHere", "device.keyboardYes"]) { try { await ctx.commands.run(id); r.push("ran"); } catch (e) { r.push(e.message); } } console.log("SNEAKY " + JSON.stringify(r)); } };\n',
+  );
+  assert.deepEqual(JSON.parse((await said).text().slice(7)), ["Sneaky can run only its own commands", "Sneaky can run only its own commands"]);
   await app.idle();
   assert.equal(await vim(app), "unmet");
   assert.equal(await app.readFile(DEVICE), before, "the device file is as it was");
@@ -85,7 +91,9 @@ async function sneaky(app: App, contributes: object, code = "export default { ac
   await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "sneaky")?.state === "active"));
 }
 
-browserTest(h, "a sandboxed extension's keys and status items can't run them either: they run for it, not for the app", { scenario: "empty", device: "phone" }, async (app) => {
+browserTest(h, "a sandboxed extension's keys and status items for them never go in, and it keeps running", { scenario: "empty", device: "tablet" }, async (app) => {
+  // A tablet, which has a status bar to click; a phone has none.
+  const DEVICE = ".common-ink/users/tester@localhost/devices/lever-tablet/device.json";
   const before = await app.readFile(DEVICE);
   await sneaky(
     app,
@@ -94,17 +102,21 @@ browserTest(h, "a sandboxed extension's keys and status items can't run them eit
   );
   const keep = (text: string) => JSON.stringify((({ keyboard, extensions }) => ({ keyboard, extensions }))(JSON.parse(text)));
   // A key on a phone is a keyboard found, which the device file says (seen); what you chose stays as it was.
+  // The keyboard is found first, by a character typed outside the note and bound to nothing, and the
+  // extension's keys come after, once Vim has gone in.
+  await app.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await app.page.keyboard.press("z");
+  await app.page.locator(".notice", { hasText: "Keyboard found" }).waitFor();
   await app.page.keyboard.press("x");
-  await app.page.locator(".notice", { hasText: "Vim: turn on for this device: an extension asked" }).waitFor();
   await app.page.keyboard.press("ControlOrMeta+Shift+y");
-  await app.page.locator(".notice", { hasText: "Keyboard: this device has a keyboard: an extension asked" }).waitFor();
   await app.page.locator(".status-item", { hasText: "Word count: 12" }).click();
-  await app.page.locator(".notice", { hasText: "Vim: turn off for this device: an extension asked" }).waitFor();
   await app.idle();
+  assert.equal(await app.page.locator(".notice", { hasText: "an extension asked" }).count(), 0, "nothing ran for it to refuse");
   assert.equal(keep(await app.readFile(DEVICE)), keep(before), "the device file keeps your choices: Keyboard Auto, no override");
+  assert.equal(await app.extensions.state("sneaky").then((s) => s?.state), "active");
 });
 
-browserTest(h, "a sandboxed extension's Vim sequences and tab menu items can't run them", { scenario: "lists", open: "Lists tour", device: "laptop" }, async (app) => {
+browserTest(h, "a sandboxed extension's Vim sequences and tab menu items for them never go in", { scenario: "lists", open: "Lists tour", device: "laptop" }, async (app) => {
   const path = ".common-ink/users/tester@localhost/devices/lever-laptop/device.json";
   await sneaky(app, { keybindings: [{ vim: "gZ", command: "vim.offHere" }], menus: { tabMenu: [{ command: "device.keyboardNo" }] } });
   await app.open("Lists tour");
@@ -112,11 +124,13 @@ browserTest(h, "a sandboxed extension's Vim sequences and tab menu items can't r
   const before = await app.readFile(path);
   await app.page.locator(".tab-editor:not([hidden]) .cm-content").first().focus();
   await app.keys("<Esc>gZ");
-  await app.page.locator(".notice", { hasText: "Vim: turn off for this device: an extension asked" }).waitFor();
   await app.page.locator(".group .tab").first().click({ button: "right" });
-  await app.page.locator(".menu button", { hasText: "device.keyboardNo" }).click();
-  await app.page.locator(".notice", { hasText: "Keyboard: this device has no keyboard: an extension asked" }).waitFor();
+  await app.page.locator(".menu button").first().waitFor();
+  assert.equal(await app.page.locator(".menu button", { hasText: "device.keyboardNo" }).count(), 0, "its menu item isn't there");
+  await app.page.keyboard.press("Escape");
   await app.idle();
+  assert.equal(await app.page.locator(".notice", { hasText: "an extension asked" }).count(), 0, "nothing ran for it to refuse");
   assert.equal(await vim(app), "active");
   assert.equal(await app.readFile(path), before, "the device file is as it was");
+  assert.equal(await app.extensions.state("sneaky").then((s) => s?.state), "active");
 });

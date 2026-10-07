@@ -26,7 +26,7 @@ export const APP_MODULES = {
   "common-ink/describe": { file: "web/src/describe.ts", exports: ["ago", "describeAuthor", "diffLines", "diffStat", "docLabel", "runLines"] },
   "common-ink/layout": { file: "web/src/layout.ts", exports: ["LAYOUT_PATH", "activeFile", "activeTab", "closeTab", "closeTabs", "cycleGroup", "cycleTab", "emptyLayout", "equalize", "fileTab", "focusDirection", "focusGroup", "focused", "groups", "insertTab", "keepFile", "keepTab", "moveTab", "moveTabDirection", "neighbor", "onShow", "only", "openTab", "openableKey", "openableOf", "parseLayout", "rects", "resizeFocused", "resizeSplit", "selectTab", "shiftTab", "showInTab", "split", "splitAt"] },
   "common-ink/editor-file": { file: "web/src/editor-file.ts", exports: ["editorFile"] },
-  "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "formatKeys", "learnLayout", "matchKeys"] },
+  "common-ink/keys": { file: "web/src/keys.ts", exports: ["IS_MAC", "chord", "formatKeys", "learnLayout", "matchKeys"] },
   "common-ink/recurrence": {
     file: "worker/src/recurrence.ts",
     exports: ["DAY_NAMES", "MONTH_NAMES", "daysBetween", "endsLabel", "formatRule", "isInterval", "nextDue", "nth", "occurrences", "parseRule", "recLabel", "ruleDays", "ruleLabel", "ruleProblem", "shiftDate", "toRRule"],
@@ -35,7 +35,7 @@ export const APP_MODULES = {
     file: "worker/src/calendar.ts",
     exports: ["basicStart", "findTarget", "fullWall", "instantOf", "isTimeZone", "mergeEvents", "newEventId", "occurrenceId", "occurrences", "parseEvent", "parseTiming", "planDelete", "planRevert", "planUpdate", "splitOccurrenceId", "wallTimeAt"],
   },
-  "common-ink/icons": { file: "web/src/icons.ts", exports: ["ICON_PATHS", "icon"] },
+  "common-ink/icons": { file: "web/src/icons.ts", exports: ["ICON_PATHS", "icon", "isIcon"] },
   "common-ink/query": { file: "worker/src/query.ts", exports: ["FILTERS", "asksFor", "format", "holds", "inGlobs", "matches", "matchesWords", "ordered", "parse", "problems", "select", "sortOf", "titleOf", "tokens"] },
   "common-ink/files": { file: "worker/src/files.ts", exports: ["Files", "RETENTION", "SEED_AUTHOR", "authorKey", "isExtensionScript", "isNote", "merge", "parseFilePath"] },
   "common-ink/uploads": {

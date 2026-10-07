@@ -60,6 +60,29 @@ const EMPTY = `{\n  "$schema": "/schema/settings.json"\n}\n`;
 export const withSetting = (text: string, key: string, value: unknown) => setTopLevelKey(text.trim() ? text : EMPTY, key, value);
 
 /**
+ * Change one key of a settings file from what that file has for it (not the settings combined from all
+ * of them, which take the whole key from one file), as one change; nothing when it comes out the same.
+ * If the file changes in between, it's read again and the change made again.
+ */
+export async function editSetting(io: Pick<SettingsUiDeps, "read" | "write">, path: FilePath, key: string, change: (current: unknown) => unknown): Promise<void> {
+  for (let tries = 0; tries < 3; tries++) {
+    const latest = await io.read(path);
+    let current: unknown;
+    try {
+      current = latest.text.trim() ? (JSON.parse(latest.text) as Record<string, unknown>)[key] : undefined;
+    } catch {
+      return;
+    }
+    const value = change(current);
+    if (JSON.stringify(value) === JSON.stringify(current)) return;
+    const text = withSetting(latest.text, key, value);
+    if (text === null || text === latest.text) return;
+    const result = await io.write(path, text, latest.revision);
+    if (result.status !== "conflict") return;
+  }
+}
+
+/**
  * Write one key of a settings file (or remove it, with undefined), on top of whatever the file says
  * now, as one change. If the file changes in between, it's read again and the key applied again.
  */
@@ -109,12 +132,18 @@ async function valuesIn(deps: SettingsUiDeps, path: FilePath | null): Promise<{ 
 export function settingsEditor(deps: SettingsUiDeps): View & { level: Shown; query: string } {
   /** Why the last change didn't save, shown once. */
   let failed = "";
+  /** The latest drawing of each element the editor is drawn in. */
+  const drawings = new WeakMap<HTMLElement, number>();
   const view = {
     id: SETTINGS_VIEW,
     title: "Settings",
     level: "user" as Shown,
     query: "",
     async render(root: HTMLElement) {
+      // Each drawing is the latest: one still reading its files when another starts (This device picked
+      // while User was being read) gives way, rather than drawing over it when its reads come back.
+      const turn = (drawings.get(root) ?? 0) + 1;
+      drawings.set(root, turn);
       const shown = view.level;
       if (shown === "device") return renderDeviceLevel(root);
       const level = shown;
@@ -126,6 +155,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Shown; que
       // The other level, to say where a value that isn't set here comes from, or what wins over it.
       const user = level === "user" ? values : (await valuesIn(deps, deps.pathFor("user"))).values;
       const workspace = level === "workspace" ? values : (await valuesIn(deps, deps.pathFor("workspace"))).values;
+      if (drawings.get(root) !== turn) return;
 
       const set = async (key: string, value: unknown) => {
         if (!path) return;

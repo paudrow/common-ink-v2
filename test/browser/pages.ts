@@ -17,6 +17,7 @@ export interface AppState {
   layout: { root: unknown; focus: string };
   windows: Array<{ id: string; focused: boolean; rect: { x: number; y: number; width: number; height: number }; tabs: Array<{ label: string; selected: boolean; preview: boolean; status?: string }> }>;
   pending: Array<{ path: string; status: string }>;
+  network: { online: boolean; unsent: Array<{ path: string }> };
   extensions: Array<{ id: string; name: string; state: string; error?: string }>;
   permissions: { grants: Record<string, Record<string, string>>; prompts: Array<{ extension: string; asks: string[]; auto: boolean; answer: string | null }> };
   embeds: Array<{ kind: string; language: string; note: string | null; shown: boolean; state: string; webview?: { loaded: boolean; drawn: { webgl: number; "2d": number } } }>;
@@ -188,7 +189,8 @@ export class SettingsEditor extends Part {
 export class ExtensionsView extends Part {
   async show() {
     await this.app.command("Show extensions");
-    await this.page.waitForSelector("#panel .extensions-view");
+    // In the panel, or, on a phone (the shell), in the window, where panels open there.
+    await this.page.locator("#panel .extensions-view, #workbench .extensions-view").first().waitFor();
   }
   row(id: string): Locator {
     return this.page.locator(`.extension-row[data-extension="${id}"]`);

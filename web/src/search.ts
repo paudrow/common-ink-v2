@@ -116,7 +116,7 @@ export function complete(text: string, caret: number, filters: readonly FilterIn
 }
 
 export class Search {
-  private providers = new Map<string, SearchProvider>();
+  private providers = new Map<string, { owner: string; provider: SearchProvider }>();
 
   constructor(
     private deps: {
@@ -126,22 +126,31 @@ export class Search {
       notes: NoteSearch;
       /** Values for filters that depend on the workspace, like its folders for `in:`. */
       values?(key: string): readonly string[];
+      /** Who owns a kind of result (the app's Ownership); without it, the first manifest that declares it. */
+      owner?(type: string): string | undefined;
     },
   ) {}
 
   /**
-   * Answer a kind of result. One kind has one provider: the first extension that declares it (built-ins
-   * come first). Throws for a kind `owner` doesn't own.
+   * Answer a kind of result. One kind has one provider, its owner's, and it answers only while that
+   * extension owns the kind. Throws for a kind `owner` doesn't own.
    */
   provide(type: string, provider: SearchProvider, owner: string): void {
     if (this.ownerOf(type) !== owner) throw new Error(`Search type "${type}" belongs to ${this.ownerOf(type) ?? "nobody"}, not ${owner}`);
-    this.providers.set(type, provider);
+    this.providers.set(type, { owner, provider });
   }
 
-  /** The extension that answers for a kind of result: the first that declares it. "note" is the workspace's. */
+  /** The extension that answers for a kind of result. "note" is the workspace's. */
   ownerOf(type: string): string | undefined {
     if (type === "note") return undefined;
+    if (this.deps.owner) return this.deps.owner(type);
     return this.deps.manifests().find((m) => m.contributes.search.types.some((t) => t.type === type))?.id;
+  }
+
+  /** A kind's provider, while the extension that gave it owns the kind. */
+  private providerOf(type: string): SearchProvider | undefined {
+    const put = this.providers.get(type);
+    return put && put.owner === this.ownerOf(type) ? put.provider : undefined;
   }
 
   /** The kinds of result, in the order their sections show: notes, then each extension's, in manifest order, each once. */
@@ -204,7 +213,7 @@ export class Search {
           // Notes never match an extension's filter, so they aren't asked.
           found[i] = rest.terms.some((t) => t.kind === "filter" && !own.has(t.key)) ? null : await notes(rest, title);
         } else {
-          const provider = this.providers.get(type);
+          const provider = this.providerOf(type);
           const globs = within(type);
           const inside = globs && inGlobs(globs);
           const late = new Promise<SearchResult[]>((resolve) => setTimeout(() => resolve([]), PROVIDER_MS));

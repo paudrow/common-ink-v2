@@ -121,7 +121,7 @@ async function runtimeOn(device: ReturnType<typeof fakeDevice>) {
     search: { provide() {}, find: async () => [], extraKeys: () => [], ownerOf: () => undefined } as never,
     onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
-    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => void notices.push(m) } as never,
+    workbench: { registerView() {}, viewIds: () => [], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => void notices.push(m) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
     settings: () => DEFAULTS,
     files: () => [],
@@ -243,4 +243,41 @@ test("Vim needs a keyboard, tabs 600px and windows side by side 840px; their com
   assert.equal(runtime.layoutPart("tabs"), null, "tabs show on a tablet");
   assert.equal(runtime.layoutPart("splits"), "Off on this device · needs a screen 840px wide");
   assert.equal(runtime.layoutPart("panels"), undefined, "a part no extension draws");
+});
+
+test("extensions add places and keyboard toolbar buttons; the bottom bar's places come from places.json", async () => {
+  const { barOf, DEFAULT_BAR } = await import("../worker/src/places.ts");
+  const { ICON_PATHS: ICONS } = await import("../web/src/icons.ts");
+  const m = parseManifest(
+    {
+      contributes: {
+        places: [
+          { id: "today", title: "Today", command: "daily.today", icon: "sun" },
+          { id: "cal", title: "Calendar", view: "calendar" },
+        ],
+        toolbar: [{ command: "lists.indent", title: "Indent", icon: "list-indent-increase", requires: { keyboard: true } }],
+      },
+    },
+    "w",
+  ) as ExtensionManifest;
+  assert.deepEqual(m.contributes.places, [
+    { id: "today", title: "Today", command: "daily.today", icon: "sun" },
+    { id: "cal", title: "Calendar", view: "calendar" },
+  ]);
+  assert.deepEqual(m.contributes.toolbar, [{ command: "lists.indent", title: "Indent", icon: "list-indent-increase", requires: { keyboard: true } }]);
+  assert.equal(parseManifest({ contributes: { places: [{ id: "x", title: "X" }] } }, "w"), 'contributes.places[0] needs a "view" or a "command": where it goes');
+  assert.equal(parseManifest({ contributes: { toolbar: [{ command: "x", title: "X" }] } }, "w"), 'contributes.toolbar[0] needs a "label" or an "icon" to show');
+
+  assert.deepEqual(DEFAULT_BAR, ["feed", "daily.today", "calendar.calendar"]);
+  assert.deepEqual(barOf(""), ["feed", "daily.today", "calendar.calendar"], "no file, the default");
+  assert.deepEqual(barOf('{"bar": ["tasks", "tasks", "feed", 3, "calendar", "today"]}'), ["tasks.tasks", "feed", "calendar.calendar", "daily.today"], "each once, old names read as the new");
+  const { shownOnBar } = await import("../worker/src/places.ts");
+  assert.deepEqual(shownOnBar(["feed", "calendar.calendar", "daily.today", "tasks.tasks"], new Set(["feed", "daily.today", "tasks.tasks"])), ["feed", "daily.today", "tasks.tasks"], "a place that isn't there now takes no slot");
+  assert.deepEqual(barOf('{"saved": {}}'), ["feed", "daily.today", "calendar.calendar"]);
+
+  for (const id of ["daily", "calendar", "tasks", "data-sources", "contacts", "uploads", "lists"]) {
+    const built = parseManifest(JSON.parse(readFileSync(`web/src/extensions/${id}/extension.json`, "utf8")), id, { builtIn: true }) as ExtensionManifest;
+    for (const p of [...built.contributes.places, ...built.contributes.toolbar]) if (p.icon) assert.ok(p.icon in ICONS, `${id}'s ${p.icon} is one of the app's icons`);
+    for (const t of built.contributes.toolbar) assert.ok(built.contributes.commands.some((c) => c.command === t.command), `${id} declares ${t.command}`);
+  }
 });
