@@ -12,7 +12,7 @@ import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSet
 import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
-import { bindingForKey, Commands, keyFor } from "./commands.ts";
+import { bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
 import { ago, describeAuthor, docLabel } from "./describe.ts";
 import { Search } from "./search.ts";
 import { format } from "../../worker/src/query.ts";
@@ -466,7 +466,7 @@ async function resolveConflict(): Promise<boolean> {
   try {
     theirs = await api.read(path);
   } catch {
-    workbench.notice("Their version can't be read while offline: try again when you're back online.");
+    workbench.notice("Their version can't be read while offline: try again when you're back online.", [], "alert");
     return true;
   }
   const latest = await fetch(`/api/history?${new URLSearchParams({ path, limit: "1" })}`)
@@ -505,7 +505,7 @@ async function resolveConflict(): Promise<boolean> {
 async function sendUnsent() {
   // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
   const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
-  for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`);
+  for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`, [], "alert");
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
     await refreshList();
@@ -591,7 +591,14 @@ function pick(how: typeof openHow) {
   bar.open();
 }
 
-const commands = new Commands((title, why) => workbench.notice(`${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`));
+/** A sandboxed extension's refusals in a row, while their notice is up: another is summed up with them. */
+let refusals: { from: string; refused: Array<{ title: string; why: string }>; up: () => boolean } | null = null;
+const commands = new Commands((title, why, by) => {
+  const one = `${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
+  if (by === "app") return void workbench.notice(one, [], "alert");
+  const refused = [...(refusals?.from === by.sandbox && refusals.up() ? refusals.refused : []), { title, why }];
+  refusals = { from: by.sandbox, refused, up: workbench.notice(refused.length > 1 ? refusalSummary(by.sandbox, refused) : one, [], "alert") };
+});
 /** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
 const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
 commands.register(
@@ -685,7 +692,7 @@ const extensions = new ExtensionRuntime({
   },
   prompt: dev ? dev.prompt(promptFor) : promptFor,
   // It tried something it never asked for: say so once, with where to see what it does ask for.
-  undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
+  undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }], "alert"),
   changed: () => extensionsChanged(),
   device,
   promoted: (id) => {
@@ -941,7 +948,7 @@ const extensionDeps: ExtensionsViewDeps = {
       if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
       else workbench.notice(`Installed ${name}. It starts after a reload${taken}.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
-      workbench.notice(`Couldn't install it: ${(err as Error).message}`);
+      workbench.notice(`Couldn't install it: ${(err as Error).message}`, [], "alert");
     }
   },
   showActivity: () => panels.show("extension-activity"),
@@ -983,7 +990,7 @@ async function installAndAnnounce(entry: CatalogEntry): Promise<void> {
     if (await goLive(entry.id, { kind: "installed" })) workbench.notice(`Installed ${entry.name}.`);
     else workbench.notice(`Installed ${entry.name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
   } catch (err) {
-    workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`);
+    workbench.notice(`Couldn't install ${entry.name}: ${(err as Error).message}`, [], "alert");
     throw err;
   } finally {
     extensionsChanged();
@@ -1118,7 +1125,7 @@ async function setTrust(id: string, trusted: boolean) {
     if (trusted !== list.includes(id)) await writeSetting(api, path, "extensions.trusted", trusted ? [...list, id] : list.filter((x) => x !== id));
   }
   await loadSettings();
-  if (!trusted && settings["extensions.trusted"].includes(id)) workbench.notice(`${id} is still trusted: fix the settings file that lists it under extensions.trusted (it isn't valid JSON), then try again.`);
+  if (!trusted && settings["extensions.trusted"].includes(id)) workbench.notice(`${id} is still trusted: fix the settings file that lists it under extensions.trusted (it isn't valid JSON), then try again.`, [], "alert");
 }
 
 const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
@@ -1183,13 +1190,13 @@ async function setBar(ids: string[]) {
   for (let tries = 0; tries < 3; tries++) {
     const now = await offline.read(PLACES_PATH);
     const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", "bar", ids);
-    if (text === null) return workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.");
+    if (text === null) return void workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.", [], "alert");
     try {
       if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
     } catch (err) {
-      if (!unreachable(err)) return workbench.notice(`The bottom bar couldn't be saved: ${(err as Error).message}`);
+      if (!unreachable(err)) return void workbench.notice(`The bottom bar couldn't be saved: ${(err as Error).message}`, [], "alert");
       await offline.hold({ path: PLACES_PATH, text, base: now.revision });
-      return workbench.notice("You're offline: the bottom bar is changed here, and saved once you're back.");
+      return void workbench.notice("You're offline: the bottom bar is changed here, and saved once you're back.");
     }
   }
 }
@@ -1417,7 +1424,7 @@ try {
     workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [
       { label: "Show extensions", run: () => panels.show("extensions") },
       ...(failed.workspace ? [{ label: "Open in safe mode", run: () => reloadWindow(true) }] : []),
-    ]);
+    ], "alert");
   }
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.

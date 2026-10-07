@@ -11,6 +11,8 @@ import type { EventFound } from "../../worker/src/operations.ts";
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import type { Change, FilePath, FileSummary, Revision, WorkspaceFile, WriteResult } from "../../worker/src/files.ts";
 import type { Contact } from "../../worker/src/sources.ts";
+import type { Sandboxed } from "../../worker/src/settings.ts";
+export type { Sandboxed };
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
 import type { SearchProvider, SearchSection } from "./search.ts";
@@ -123,16 +125,16 @@ export interface ExtensionContext {
   commands: {
     /** What a command the manifest declares does. */
     register(id: string, run: () => unknown): void;
-    /** Run a command. `by: "sandbox"` runs one a sandboxed extension's contribution names (its key, its menu item) for that extension, so an app-only command refuses. */
-    run(id: string, by?: "sandbox"): boolean;
+    /** Run a command. `by` runs one a sandboxed extension's contribution names (its key, its menu item) for that extension, so an app-only command refuses. */
+    run(id: string, by?: Sandboxed): boolean;
     /** Every command, with its title, and why it's off on this device if it is ("Off on this device · needs a keyboard"). */
     all(): Array<{ id: string; title: string; off?: string }>;
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
-    keybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: "sandbox" }>;
+    keybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: Sandboxed }>;
     /** The commands extensions add to a menu ("tabMenu", "commandBar", "editorContext", or "quickOpen", which ⌘P lists with files), with their titles. */
-    menu(menu: "commandBar" | "tabMenu" | "editorContext" | "quickOpen"): Array<{ command: string; title: string; by?: "sandbox" }>;
+    menu(menu: "commandBar" | "tabMenu" | "editorContext" | "quickOpen"): Array<{ command: string; title: string; by?: Sandboxed }>;
   };
   /**
    * The layout of windows and tabs: the core's model (layout.ts), changed with common-ink/layout's

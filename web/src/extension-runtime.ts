@@ -7,7 +7,7 @@ import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src
 import { parseFilePath, type Change, type ChangeNotice, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { inGlobs } from "../../worker/src/globs.ts";
 import { decide, decidesTrust, parseGrants, type Ask } from "../../worker/src/permissions.ts";
-import { settingsCatalog, type Keybinding, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
+import { settingsCatalog, type Keybinding, type Sandboxed, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
 import { confirmDialog } from "./dialog.ts";
@@ -367,7 +367,7 @@ export class ExtensionRuntime {
   }
 
   /** Run a command for an extension's status item: a sandboxed one's runs only its own, checked as it's clicked. */
-  runFor(owner: string, command: string, by: "app" | "sandbox" = "app"): void {
+  runFor(owner: string, command: string, by: Sandboxed | "app" = "app"): void {
     const m = this.host.on().find((x) => x.id === owner);
     if (m && this.bindable(m)(command)) this.app.commands.run(command, by);
   }
@@ -409,7 +409,7 @@ export class ExtensionRuntime {
   }
 
   /** Commands extensions add to a menu, with their titles. */
-  menu(id: MenuId): Array<{ command: string; title: string; by?: "sandbox" }> {
+  menu(id: MenuId): Array<{ command: string; title: string; by?: Sandboxed }> {
     return this.host.on().flatMap((m) =>
       (m.contributes.menus[id] ?? []).filter((item) => this.bindable(m)(item.command)).map((item) => ({ command: item.command, title: m.contributes.commands.find((c) => c.command === item.command)?.title ?? item.command, ...this.by(m) })),
     );
@@ -417,11 +417,11 @@ export class ExtensionRuntime {
 
   /** Every keybinding in effect, with the Vim sequences extensions declare (never a sandboxed one's). */
   /** Who what an extension's manifest contributes (a key, a menu item, a status item) runs its command for: a sandboxed one's runs for it, so app-only commands refuse. */
-  by(m: ExtensionManifest): { by?: "sandbox" } {
-    return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: "sandbox" } : {};
+  by(m: ExtensionManifest): { by?: Sandboxed } {
+    return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: { sandbox: m.name } } : {};
   }
 
-  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: "sandbox" }> {
+  allKeybindings(): Array<{ command: string; key?: string; vim?: string; operator?: true; by?: Sandboxed }> {
     const keys = this.app.settings().keybindings.flatMap((k) => (k.command ? [{ command: k.command, key: k.key, ...(k.by ? { by: k.by } : {}) }] : []));
     const vim = this.host
       .on()
@@ -699,7 +699,7 @@ export class ExtensionRuntime {
     const own = () => this.handlers.get(id, m.id);
     if (!own()) await this.activateFor(`onCommand:${id}`, (x) => x === m);
     const run = own();
-    if (!run) this.app.workbench.notice(`The command "${id}" isn't available: its extension is off, or didn't start.`);
+    if (!run) this.app.workbench.notice(`The command "${id}" isn't available: its extension is off, or didn't start.`, [], "alert");
     return run?.();
   }
 
@@ -822,7 +822,7 @@ export class ExtensionRuntime {
           if (!m.contributes.commands.some((c) => c.command === id)) throw new Error(`Command "${id}" isn't declared in ${m.id}'s contributes.commands`);
           if (!this.handlers.set(m.id, id, guard(run))) this.taken(m, "command", id);
         },
-        run: (id, by) => app.commands.run(id, by === "sandbox" ? "sandbox" : "app"),
+        run: (id, by) => app.commands.run(id, by ?? "app"),
         all: () => this.allCommands(),
         shortcut: (id) => this.shortcut(id),
         keybindings: () => this.allKeybindings(),
@@ -1016,7 +1016,7 @@ export class ExtensionRuntime {
         tabs: () => this.tabs(),
         moveTab: (by) => app.workbench.change((l) => L.shiftTab(l, by)),
         refreshFromServer: (paths) => app.workbench.refreshFromServer(paths),
-        notice: (message, actions) => app.workbench.notice(message, actions),
+        notice: (message, actions) => void app.workbench.notice(message, actions),
         confirm: (title, text, yes, how) => confirmDialog(title, text, yes, how?.danger === true),
         canGo: (by) => !!app.workbench.navigation.step(by),
       },
@@ -1076,7 +1076,7 @@ export class ExtensionRuntime {
           case "commands.run":
             // Only its own: an app command acts as you, on whatever is open.
             if (!this.owns(m, "command", a)) throw new Error(`${m.name} can run only its own commands`);
-            return app.commands.run(a, "sandbox");
+            return app.commands.run(a, { sandbox: m.name });
           case "commands.all":
             return this.allCommands();
           case "commands.shortcut":
@@ -1238,7 +1238,7 @@ export class ExtensionRuntime {
           case "workbench.moveTab":
             return app.workbench.change((l) => L.shiftTab(l, Number(a)));
           case "workbench.notice":
-            return app.workbench.notice(`${m.name}: ${a}`);
+            return void app.workbench.notice(`${m.name}: ${a}`);
         }
         throw new Error(`There's no ${method} for extensions`);
       },

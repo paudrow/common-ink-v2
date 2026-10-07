@@ -7,6 +7,7 @@
 import { icon, isIcon, type IconName } from "./icons.ts";
 import { openModal, type Modal } from "./modal.ts";
 import { shownOnBar } from "../../worker/src/places.ts";
+import type { Sandboxed } from "../../worker/src/settings.ts";
 import type { Device } from "./device.ts";
 
 /** Somewhere to go: listed in the Places sheet, and maybe on the bottom bar. */
@@ -21,7 +22,7 @@ export interface Place {
   /** The extension that adds it: said beside it, so no extension's place passes for the app's own. */
   from?: string;
   /** Added by a sandboxed extension: its command runs for it, not for the app (commands.ts, appOnly). */
-  by?: "sandbox";
+  by?: Sandboxed;
 }
 
 /** A command as a button or a menu item, with why it's off on this device if it is. */
@@ -32,7 +33,7 @@ export interface Action {
   label?: string;
   off?: string | null;
   /** Added by a sandboxed extension: its command runs for it, not for the app. */
-  by?: "sandbox";
+  by?: Sandboxed;
 }
 
 export interface ShellDeps {
@@ -49,7 +50,7 @@ export interface ShellDeps {
    * its note (at the place in Navigation's history `nav` names, if that's still kept). Done once it's on show.
    */
   restore(show: string, nav: number | undefined): Promise<unknown>;
-  run(command: string, by?: "sandbox"): unknown;
+  run(command: string, by?: Sandboxed): unknown;
   /** Navigation's own place in its history (navigation.ts), for the entry of a note on show. */
   visitId(): number | null;
   notice(message: string): void;

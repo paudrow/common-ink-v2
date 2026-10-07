@@ -105,6 +105,17 @@ const NOTICE_WITH_ACTIONS_MS = 6000;
 /** How long a wider screen's notice with nothing to do stays: one with actions stays until it's acted on or closed. */
 const NOTICE_WIDE_MS = 8000;
 
+/** How much a notice matters: an alert (something refused, or gone wrong) outranks news, which waits for it to go. */
+export type Urgency = "news" | "alert";
+type NoticeAction = { label: string; run: () => unknown };
+interface Notice {
+  message: string;
+  actions: NoticeAction[];
+  urgency: Urgency;
+  /** Its box, once shown. Held weakly: a closed window's notice mustn't keep it alive. */
+  box?: WeakRef<HTMLElement>;
+}
+
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
   private files = new Map<FilePath, OpenFile>();
@@ -119,7 +130,9 @@ export class Workbench {
   /** Going back to a place: what that changes isn't a jump of its own. */
   private returning = false;
   private layoutRevision = 0;
-  private pendingNotice: [string, Array<{ label: string; run: () => unknown }>] | null = null;
+  /** The notice last shown, and the newest of each urgency waiting: for a window to show it in, or for a more urgent one to go. */
+  private shownNotice: Notice | null = null;
+  private waitingNotices: Partial<Record<Urgency, Notice>> = {};
   /** Whether start() has loaded the layout: until then, the live socket's news of it is start's to read. */
   private started = false;
   /** Editor extensions for one file's editors, such as help in a settings file. */
@@ -176,8 +189,7 @@ export class Workbench {
     // Where the page opened is the first place (or, after a reload, where you were, brought up to date).
     this.arrive(false);
     this.started = true;
-    if (this.pendingNotice) this.notice(...this.pendingNotice);
-    this.pendingNotice = null;
+    this.nextNotice();
     return { missing };
   }
 
@@ -191,18 +203,38 @@ export class Workbench {
 
   /**
    * A message in the focused window, with buttons and a ×. Drawing the window again (a note opened in
-   * it) doesn't take it away; × does, as does a newer notice. On a wider screen it sits at the top, and
-   * the note moves down to make room; one with nothing to do goes after a few seconds, one with actions
-   * stays until they're used. On a phone it's a bar at the bottom that goes after a few seconds either
-   * way. A timer waits while you're reaching for it (a finger or the pointer on it, or focus in it).
+   * it) doesn't take it away; × does, as does a newer notice as urgent or more. A less urgent one waits
+   * until it's gone, so news a moment after a refusal doesn't hide it. On a wider screen it sits at the
+   * top, and the note moves down to make room; one with nothing to do goes after a few seconds, one with
+   * actions stays until they're used. On a phone it's a bar at the bottom that goes after a few seconds
+   * either way. A timer waits while you're reaching for it (a finger or the pointer on it, or focus in it).
+   * What comes back says whether it's still on screen, or waiting to be.
    */
-  notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
+  notice(message: string, actions: NoticeAction[] = [], urgency: Urgency = "news"): () => boolean {
+    const notice: Notice = { message, actions, urgency };
+    this.waitingNotices[urgency] = notice;
+    this.nextNotice();
+    return () => this.waitingNotices[urgency] === notice || !!notice.box?.deref()?.isConnected;
+  }
+
+  /** Show the most urgent notice waiting, unless one more urgent is on screen, or there's no window to show it in yet. */
+  private nextNotice() {
+    const next = this.waitingNotices.alert ?? this.waitingNotices.news;
+    if (!next) return;
+    if (next.urgency === "news" && this.shownNotice?.urgency === "alert" && this.shownNotice.box?.deref()?.isConnected) return;
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
-    // Before there's a window to show it in (an extension starting with the app, say): show it once there is.
-    if (!editors) return void (this.pendingNotice = [message, actions]);
+    if (!editors) return;
+    delete this.waitingNotices[next.urgency];
+    this.shownNotice = next;
+    this.showNotice(editors, next);
+  }
+
+  private showNotice(editors: HTMLElement, notice: Notice) {
+    const { message, actions } = notice;
     const box = document.createElement("div");
     box.className = "notice";
     box.setAttribute("role", "status");
+    notice.box = new WeakRef(box);
     const p = document.createElement("p");
     p.textContent = message;
     box.append(p);
@@ -292,6 +324,8 @@ export class Workbench {
     sizes?.unobserve(box);
     this.noticeGone.get(box)?.();
     this.noticeGone.delete(box);
+    // What waited for it shows now, once whatever took it away has drawn its windows.
+    if (this.shownNotice?.box?.deref() === box) queueMicrotask(() => this.nextNotice());
   }
 
   /** A window closed: stop watching its notices, and let its notice go. */
