@@ -109,12 +109,18 @@ async function valuesIn(deps: SettingsUiDeps, path: FilePath | null): Promise<{ 
 export function settingsEditor(deps: SettingsUiDeps): View & { level: Shown; query: string } {
   /** Why the last change didn't save, shown once. */
   let failed = "";
+  /** The latest drawing of each element the editor is drawn in. */
+  const drawings = new WeakMap<HTMLElement, number>();
   const view = {
     id: SETTINGS_VIEW,
     title: "Settings",
     level: "user" as Shown,
     query: "",
     async render(root: HTMLElement) {
+      // Each drawing is the latest: one still reading its files when another starts (This device picked
+      // while User was being read) gives way, rather than drawing over it when its reads come back.
+      const turn = (drawings.get(root) ?? 0) + 1;
+      drawings.set(root, turn);
       const shown = view.level;
       if (shown === "device") return renderDeviceLevel(root);
       const level = shown;
@@ -126,6 +132,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Shown; que
       // The other level, to say where a value that isn't set here comes from, or what wins over it.
       const user = level === "user" ? values : (await valuesIn(deps, deps.pathFor("user"))).values;
       const workspace = level === "workspace" ? values : (await valuesIn(deps, deps.pathFor("workspace"))).values;
+      if (drawings.get(root) !== turn) return;
 
       const set = async (key: string, value: unknown) => {
         if (!path) return;
