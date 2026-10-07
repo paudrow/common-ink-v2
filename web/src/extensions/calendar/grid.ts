@@ -44,7 +44,7 @@ export class TimeGrid implements CalendarView {
   private settle = 0;
   /** Whether the columns have their width yet. */
   private laidOut = false;
-  private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; day: number; minutes: number; edge: boolean } | null = null;
+  private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; parent?: HTMLElement; day: number; minutes: number; edge: boolean } | null = null;
   private drag: Drag | null = null;
   private onScreen: Occurrence[] = [];
   private columns = new Map<Day, HTMLElement>();
@@ -304,6 +304,7 @@ export class TimeGrid implements CalendarView {
       target: event ? "event" : inAllDay ? "allday" : "empty",
       o,
       node: event ?? undefined,
+      parent: event?.parentElement ?? undefined,
       day: this.dayIndexAt(e),
       minutes: this.minutesAt(e),
       edge: target.classList.contains("cal-resize"),
@@ -351,15 +352,18 @@ export class TimeGrid implements CalendarView {
       return { kind: "create", day: p.day, from: p.minutes, to: p.minutes, ghost };
     }
     if (!p.o || !p.node) return null;
-    if (p.node.classList.contains("cal-bar")) return { kind: "moveAllDay", o: p.o, node: p.node, grabDay: p.day, shift: 0 };
+    // Drawing again since the press replaced the node it found, so the drag takes the one drawn now.
+    const node = p.node.isConnected ? p.node : p.parent?.querySelector<HTMLElement>(`:scope > [data-address="${CSS.escape(p.o.address)}"]`);
+    if (!node) return null;
+    if (node.classList.contains("cal-bar")) return { kind: "moveAllDay", o: p.o, node, grabDay: p.day, shift: 0 };
     const s = localSpan(p.o);
     const day = p.day;
     const start = s.startDay === this.dayAt(day) ? s.start : 0;
     const end = s.endDay === this.dayAt(day) ? s.end : 24 * 60;
     // Dragged out of its column, so it sits above the others while it moves.
-    this.body.append(p.node);
-    p.node.classList.add("is-moving");
-    return { kind: p.edge ? "resize" : "move", o: p.o, node: p.node, grab: p.minutes - start, day, start, end, startDay: day };
+    this.body.append(node);
+    node.classList.add("is-moving");
+    return { kind: p.edge ? "resize" : "move", o: p.o, node, grab: p.minutes - start, day, start, end, startDay: day };
   }
 
   /** Put a block over a day's column, from one time to another. */

@@ -107,9 +107,26 @@ browserTest(h, "dragging an event moves it, and dragging its bottom edge changes
   await drag(app, { x: p.x + p.width / 2, y: p.y + p.height - 3 }, { x: p.x + p.width / 2, y: end.y });
   await until(app, "planning ends at 15:00", async () => (await event(app, "event:sample/work/planning"))?.end === "2026-10-05T15:00:00");
   assert.equal((await event(app, "event:sample/work/planning"))?.start, "2026-10-05T13:00:00", "its start stayed");
-  // While a move is drawn, its ghost (.is-moving) is there too: the event is the other one.
-  const height = async () => (await app.page.locator(".cal-event:not(.is-moving)", { hasText: "Quarterly planning" }).boundingBox())?.height ?? 0;
+  const height = async () => (await planning.boundingBox())?.height ?? 0;
   await until(app, "planning is drawn two hours tall", async () => Math.abs((await height()) - 2 * HOUR) < 4);
+});
+
+browserTest(h, "an event pressed before the calendar draws again is still one event while it's dragged and after", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const dentist = app.page.locator('.cal-event[data-address="event:sample/personal/dentist"]');
+  const from = await box(app, dentist);
+  const to = await at(app, "2026-10-07", 16 * 60 + 15);
+  await app.page.mouse.move(from.x + from.width / 2, from.y + 8);
+  await app.page.mouse.down();
+  const size = app.page.viewportSize()!;
+  await app.page.setViewportSize({ width: size.width + 1, height: size.height });
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  for (let i = 1; i <= 8; i++) await app.page.mouse.move(from.x + from.width / 2 + ((to.x - from.x - from.width / 2) * i) / 8, from.y + 8 + ((to.y - from.y) * i) / 8);
+  assert.equal(await dentist.count(), 1, "one dentist while it's dragged");
+  await app.page.mouse.up();
+  assert.equal(await dentist.count(), 1, "one dentist once it's dropped");
+  await until(app, "the dentist moved to Wednesday 16:15", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T16:15:00");
+  assert.equal(await dentist.count(), 1, "one dentist once it's saved");
 });
 
 browserTest(h, "a repeating event's edits ask which ones: this event, this and following, all", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
