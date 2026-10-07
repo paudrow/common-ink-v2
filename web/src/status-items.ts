@@ -1,6 +1,8 @@
 // Extensions' items in the status bar (contributes.statusBarItems): each declared in its manifest with
 // a side and a priority, placed when the app loads, and empty (so hidden) until its extension sets it.
 import type { StatusBarItemContribution } from "../../worker/src/extensions.ts";
+import type { RunBy } from "./commands.ts";
+import type { Sandboxed } from "../../worker/src/settings.ts";
 
 export class StatusItems {
   private items = new Map<string, { el: HTMLElement; owner: string }>();
@@ -10,11 +12,11 @@ export class StatusItems {
     private left: HTMLElement,
     private right: HTMLElement,
     /** Run a click's command, for the extension whose item it is. */
-    private run: (command: string, owner: string, by: "app" | "sandbox") => void,
+    private run: (command: string, owner: string, by: RunBy) => void,
   ) {}
 
   /** Place every declared item, highest priority outermost, as VS Code does. Items already placed are left alone. */
-  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string; by?: "sandbox" }>): void {
+  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string; by?: Sandboxed }>): void {
     const sorted = [...items].sort((a, b) => b.priority - a.priority);
     for (const item of sorted) {
       if (this.items.has(item.id)) continue;
