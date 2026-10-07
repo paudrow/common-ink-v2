@@ -1,13 +1,15 @@
-// The Feed (study, sections 5.2 and 6.2): every note that isn't archived, newest change first, as cards.
-// It reads them with search (`-is:archived sort:edited`, a page at a time), archives through the
-// workspace's archive operation and trashes by deleting, as Archive and Trash do, so Undo on the notice
-// takes either back. On a phone it's the bottom bar's Feed, and what the app opens on.
+// The Feed (study, sections 5.2 and 6.2): every note that isn't archived, pinned ones first, then newest
+// change first, as cards. It reads them with search (`-is:archived sort:edited`, a page at a time, and
+// `is:pinned` in the order .common-ink/pins.json has them), archives and pins through the workspace's
+// operations and trashes by deleting, as Archive and Trash do, so Undo on the notice, or u, takes any of
+// it back. On a phone it's the bottom bar's Feed, and what the app opens on.
 import { ago, describeAuthor } from "common-ink/describe";
 import type { FilePath } from "common-ink/files";
 import type { ExtensionModule } from "../../extension-api.ts";
 import { FeedView, type Card, type SwipeChoice } from "./view.ts";
 
 export const FEED_QUERY = "-is:archived sort:edited";
+const PINS = ".common-ink/pins.json" as FilePath;
 
 async function call<T>(method: "GET" | "POST" | "DELETE", route: string, body?: unknown): Promise<T> {
   // Archiving and trashing are the workspace's to record, so they wait for the server: say so plainly when it can't be reached.
@@ -21,18 +23,55 @@ async function call<T>(method: "GET" | "POST" | "DELETE", route: string, body?: 
 
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** The pinned paths in the pins file's text, in order (worker/src/pins.ts writes it). */
+function parsePinned(text: string): string[] {
+  try {
+    const list = (JSON.parse(text || "{}") as { pinned?: unknown }).pinned;
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 const extension: ExtensionModule = {
   activate(ctx) {
     const name = (paths: FilePath[]) => (paths.length === 1 ? `"${ctx.util.label(paths[0])}"` : `${paths.length} notes`);
     const swipe = (side: "right" | "left"): SwipeChoice => {
       const value = ctx.settings.get<string>(`feed.swipe.${side}`);
-      return value === "archive" || value === "trash" || value === "none" ? value : side === "right" ? "archive" : "trash";
+      return value === "archive" || value === "trash" || value === "pin" || value === "none" ? value : side === "right" ? "archive" : "trash";
+    };
+    /** What u (or ⌘Z's cousin, Undo on the notice) takes back: the last archive, trash or pin. */
+    let last: (() => Promise<void>) | null = null;
+    const search = async (query: string, offset: number, limit: number) => {
+      const found = await call<{ total: number; results: Card[] }>("GET", `/api/search?${new URLSearchParams({ query, limit: String(limit), offset: String(offset), zone: ZONE })}`);
+      return { cards: found.results.map(({ path, title, edited, author }) => ({ path, title, edited, author })), total: found.total };
     };
 
     const view = new FeedView({
-      page: async (offset, limit) => {
-        const found = await call<{ total: number; results: Card[] }>("GET", `/api/search?${new URLSearchParams({ query: FEED_QUERY, limit: String(limit), offset: String(offset), zone: ZONE })}`);
-        return { cards: found.results.map(({ path, title, edited, author }) => ({ path, title, edited, author })), total: found.total };
+      page: (offset, limit) => search(`${FEED_QUERY} -is:pinned`, offset, limit),
+      pinned: async () => {
+        const order = parsePinned((await ctx.files.read(PINS).catch(() => null))?.text ?? "");
+        const { cards } = await search("is:pinned -is:archived", 0, 100);
+        return cards.sort((a, b) => order.indexOf(a.path) - order.indexOf(b.path));
+      },
+      undo: () => {
+        const undoing = last;
+        last = null;
+        if (undoing) void undoing();
+        else ctx.workbench.notice("Nothing to undo in the Feed");
+      },
+      pin: async (paths, pinned) => {
+        try {
+          const done = await call<{ revision: number | null }>("POST", pinned ? "/api/pin" : "/api/unpin", { paths });
+          const revision = done.revision;
+          const what = `${pinned ? "pinning" : "unpinning"} ${name(paths)}`;
+          last = revision === null ? null : () => undo([revision], what);
+          ctx.workbench.notice(`${pinned ? "Pinned" : "Unpinned"} ${name(paths)}`, revision === null ? [] : [{ label: "Undo", run: () => undo([revision], what) }]);
+          return true;
+        } catch (err) {
+          ctx.workbench.notice(`Couldn't ${pinned ? "pin" : "unpin"} ${name(paths)}: ${(err as Error).message}`);
+          return false;
+        }
       },
       text: async (path) => (await ctx.files.read(path)).text,
       open: (path) => void ctx.workbench.open(path),
@@ -46,6 +85,7 @@ const extension: ExtensionModule = {
         try {
           const done = await call<{ revision: number | null }>("POST", "/api/archive", { paths });
           const revision = done.revision;
+          last = revision === null ? null : () => undo([revision], `archiving ${name(paths)}`);
           ctx.workbench.notice(`Archived ${name(paths)}`, revision === null ? [] : [{ label: "Undo", run: () => undo([revision], `archiving ${name(paths)}`) }]);
           return true;
         } catch (err) {
@@ -72,6 +112,7 @@ const extension: ExtensionModule = {
           const moved = new Set<string>(gone.map((g) => g.path));
           await ctx.layout.closeTabs((tab) => "file" in tab && moved.has(tab.file));
           const what = name(gone.map((g) => g.path));
+          last = () => restore(gone, what);
           ctx.workbench.notice(`Moved ${what} to Trash${failed ? `. ${failed}` : ""}`, [{ label: "Undo", run: () => restore(gone, what) }]);
         } else if (failed) ctx.workbench.notice(failed);
         return gone.length > 0;
@@ -100,7 +141,7 @@ const extension: ExtensionModule = {
     ctx.views.register("feed", { render: (box) => view.render(box) });
     ctx.commands.register("feed.show", () => ctx.views.open("feed", { newTab: true }));
     ctx.events.onChange((change) => {
-      if (change.path.endsWith(".md") || change.path === ".common-ink/archive.json") view.changed(change.path);
+      if (change.path.endsWith(".md") || change.path === ".common-ink/archive.json" || change.path === PINS) view.changed(change.path);
     });
   },
 };

@@ -13,6 +13,7 @@ export interface NoteResult {
   edited: number;
   author: Author;
   archived?: true;
+  pinned?: true;
   /** Deleted, and in Trash: only with is:trashed. */
   trashed?: true;
   line?: { number: number; text: string };
@@ -33,6 +34,8 @@ export interface SearchOptions {
   offset?: number;
   /** The paths in the archive, which come last. */
   archived?: ReadonlySet<string>;
+  /** The pinned paths (pins.ts), for is:pinned. */
+  pinned?: ReadonlySet<string>;
   /**
    * Only notes whose paths match one of these globs (globs.ts) are searched: ranked, limited and
    * counted, as if no other note were there. What an extension may read, for its searches.
@@ -154,7 +157,7 @@ export class SearchIndex {
    * right ones however many notes there are, `more` says some were never read, and `total` counts only
    * those that were.
    */
-  search(query: Query, { ctx, limit, offset = 0, archived = new Set(), within }: SearchOptions): SearchResults {
+  search(query: Query, { ctx, limit, offset = 0, archived = new Set(), pinned = new Set(), within }: SearchOptions): SearchResults {
     const fts = ftsQuery(query);
     const inside = within ? inGlobs(within) : () => true;
     const authors = new Map<string, Author>();
@@ -164,7 +167,7 @@ export class SearchIndex {
         `SELECT d.path, d.title, c.author, c.time FROM search_docs d JOIN files f ON f.path = d.path JOIN changes c ON c.revision = f.revision${fts ? " WHERE d.id IN (SELECT rowid FROM search WHERE search MATCH ?)" : ""}`,
         ...(fts ? [fts] : []),
       )
-      .flatMap((r) => (inside(r.path) ? [{ path: r.path, title: r.title, text: "", edited: r.time, author: author(r.author), ...(archived.has(r.path) ? { archived: true } : {}) }] : []));
+      .flatMap((r) => (inside(r.path) ? [{ path: r.path, title: r.title, text: "", edited: r.time, author: author(r.author), ...(archived.has(r.path) ? { archived: true } : {}), ...(pinned.has(r.path) ? { pinned: true } : {}) }] : []));
     if (!query.terms.some(needsText)) return present(query, notes, { ctx, limit, offset });
     const known: Query = { terms: query.terms.filter((t) => !needsText(t)) };
     const candidates = ordered(query, notes.filter((n) => matches(known, n, ctx)));
@@ -200,6 +203,7 @@ export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit,
         edited: n.edited,
         author: n.author,
         ...(n.archived ? { archived: true as const } : {}),
+        ...(n.pinned ? { pinned: true as const } : {}),
         ...(n.trashed ? { trashed: true as const } : {}),
         ...(at >= 0 ? { line: { number: at + 1, text: lines[at].trim().slice(0, 200) } } : {}),
       };
