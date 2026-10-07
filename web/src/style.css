@@ -1010,10 +1010,10 @@ html[data-width="compact"] #not-saved:not([hidden]) {
 }
 
 /* The note makes room for a notice, so it hides none of its lines: on a wider screen, it starts below
-   the notice (--notice-room, from workbench.ts); on a phone, where a notice is a bar at the bottom, as a
-   snackbar is, it ends above it. */
-.editors:has(> .notice) > .tab-editor {
-  top: var(--notice-room, 3.5rem);
+   the notice (--notice-room, from workbench.ts, which scrolls the note so its text doesn't move); on a
+   phone, where a notice is a bar at the bottom, as a snackbar is, it ends above it. */
+.editors > .tab-editor {
+  top: var(--notice-room, 0px);
 }
 
 @media (max-width: 599.98px) {

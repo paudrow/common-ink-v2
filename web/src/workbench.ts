@@ -215,17 +215,22 @@ export class Workbench {
       });
       box.append(b);
     }
+    // Closed, focus goes back where it was (an editor, so Vim's keys keep working), or else to the note on show.
+    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     const close = document.createElement("button");
     close.className = "notice-close";
     close.textContent = "×";
     close.setAttribute("aria-label", "Close");
     close.title = "Close";
-    close.addEventListener("click", () => box.remove());
+    close.addEventListener("click", () => {
+      box.remove();
+      if (before?.isConnected) before.focus();
+      else this.focusedView?.focus();
+    });
     box.append(close);
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
-    // On a wider screen the note starts below it (style.css), as far down as it reaches.
-    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => box.isConnected && editors.style.setProperty("--notice-room", `${box.offsetTop + box.offsetHeight + 8}px`)).observe(box);
+    this.makeRoom(editors, box);
     const compact = matchMedia(COMPACT);
     let held = false;
     box.addEventListener("pointerdown", () => (held = true));
@@ -245,6 +250,33 @@ export class Workbench {
     };
     compact.addEventListener("change", narrowed);
   }
+
+  /**
+   * On a wider screen the note starts below its window's notice (--notice-room, style.css), and its text
+   * stays where it is on screen as the notice comes and goes: it scrolls by as much as the note moves.
+   */
+  private makeRoom(editors: HTMLElement, box: HTMLElement) {
+    let room = this.rooms.get(editors);
+    if (!room) {
+      let was = 0;
+      const apply = () => {
+        const notice = editors.querySelector<HTMLElement>(":scope > .notice");
+        const now = notice && !matchMedia(COMPACT).matches ? notice.offsetTop + notice.offsetHeight + 8 : 0;
+        if (now === was) return;
+        editors.style.setProperty("--notice-room", `${now}px`);
+        for (const scroller of editors.querySelectorAll<HTMLElement>(":scope > .tab-editor:not([hidden]) .cm-scroller")) scroller.scrollTop += now - was;
+        was = now;
+      };
+      // A notice put in or taken out, before the next frame is drawn; and one that wraps or unwraps.
+      new MutationObserver(apply).observe(editors, { childList: true });
+      room = { apply, sizes: typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply) };
+      this.rooms.set(editors, room);
+    }
+    room.sizes?.observe(box);
+    room.apply();
+  }
+
+  private rooms = new WeakMap<HTMLElement, { apply: () => void; sizes: ResizeObserver | null }>();
 
   get focusedGroup(): L.Group {
     return L.focused(this.layout);
