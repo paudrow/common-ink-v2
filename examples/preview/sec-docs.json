@@ -1,7 +1,0 @@
-{
-  "pr": 57,
-  "title": "The security model, written down",
-  "steps": [
-    "Nothing changes in the app. Read docs/security.md in the pull request, and ADR 0006's last bullets under What building it changed."
-  ]
-}

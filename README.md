@@ -6,7 +6,6 @@ A minimal, keyboard-first workspace for markdown notes, tasks and calendar data,
 - [ROADMAP.md](ROADMAP.md): what's being built, in order (edited by hand)
 - [CONTEXT.md](CONTEXT.md): the project's vocabulary
 - [docs/adr/](docs/adr/): architectural decisions and why they were made
-- [docs/security.md](docs/security.md): the threat model (what's protected, from whom, and how), what's still open, and how to report a vulnerability
 - [docs/TESTING.md](docs/TESTING.md): how people and agents test, locally and on Previews: scenarios, test levers, the inspector, the probe CLI, and regression tests
 
 ## Develop

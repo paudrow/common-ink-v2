@@ -1,0 +1,84 @@
+// Places on wide screens (study step 10): the sidebar, the list beside the note, ⌘B, the go keys,
+// saved searches and pinned notes. Under 840px the phone shell has Places (shell.browser.ts).
+import assert from "node:assert/strict";
+import type { Page } from "playwright-core";
+import { browserTest, harness } from "./harness.ts";
+
+const h = harness();
+
+const sections = (page: Page) => page.locator("#places section").evaluateAll((els) => els.map((s) => [s.querySelector("h3")?.textContent ?? "", [...s.querySelectorAll(".place-title")].map((t) => t.textContent)]));
+const item = (page: Page, title: string) => page.locator("#places button.place-item", { has: page.locator(".place-title", { hasText: new RegExp(`^${title}$`) }) });
+const current = (page: Page) => page.locator("#places [aria-current]").locator(".place-title").allTextContents();
+
+browserTest(h, "on a wide screen Places is a sidebar beside the list and the note: places open in the window, ⌘B hides it, and g then a key goes", { scenario: "preview", open: "Welcome" }, async (app) => {
+  const { page } = app;
+  await page.locator("#places .place-item").first().waitFor();
+  const [top, bottom] = [(await sections(page))[0], (await sections(page)).at(-1)!];
+  assert.deepEqual(top[1].slice(0, 3), ["Feed", "Search", "Today"]);
+  assert.ok(top[1].includes("Tasks") && top[1].includes("Calendar"), JSON.stringify(top));
+  assert.deepEqual(bottom[1], ["Sources", "Archive", "Trash", "Extensions", "Settings"]);
+  assert.equal(await page.locator("#notes .list-head h2").textContent(), "Feed", "the list beside the note says what it is");
+  // A view place opens in the window, and is marked.
+  await item(page, "Tasks").click();
+  await app.tabs.tab(0, "Tasks").waitFor();
+  assert.deepEqual(await current(page), ["Tasks"]);
+  // The go keys, outside text.
+  await page.locator("#notes .list-head").click();
+  await page.keyboard.press("g");
+  await page.keyboard.press("x");
+  await app.tabs.tab(0, "Trash").waitFor();
+  assert.deepEqual(await current(page), ["Trash"]);
+  // In a note, g is Vim's: g e moves back a word there, and doesn't go to Extensions.
+  await app.open("Welcome");
+  await app.editor.focus();
+  await app.editor.keys("ge");
+  assert.deepEqual(await current(page), ["Trash"], "g e in a note doesn't go anywhere");
+  // ⌘B puts it away and brings it back.
+  await page.keyboard.press("ControlOrMeta+b");
+  await page.locator("#places").waitFor({ state: "hidden" });
+  await page.keyboard.press("ControlOrMeta+b");
+  await page.locator("#places").waitFor();
+});
+
+browserTest(h, "a search saved with ⌘S is a place, with how many notes it finds, and it lists them beside the note", { scenario: "preview", open: "Welcome" }, async (app) => {
+  const { page } = app;
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.locator("#command-bar input").fill("tour");
+  await page.locator("#command-bar li", { hasText: "Tasks tour" }).first().waitFor();
+  await page.keyboard.press("ControlOrMeta+s");
+  await page.locator(".dialog input").fill("Tours");
+  await page.keyboard.press("Enter");
+  await item(page, "Tours").waitFor();
+  assert.deepEqual(await current(page), ["Tours"]);
+  await page.locator("#places .place-count", { hasText: /^\d+$/ }).waitFor();
+  assert.deepEqual([await page.locator("#notes .list-head h2").textContent(), await page.locator("#notes .list-head code").textContent()], ["Tours", "tour"]);
+  await page.locator("#notes a", { hasText: "Tasks tour" }).first().click();
+  await page.waitForFunction(() => document.title.startsWith("Tasks tour"));
+  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")).saved, { Tours: "tour" });
+  // The Feed takes the list back; removing the search takes it out of places.json.
+  await item(page, "Feed").click();
+  assert.equal(await page.locator("#notes .list-head h2").textContent(), "Feed");
+  await item(page, "Tours").hover();
+  await page.locator("#places .place-remove").click();
+  await item(page, "Tours").waitFor({ state: "detached" });
+  await page.waitForFunction(async () => JSON.stringify(JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved) === "{}");
+});
+
+browserTest(h, "pinned notes are in Places, in pin order, and open from there", { scenario: "preview", open: "Welcome" }, async (app) => {
+  const { page } = app;
+  await app.writeFile(".common-ink/pins.json", JSON.stringify({ pinned: ["Reading list.md", "Daily plan.md"] }));
+  await page.locator("#places h3", { hasText: "Pinned" }).waitFor();
+  assert.deepEqual((await sections(page)).find(([h]) => h === "Pinned")?.[1], ["Reading list", "Daily plan"]);
+  await item(page, "Daily plan").click();
+  await page.waitForFunction(() => document.title.startsWith("Daily plan"));
+  assert.deepEqual(await current(page), ["Daily plan"]);
+});
+
+browserTest(h, "on a phone there's no sidebar: Places stays the sheet, and ⌘B does nothing", { scenario: "preview", device: "phone" }, async (app) => {
+  const { page } = app;
+  await page.locator("#shell-bar").waitFor();
+  assert.equal(await page.locator("#places").isVisible(), false);
+  await page.keyboard.press("ControlOrMeta+b");
+  assert.equal(await page.locator("#places").isVisible(), false);
+});

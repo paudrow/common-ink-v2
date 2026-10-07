@@ -107,6 +107,142 @@ body {
   background: var(--line);
 }
 
+/* Places on wide screens (sidebar.ts): a column left of the list, put away with ⌘B. */
+#places {
+  display: none;
+}
+
+html[data-places]:not([data-shell]) body {
+  grid-template: "places notes editor panel" 1fr "places notes status status" auto / 13rem 14rem 1fr auto;
+}
+
+html[data-places]:not([data-shell]) #places {
+  grid-area: places;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  padding: 1rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+#places ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#places h3 {
+  margin: 0 0 0.25rem;
+  padding: 0 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+#places li {
+  display: flex;
+  align-items: center;
+}
+
+#places .place-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+#places .place-item:hover,
+#places .place-item:focus-visible,
+#places .place-item[aria-current] {
+  color: var(--ink);
+}
+
+#places .place-item[aria-current] {
+  background: var(--line);
+}
+
+#places .place-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#places .place-from,
+#places .place-count {
+  flex: none;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+
+#places .place-remove {
+  display: none;
+  border: none;
+  background: none;
+  color: var(--faint);
+  padding: 0.25rem;
+  cursor: pointer;
+}
+
+#places li:hover .place-remove,
+#places .place-remove:focus-visible {
+  display: inline-flex;
+}
+
+#places .places-bottom {
+  margin-top: auto;
+}
+
+/* The list beside the note: what it is (the Feed, or a saved search and its query). */
+.list-head {
+  padding: 0 0.5rem 0.5rem;
+}
+
+.list-head h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.list-head code {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--faint);
+  font: 0.75rem var(--mono);
+  overflow-wrap: anywhere;
+}
+
+#notes a small {
+  display: block;
+  color: var(--faint);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#notes .list-note {
+  padding: 0.25rem 0.5rem;
+  color: var(--faint);
+}
+
+html[data-shell] .list-head {
+  display: none;
+}
+
 #workbench {
   grid-area: editor;
   min-height: 0;

@@ -57,6 +57,8 @@ export class CommandBar {
   private returnFocus: HTMLElement | null = null;
 
   private providers: Provider[] = [];
+  /** ⌘S in a search: save its query as a place (main.ts). The bar closes first. */
+  onSave: ((query: string) => void) | null = null;
   /** A one-off list to pick from (pick), in place of the providers until the bar closes. */
   private choices: Provider | null = null;
 
@@ -279,6 +281,11 @@ export class CommandBar {
       else if (matchKeys(e, "ArrowUp") || matchKeys(e, "Ctrl-p") || matchKeys(e, "Ctrl-k")) this.move(-1);
       else if (matchKeys(e, "Enter")) this.choose(this.selected);
       else if (matchKeys(e, "Escape")) this.close();
+      else if (matchKeys(e, "Mod-s") && this.onSave && this.found()?.provider.query && this.found()!.query.trim()) {
+        const { query } = this.found()!;
+        this.close();
+        this.onSave(query.trim());
+      }
       // With nothing to complete, Tab moves on to the chips and Cancel, as it would.
       else if (matchKeys(e, "Tab")) return this.completeFilter();
       else return false;

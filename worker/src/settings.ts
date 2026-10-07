@@ -50,6 +50,7 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
   { key: "Mod-,", command: "settings.user" },
   { key: "Mod-[", command: "go.back" },
   { key: "Mod-]", command: "go.forward" },
+  { key: "Mod-b", command: "places.toggle" },
 ];
 
 const keybindings: Declared<Keybinding[]> = {
