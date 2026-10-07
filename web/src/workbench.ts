@@ -102,6 +102,8 @@ const COMPACT = "(max-width: 599.98px)";
 /** How long a notice stays on a phone: a little longer when it has a button, such as Undo. */
 const NOTICE_MS = 4000;
 const NOTICE_WITH_ACTIONS_MS = 6000;
+/** How long a wider screen's notice with nothing to do stays: one with actions stays until it's acted on or closed. */
+const NOTICE_WIDE_MS = 8000;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
@@ -188,9 +190,11 @@ export class Workbench {
   }
 
   /**
-   * A message in the focused window, with buttons, until its tabs change. On a phone it's a bar at the
-   * bottom that goes after a few seconds, unless you're reaching for it (a finger or the pointer on it,
-   * or focus in it).
+   * A message in the focused window, with buttons and a ×. Drawing the window again (a note opened in
+   * it) doesn't take it away; × does, as does a newer notice. On a wider screen it sits at the top, and
+   * the note moves down to make room; one with nothing to do goes after a few seconds, one with actions
+   * stays until they're used. On a phone it's a bar at the bottom that goes after a few seconds either
+   * way. A timer waits while you're reaching for it (a finger or the pointer on it, or focus in it).
    */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
@@ -211,9 +215,24 @@ export class Workbench {
       });
       box.append(b);
     }
+    // Closed, focus goes back where it was (an editor, so Vim's keys keep working), or else to the note on
+    // show. Held weakly: a notice mustn't keep a closed editor alive.
+    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? new WeakRef(document.activeElement) : null;
+    const close = document.createElement("button");
+    close.className = "notice-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close";
+    close.addEventListener("click", () => {
+      box.remove();
+      const was = before?.deref();
+      if (was?.isConnected) was.focus();
+      else this.focusedView?.focus();
+    });
+    box.append(close);
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
-    // On a phone it goes by itself; on a wider screen it stays, until the window narrows to a phone's.
+    this.makeRoom(editors, box);
     const compact = matchMedia(COMPACT);
     let held = false;
     box.addEventListener("pointerdown", () => (held = true));
@@ -226,12 +245,66 @@ export class Workbench {
     };
     const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
     if (compact.matches) return void start();
+    if (!actions.length) window.setTimeout(go, NOTICE_WIDE_MS);
     const narrowed = (e: MediaQueryListEvent) => {
       if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
       if (box.isConnected && e.matches) start();
     };
     compact.addEventListener("change", narrowed);
+    // Gone (closed, timed out, replaced, its window closed): it stops listening, so nothing keeps it.
+    this.noticeGone.set(box, () => compact.removeEventListener("change", narrowed));
   }
+
+  /** What to undo when a notice goes, by its box. */
+  private noticeGone = new WeakMap<HTMLElement, () => void>();
+
+  /**
+   * On a wider screen the note starts below its window's notice (--notice-room, style.css), and its text
+   * stays where it is on screen as the notice comes and goes: it scrolls by as much as the note moves.
+   */
+  private makeRoom(editors: HTMLElement, box: HTMLElement) {
+    let room = this.rooms.get(editors);
+    if (!room) {
+      let was = 0;
+      const apply = () => {
+        const notice = editors.querySelector<HTMLElement>(":scope > .notice");
+        const now = notice && !matchMedia(COMPACT).matches ? notice.offsetTop + notice.offsetHeight + 8 : 0;
+        if (now === was) return;
+        editors.style.setProperty("--notice-room", `${now}px`);
+        for (const scroller of editors.querySelectorAll<HTMLElement>(":scope > .tab-editor:not([hidden]) .cm-scroller")) scroller.scrollTop += now - was;
+        was = now;
+      };
+      const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+      // A notice put in or taken out, before the next frame is drawn; and one that wraps or unwraps.
+      const changes = new MutationObserver((records) => {
+        for (const r of records) for (const n of r.removedNodes) if (n instanceof HTMLElement && n.classList.contains("notice")) this.goneNotice(n, sizes);
+        apply();
+      });
+      changes.observe(editors, { childList: true });
+      room = { apply, sizes, changes };
+      this.rooms.set(editors, room);
+    }
+    room.sizes?.observe(box);
+    room.apply();
+  }
+
+  private goneNotice(box: HTMLElement, sizes: ResizeObserver | null) {
+    sizes?.unobserve(box);
+    this.noticeGone.get(box)?.();
+    this.noticeGone.delete(box);
+  }
+
+  /** A window closed: stop watching its notices, and let its notice go. */
+  private dropRoom(editors: HTMLElement) {
+    const room = this.rooms.get(editors);
+    if (!room) return;
+    for (const box of editors.querySelectorAll<HTMLElement>(":scope > .notice")) this.goneNotice(box, room.sizes);
+    room.sizes?.disconnect();
+    room.changes.disconnect();
+    this.rooms.delete(editors);
+  }
+
+  private rooms = new WeakMap<HTMLElement, { apply: () => void; sizes: ResizeObserver | null; changes: MutationObserver }>();
 
   get focusedGroup(): L.Group {
     return L.focused(this.layout);
@@ -740,7 +813,13 @@ export class Workbench {
     for (const k of this.viewBoxes.keys()) if (!wanted.has(k)) this.viewBoxes.delete(k);
     const shown = new Set(L.groups(this.layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))));
     for (const [path, file] of this.files) if (!file.views.size && !shown.has(path)) this.files.delete(path);
-    for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
+    for (const [id, el] of this.groupEls)
+      if (!L.groups(this.layout).some((g) => g.id === id)) {
+        this.groupEls.delete(id);
+        // A closed window's watch on its notices goes with it.
+        const editors = el.querySelector<HTMLElement>(".editors");
+        if (editors) this.dropRoom(editors);
+      }
     // Rebuild the windows only when their arrangement changes. Otherwise update them where they are:
     // moving a focused editor's node would blur it (and save) in the middle of a click.
     const shape = shapeOf(this.layout.root);
@@ -795,13 +874,15 @@ export class Workbench {
       box.hidden = !showing;
       return box;
     });
-    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
+    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes, and so does a notice: a
+    // window drawn again (a note opened in it) isn't a reason for what it says to go unread.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
+    const kept = [...chrome, ...editors.querySelectorAll<HTMLElement>(":scope > .notice")];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
     // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
     // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
     const wanted = new Set<Node>([...empty, ...boxes]);
-    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const c of [...editors.children]) if (!wanted.has(c) && !kept.includes(c as HTMLElement)) c.remove();
     for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }

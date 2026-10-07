@@ -12,6 +12,7 @@ Object.assign(globalThis, {
   Window: window.Window,
   HTMLElement: window.HTMLElement,
   CSS: { escape: (s: string) => s },
+  matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
 });
 const { Workbench } = await import("../web/src/workbench.ts");
 const { LAYOUT_PATH, focusGroup } = await import("../web/src/layout.ts");
@@ -109,4 +110,40 @@ test("moving the cursor about isn't a place of its own; a jump of more than ten 
   assert.equal(places(), 2, "G or a search: a jump");
   await wb.go(-1);
   assert.equal(view.state.doc.lineAt(view.state.selection.main.head).number, 4, "back where the cursor was before the jump");
+});
+
+test("a notice stays as its window opens another note, or its tab changes: only its ×, its time or a newer notice takes it away", async () => {
+  const { wb, host } = await workbench({ root: group("g1", "A.md"), focus: "g1" });
+  wb.notice("Word count left the Catalog. A file you added in its folder stayed.");
+  const notices = () => [...host.querySelectorAll(".notice p")].map((p) => p.textContent);
+  assert.deepEqual(notices(), ["Word count left the Catalog. A file you added in its folder stayed."]);
+  await wb.open("B.md" as FilePath);
+  await wb.open("C.md" as FilePath, { newTab: true });
+  assert.deepEqual(notices(), ["Word count left the Catalog. A file you added in its folder stayed."], "opening notes leaves it");
+  wb.notice("Saved a copy");
+  assert.deepEqual(notices(), ["Saved a copy"], "a newer notice replaces it");
+});
+
+test("on a wider screen a notice with nothing to do goes after its time; one with an action stays; × closes either", async (t) => {
+  const { wb, host } = await workbench({ root: group("g1", "A.md"), focus: "g1" });
+  const notices = () => [...host.querySelectorAll(".notice p")].map((p) => p.textContent);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  wb.notice("Copied");
+  t.mock.timers.tick(7_000);
+  assert.deepEqual(notices(), ["Copied"], "still there after 7 s");
+  t.mock.timers.tick(1_500);
+  assert.deepEqual(notices(), [], "gone after 8 s");
+
+  wb.notice("Moved to Trash", [{ label: "Undo", run: () => {} }]);
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(notices(), ["Moved to Trash"], "one with an action waits for it");
+  const close = host.querySelector<HTMLButtonElement>(".notice .notice-close")!;
+  assert.equal(close.getAttribute("aria-label"), "Close", "a button, so a key reaches it too");
+  close.click();
+  assert.deepEqual(notices(), [], "× closes it");
+
+  wb.notice("Copied");
+  host.querySelector<HTMLButtonElement>(".notice .notice-close")!.click();
+  assert.deepEqual(notices(), [], "× closes one with nothing to do too");
+  t.mock.timers.reset();
 });

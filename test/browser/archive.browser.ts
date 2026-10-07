@@ -111,7 +111,7 @@ browserTest(h, "archiving while offline says so plainly", { scenario: "empty", a
   await page.context().setOffline(false);
 });
 
-browserTest(h, "a notice sits below an archived note's line on a wide screen", { scenario: "empty" }, async (app) => {
+browserTest(h, "a notice covers none of an archived note's line on a wide screen: the note, line and all, starts below it", { scenario: "empty" }, async (app) => {
   const { page } = app;
   await app.writeFile("Alpha.md", "# Alpha\n");
   await app.open("Alpha");
@@ -120,7 +120,7 @@ browserTest(h, "a notice sits below an archived note's line on a wide screen", {
   await page.locator(".notice", { hasText: "Archived" }).waitFor();
   await banner(page).waitFor();
   const [b, n] = [await banner(page).boundingBox(), await page.locator(".notice").boundingBox()];
-  assert.ok(b && n && n.y >= b.y + b.height, `notice ${JSON.stringify(n)} under banner ${JSON.stringify(b)}`);
+  assert.ok(b && n && b.y >= n.y + n.height, `banner ${JSON.stringify(b)} under notice ${JSON.stringify(n)}`);
 });
 
 browserTest(h, "on a phone, a notice hides none of the note and goes by itself", { scenario: "empty", viewport: { width: 375, height: 812 }, touch: true }, async (app) => {
@@ -159,4 +159,32 @@ browserTest(h, "a notice shown on a wide screen goes by itself once the window n
   await page.setViewportSize({ width: 375, height: 812 });
   await page.mouse.move(0, 0);
   await notice.waitFor({ state: "detached", timeout: 12_000 });
+});
+
+browserTest(h, "on a laptop a notice covers none of the note: the note starts below it, and it stays as other notes open until it's used or closed", { scenario: "empty" }, async (app) => {
+  const { page } = app;
+  await app.writeFile("Alpha.md", "# Alpha\n\nFirst words.\n");
+  await app.writeFile("Beta.md", "# Beta\n");
+  await app.open("Alpha");
+  await app.call("idle");
+  await app.command("Archive this note");
+  const notice = page.locator(".notice", { hasText: "Archived" });
+  await notice.waitFor();
+  const overlaps = () =>
+    page.evaluate(() => {
+      const n = document.querySelector(".notice")!.getBoundingClientRect();
+      return [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-line, .tab-editor:not([hidden]) .cm-panels-top")]
+        .map((l) => l.getBoundingClientRect())
+        .filter((r) => r.height && r.top < n.bottom && n.top < r.bottom).length;
+    });
+  await page.waitForFunction(() => {
+    const n = document.querySelector(".notice")!.getBoundingClientRect();
+    return document.querySelector(".tab-editor:not([hidden])")!.getBoundingClientRect().top >= n.bottom;
+  });
+  assert.equal(await overlaps(), 0, "not the archived note's top line, nor its first line");
+  await app.open("Beta");
+  await page.waitForTimeout(9_000);
+  assert.equal(await notice.count(), 1, "with an Undo to use, it waits for it, through other notes opening");
+  await notice.locator(".notice-close").click();
+  assert.equal(await notice.count(), 0, "× closes it");
 });
