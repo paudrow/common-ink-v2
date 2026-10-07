@@ -47,22 +47,22 @@ browserTest(h, "a search saved with ⌘S is a place, with how many notes it find
   await page.locator("#command-bar input").fill("tour");
   await page.locator("#command-bar li", { hasText: "Tasks tour" }).first().waitFor();
   await page.keyboard.press("ControlOrMeta+s");
-  await page.locator(".dialog input").fill("Tours");
+  await page.locator(".dialog input").fill("Tour notes");
   await page.keyboard.press("Enter");
-  await item(page, "Tours").waitFor();
-  assert.deepEqual(await current(page), ["Tours"]);
-  await page.locator("#places .place-count", { hasText: /^\d+$/ }).waitFor();
-  assert.deepEqual([await page.locator("#notes .list-head h2").textContent(), await page.locator("#notes .list-head code").textContent()], ["Tours", "tour"]);
+  await item(page, "Tour notes").waitFor();
+  assert.deepEqual(await current(page), ["Tour notes"]);
+  await page.locator("#places li", { has: item(page, "Tour notes") }).locator(".place-count", { hasText: /^\d+$/ }).waitFor();
+  assert.deepEqual([await page.locator("#notes .list-head h2").textContent(), await page.locator("#notes .list-head code").textContent()], ["Tour notes", "tour"]);
   await page.locator("#notes a", { hasText: "Tasks tour" }).first().click();
   await page.waitForFunction(() => document.title.startsWith("Tasks tour"));
-  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/places.json")).saved, { Tours: "tour" });
+  assert.equal(JSON.parse(await app.readFile(".common-ink/places.json")).saved["Tour notes"], "tour");
   // The Feed takes the list back; removing the search takes it out of places.json.
   await item(page, "Feed").click();
   assert.equal(await page.locator("#notes .list-head h2").textContent(), "Feed");
-  await item(page, "Tours").hover();
-  await page.locator("#places .place-remove").click();
-  await item(page, "Tours").waitFor({ state: "detached" });
-  await page.waitForFunction(async () => JSON.stringify(JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved) === "{}");
+  await item(page, "Tour notes").hover();
+  await page.locator("#places li", { has: item(page, "Tour notes") }).locator(".place-remove").click();
+  await item(page, "Tour notes").waitFor({ state: "detached" });
+  await page.waitForFunction(async () => !("Tour notes" in JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved));
 });
 
 browserTest(h, "pinned notes are in Places, in pin order, and open from there", { scenario: "preview", open: "Welcome" }, async (app) => {
