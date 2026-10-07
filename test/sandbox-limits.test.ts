@@ -81,7 +81,7 @@ function cpu(work: () => void) {
   return (user + system) / 1000;
 }
 
-test("a frame's flood of tiny calls past its share is refused at about the cost of answering each at all", async () => {
+test("a frame's flood of tiny calls past its share is refused at about the cost of answering each at all", async (t) => {
   // What answering a call costs with nothing done for it: an async answer with words made once.
   const bare = framePort();
   bare.port.onmessage = (e) => void (async (id: string) => bare.port.postMessage({ t: "reject", id, message: TOO_OFTEN }))((e.data as { id: string }).id);
@@ -106,26 +106,6 @@ test("a frame's flood of tiny calls past its share is refused at about the cost 
   assert.equal(sent.results + sent.refusals, 2_000 + 20_000 + 7 * 20_000);
   assert.ok(sent.results >= 2_000 && sent.refusals >= 7 * 20_000, `${sent.results} answered, ${sent.refusals} refused`);
   const [least, leastAlone] = [Math.min(...flood), Math.min(...alone)];
-  console.log(`DIAG flood least ${least.toFixed(1)} all ${flood.map((x) => x.toFixed(1)).join(" ")}; alone least ${leastAlone.toFixed(1)} all ${alone.map((x) => x.toFixed(1)).join(" ")}`);
+  t.diagnostic(`refusing 20,000 calls took at least ${least.toFixed(1)} ms of CPU, answering them ${leastAlone.toFixed(1)} ms`);
   assert.ok(least < 3 * leastAlone + 10, `refusing 20,000 calls took at least ${least.toFixed(1)} ms of CPU, against ${leastAlone.toFixed(1)} ms to answer them at all`);
-});
-
-test("DIAGNOSTIC: what each part of a refusal costs here", async () => {
-  const os = await import("node:os");
-  const fs = await import("node:fs");
-  const per = (label: string, work: (i: number) => unknown) => {
-    const runs: number[] = [];
-    for (let r = 0; r < 7; r++) runs.push(cpu(() => { for (let i = 0; i < 20_000; i++) work(i); }));
-    console.log(`DIAG ${label}: least ${Math.min(...runs).toFixed(2)} ms, all ${runs.map((x) => x.toFixed(1)).join(" ")}`);
-  };
-  let clock = "?";
-  try { clock = fs.readFileSync("/sys/devices/system/clocksource/clocksource0/current_clocksource", "utf8").trim(); } catch {}
-  console.log(`DIAG cpus ${os.cpus().length} ${os.cpus()[0]?.model} node ${process.version} clocksource ${clock}`);
-  per("performance.now()", () => performance.now());
-  per("Date.now()", () => Date.now());
-  per("measure(['nope'])", () => measure(["nope"], 2_000_000));
-  const share = new CallShare("D", { size: 10_000_000, calls: 2_000, ms: 10_000 });
-  for (let i = 0; i < 2_000; i++) share.take(8, 0);
-  per("share.take(8, 1) refused", () => share.take(8, 1));
-  per("share.take(8, performance.now()) refused", () => share.take(8, performance.now()));
 });
