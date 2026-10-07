@@ -42,7 +42,7 @@ const extension: ExtensionModule = {
           { label: "Undo", run: () => call("POST", "/api/undo", { revisions: [done.revision] }).then(load) },
         ]);
       } catch (err) {
-        ctx.workbench.notice(`Couldn't restore "${name}": ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't restore "${name}": ${(err as Error).message}`, [], "alert");
       }
     };
 
@@ -60,7 +60,7 @@ const extension: ExtensionModule = {
         await load();
         ctx.workbench.notice(`Deleted ${done.purged.length === 1 ? `"${ctx.util.label(done.purged[0].path as FilePath)}"` : `${done.purged.length} notes`} forever`);
       } catch (err) {
-        ctx.workbench.notice(`Couldn't delete forever: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't delete forever: ${(err as Error).message}`, [], "alert");
       }
     };
 
@@ -106,7 +106,7 @@ const extension: ExtensionModule = {
         await load();
         ctx.workbench.notice(`Moved "${name}" to Trash`, [{ label: "Undo", run: () => restore({ path, revision }) }]);
       } catch (err) {
-        ctx.workbench.notice(`Couldn't move "${name}" to Trash: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't move "${name}" to Trash: ${(err as Error).message}`, [], "alert");
       }
     });
     ctx.commands.register("trash.show", () => {

@@ -94,6 +94,6 @@ test("a frame's flood of tiny calls past its share is refused at about the cost 
   const flooding = calls(100_000, "h");
   const flood = cpu(() => flooding.forEach((m) => port.onmessage!(m)));
 
-  assert.deepEqual(sent, { results: 2_000, refusals: 120_000, other: [] });
+  assert.deepEqual({ ...sent, other: sent.other.length }, { results: 2_000, refusals: 120_000, other: 0 }, `the first others: ${JSON.stringify(sent.other.slice(0, 3))}`);
   assert.ok(flood < 3 * alone + 30, `refusing 100,000 calls took ${Math.round(flood)} ms of CPU, against ${Math.round(alone)} ms to answer them at all`);
 });

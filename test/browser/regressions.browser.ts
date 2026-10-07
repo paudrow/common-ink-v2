@@ -862,7 +862,7 @@ browserTest(h, "a click in the Extensions panel lands though the panel is drawn 
   assert.ok(same, "the button held is still the one on the page");
 });
 
-browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, A, a block's I and a . each go in one step", { scenario: "empty" }, async (app) => {
+browserTest(h, "Vim's u takes back a whole change, typed however slowly: cw, o, A, a block's I and a . each go in one step", { scenario: "empty", timeout: 300_000 }, async (app) => {
   const START = "# U\n\nabcd\nefgh\nijkl\nmnop\n";
   // Each key more than half a second after the last: further apart than edits are joined otherwise.
   const slowly = async (keys: string[]) => {

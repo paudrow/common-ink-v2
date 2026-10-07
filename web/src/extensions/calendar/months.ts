@@ -6,7 +6,7 @@
 import type { Occurrence } from "common-ink/calendar";
 import { el, reducedMotion } from "./dom.ts";
 import { addDays, addMonths, daysBetween, monthWeeks, startOfMonth, startOfYear, weekdays, type Day } from "./model.ts";
-import { localSpan, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
+import { localSpan, shiftedDays, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
 
 const AROUND = 3;
 const SLOP = 4;
@@ -257,9 +257,7 @@ export class MonthView extends Strip {
     }
     const to = (document.elementsFromPoint(e.clientX, e.clientY).find((n) => n.classList.contains("cal-cell")) as HTMLElement | undefined)?.dataset.day;
     if (!p.o || !to || !p.day || to === p.day) return this.redraw();
-    const shift = daysBetween(p.day, to);
-    const s = localSpan(p.o);
-    this.env.move(p.o, p.o.allDay ? { allDay: true, startDay: addDays(s.startDay, shift), endDay: addDays(s.endDay, shift) } : { allDay: false, startDay: addDays(s.startDay, shift), start: s.start, endDay: addDays(s.endDay, shift), end: s.end }, p.node!.getBoundingClientRect());
+    this.env.move(p.o, shiftedDays(p.o, daysBetween(p.day, to)), p.node!.getBoundingClientRect());
   }
 }
 
