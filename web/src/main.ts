@@ -49,7 +49,7 @@ import { isIcon } from "./icons.ts";
 import { barOf, GO_KEYS, PLACES_PATH, savedOf, type SavedSearch } from "../../worker/src/places.ts";
 import { parsePins, PINS_PATH } from "../../worker/src/pins.ts";
 import { GoKeys, Sidebar, type Chosen } from "./sidebar.ts";
-import { withSaved, writePlacesKey } from "./places-file.ts";
+import { changePlaces, placesChangeOf, sendPlaces, type PlacesChange } from "./places-file.ts";
 import { undo as undoTyping } from "@codemirror/commands";
 import { atLeast, deviceOfLayout, here, hereText, needsText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
@@ -506,7 +506,11 @@ async function resolveConflict(): Promise<boolean> {
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
   // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
-  const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
+  // A change to places.json is made on the file as the server has it now; the rest are records' edits.
+  const { refused } = await offline.flushOps((op) => {
+    const places = placesChangeOf(op);
+    return places ? sendPlaces(offline, places) : api.editEvent(op.method, op.body, op.extension);
+  });
   for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`, [], "alert");
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
@@ -1234,10 +1238,11 @@ async function loadPlaces() {
   sidebar.render();
 }
 /** Write one key of places.json (places-file.ts), saying what happened in a notice. */
-const writePlaces = (key: string, value: (now: string) => unknown, what: string) => writePlacesKey(offline, key, value, what, (message, alert) => workbench.notice(message, [], alert ? "alert" : undefined));
+/** Change one key of places.json (places-file.ts): held, and sent with the rest of what's held. */
+const writePlaces = (change: PlacesChange, what: string) => changePlaces(offline, change, what, sendUnsent, (message) => workbench.notice(message));
 async function setBar(ids: string[]) {
   barIds = ids;
-  await writePlaces("bar", () => ids, "the bottom bar");
+  await writePlaces({ key: "bar", ids }, "the bottom bar");
 }
 /** Whether an extension owns a view (ownership.ts): what names a view reaches only its owner's. */
 const ownsView = (extension: string, view: string) => extensions.ownership.owns(extension, "view", view);
@@ -1369,7 +1374,7 @@ async function saveSearch(query: string) {
   chosen = { saved: name };
   void showSaved({ name, query });
   sidebar.render();
-  await writePlaces("saved", (now) => withSaved(now, name, query), "the saved searches");
+  await writePlaces({ key: "saved", name, query }, "the saved searches");
 }
 const sidebar = new Sidebar({
   places,
@@ -1394,7 +1399,7 @@ const sidebar = new Sidebar({
       showFeed();
     }
     sidebar.render();
-    void writePlaces("saved", (now) => withSaved(now, q.name, null), "the saved searches").then(() => workbench.notice(`Removed "${q.name}" from Places: undo its change to places.json in History to bring it back.`));
+    void writePlaces({ key: "saved", name: q.name, query: null }, "the saved searches").then(() => workbench.notice(`Removed "${q.name}" from Places: undo its change to places.json in History to bring it back.`));
   },
   search: () => void commands.run("quickOpen"),
 });
