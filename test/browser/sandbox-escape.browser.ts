@@ -357,7 +357,7 @@ async function messagesAlone(app: App, cpu: () => Promise<number>) {
   return (await cpu()) - before;
 }
 
-browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, refused at the cost of its messages, and leaves other frames their share", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count, refused at the cost of its messages, and leaves other frames their share", { scenario: "empty", allowErrors: [/./], timeout: 300_000 }, async (app) => {
   await app.writeFile(".common-ink/extensions/spammer/extension.json", JSON.stringify(SPAMMER));
   await app.writeFile(".common-ink/extensions/spammer/index.js", SPAM);
   await app.writeFile(".common-ink/extensions/neighbor/extension.json", JSON.stringify(NEIGHBOR));

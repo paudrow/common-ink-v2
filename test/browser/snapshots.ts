@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "playwright-core";
+import { bounded } from "./pages.ts";
 
 const DIR = path.join(import.meta.dirname, "snapshots", process.platform);
 const RESULTS = path.resolve(import.meta.dirname, "../../test-results/snapshots", process.platform);
@@ -24,7 +25,7 @@ export interface SnapshotOptions {
 export async function matchSnapshot(page: Page, name: string, { threshold = 32, maxDiff = 0.002 }: SnapshotOptions = {}): Promise<string | null> {
   // The editor's own cursor and the focused line move with every keypress; neither is what's checked.
   await page.addStyleTag({ content: ".cm-cursorLayer, .cm-selectionLayer { visibility: hidden !important; }" });
-  await page.evaluate(() => document.fonts.ready);
+  await bounded("document.fonts.ready", page.evaluate(() => document.fonts.ready));
   const shot = await page.screenshot({ animations: "disabled", caret: "hide" });
   const baseline = path.join(DIR, `${name}.png`);
   if (process.env.UPDATE_SNAPSHOTS || !fs.existsSync(baseline)) {
@@ -51,7 +52,7 @@ function write(file: string, data: Buffer) {
 async function compare(page: Page, a: Buffer, b: Buffer, threshold: number): Promise<{ ratio: number; diff?: string; size?: string }> {
   const blank = await page.context().newPage();
   try {
-    return (await blank.evaluate(
+    return (await bounded("a snapshot's comparison", blank.evaluate(
       `(async ([a, b, threshold]) => {
         const load = async (data) => { const img = new Image(); img.src = "data:image/png;base64," + data; await img.decode(); return img; };
         const [x, y] = await Promise.all([load(a), load(b)]);
@@ -74,7 +75,7 @@ async function compare(page: Page, a: Buffer, b: Buffer, threshold: number): Pro
         g.putImageData(out, 0, 0);
         return { ratio: changed / (c.width * c.height), diff: c.toDataURL().split(",")[1] };
       })(${JSON.stringify([a.toString("base64"), b.toString("base64"), threshold])})`,
-    )) as { ratio: number; diff?: string; size?: string };
+    ))) as { ratio: number; diff?: string; size?: string };
   } finally {
     await blank.close();
   }
