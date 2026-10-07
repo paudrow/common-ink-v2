@@ -49,6 +49,13 @@ export function localSpan(o: Occurrence): { startDay: Day; endDay: Day; start: n
   return { startDay: dayOf(s), endDay: dayOf(e), start: s.getHours() * 60 + s.getMinutes(), end: e.getHours() * 60 + e.getMinutes() };
 }
 
+/** An event moved by whole days, as a bar or in a month: all day stays all day, and timed keeps its times. */
+export function shiftedDays(o: Occurrence, days: number): Moved {
+  const s = localSpan(o);
+  const [startDay, endDay] = [addDays(s.startDay, days), addDays(s.endDay, days)];
+  return o.allDay ? { allDay: true, startDay, endDay } : { allDay: false, startDay, start: s.start, endDay, end: s.end };
+}
+
 /**
  * Where a timed event goes when it's dropped. A move keeps its length: the whole event moves as far as
  * the part that was dragged, from `startDay` to `start` minutes into `day`. A resize changes only its

@@ -7,7 +7,7 @@
 import type { Occurrence } from "common-ink/calendar";
 import { el, reducedMotion } from "./dom.ts";
 import { addDays, clock, daysBetween, dragRange, period, placeDay, snap, weekday, type Day, type View } from "./model.ts";
-import { dropped, localSpan, longEvent, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
+import { dropped, localSpan, shiftedDays, longEvent, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
 
 /** One hour's height, in pixels. */
 export const HOUR = 48;
@@ -424,9 +424,8 @@ export class TimeGrid implements CalendarView {
       return this.env.create({ allDay: false, day: d.day, start, end }, d.ghost.getBoundingClientRect(), d.ghost);
     }
     if (d.kind === "moveAllDay") {
-      const s = localSpan(d.o);
       if (!d.shift) return this.redraw();
-      return this.env.move(d.o, { allDay: true, startDay: addDays(s.startDay, d.shift), endDay: addDays(s.endDay, d.shift) }, d.node.getBoundingClientRect());
+      return this.env.move(d.o, shiftedDays(d.o, d.shift), d.node.getBoundingClientRect());
     }
     this.env.move(d.o, dropped(d.o, d), d.node.getBoundingClientRect());
   }
