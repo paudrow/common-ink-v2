@@ -79,7 +79,7 @@ const extension: ExtensionModule = {
       log: (c) => {
         const where = store.log(c.line, c);
         logs.set(c.line, where);
-        void where.catch((e) => ctx.workbench.notice(`Couldn't log it in today's note: ${e instanceof Error ? e.message : e}`));
+        void where.catch((e) => ctx.workbench.notice(`Couldn't log it in today's note: ${e instanceof Error ? e.message : e}`, [], "alert"));
       },
       unlog: (c) => void store.unlog(c.line).catch(() => {}),
       putBack: (line) => store.putBack(line),

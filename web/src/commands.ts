@@ -13,16 +13,19 @@ export interface Command {
 }
 
 export type { Keybinding } from "../../worker/src/settings.ts";
-import type { Keybinding } from "../../worker/src/settings.ts";
+import type { Keybinding, Sandboxed } from "../../worker/src/settings.ts";
 
 /** Who a command runs for: the app (you, through a key, a menu or the command bar), or a sandboxed extension, by its code or what its manifest contributes. */
-export type RunBy = "app" | "sandbox";
+export type RunBy = "app" | Sandboxed;
+
+/** Why an app-only command a sandboxed extension asked for didn't run. */
+export const APP_ONLY = "An extension asked to run it, and only you can";
 
 export class Commands {
   private byId = new Map<string, Command>();
 
-  /** @param refused says why a command didn't run: it's off on this device, or it's app-only and an extension asked. */
-  constructor(private refused: (title: string, why: string) => void = () => {}) {}
+  /** @param refused says why a command didn't run, and who asked: it's off on this device, or it's app-only and an extension asked. */
+  constructor(private refused: (title: string, why: string, by: RunBy) => void = () => {}) {}
 
   register(...commands: Command[]): void {
     for (const c of commands) this.byId.set(c.id, c);
@@ -46,7 +49,7 @@ export class Commands {
     const command = this.byId.get(id);
     if (!command) return false;
     const off = this.refusal(command, by);
-    if (off) this.refused(command.title, off);
+    if (off) this.refused(command.title, off, by);
     else void command.run();
     return true;
   }
@@ -56,13 +59,13 @@ export class Commands {
     const command = this.byId.get(id);
     if (!command) return undefined;
     const off = this.refusal(command, by);
-    if (off) return void this.refused(command.title, off);
+    if (off) return void this.refused(command.title, off, by);
     return command.run();
   }
 
   /** Why a command won't run for whoever asked: an app-only one a sandboxed extension asked for, or one off on this device. */
   private refusal(command: Command, by: RunBy): string | null | undefined {
-    return command.appOnly && by === "sandbox" ? "An extension asked to run it, and only you can" : command.off?.();
+    return command.appOnly && by !== "app" ? APP_ONLY : command.off?.();
   }
 
   /**
@@ -74,10 +77,20 @@ export class Commands {
     const command = this.byId.get(id);
     if (!command) return false;
     const off = this.refusal(command, by);
-    if (off) return (this.refused(command.title, off), true);
+    if (off) return (this.refused(command.title, off, by), true);
     return command.run() !== false;
   }
 }
+
+/** Refusals in a row for one sandboxed extension, in one notice: what it asked for, by why each was refused. */
+export function refusalSummary(extension: string, refused: ReadonlyArray<{ title: string; why: string }>): string {
+  const byWhy = new Map<string, Set<string>>();
+  for (const { title, why } of refused) byWhy.set(why, (byWhy.get(why) ?? new Set()).add(title));
+  const parts = [...byWhy].map(([why, titles]) => `${and([...titles])} (${why === APP_ONLY ? "only you can" : why.charAt(0).toLowerCase() + why.slice(1)})`);
+  return `${refused.length} requests from ${extension} refused: ${parts.join("; ")}`;
+}
+
+const and = (items: string[]) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items[0]);
 
 /**
  * The command a key press is bound to, if any. A later binding for the same key wins, and a null command

@@ -95,6 +95,10 @@ browserTest(h, "a sandboxed extension with no permissions can't read notes, task
   await page.reload();
   await page.waitForSelector(".cm-content");
   await runCommand(page, "Run snoop");
+  // What it was refused is said first: its own notice waits until that's closed.
+  const denial = page.locator(".notice", { hasNotText: /SNOOP \{/ });
+  await denial.waitFor();
+  await denial.locator(".notice-close").click();
   const said = await notice(page, "SNOOP");
   const got = JSON.parse(said.slice(said.indexOf("{")));
   assert.equal(got.read, "blocked", "files.read is refused");

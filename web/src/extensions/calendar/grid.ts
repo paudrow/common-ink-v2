@@ -7,7 +7,7 @@
 import type { Occurrence } from "common-ink/calendar";
 import { el, reducedMotion } from "./dom.ts";
 import { addDays, clock, daysBetween, dragRange, period, placeDay, snap, weekday, type Day, type View } from "./model.ts";
-import { localSpan, longEvent, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
+import { dropped, localSpan, longEvent, timeLabel, type CalendarView, type ViewEnv } from "./views.ts";
 
 /** One hour's height, in pixels. */
 export const HOUR = 48;
@@ -428,14 +428,7 @@ export class TimeGrid implements CalendarView {
       if (!d.shift) return this.redraw();
       return this.env.move(d.o, { allDay: true, startDay: addDays(s.startDay, d.shift), endDay: addDays(s.endDay, d.shift) }, d.node.getBoundingClientRect());
     }
-    const s = localSpan(d.o);
-    const dayShift = daysBetween(d.startDay, d.day);
-    const startDay = addDays(s.startDay, dayShift);
-    // An event that runs past midnight keeps its end day; one within a day ends on its new day.
-    const endDay = s.startDay === s.endDay ? startDay : addDays(s.endDay, dayShift);
-    const start = d.kind === "resize" ? (s.startDay === d.startDay ? s.start : 0) : d.start;
-    const end = d.kind === "resize" ? d.end : s.startDay === s.endDay ? d.end : s.end;
-    this.env.move(d.o, { allDay: false, startDay, start, endDay: d.kind === "resize" ? d.day : endDay, end }, d.node.getBoundingClientRect());
+    this.env.move(d.o, dropped(d.o, d), d.node.getBoundingClientRect());
   }
 
   private cancel() {

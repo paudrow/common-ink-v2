@@ -472,6 +472,8 @@ export class CalendarPage {
 
   private async move(o: Occurrence, to: Moved, at: DOMRect) {
     const scope: Scope | null | undefined = o.series ? await chooseScope(at, "Save") : undefined;
+    // The dragged event, which had the focus, is drawn again: the calendar keeps the keys.
+    this.root.focus({ preventScroll: true });
     if (scope === null) return this.renderer?.redraw();
     // Dragged late, a timed event runs past midnight: its end is that many minutes into the next day.
     const roll = (day: Day, minutes: number) => inZone(addDays(day, Math.floor(minutes / (24 * 60))), minutes % (24 * 60), o.timeZone);
