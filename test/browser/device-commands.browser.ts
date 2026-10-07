@@ -85,13 +85,9 @@ async function sneaky(app: App, contributes: object, code = "export default { ac
   await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "sneaky")?.state === "active"));
 }
 
-browserTest(h, "a sandboxed extension's keys and status items can't run them either: they run for it, not for the app", { scenario: "empty", device: "phone" }, async (app) => {
+browserTest(h, "a sandboxed extension's keys can't run them either: they run for it, not for the app", { scenario: "empty", device: "phone" }, async (app) => {
   const before = await app.readFile(DEVICE);
-  await sneaky(
-    app,
-    { keybindings: [{ key: "x", command: "vim.onHere" }, { key: "Mod-Shift-y", command: "device.keyboardYes" }], statusBarItems: [{ id: "s", alignment: "left", command: "vim.offHere" }] },
-    'export default { activate(ctx) { ctx.statusBar.set("s", "Word count: 12"); } };\n',
-  );
+  await sneaky(app, { keybindings: [{ key: "x", command: "vim.onHere" }, { key: "Mod-Shift-y", command: "device.keyboardYes" }] });
   const keep = (text: string) => JSON.stringify((({ keyboard, extensions }) => ({ keyboard, extensions }))(JSON.parse(text)));
   // A key on a phone is a keyboard found, which the device file says (seen); what you chose stays as it was.
   // The app says so in a notice once Vim has gone in, a moment later, replacing whatever notice is up. So
@@ -104,15 +100,18 @@ browserTest(h, "a sandboxed extension's keys and status items can't run them eit
   await app.page.locator(".notice", { hasText: "Vim: turn on for this device: an extension asked" }).waitFor();
   await app.page.keyboard.press("ControlOrMeta+Shift+y");
   await app.page.locator(".notice", { hasText: "Keyboard: this device has a keyboard: an extension asked" }).waitFor();
-  await app.page.locator(".status-item", { hasText: "Word count: 12" }).click();
-  await app.page.locator(".notice", { hasText: "Vim: turn off for this device: an extension asked" }).waitFor();
   await app.idle();
   assert.equal(keep(await app.readFile(DEVICE)), keep(before), "the device file keeps your choices: Keyboard Auto, no override");
 });
 
-browserTest(h, "a sandboxed extension's Vim sequences and tab menu items can't run them", { scenario: "lists", open: "Lists tour", device: "laptop" }, async (app) => {
+// A phone has no status bar, so the status item is tried on a laptop.
+browserTest(h, "a sandboxed extension's Vim sequences, tab menu items and status items can't run them", { scenario: "lists", open: "Lists tour", device: "laptop" }, async (app) => {
   const path = ".common-ink/users/tester@localhost/devices/lever-laptop/device.json";
-  await sneaky(app, { keybindings: [{ vim: "gZ", command: "vim.offHere" }], menus: { tabMenu: [{ command: "device.keyboardNo" }] } });
+  await sneaky(
+    app,
+    { keybindings: [{ vim: "gZ", command: "vim.offHere" }], menus: { tabMenu: [{ command: "device.keyboardNo" }] }, statusBarItems: [{ id: "s", alignment: "left", command: "vim.autoHere" }] },
+    'export default { activate(ctx) { ctx.statusBar.set("s", "Word count: 12"); } };\n',
+  );
   await app.open("Lists tour");
   await app.idle();
   const before = await app.readFile(path);
@@ -122,6 +121,8 @@ browserTest(h, "a sandboxed extension's Vim sequences and tab menu items can't r
   await app.page.locator(".group .tab").first().click({ button: "right" });
   await app.page.locator(".menu button", { hasText: "device.keyboardNo" }).click();
   await app.page.locator(".notice", { hasText: "Keyboard: this device has no keyboard: an extension asked" }).waitFor();
+  await app.page.locator(".status-item", { hasText: "Word count: 12" }).click();
+  await app.page.locator(".notice", { hasText: "Vim: on here whenever this device has a keyboard: an extension asked" }).waitFor();
   await app.idle();
   assert.equal(await vim(app), "active");
   assert.equal(await app.readFile(path), before, "the device file is as it was");
