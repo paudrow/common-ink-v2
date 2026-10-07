@@ -369,8 +369,9 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   // Error and no number written out per refused call. (The version that did both stalled the page 2.5 to
   // 4 times longer.) These count the spellings that version used, not every way of doing the same: an
   // Error subclass per refusal isn't counted here. What any refusal costs is bounded twice more below: no
-  // long task, and the flood's CPU time. CallShare's own words and count are unit tested
-  // (sandbox-limits.test.ts), where a number formatted per refusal fails on time.
+  // long task, and the flood's CPU time. CallShare's own words and count, and SandboxHost's refusals
+  // against the cost of answering at all, are unit tested (sandbox-limits.test.ts), where a number
+  // formatted or an Error made per refusal, however it's spelled, fails on time.
   await app.page.evaluate(() => {
     const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
     w.made = { errors: 0, numbers: 0 };

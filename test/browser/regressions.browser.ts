@@ -1183,3 +1183,28 @@ browserTest(h, "with reduced motion asked for, nothing on screen pulses or flash
   );
   assert.deepEqual(looping, []);
 });
+
+// Two tabs on one device share its layout file. A tab's change to the layout that isn't saved yet is newer
+// than another tab's save that lands meanwhile: it was taking that older layout in, so what it had just
+// opened went away (the flake in "an edit held offline and undone in a tab that closes at once…").
+browserTest(h, "a layout change not yet saved in one tab isn't lost to another tab's older save landing meanwhile", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Trip.md", "# Trip\nalpha\n");
+  await app.writeFile("Other.md", "# Other\n");
+  const other = new App(await app.page.context().newPage(), app.base);
+  await other.goto();
+  await other.idle();
+  // The first tab changes the layout, then the second does: the first one's save lands while the second's waits.
+  await app.open("Trip");
+  await app.page.waitForTimeout(400);
+  await other.open("Other");
+  const saved = app.page.waitForResponse((r) => r.request().method() === "PUT" && (r.request().postData() ?? "").includes("layout.json"));
+  await saved;
+  await other.page.waitForTimeout(300);
+  assert.match(await other.page.title(), /^Other/, "the second tab keeps what it opened");
+  // Its own save comes after, over the first's: last write wins, and the device's layout shows Other.
+  const id = await other.page.evaluate(() => localStorage.getItem("common-ink.device"));
+  const layout = `.common-ink/users/tester@localhost/devices/${id}/layout.json`;
+  for (let i = 0; i < 40 && !(await app.readFile(layout)).includes('"Other.md"'); i++) await other.page.waitForTimeout(100);
+  assert.match(await app.readFile(layout), /"Other\.md"/);
+  assert.match(await other.page.title(), /^Other/);
+});
