@@ -127,8 +127,7 @@ browserTest(h, "with this site's storage blocked, the app still opens a note and
     Object.defineProperty(window, "localStorage", { get: blocked });
     Object.defineProperty(IDBFactory.prototype, "open", { value: blocked });
   });
-  await app.page.reload();
-  await app.ready();
+  await app.reload();
   await app.open("Trip");
   await app.idle();
   await app.call("cursor", 1, 7);
@@ -147,8 +146,7 @@ browserTest(h, "with storage blocked, edits waiting to be sent say they're lost 
       },
     });
   });
-  await app.page.reload();
-  await app.ready();
+  await app.reload();
   await app.open("Trip");
   await app.idle();
   await app.page.context().setOffline(true);
