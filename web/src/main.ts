@@ -637,6 +637,7 @@ commands.register(
 const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.startsWith(".")).flatMap((f) => f.path.split("/").slice(0, -1).map((_, i, parts) => `${parts.slice(0, i + 1).join("/")}/`)))].sort();
 const search = new Search({
   manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
+  owner: (type) => extensions.ownership.owner("searchType", type),
   notes: {
     search: async (query, limit, within) => {
       const answer = await api.search(format(query), limit, within);
@@ -666,7 +667,7 @@ const extensions = new ExtensionRuntime({
   commands,
   bar,
   search,
-  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, by) => commands.run(command, by)),
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, owner, by) => extensions.runFor(owner, command, by)),
   panels,
   workbench,
   offline,
@@ -1212,7 +1213,8 @@ function places(): Place[] {
   return [
     { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
     // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
-    ...on.flatMap((r) => r.manifest.contributes.places.map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
+    // A sandboxed extension's place that runs a command runs one still its own (the runtime's bindable), as its keys and menu items do.
+    ...on.flatMap((r) => r.manifest.contributes.places.filter((p) => "view" in p || extensions.bindable(r.manifest)(p.command)).map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
     ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
     { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
     { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
@@ -1249,7 +1251,7 @@ shell = new Shell({
   menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title, ...(i.by ? { by: i.by } : {}) })), action("tab.open"), action("window.openRight"), action("tab.close")],
   // Extensions' buttons, then the core's: a heading, a link, undo.
   toolbar: () => [
-    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off, ...extensions.by(m) }))),
+    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.filter((t) => extensions.bindable(m)(t.command)).map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off, ...extensions.by(m) }))),
     action("editor.heading", { icon: "heading" }),
     action("editor.link", { icon: "link", label: "[[" }),
     action("editor.undo", { icon: "undo-2" }),

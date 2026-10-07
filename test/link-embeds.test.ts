@@ -64,6 +64,9 @@ test("the page may frame only the hosts of link embeds that are on, and drawn in
   assert.ok(!(await embedFrameHosts(s, you.email)).includes("player.vimeo.com"), "a sandboxed extension can't put a frame in the page, so its hosts aren't allowed");
   write(".common-ink/users/you@example.com/settings.json", JSON.stringify({ "extensions.trusted": ["films"], "extensions.disabled": ["link-embeds"] }));
   assert.deepEqual(await embedFrameHosts(s, you.email), ["player.vimeo.com"], "a trusted one's are; one turned off has none");
+  write(".common-ink/users/you@example.com/settings.json", "{}");
+  write(".common-ink/extensions/link-embeds/extension.json", JSON.stringify({ name: "Link embeds, customized", contributes: { urlEmbeds: [{ id: "mine", title: "Mine", pattern: "^https://mine\\.example/", frameHosts: ["mine.example"] }] } }));
+  assert.deepEqual(await embedFrameHosts(s, you.email), ["embed.bsky.app", "open.spotify.com", "platform.twitter.com", "www.youtube-nocookie.com"], "an untrusted copy of a built-in leaves the built-in's");
 });
 
 test("each link embed's pattern takes its own links; anything else is a card", () => {

@@ -28,6 +28,11 @@ export class Commands {
     for (const c of commands) this.byId.set(c.id, c);
   }
 
+  has(id: string): boolean {
+    return this.byId.has(id);
+  }
+
+  /** The command registered under an id now: a later registration replaces it. */
   get(id: string): Command | undefined {
     return this.byId.get(id);
   }

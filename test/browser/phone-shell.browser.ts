@@ -326,7 +326,7 @@ browserTest(h, "H3 Search on a phone, picking the note that was open, shows it o
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor({ timeout: 3000 });
 });
 
-browserTest(h, "a sandboxed extension's place and toolbar button can't run an app-only command: they run for it, not for the app", { scenario: "lists", device: "phone" }, async (app) => {
+browserTest(h, "a sandboxed extension's places and toolbar buttons run only its own commands: ones naming the app's or another extension's never go in", { scenario: "lists", device: "phone" }, async (app) => {
   const device = ".common-ink/users/tester@localhost/devices/lever-phone/device.json";
   const choices = async () => (({ keyboard, extensions }) => ({ keyboard, extensions }))(JSON.parse(await app.readFile(device)));
   const before = await choices();
@@ -341,19 +341,47 @@ browserTest(h, "a sandboxed extension's place and toolbar button can't run an ap
       files: ["index.js"],
       activationEvents: ["onStartup"],
       permissions: {},
-      contributes: { places: [{ id: "go", title: "Go", command: "vim.onHere" }], toolbar: [{ command: "device.keyboardYes", title: "Sneak", label: "S" }] },
+      contributes: {
+        commands: [{ command: "sneaky.hello", title: "Hello" }],
+        statusBarItems: [{ id: "sneaky.said", alignment: "left" }],
+        places: [
+          { id: "app", title: "Go app", command: "vim.onHere" },
+          { id: "other", title: "Go other", command: "lists.indent" },
+          { id: "own", title: "Go own", command: "sneaky.hello" },
+        ],
+        toolbar: [
+          { command: "device.keyboardYes", title: "Sneak app", label: "A" },
+          { command: "lists.indent", title: "Sneak other", label: "O" },
+          { command: "sneaky.hello", title: "Sneak own", label: "S" },
+        ],
+      },
     }),
   );
-  await app.writeFile(".common-ink/extensions/sneaky/index.js", "export default { activate() {} };\n");
+  await app.writeFile(
+    ".common-ink/extensions/sneaky/index.js",
+    'export default { activate(ctx) { let n = 0; ctx.commands.register("sneaky.hello", () => ctx.statusBar.set("sneaky.said", `hello ${++n}`)); } };\n',
+  );
   await app.reload();
+  await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "sneaky")?.state === "active"));
+  const said = app.page.locator('[data-item="sneaky.said"]');
+
   await app.page.locator('#shell-bar [aria-label="Places"]').tap();
-  await app.page.locator(".shell-sheet .shell-place", { hasText: /^Go/ }).tap();
-  await app.page.locator(".notice", { hasText: "Vim: turn on for this device: an extension asked to run it, and only you can" }).waitFor();
+  const places = await app.page.locator(".shell-sheet .shell-place").allInnerTexts();
+  assert.ok(places.some((t) => t.startsWith("Go own")), places.join(" | "));
+  assert.ok(!places.some((t) => t.startsWith("Go app") || t.startsWith("Go other")), `only its own command's place: ${places.join(" | ")}`);
+  await app.page.locator(".shell-sheet .shell-place", { hasText: /^Go own/ }).tap();
+  await app.page.waitForFunction(() => document.querySelector('[data-item="sneaky.said"]')?.textContent === "hello 1");
+
   await app.open("Lists tour");
   await app.page.locator(".cm-line", { hasText: "Basil" }).tap();
-  await app.page.locator('#shell-toolbar [aria-label="Sneak"]').tap();
-  await app.page.locator(".notice", { hasText: "Keyboard: this device has a keyboard: an extension asked to run it, and only you can" }).waitFor();
+  await app.page.locator("#shell-toolbar").waitFor();
+  assert.equal(await app.page.locator('#shell-toolbar [aria-label="Sneak app"], #shell-toolbar [aria-label="Sneak other"]').count(), 0, "only its own command's button");
+  await app.page.locator('#shell-toolbar [aria-label="Sneak own"]').tap();
+  await app.page.waitForFunction(() => document.querySelector('[data-item="sneaky.said"]')?.textContent === "hello 2");
+  assert.equal(await said.count(), 1);
+
   await app.idle();
+  assert.equal(await app.page.locator(".notice", { hasText: "an extension asked" }).count(), 0, "nothing ran for it to refuse");
   assert.equal((await app.extensions.state("vim"))?.state, "unmet");
   assert.deepEqual(await choices(), before, "the device file keeps your choices");
 });

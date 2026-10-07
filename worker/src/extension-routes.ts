@@ -3,6 +3,7 @@
 // extension's files from a URL.
 import { BUILT_IN_MANIFESTS } from "./builtin-extensions.ts";
 import { parseCatalog } from "./catalog.ts";
+import { idsIn } from "./embed-list.ts";
 import { extensionFilePath, manifestPath, parseManifest, type ExtensionManifest } from "./extensions.ts";
 import { isExtensionScript, parseFilePath, type Author } from "./files.ts";
 import type { Store } from "./operations.ts";
@@ -65,14 +66,18 @@ export async function sandboxRoute(req: Request, url: URL, assets: { fetch(req: 
   return new Response("Not found\n", { status: 404 });
 }
 
-/** An extension's manifest in effect: the workspace's copy if there is one, else the built-in's. */
-async function manifestOf(store: Store, id: string): Promise<{ manifest: ExtensionManifest; builtIn: boolean } | null> {
+/**
+ * An extension's manifest in effect for `email`: the workspace's copy if there is one, else the
+ * built-in's. A customized copy of a built-in runs only once it's trusted; until then the built-in runs
+ * as it shipped, so it's judged as the built-in it is.
+ */
+async function manifestOf(store: Store, id: string, email: string): Promise<{ manifest: ExtensionManifest; builtIn: boolean } | null> {
+  const builtIn = BUILT_IN_MANIFESTS.find((m) => m.id === id);
   const file = await store.read(manifestPath(id));
-  if (file) {
+  if (file && (!builtIn || (await idsIn(store, "extensions.trusted", email)).has(id))) {
     const m = parseManifest(file.text, id);
     return typeof m === "string" ? null : { manifest: m, builtIn: false };
   }
-  const builtIn = BUILT_IN_MANIFESTS.find((m) => m.id === id);
   return builtIn ? { manifest: builtIn, builtIn: true } : null;
 }
 
@@ -92,12 +97,12 @@ export async function extensionApi(req: Request, url: URL, email: string, author
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/sandbox/token") {
     const id = url.searchParams.get("extension") ?? "";
-    if (!(await manifestOf(store, id))) return json({ error: `No extension ${id}` }, 404);
+    if (!(await manifestOf(store, id, email))) return json({ error: `No extension ${id}` }, 404);
     return json({ token: await signCodeToken(await store.sandboxKey(), id, Date.now() + TOKEN_LIFETIME_MS) });
   }
   if (route === "POST /api/extensions/fetch") {
     const body = (await req.json().catch(() => ({}))) as { extension?: string; url?: string; method?: string; headers?: Record<string, string>; body?: string; once?: boolean; card?: boolean };
-    const found = await manifestOf(store, body.extension ?? "");
+    const found = await manifestOf(store, body.extension ?? "", email);
     if (!found || typeof body.url !== "string") return json({ error: "Say which extension and which URL" }, 400);
     let host: string;
     try {
