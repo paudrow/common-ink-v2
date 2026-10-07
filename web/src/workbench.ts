@@ -517,7 +517,8 @@ export class Workbench {
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
     if (path === this.layoutPath) {
-      if (!this.started || revision <= this.layoutRevision || this.layoutSaving) return false;
+      // A change here that isn't saved yet is newer than theirs: it's saved over theirs (last write wins), not lost to it.
+      if (!this.started || revision <= this.layoutRevision || this.layoutSaving || this.layoutTimer) return false;
       const saved = await this.net.read(this.layoutPath);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;
@@ -775,7 +776,8 @@ export class Workbench {
     this.layoutSaving = true;
     try {
       let result = await this.net.write(this.layoutPath, text, this.layoutRevision);
-      if (result.status === "conflict" && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
+      // Another tab's save came first: this one goes over it as it is, neither refused nor merged line by line with it.
+      if ((result.status === "conflict" || (result.status === "merged" && result.file.text !== text)) && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
