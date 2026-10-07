@@ -84,3 +84,16 @@ test("what a sandboxed extension registered under a name it owned is no longer f
   records.push({ id: "wordCount", tier: "page", state: "inactive", manifest: { id: "wordCount", contributes: CASES.command.contributes } } as never);
   assert.equal(handlers.get("wordCount.go"), undefined);
 });
+
+test("in the page, a built-in keeps its own names, one turned off holds none, and the first listed keeps a name two others declare", async () => {
+  const { Ownership } = await import("../web/src/ownership.ts");
+  const declares = CASES.command.contributes;
+  const rec = (id: string, more: Record<string, unknown> = {}) => ({ id, tier: "page", state: "inactive", manifest: { id, contributes: declares }, ...more });
+  const owner = (records: unknown[]) => new Ownership(() => records as never).owner("command", "wordCount.go");
+  assert.equal(owner([rec("lists", { builtIn: {} }), rec("helper")]), "lists");
+  assert.equal(owner([rec("helper"), rec("lists", { builtIn: {} })]), "lists");
+  assert.equal(owner([rec("alpha"), rec("beta")]), "alpha");
+  assert.equal(owner([rec("alpha", { state: "off" }), rec("beta")]), "beta");
+  assert.equal(owner([rec("alpha", { state: "unmet" }), rec("beta")]), "alpha", "off on this device, it still holds its names");
+  assert.equal(owner([rec("alpha", { state: "off" })]), undefined);
+});

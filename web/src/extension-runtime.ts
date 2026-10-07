@@ -33,7 +33,9 @@ import type { EditResult } from "../../worker/src/data-sources.ts";
 import type { Panels } from "./panels.ts";
 import * as L from "./layout.ts";
 import { SandboxHost, Webview } from "./sandbox.ts";
-import { Ownership, prefixName } from "./ownership.ts";
+import { Ownership, prefixName, type NameKind } from "./ownership.ts";
+
+const WORDS: Record<NameKind, string> = { command: "The command", view: "The view", embed: "The embed", statusItem: "The status bar item", searchType: "The kind of search result", prefix: "The command bar prefix" };
 import type { StatusItems } from "./status-items.ts";
 import type { View, Workbench, WorkbenchChrome } from "./workbench.ts";
 import { here, hereText, type Here, type Requires } from "../../worker/src/devices.ts";
@@ -368,6 +370,18 @@ export class ExtensionRuntime {
     if (m && this.bindable(m)(command)) this.app.commands.run(command, by);
   }
 
+  /**
+   * Say, against an extension, that a name it declares is another extension's: what it has under that
+   * name is left out, and the rest of it runs. Shown in the Extensions view, once.
+   */
+  private taken(m: ExtensionManifest, kind: NameKind, name: string): void {
+    const record = this.host.records.find((r) => r.manifest === m);
+    const owner = this.host.records.find((r) => r.id === this.ownership.owner(kind, name));
+    if (!record || record.error || !owner || owner === record) return;
+    record.error = `${WORDS[kind]} "${name}" is ${owner.manifest.name}'s, so ${m.name}'s is left out`;
+    this.app.changed();
+  }
+
   /** The extension that draws an embed, by Ownership's rule: while it's off on this device, its embed says so. */
   private embedOwner(language: string): ExtensionManifest | undefined {
     const owner = this.ownership.owner("embed", language);
@@ -437,7 +451,11 @@ export class ExtensionRuntime {
     // A sandboxed extension never takes a command or view id the app or another extension has already.
     const sandboxed = this.sandboxed(m);
     for (const c of m.contributes.commands) {
-      if (!this.ownership.owns(m.id, "command", c.command) || (sandboxed && this.app.commands.has(c.command) && !this.owns(m, "command", c.command))) continue;
+      if (!this.ownership.owns(m.id, "command", c.command)) {
+        this.taken(m, "command", c.command);
+        continue;
+      }
+      if (sandboxed && this.app.commands.has(c.command) && !this.owns(m, "command", c.command)) continue;
       const command: Command = {
         id: c.command,
         title: c.title,
@@ -452,9 +470,14 @@ export class ExtensionRuntime {
       this.app.commands.register(command);
       this.owners.command.set(c.command, { owner: m.id, is: command });
     }
+    for (const item of m.contributes.statusBarItems) if (!this.ownership.owns(m.id, "statusItem", item.id)) this.taken(m, "statusItem", item.id);
     this.app.statusItems.declare(m.contributes.statusBarItems.filter((item) => this.ownership.owns(m.id, "statusItem", item.id)).map((item) => ({ ...item, command: item.command !== undefined && this.bindable(m)(item.command) ? item.command : undefined, owner: m.id, ...this.by(m) })));
     for (const view of Object.values(m.contributes.views).flat()) {
-      if (!this.ownership.owns(m.id, "view", view.id) || (sandboxed && (this.app.workbench.viewIds().includes(view.id) || this.app.commands.has(`${view.id}.openInWindow`)) && !this.owns(m, "view", view.id))) continue;
+      if (!this.ownership.owns(m.id, "view", view.id)) {
+        this.taken(m, "view", view.id);
+        continue;
+      }
+      if (sandboxed && (this.app.workbench.viewIds().includes(view.id) || this.app.commands.has(`${view.id}.openInWindow`)) && !this.owns(m, "view", view.id)) continue;
       const declared: View = {
         id: view.id,
         title: view.name,
@@ -787,7 +810,7 @@ export class ExtensionRuntime {
       commands: {
         register: (id, run) => {
           if (!m.contributes.commands.some((c) => c.command === id)) throw new Error(`Command "${id}" isn't declared in ${m.id}'s contributes.commands`);
-          if (!this.handlers.set(m.id, id, guard(run))) throw new Error(`Command "${id}" is another extension's`);
+          if (!this.handlers.set(m.id, id, guard(run))) this.taken(m, "command", id);
         },
         run: (id, by) => app.commands.run(id, by === "sandbox" ? "sandbox" : "app"),
         all: () => this.allCommands(),
@@ -838,7 +861,7 @@ export class ExtensionRuntime {
         register: (id, renderer) => {
           if (!declaresView(id)) throw new Error(`View "${id}" isn't declared in ${m.id}'s contributes.views`);
           const draw = "resolve" in renderer ? (el: HTMLElement) => renderer.resolve(this.webviewHandle(m, id, el)) : (el: HTMLElement) => renderer.render(el);
-          if (!this.renderers.set(m.id, id, { render: (el: HTMLElement) => drawSafely(el, `${m.name}'s view`, () => draw(el), failed) })) throw new Error(`View "${id}" is another extension's`);
+          if (!this.renderers.set(m.id, id, { render: (el: HTMLElement) => drawSafely(el, `${m.name}'s view`, () => draw(el), failed) })) this.taken(m, "view", id);
         },
         provide: (prefix, make) =>
           app.workbench.provideViews(prefix, (id) => {
@@ -872,7 +895,7 @@ export class ExtensionRuntime {
                   return provider.update ? (next) => (guard(() => provider.update!(el, next))(), true) : null;
                 },
           );
-          if (!drew) throw new Error(`Embed "${language}" is another extension's to draw`);
+          if (!drew) this.taken(m, "embed", language);
         },
       },
       media: (() => {

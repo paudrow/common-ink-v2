@@ -223,3 +223,8 @@ test("a command the app registers after a sandboxed extension's, under the same 
   runtime.runFor("late", "late.go");
   assert.deepEqual(ran, [], "its status item's click doesn't run the app's command");
 });
+
+test("a sandboxed extension's search filter keys are named for it, so ordinary words stay searchable", () => {
+  const m = manifest("word-count", { contributes: { search: { types: [{ type: "word-count", title: "Counts" }], filters: ["meeting", "word-count", "word-count-done", "wordcount", "words"].map((filter) => ({ filter, description: "", values: [] })) } } });
+  assert.deepEqual(confined(m, { names: new Set(), keys: new Set() }).contributes.search.filters.map((f) => f.filter), ["word-count", "word-count-done", "wordcount"]);
+});

@@ -3,8 +3,9 @@
 // registry keyed by such a name consults, as things are registered and again as they're used:
 //
 // - An extension that runs in the page (a built-in, or one you trust) owns every name its manifest
-//   declares, from the moment extensions load, even while it's off on this device. When more than one
-//   does, the last one listed owns it, as its registrations replace the earlier ones'.
+//   declares, from the moment extensions load, even while it's off on this device, but not while you've
+//   turned it off. A built-in keeps its own names against any other; between two others, the first listed
+//   keeps it.
 // - A sandboxed extension owns a name only if no extension in the page declares it, and it's the first
 //   sandboxed one that's on and declares it.
 //
@@ -36,8 +37,9 @@ export class Ownership {
   owner(kind: NameKind, name: string): string | undefined {
     const declares = (r: ExtensionRecord) => DECLARED[kind](r.manifest).includes(name);
     const records = this.records();
-    const page = records.filter((r) => r.tier === "page" && !r.broken && declares(r)).at(-1);
-    if (page) return page.id;
+    const page = records.filter((r) => r.tier === "page" && !r.broken && r.state !== "off" && declares(r));
+    const held = page.find((r) => r.builtIn) ?? page[0];
+    if (held) return held.id;
     return records.find((r) => r.tier === "sandbox" && (r.state === "inactive" || r.state === "active") && declares(r))?.id;
   }
 
