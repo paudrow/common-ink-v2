@@ -577,7 +577,9 @@ function feedInList(): boolean {
 function renderList() {
   const current = workbench.focusedPath;
   const feed = feedInList();
-  document.documentElement.toggleAttribute("data-list-feed", feed);
+  // The column is as wide as the Feed needs from the start, while the Feed is the place, so the note
+  // beside it doesn't change width (and its embeds height) once the Feed has drawn.
+  document.documentElement.toggleAttribute("data-list-feed", feed || ("feed" in listShows && device.atLeast("expanded") && feedOn()));
   feedBox.hidden = !feed;
   listHead.hidden = list.hidden = feed;
   // Behind the Feed, the rows of every note aren't kept: they're drawn again when they show.
@@ -598,7 +600,9 @@ function renderList() {
 }
 
 /** Whether the Feed extension is on, so the Feed is its view, not the list of every note. */
-const feedOn = () => extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+function feedOn(): boolean {
+  return extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+}
 
 /** Show a saved search's notes in the list, and keep them current as notes change. */
 async function showSaved(saved: SavedSearch) {
