@@ -52,7 +52,7 @@ const extension: ExtensionModule = {
         const revision = done.revision;
         ctx.workbench.notice(`${archive ? "Archived" : "Unarchived"} ${name}`, [{ label: "Undo", run: () => undo(revision, name, archive) }]);
       } catch (err) {
-        ctx.workbench.notice(`Couldn't ${archive ? "archive" : "unarchive"} ${name}: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't ${archive ? "archive" : "unarchive"} ${name}: ${(err as Error).message}`, [], "alert");
       }
     };
     /** Take back an archive or unarchive, saying so if it couldn't be. */
@@ -62,7 +62,7 @@ const extension: ExtensionModule = {
         await load();
         if (result?.status !== "undone" && result?.status !== "unchanged") throw new Error(result?.status === "missing" ? "that change isn't in history any more" : "the archive changed in a way it can't be taken back from");
       } catch (err) {
-        ctx.workbench.notice(`Couldn't undo ${archive ? "archiving" : "unarchiving"} ${name}: ${(err as Error).message}`);
+        ctx.workbench.notice(`Couldn't undo ${archive ? "archiving" : "unarchiving"} ${name}: ${(err as Error).message}`, [], "alert");
       }
     };
     const onFocused = (archive: boolean | "toggle") => {
