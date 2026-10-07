@@ -177,6 +177,26 @@ for (const width of [320, 375])
     await app.page.unroute("**/api/file**");
   });
 
+browserTest(h, "on a phone, Search opened as a save fails and cancelled leaves the pill at the top of the note, and the line being edited never goes under it", { scenario: "empty", viewport: { width: 375, height: 600 }, ...OFFLINE }, async (app) => {
+  await app.writeFile("Long.md", Array.from({ length: 200 }, (_, i) => `Line ${i} with words`).join("\n") + "\n");
+  await app.goto({}, "Long");
+  await app.idle();
+  await app.page.route("**/api/file**", (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, contentType: "application/json", body: "{}" }) : r.continue()));
+  await app.keys("Gox<Esc>");
+  await app.command("Search…");
+  // The save fails, and the pill shows, while Search covers the note.
+  await app.page.locator("#not-saved", { hasText: "can't reach the server" }).waitFor({ state: "attached" });
+  await app.page.waitForTimeout(1500);
+  await app.page.locator("#command-bar .cancel").first().click();
+  await app.page.waitForTimeout(600);
+  assert.equal(await app.page.locator("#not-saved").getAttribute("data-at"), "top");
+  // Whatever line is now at the bottom, edited there, stays clear of where a pill at the bottom would be.
+  const pill = (await app.page.locator("#not-saved").boundingBox())!;
+  const cursor = await app.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-cursor, .tab-editor:not([hidden]) .cm-fat-cursor")!.getBoundingClientRect().toJSON());
+  assert.ok(cursor.bottom <= pill.y || cursor.top >= pill.y + pill.height, `the cursor ${JSON.stringify(cursor)} isn't under the pill ${JSON.stringify(pill)}`);
+  await app.page.unroute("**/api/file**");
+});
+
 browserTest(h, "a phone's notice stays a bar at the bottom while an edit isn't saved", { scenario: "empty", viewport: { width: 375, height: 700 }, ...OFFLINE }, async (app) => {
   await app.writeFile("A.md", "alpha body\n");
   await app.goto({}, "A");

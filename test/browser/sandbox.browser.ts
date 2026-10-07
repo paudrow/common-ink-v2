@@ -163,12 +163,16 @@ browserTest(h, "a sandboxed extension starts with the app, asking before it read
 browserTest(h, "Word count installed from the Catalog before it left: the app starts without it, without errors, and clears its files and your answer to it away, as changes undo can take back", { scenario: "empty" }, async (app) => {
   const settingsPath = ".common-ink/users/tester@localhost/settings.json";
   await app.writeFile(settingsPath, JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "allow" }, boards: { "files:read:**/*.md": "allow" } } }));
+  // Answers in the workspace's settings too: each file loses only its own answer to Word count.
+  await app.writeFile(".common-ink/settings.json", JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "deny" }, pomodoro: { notifications: "allow" } } }));
+  await app.writeFile(".common-ink/extensions/word-count/my-notes.md", "# Mine\n");
   await app.writeFile("Note.md", "# Note\n\nSome words.\n");
   await app.writeFile(".common-ink/extensions/word-count/extension.json", JSON.stringify({ id: "word-count", name: "Word count", version: "1.0.0", main: "index.js", activationEvents: ["onStartup"], permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" } }, contributes: { statusBarItems: [{ id: "wordCount.status", alignment: "left", priority: 10 }] } }));
   await app.writeFile(".common-ink/extensions/word-count/index.js", 'export default { activate(ctx) { ctx.statusBar.set("wordCount.status", "counted"); } };\n');
   await app.writeFile(".common-ink/extensions/word-count/installed.json", '{"catalog": "Common Ink"}\n');
   await app.goto({}, "Note");
   await app.idle();
+  await app.page.locator(".notice", { hasText: "A file you added in its folder stayed" }).waitFor();
   assert.deepEqual((await app.state()).extensions.filter((e) => e.id === "word-count"), []);
   await app.extensions.show();
   assert.equal(await app.page.locator('.extension-row[data-extension="word-count"]').count(), 0);
@@ -177,7 +181,10 @@ browserTest(h, "Word count installed from the Catalog before it left: the app st
   for (const f of ["extension.json", "index.js", "installed.json"]) await app.page.waitForFunction(async (p) => (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).status === 404, `.common-ink/extensions/word-count/${f}`);
   await app.page.waitForFunction(async (p) => !(await (await fetch(`/api/file?path=${encodeURIComponent(p)}`)).json()).text.includes("word-count"), settingsPath);
   assert.deepEqual(JSON.parse(await app.readFile(settingsPath))["extensions.permissions"], { boards: { "files:read:**/*.md": "allow" } }, "others' answers stay");
+  await app.page.waitForFunction(async () => !(await (await fetch("/api/file?path=.common-ink%2Fsettings.json")).json()).text.includes("word-count"));
+  assert.deepEqual(JSON.parse(await app.readFile(".common-ink/settings.json"))["extensions.permissions"], { pomodoro: { notifications: "allow" } }, "the workspace's own others stay");
+  assert.equal(await app.readFile(".common-ink/extensions/word-count/my-notes.md"), "# Mine\n", "a file you added stays");
   // Each file written by the test, then cleared away: two changes in History for each.
-  const changes = (await app.state()).history.filter((c) => c.path.includes("word-count") || c.path === settingsPath).map((c) => c.path).sort();
+  const changes = (await app.state()).history.filter((c) => (c.path.includes("word-count") && !c.path.endsWith(".md")) || c.path === settingsPath).map((c) => c.path).sort();
   assert.deepEqual(changes, [settingsPath, settingsPath, ...[".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"].flatMap((p) => [p, p])].sort());
 });

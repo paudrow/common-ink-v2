@@ -9,7 +9,7 @@ import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
+import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { bindingForKey, Commands, keyFor } from "./commands.ts";
@@ -33,7 +33,7 @@ import { createState, editText, floatsOverEditors } from "./editor.ts";
 import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
-import { parseGrants } from "../../worker/src/permissions.ts";
+import { parseGrants, type Answer } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline, syncLine, UNREACHABLE_TEXT } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
@@ -388,8 +388,10 @@ function placeNotSaved() {
   const box = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0];
   const top = box?.top ?? 0;
   notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
-  // What's there, under where the pill would sit at the top: a note's editor, or something else.
-  const under = box ? document.elementsFromPoint(box.right - 24, top + 16).find((e) => e !== notSavedLine) : null;
+  // What's there in the windows, under where the pill would sit at the top: a note's editor, or
+  // something else. Overlays above them (Search, a menu, a dialog) aren't what it floats over once they close.
+  const workbenchEl = $("#workbench");
+  const under = box ? document.elementsFromPoint(box.right - 24, top + 16).find((e) => workbenchEl.contains(e)) : null;
   notSavedLine.dataset.at = under?.closest(".editors .cm-editor") ? "top" : "bottom";
   const viewport = window.visualViewport;
   notSavedLine.style.setProperty("--keyboard", `${viewport ? Math.max(0, Math.round(innerHeight - viewport.offsetTop - viewport.height)) : 0}px`);
@@ -400,6 +402,8 @@ new ResizeObserver(placeNotSaved).observe($("#workbench"));
 window.visualViewport?.addEventListener("resize", placeNotSaved);
 focusListeners.push(() => requestAnimationFrame(placeNotSaved));
 new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#panel"), { attributes: true, attributeFilter: ["hidden", "class"] });
+// And as a menu or a dialog closes, in case what's under it changed while it was open.
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe(document.body, { childList: true });
 floatsOverEditors(notSavedLine);
 notSavedLine.addEventListener("click", () => void openClash());
 notSavedLine.addEventListener("keydown", (e) => {
@@ -614,6 +618,8 @@ const search = new Search({
   values: (key) => (key === "in" ? folders() : []),
 });
 const bar = new CommandBar({ all: () => search.filters(), extraKeys: () => search.extraKeys() });
+// The pill's place again as Search closes.
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#command-bar"), { attributes: true, attributeFilter: ["hidden"] });
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
@@ -635,8 +641,7 @@ const extensions = new ExtensionRuntime({
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
+    await answerGrant(id, key, answer);
     await loadSettings();
   },
   prompt: dev ? dev.prompt(promptFor) : promptFor,
@@ -779,23 +784,55 @@ async function customize(b: BuiltIn) {
 
 /** Delete a workspace extension's files, as changes that undo can take back. */
 /**
+ * Your answer to one of an extension's permissions, in your settings, beside the others there (or
+ * none, to ask again). Each settings file's answers are edited as that file has them: the settings
+ * combined from all of them take the whole key from one file, and writing those back would copy
+ * another file's answers over, or lose its own.
+ */
+function answerGrant(id: string, key: string, answer: Answer | undefined) {
+  return editSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", (value) => {
+    const grants = parseGrants(value);
+    const mine = { ...grants[id] };
+    if (answer) mine[key] = answer;
+    else delete mine[key];
+    return { ...grants, [id]: mine };
+  });
+}
+
+/** Forget every answer to an extension's permissions, in each settings file that has any. */
+async function forgetGrants(id: string) {
+  for (const path of new Set([USER_SETTINGS, WORKSPACE_SETTINGS].filter((p) => p !== null)))
+    await editSetting(api, path, "extensions.permissions", (value) => {
+      const grants = parseGrants(value);
+      if (!(id in grants)) return value;
+      const { [id]: _forgotten, ...others } = grants;
+      return others;
+    });
+}
+
+/**
  * Clear away a retired Catalog extension's copy (Word count): its files and your answers to its
  * permissions, each a change in History that undo can take back. Done once: then there's nothing left.
  */
 async function clearRetired(found: readonly { id: string; files: FilePath[] }[]) {
+  const kept: FilePath[] = [];
   for (const w of found) {
-    workbench.forget(w.files);
-    for (const path of w.files) {
+    // The Catalog's files only: anything you added in its folder stays, and you're told.
+    const catalogs = new Set(["extension.json", "index.js", "installed.json"].map((f) => `.common-ink/extensions/${w.id}/${f}`));
+    const theirs = w.files.filter((p) => catalogs.has(p));
+    // Every file in its folder, notes too, which aren't the extension's own files.
+    kept.push(...files.map((f) => f.path).filter((p) => p.startsWith(`.common-ink/extensions/${w.id}/`) && !catalogs.has(p)));
+    workbench.forget(theirs);
+    for (const path of theirs) {
       const file = await api.read(path).catch(() => null);
       if (file?.revision) await api.delete(path, file.revision);
     }
-    const { [w.id]: had, ...others } = parseGrants(settings["extensions.permissions"]);
-    if (had) await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await forgetGrants(w.id);
   }
-  if (found.length) {
-    await loadSettings();
-    await refreshList();
-  }
+  if (!found.length) return;
+  await loadSettings();
+  await refreshList();
+  if (kept.length) workbench.notice(`Word count left the Catalog, and its files are gone. ${kept.length === 1 ? "A file" : `${kept.length} files`} you added in its folder stayed: ${kept.map(docLabel).join(", ")}.`);
 }
 
 async function removeExtension(r: ExtensionRecord) {
@@ -829,16 +866,11 @@ const extensionDeps: ExtensionsViewDeps = {
   reload: reloadWindow,
   answer: (r, key) => parseGrants(settings["extensions.permissions"])[r.id]?.[key],
   async setAnswer(r, key, answer) {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    const mine = { ...grants[r.id] };
-    if (answer) mine[key] = answer;
-    else delete mine[key];
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
+    await answerGrant(r.id, key, answer);
     await loadSettings();
   },
   async resetAnswers(r) {
-    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await forgetGrants(r.id);
     await loadSettings();
   },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
@@ -1182,7 +1214,6 @@ try {
   // This device's file first: what it has and your overrides decide which extensions are on here.
   await device.load({ read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) });
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
-  void clearRetired(extensions.host.retired);
   catalog = extensions.catalog();
   extensions.declare();
   // Embeds draw in notes for the languages extensions that are on declare.
@@ -1209,6 +1240,8 @@ try {
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
   } else if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();
+  // Once the windows are up, so what it says shows in one.
+  void clearRetired(extensions.host.retired);
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }
