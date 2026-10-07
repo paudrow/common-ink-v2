@@ -144,11 +144,8 @@ browserTest(h, "a search saved offline on a laptop while the phone changes the b
   await page.locator("#places .place-item").first().waitFor();
   await page.context().setOffline(true);
   await savedSearch(page, "garden", "Garden");
-  // The phone, meanwhile, writes places.json with a new bar.
+  // The phone, meanwhile, writes places.json with a new bar (from outside this page, which is offline).
+  await app.writeFile(".common-ink/places.json", JSON.stringify({ ...JSON.parse(await app.readFile(".common-ink/places.json")), bar: ["feed", "tasks.tasks"] }, null, 2));
   await page.context().setOffline(false);
-  const now = await page.evaluate(async () => (await (await fetch("/api/file?path=.common-ink/places.json")).json()) as { text: string; revision: number });
-  const phone = JSON.stringify({ ...JSON.parse(now.text), bar: ["feed", "tasks.tasks"] }, null, 2);
-  await page.evaluate(async ({ text, base }) => void (await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: ".common-ink/places.json", text, base }) })), { text: phone, base: now.revision });
-  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await settled(app, (places) => places.saved?.Garden === "garden" && places.bar?.join() === "feed,tasks.tasks");
 });
