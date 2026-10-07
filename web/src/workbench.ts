@@ -215,8 +215,9 @@ export class Workbench {
       });
       box.append(b);
     }
-    // Closed, focus goes back where it was (an editor, so Vim's keys keep working), or else to the note on show.
-    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    // Closed, focus goes back where it was (an editor, so Vim's keys keep working), or else to the note on
+    // show. Held weakly: a notice mustn't keep a closed editor alive.
+    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? new WeakRef(document.activeElement) : null;
     const close = document.createElement("button");
     close.className = "notice-close";
     close.textContent = "×";
@@ -224,7 +225,8 @@ export class Workbench {
     close.title = "Close";
     close.addEventListener("click", () => {
       box.remove();
-      if (before?.isConnected) before.focus();
+      const was = before?.deref();
+      if (was?.isConnected) was.focus();
       else this.focusedView?.focus();
     });
     box.append(close);
@@ -249,7 +251,12 @@ export class Workbench {
       if (box.isConnected && e.matches) start();
     };
     compact.addEventListener("change", narrowed);
+    // Gone (closed, timed out, replaced, its window closed): it stops listening, so nothing keeps it.
+    this.noticeGone.set(box, () => compact.removeEventListener("change", narrowed));
   }
+
+  /** What to undo when a notice goes, by its box. */
+  private noticeGone = new WeakMap<HTMLElement, () => void>();
 
   /**
    * On a wider screen the note starts below its window's notice (--notice-room, style.css), and its text
@@ -267,16 +274,37 @@ export class Workbench {
         for (const scroller of editors.querySelectorAll<HTMLElement>(":scope > .tab-editor:not([hidden]) .cm-scroller")) scroller.scrollTop += now - was;
         was = now;
       };
+      const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
       // A notice put in or taken out, before the next frame is drawn; and one that wraps or unwraps.
-      new MutationObserver(apply).observe(editors, { childList: true });
-      room = { apply, sizes: typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply) };
+      const changes = new MutationObserver((records) => {
+        for (const r of records) for (const n of r.removedNodes) if (n instanceof HTMLElement && n.classList.contains("notice")) this.goneNotice(n, sizes);
+        apply();
+      });
+      changes.observe(editors, { childList: true });
+      room = { apply, sizes, changes };
       this.rooms.set(editors, room);
     }
     room.sizes?.observe(box);
     room.apply();
   }
 
-  private rooms = new WeakMap<HTMLElement, { apply: () => void; sizes: ResizeObserver | null }>();
+  private goneNotice(box: HTMLElement, sizes: ResizeObserver | null) {
+    sizes?.unobserve(box);
+    this.noticeGone.get(box)?.();
+    this.noticeGone.delete(box);
+  }
+
+  /** A window closed: stop watching its notices, and let its notice go. */
+  private dropRoom(editors: HTMLElement) {
+    const room = this.rooms.get(editors);
+    if (!room) return;
+    for (const box of editors.querySelectorAll<HTMLElement>(":scope > .notice")) this.goneNotice(box, room.sizes);
+    room.sizes?.disconnect();
+    room.changes.disconnect();
+    this.rooms.delete(editors);
+  }
+
+  private rooms = new WeakMap<HTMLElement, { apply: () => void; sizes: ResizeObserver | null; changes: MutationObserver }>();
 
   get focusedGroup(): L.Group {
     return L.focused(this.layout);
@@ -785,7 +813,13 @@ export class Workbench {
     for (const k of this.viewBoxes.keys()) if (!wanted.has(k)) this.viewBoxes.delete(k);
     const shown = new Set(L.groups(this.layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))));
     for (const [path, file] of this.files) if (!file.views.size && !shown.has(path)) this.files.delete(path);
-    for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
+    for (const [id, el] of this.groupEls)
+      if (!L.groups(this.layout).some((g) => g.id === id)) {
+        this.groupEls.delete(id);
+        // A closed window's watch on its notices goes with it.
+        const editors = el.querySelector<HTMLElement>(".editors");
+        if (editors) this.dropRoom(editors);
+      }
     // Rebuild the windows only when their arrangement changes. Otherwise update them where they are:
     // moving a focused editor's node would blur it (and save) in the middle of a click.
     const shape = shapeOf(this.layout.root);
