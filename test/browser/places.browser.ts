@@ -19,14 +19,16 @@ browserTest(h, "on a wide screen Places is a sidebar beside the list and the not
   assert.deepEqual(top[1].slice(0, 3), ["Feed", "Search", "Today"]);
   assert.ok(top[1].includes("Tasks") && top[1].includes("Calendar"), JSON.stringify(top));
   assert.deepEqual(bottom[1], ["Sources", "Archive", "Trash", "Extensions", "Settings"]);
-  // Beside the note, every note; the Feed opens in the window.
-  assert.equal(await page.locator("#notes .list-head h2").textContent(), "All notes");
-  await item(page, "Feed").click();
-  await app.tabs.tab(0, "Feed").waitFor();
-  // A view place opens in the window, and is marked.
+  // The Feed is the list beside the note (decision 4): a card opens its note in the window, and the Feed stays.
+  await page.locator("#notes .list-feed .feed-card").first().waitFor();
+  await app.listItem("Chores.md").click();
+  await page.waitForFunction(() => document.title.startsWith("Chores"));
+  assert.equal(await page.locator("#notes .list-feed").isVisible(), true);
+  // A view place opens in the window, and is marked; beside it, every note.
   await item(page, "Tasks").click();
   await app.tabs.tab(0, "Tasks").waitFor();
   assert.deepEqual(await current(page), ["Tasks"]);
+  assert.equal(await page.locator("#notes .list-head h2").textContent(), "All notes");
   // The go keys, outside text.
   await page.locator("#notes .list-head").click();
   await page.keyboard.press("g");
@@ -59,12 +61,13 @@ browserTest(h, "a search saved with ⌘S is a place, with how many notes it find
   assert.deepEqual(await current(page), ["Tour notes"]);
   await row(page, "Tour notes").locator(".place-count", { hasText: /^\d+$/ }).waitFor();
   assert.deepEqual([await page.locator("#notes .list-head h2").textContent(), await page.locator("#notes .list-head code").textContent()], ["Tour notes", "tour"]);
-  await page.locator("#notes a", { hasText: "Tasks tour" }).first().click();
+  await app.listItem("Tasks tour.md").click();
   await page.waitForFunction(() => document.title.startsWith("Tasks tour"));
   assert.equal(JSON.parse(await app.readFile(".common-ink/places.json")).saved["Tour notes"], "tour");
   // The Feed takes the list back; removing the search takes it out of places.json.
   await item(page, "Feed").click();
-  assert.equal(await page.locator("#notes .list-head h2").textContent(), "All notes");
+  await page.locator("#notes .list-feed .feed-card").first().waitFor();
+  assert.equal(await page.locator("#notes .list-head").isVisible(), false);
   await item(page, "Tour notes").hover();
   await row(page, "Tour notes").locator(".place-remove").click();
   await item(page, "Tour notes").waitFor({ state: "detached" });
@@ -122,4 +125,17 @@ browserTest(h, "offline, two searches saved one after the other both reach place
     const saved = JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved ?? {};
     return saved.Garden === "garden" && saved.Launch === "launch" && saved.Tours === "tour";
   }, undefined, { timeout: 20_000 });
+});
+
+browserTest(h, "a Feed card beside the note is a list row: ⌘-click opens it in a tab of its own, and a double click keeps its tab", { scenario: "preview", open: "Welcome" }, async (app) => {
+  const { page } = app;
+  await app.listItem("Chores.md").waitFor();
+  assert.equal(await app.listItem("Chores.md").evaluate((el) => el.closest(".feed-card") !== null), true, "it's a Feed card");
+  await app.listItem("Chores.md").click({ modifiers: ["ControlOrMeta"] });
+  await app.tabs.tab(0, "Chores").waitFor();
+  assert.ok((await app.tabs.windows())[0].tabs.some((t) => t.label === "Welcome"), "Welcome's tab stays");
+  await app.listItem("Shopping.md").dblclick();
+  await page.waitForFunction(() => document.title.startsWith("Shopping"));
+  const shopping = (await app.tabs.windows())[0].tabs.find((t) => t.label === "Shopping");
+  assert.equal(shopping?.preview ?? false, false, "kept, not the preview tab");
 });

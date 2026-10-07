@@ -36,7 +36,7 @@ browserTest(h, "idle, the page runs no frame after frame: a plain note, a note f
   await app.page.locator(".cm-embed[data-live]").first().waitFor();
   const one = await framesWhileIdle(app);
   assert.ok(one <= 3, `a note of embeds: ${one} frames in 3s`);
-  for (const note of ["Link embeds tour", "Markdown extras", "Three.js scene", "Plain"]) await app.page.locator("#notes a", { hasText: note }).click({ modifiers: ["ControlOrMeta"] });
+  for (const note of ["Link embeds tour", "Markdown extras", "Three.js scene", "Plain"]) await app.listItem(`${note}.md`).click({ modifiers: ["ControlOrMeta"] });
   await app.page.waitForFunction(() => document.querySelectorAll(".tab").length >= 5);
   const five = await framesWhileIdle(app);
   assert.ok(five <= 3, `five tabs: ${five} frames in 3s`);

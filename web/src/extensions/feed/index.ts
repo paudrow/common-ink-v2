@@ -74,7 +74,7 @@ const extension: ExtensionModule = {
         }
       },
       text: async (path) => (await ctx.files.read(path)).text,
-      open: (path) => void ctx.workbench.open(path),
+      open: (path, how) => void ctx.workbench.open(path, how),
       swipe,
       who: (author) => ({ name: describeAuthor(author, ctx.me), agent: author.kind === "agent" }),
       when: (time) => ago(time),
