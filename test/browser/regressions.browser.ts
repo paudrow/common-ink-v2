@@ -426,6 +426,10 @@ for (const when of ["back online", "still offline"] as const) {
     await app.page.reload().catch(() => {});
     await app.page.waitForTimeout(1000);
     await app.page.context().setOffline(false);
+    // A reload that failed offline left the browser's error page, which loads the app again by itself
+    // once back online: that load runs first, so the next one doesn't cut it short.
+    await app.page.waitForURL((url) => url.origin === new URL(app.base).origin);
+    await app.ready();
     await app.goto({}, "Trip");
     await app.idle();
     await app.page.waitForTimeout(1500);
