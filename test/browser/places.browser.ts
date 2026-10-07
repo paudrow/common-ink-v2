@@ -38,7 +38,8 @@ browserTest(h, "on a wide screen Places is a sidebar beside the list and the not
   await app.editor.focus();
   await app.editor.keys("ge");
   assert.deepEqual(await current(page), ["Trash"], "g e in a note doesn't go anywhere");
-  // ⌘B puts it away and brings it back.
+  // ⌘B puts it away and brings it back, from outside the note (off a Mac, Ctrl-b in a note is Vim's page up).
+  await page.locator("#notes .list-head").click();
   await page.keyboard.press("ControlOrMeta+b");
   await page.locator("#places").waitFor({ state: "hidden" });
   await page.keyboard.press("ControlOrMeta+b");
