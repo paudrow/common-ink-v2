@@ -90,8 +90,8 @@ browserTest(h, "an untrusted copy of Link embeds: the shipped built-in still dra
   assert.ok(drawn, `no link card with an untrusted copy present; activity: ${JSON.stringify(activity)}`);
 });
 
-// A trusted extension that goes in late (once a keyboard is found) takes its command id from a sandboxed
-// one with the same name in camelCase, which registered code under it first.
+// A trusted extension that goes in late (once a keyboard is found), and a sandboxed one with the same name
+// in camelCase that asks for its command id first.
 const LATE_TRUSTED = {
   name: "Word count",
   requires: { keyboard: true },
@@ -126,7 +126,8 @@ browserTest(h, "on a phone, a trusted extension that goes in once a keyboard is 
   await app.call("command", "wordCount.secret");
   await app.page.waitForTimeout(2000);
   const said = logs.filter((l) => /HANDLER|EARLY/.test(l));
-  assert.ok(said.includes("EARLY registered"), `setup: the sandboxed one held the id first (${said.join("; ")})`);
+  // The id is the trusted extension's from load, even while it's off here, so the sandboxed one never gets it.
+  assert.ok(said.includes("EARLY refused"), said.join("; "));
   assert.ok(!said.includes("SANDBOX HANDLER"), `running the trusted extension's command ran the sandboxed one's code: ${said.join("; ")}`);
   assert.ok(said.includes("TRUSTED HANDLER"), `the trusted one's handler ran: ${said.join("; ")}`);
 });
@@ -155,4 +156,65 @@ browserTest(h, "on a phone, a trusted embed owner that goes in once a keyboard i
   // The language is the trusted extension's even while it's off here, so the sandboxed one never gets it.
   assert.ok(said.includes("THIEF REGISTER refused"), said.join("; "));
   assert.ok(!said.some((l) => l.startsWith("THIEF GOT")), `after the owner went in, the sandboxed drawer still drew its embed: ${said.join("; ")}`);
+});
+
+// A view the trusted extension declares, while it's off here and once it goes in.
+const VIEW_OWNER = {
+  name: "Word count",
+  requires: { keyboard: true },
+  activationEvents: ["onCommand:wordCount.other"],
+  contributes: { commands: [{ command: "wordCount.other", title: "Other" }], views: { sidebar: [{ id: "wordCount", name: "Counts" }] } },
+};
+const VIEW_OWNER_CODE = `export default { activate(ctx) { ctx.views.register("wordCount", { render(el) { el.textContent = "TRUSTED VIEW"; } }); } };`;
+const VIEW_SQUAT = {
+  name: "Word count (sandboxed)",
+  activationEvents: ["onStartup"],
+  contributes: { views: { sidebar: [{ id: "wordCount", name: "Counts too" }] } },
+};
+const VIEW_SQUAT_CODE = `export default { async activate(ctx) {
+  let r; try { await ctx.views.register("wordCount", { resolve(w) { w.html = "<p>SANDBOX VIEW</p>"; console.log("SANDBOX DREW VIEW"); } }); r = "registered"; } catch (e) { r = "refused"; }
+  console.log("SQUAT " + r);
+} };`;
+
+browserTest(h, "on a phone, a trusted view that goes in once a keyboard is found draws itself, not a sandboxed renderer left under its id", { scenario: "empty", device: "phone", allowErrors: [/./] }, async (app) => {
+  const logs: string[] = [];
+  app.page.on("console", (m) => logs.push(m.text()));
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["wordCount"]\n}\n');
+  await app.writeFile(".common-ink/extensions/wordCount/extension.json", JSON.stringify(VIEW_OWNER));
+  await app.writeFile(".common-ink/extensions/wordCount/index.js", VIEW_OWNER_CODE);
+  await app.writeFile(".common-ink/extensions/word-count/extension.json", JSON.stringify(VIEW_SQUAT));
+  await app.writeFile(".common-ink/extensions/word-count/index.js", VIEW_SQUAT_CODE);
+  await app.reload();
+  await app.page.waitForTimeout(2000);
+  for (const k of ["ArrowLeft", "Home", "Escape"]) await app.page.keyboard.press(k);
+  await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
+  await app.page.waitForTimeout(1500);
+  await app.call("command", "wordCount.openInWindow");
+  await app.page.waitForTimeout(3000);
+  const said = logs.filter((l) => /SQUAT|SANDBOX DREW/.test(l));
+  assert.deepEqual(said, ["SQUAT refused"]);
+  await app.page.getByText("TRUSTED VIEW").first().waitFor();
+});
+
+// Vim's status item is Vim's while it's off here (a phone), and once a keyboard is found and Vim goes in.
+const MODE = {
+  name: "Moder",
+  activationEvents: ["onStartup"],
+  contributes: { statusBarItems: [{ id: "vim.mode", alignment: "left", priority: 100 }] },
+};
+const MODE_CODE = `export default { activate(ctx) { ctx.statusBar.set("vim.mode", "-- SPOOFED --"); } };`;
+
+browserTest(h, "on a phone, a sandboxed extension can't take Vim's status item before Vim goes in", { scenario: "empty", device: "phone", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/extensions/moder/extension.json", JSON.stringify(MODE));
+  await app.writeFile(".common-ink/extensions/moder/index.js", MODE_CODE);
+  await app.writeFile("Plan.md", "# Plan\n\none\n");
+  await app.reload();
+  await app.page.waitForTimeout(1500);
+  for (const k of ["ArrowLeft", "Home", "Escape"]) await app.page.keyboard.press(k);
+  await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
+  await app.page.waitForTimeout(1500);
+  await app.open("Plan");
+  await app.page.waitForTimeout(1500);
+  const shown = await app.page.locator('.status-item[data-item="vim.mode"]').allInnerTexts();
+  assert.ok(!shown.some((t) => t.includes("SPOOFED")), `Vim's status item shows the sandboxed extension's text: ${JSON.stringify(shown)}`);
 });

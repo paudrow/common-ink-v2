@@ -119,7 +119,7 @@ export interface Claimed {
 }
 
 /** An extension's own names for what it adds: its id, and its id in camelCase ("word-count" and "wordCount"). */
-const namesOf = (id: string) => [...new Set([id, id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase())])];
+export const namesOf = (id: string) => [...new Set([id, id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase())])];
 
 /** A name as names are compared: in any case, with and without its dashes read as camelCase. */
 const spellings = (name: string) => [...new Set([name.toLowerCase(), name.replace(/-([a-z0-9])/gi, (_, c: string) => c.toUpperCase()).toLowerCase()])];
