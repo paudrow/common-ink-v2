@@ -46,3 +46,50 @@ browserTest(h, "closing a split of a note with calendars leaves nothing behind",
   const after = await alive(app);
   assert.ok(after.nodes - before.nodes < 50 && after.listeners - before.listeners < 20, `eight splits closed left ${after.nodes - before.nodes} nodes and ${after.listeners - before.listeners} listeners`);
 });
+
+/** Live objects of a kind, after a forced garbage collection: by its prototype, filtered in the page. */
+async function liveObjects(app: App) {
+  const cdp = await app.page.context().newCDPSession(app.page);
+  await cdp.send("HeapProfiler.collectGarbage");
+  const count = async (proto: string, filter = "() => true") => {
+    const { result } = (await cdp.send("Runtime.evaluate", { expression: `${proto}.prototype` })) as { result: { objectId: string } };
+    const { objects } = (await cdp.send("Runtime.queryObjects", { prototypeObjectId: result.objectId })) as { objects: { objectId: string } };
+    const { result: n } = (await cdp.send("Runtime.callFunctionOn", { objectId: objects.objectId, functionDeclaration: `function () { return this.filter(${filter}).length; }`, returnByValue: true })) as { result: { value: number } };
+    return n.value;
+  };
+  const counts = {
+    detachedEditors: await count("HTMLDivElement", "(e) => e.classList.contains('cm-editor') && !e.isConnected"),
+    resizeObservers: await count("ResizeObserver"),
+    mutationObservers: await count("MutationObserver"),
+  };
+  await cdp.detach();
+  return counts;
+}
+
+browserTest(h, "a window with a notice in it, closed, leaves neither its editor nor the notice's watchers behind", { scenario: "empty" }, async (app) => {
+  await app.writeFile("Alpha.md", "# Alpha\n\nWords.\n");
+  for (let i = 0; i < 10; i++) await app.writeFile(`Note ${i}.md`, `# Note ${i}\n\nWords.\n`);
+  await app.goto({}, "Alpha");
+  await app.idle();
+  // Open a note in a split, archive it (a notice with Undo, which stays), and close the split.
+  const cycle = async (i: number) => {
+    await app.keys(":vs<CR>");
+    await app.page.waitForTimeout(150);
+    await app.open(`Note ${i}`);
+    await app.idle();
+    await app.command("Archive this note");
+    await app.page.locator(".notice", { hasText: "Archived" }).waitFor();
+    await app.keys("<C-w>c");
+    await app.page.waitForTimeout(150);
+  };
+  for (let i = 0; i < 2; i++) await cycle(i);
+  await app.idle();
+  const before = await liveObjects(app);
+  for (let i = 2; i < 10; i++) await cycle(i);
+  await app.idle();
+  await app.page.waitForTimeout(500);
+  const after = await liveObjects(app);
+  // The last window closed can be held a while (CI saw one, before and after alike): what matters is that eight more add none.
+  assert.ok(after.detachedEditors <= Math.max(1, before.detachedEditors), `closed windows' editors kept: ${JSON.stringify({ before, after })}`);
+  assert.ok(after.resizeObservers <= before.resizeObservers + 1 && after.mutationObservers <= before.mutationObservers + 1, `watchers grew: ${JSON.stringify({ before, after })}`);
+});

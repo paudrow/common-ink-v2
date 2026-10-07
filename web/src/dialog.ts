@@ -45,7 +45,7 @@ export interface Asker {
 const detailsLink = (who: Asker, text: string, id: string) => focusable(el("button", { type: "button", className: "link", textContent: text, onclick: () => who.showDetails() }), id);
 
 /**
- * "Word count wants to read the note This week", answering, in order: who's asking, what exactly (the
+ * "Boards wants to read the note This week", answering, in order: who's asking, what exactly (the
  * technical scope behind a Details disclosure), why now (what you did that it's acting on), and why at
  * all (its own reason, as it says it). Then Allow this time, Always allow, or Don't allow.
  */
@@ -100,12 +100,13 @@ export function askPermission(who: Asker, extension: ExtensionManifest, asks: Ar
 }
 
 /** Yes or no, with what yes means spelled out. */
-export function confirmDialog(title: string, text: string, yes: string): Promise<boolean> {
+export function confirmDialog(title: string, text: string, yes: string, danger = false): Promise<boolean> {
   return dialog<boolean>(title, (settle) => ({
     body: [
       el("h2", { textContent: title }),
       el("p", { textContent: text }),
-      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, onclick: () => settle(true) })),
+      // Something that can't be undone says so in red.
+      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, className: danger ? "danger" : "", onclick: () => settle(true) })),
     ],
     escape: false,
   }));

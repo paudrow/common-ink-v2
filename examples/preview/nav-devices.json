@@ -1,0 +1,10 @@
+{
+  "pr": 156,
+  "title": "Devices: what this device has, and extensions that need more",
+  "steps": [
+    "On a laptop, ⌘⇧P › Open user settings, then This device at the top: Width, Pointer, Touch and Keyboard, each with why. The keyboard is assumed, because it has a mouse or trackpad that hovers. Set Keyboard to No, then back to Auto.",
+    "Open this Preview with ?device=phone at the end of its address: the page is framed to a phone's 375 × 812 at the top left, with no keyboard found. Press Escape: \"Keyboard found\", and This device now says Yes, and keeps it after a reload. Leave with ?device= (empty).",
+    "Each browser has a device file: open .common-ink/users/<you>/devices/ from ⌘P and look at device.json and its history.",
+    "On a phone with a Bluetooth keyboard, tap into a note and press Escape: the app finds the keyboard the same way."
+  ]
+}

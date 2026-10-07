@@ -1,0 +1,7 @@
+{
+  "pr": 111,
+  "title": "npm run dev knows its own server by a nonce its Worker holds",
+  "steps": [
+    "Local only. `npm run dev -- --port 0` prints the port it picked, then comes up there. Two runs in one worktree on one port: the second says the port is taken and leaves the first alone."
+  ]
+}

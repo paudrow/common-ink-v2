@@ -4,15 +4,17 @@ import type { StatusBarItemContribution } from "../../worker/src/extensions.ts";
 
 export class StatusItems {
   private items = new Map<string, { el: HTMLElement; owner: string }>();
+  private shown: ((shown: boolean) => void)[] = [];
 
   constructor(
     private left: HTMLElement,
     private right: HTMLElement,
-    private run: (command: string) => void,
+    /** Run a click's command, for the extension whose item it is. */
+    private run: (command: string, owner: string, by: "app" | "sandbox") => void,
   ) {}
 
   /** Place every declared item, highest priority outermost, as VS Code does. Items already placed are left alone. */
-  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string }>): void {
+  declare(items: ReadonlyArray<StatusBarItemContribution & { owner: string; by?: "sandbox" }>): void {
     const sorted = [...items].sort((a, b) => b.priority - a.priority);
     for (const item of sorted) {
       if (this.items.has(item.id)) continue;
@@ -20,7 +22,7 @@ export class StatusItems {
       el.className = "status-item";
       el.dataset.item = item.id;
       el.hidden = true;
-      if (item.command) el.addEventListener("click", () => this.run(item.command!));
+      if (item.command) el.addEventListener("click", () => this.run(item.command!, item.owner, item.by ?? "app"));
       if (item.alignment === "left") this.left.append(el);
       else this.right.prepend(el);
       this.items.set(item.id, { el, owner: item.owner });
@@ -35,5 +37,21 @@ export class StatusItems {
     item.el.hidden = !text;
     if (tooltip) item.el.title = tooltip;
     else item.el.removeAttribute("title");
+  }
+
+  /** Be told whether the status bar shows, now and each time that changes: a phone has none. */
+  onShown(fn: (shown: boolean) => void): void {
+    const bar = this.left.parentElement!;
+    const showing = () => bar.getClientRects().length > 0;
+    if (!this.shown.length && typeof ResizeObserver !== "undefined") {
+      let was = showing();
+      new ResizeObserver(() => {
+        if (was === showing()) return;
+        was = !was;
+        for (const f of this.shown) f(was);
+      }).observe(bar);
+    }
+    this.shown.push(fn);
+    fn(showing());
   }
 }

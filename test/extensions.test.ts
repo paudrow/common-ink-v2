@@ -25,6 +25,17 @@ const builtIn = (id: string, module: ExtensionModule, more: Record<string, unkno
   folder: `web/src/extensions/${id}`,
 });
 
+/** A laptop, as the runtime reads devices: wide, a mouse, a keyboard. */
+const laptop = {
+  facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true },
+  override: () => undefined,
+  has: () => true,
+  atLeast: () => true,
+  why: () => "",
+  onChange: () => () => {},
+  describe: () => ({}),
+} as never;
+
 /** A host whose context records what extensions do, and which starts nothing until told. */
 function host() {
   const started: string[] = [];
@@ -83,11 +94,20 @@ test("a manifest that's wrong says what's wrong with it", () => {
   assert.equal(wrong({ permissions: { network: { why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any');
   assert.equal(wrong({ permissions: { network: { hosts: ["http://evil.example"], why: "Talk" } } }), 'permissions["network"].hosts must name hosts, like "api.weather.gov" or "*.example.com", or be "*" for any; "http://evil.example" isn\'t one');
   assert.equal(wrong({ permissions: { "files:read": { paths: ["**"] } } }), 'permissions["files:read"].why must be text');
+  assert.equal(wrong({ permissions: { "files:read": { paths: ["!Secret/**"], why: "x" } } }), 'permissions["files:read"].paths are the files it may touch, so none starts with "!": "!Secret/**" does');
   assert.equal(wrong({ contributes: { configuration: { properties: { "other.thing": { type: "boolean" } } } } }), 'Setting "other.thing" must start with "x."');
   assert.equal(wrong({ main: "../escape.js" }), '"main" must be a file in the extension\'s folder, like "index.js"');
   assert.equal(wrong({ main: "index.ts" }), '"main" must be a file in the extension\'s folder, like "index.js"', "only built-ins are compiled");
   assert.match(wrong({ activationEvents: ["whenever"] }) as string, /^"activationEvents"\[0\] isn't an activation event/);
   assert.equal(wrong({}, "../up"), `"../up" can't be an extension's id: letters, digits, dots, dashes and underscores`);
+  assert.equal(wrong({ contributes: { search: { types: [{ type: "note", title: "Mine" }] } } }), 'contributes.search.types[0].type must be lowercase letters and dashes, and not "note"');
+  assert.equal(wrong({ contributes: { search: { filters: [{ filter: "is:", values: [] }] } } }), 'contributes.search.filters[0].filter must be a word like "due:", and not one of is, in, from, type, edited, has, sort, http, https, www, ftp, mailto, file, note');
+  assert.match(wrong({ contributes: { search: { filters: [{ filter: "https", values: [] }] } } }) as string, /not one of/);
+});
+
+test("a manifest's search contribution names its kinds of result and its filters, without their colons", () => {
+  const m = parseManifest({ name: "x", version: "1", contributes: { search: { types: [{ type: "event", title: "Events" }], filters: [{ filter: "On:", description: "A day", values: ["today"] }] } } }, "x");
+  assert.deepEqual(typeof m === "string" ? m : m.contributes.search, { types: [{ type: "event", title: "Events" }], filters: [{ filter: "on", description: "A day", values: ["today"] }] });
 });
 
 test("every built-in's extension.json is valid, and lists files that are there", () => {
@@ -132,8 +152,8 @@ test("built-ins start on their activation events, not before; one that throws fa
 
 test("a workspace extension is read from its folder; one with a built-in's id replaces it, except in safe mode", async () => {
   const files = summaries([
-    ".common-ink/extensions/word-count/extension.json",
-    ".common-ink/extensions/word-count/index.js",
+    ".common-ink/extensions/reading-time/extension.json",
+    ".common-ink/extensions/reading-time/index.js",
     ".common-ink/extensions/a/extension.json",
     ".common-ink/extensions/a/index.js",
     ".common-ink/extensions/a/lib/util.js",
@@ -143,28 +163,68 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   ]);
   assert.deepEqual(
     findWorkspaceExtensions(files).map((w) => [w.id, w.files.length]),
-    [["word-count", 2], ["a", 3], ["bad", 1]],
+    [["reading-time", 2], ["a", 3], ["bad", 1]],
   );
   const texts = {
-    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "version": "1.2.0"}',
+    ".common-ink/extensions/reading-time/extension.json": '{"name": "Reading time", "version": "1.2.0"}',
     ".common-ink/extensions/a/extension.json": '{"name": "A, customized"}',
     ".common-ink/extensions/bad/extension.json": "{oops",
   };
   const { h } = host();
-  await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false);
+  // Customize trusts the copy it makes.
+  await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false, ["a"]);
   assert.deepEqual(
     h.records.map((r) => [r.id, r.manifest.name, r.state, !!r.builtIn, !!r.workspace]),
-    [["word-count", "Word count", "inactive", false, true], ["a", "A, customized", "inactive", true, true], ["bad", "bad", "failed", false, true]],
+    [["reading-time", "Reading time", "inactive", false, true], ["a", "A, customized", "inactive", true, true], ["bad", "bad", "failed", false, true]],
   );
   assert.match(h.records[2].error!, /^extension\.json isn't valid JSON/);
-  assert.deepEqual(h.installed().map((m) => m.id), ["word-count", "a"], "a broken manifest adds nothing");
+  assert.deepEqual(h.installed().map((m) => m.id), ["reading-time", "a"], "a broken manifest adds nothing");
 
   const safe = host();
   await safe.h.load([builtIn("a", { activate() {} })], files, read(texts), [], true);
   assert.deepEqual(
     safe.h.records.map((r) => [r.id, r.manifest.name, r.state]),
-    [["a", "a", "inactive"], ["word-count", "Word count", "safe"], ["bad", "bad", "failed"]],
+    [["a", "a", "inactive"], ["reading-time", "Reading time", "safe"], ["bad", "bad", "failed"]],
   );
+});
+
+test("a sandboxed extension keeps only what's its own: commands in its namespace, and keys, items and menus naming them", async () => {
+  const files = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/trusty/extension.json"]);
+  const contributes = {
+    commands: [
+      { command: "wordCount.show", title: "Show" },
+      { command: "word-count.reset", title: "Reset" },
+      { command: "lists.indent", title: "Indent" },
+      { command: "account.signOut", title: "Sign out" },
+    ],
+    keybindings: [
+      { key: "Mod-Alt-j", command: "wordCount.show" },
+      { key: "Mod-s", command: "wordCount.show" },
+      { key: "Ctrl-s", command: "wordCount.show" },
+      { key: "Mod-Alt-k", command: "lists.indent" },
+      { vim: "gw", command: "wordCount.show" },
+      { vim: ">>", command: "lists.indent" },
+    ],
+    statusBarItems: [
+      { id: "mine", alignment: "left", priority: 1, command: "wordCount.show" },
+      { id: "theirs", alignment: "left", priority: 1, command: "settings.workspaceJson" },
+    ],
+    menus: { commandBar: [{ command: "wordCount.show" }, { command: "account.signOut" }] },
+    views: { sidebar: [{ id: "wordCount", name: "Word count" }, { id: "extensions", name: "Not yours" }] },
+  };
+  const texts = {
+    ".common-ink/extensions/word-count/extension.json": JSON.stringify({ name: "Word count", contributes }),
+    ".common-ink/extensions/trusty/extension.json": JSON.stringify({ name: "Trusty", contributes: { commands: [{ command: "lists.indent", title: "Indent" }] } }),
+  };
+  const { h } = host();
+  await h.load([], files, read(texts), [], false, ["trusty"]);
+  const m = h.records.find((r) => r.id === "word-count")!.manifest;
+  assert.deepEqual(m.contributes.commands.map((c) => c.command), ["wordCount.show", "word-count.reset"]);
+  assert.deepEqual(m.contributes.keybindings, [{ key: "Mod-Alt-j", command: "wordCount.show" }], "no Vim sequences: they're Vim's");
+  assert.deepEqual(m.contributes.statusBarItems.map((i) => [i.id, i.command]), [["mine", "wordCount.show"], ["theirs", undefined]]);
+  assert.deepEqual(m.contributes.menus.commandBar, [{ command: "wordCount.show" }]);
+  assert.deepEqual(Object.values(m.contributes.views).flat().map((v) => v.id), ["wordCount"]);
+  assert.deepEqual(h.records.find((r) => r.id === "trusty")!.manifest.contributes.commands.map((c) => c.command), ["lists.indent"], "a trusted one keeps what it declares");
 });
 
 test("an extension installed from a URL or a catalog says so, and who made it", async () => {
@@ -173,15 +233,15 @@ test("an extension installed from a URL or a catalog says so, and who made it", 
     ".common-ink/extensions/weather/extension.json",
     ".common-ink/extensions/weather/installed.json",
     ".common-ink/extensions/mine/extension.json",
-    ".common-ink/extensions/word-count/extension.json",
-    ".common-ink/extensions/word-count/installed.json",
+    ".common-ink/extensions/reading-time/extension.json",
+    ".common-ink/extensions/reading-time/installed.json",
   ]);
   const texts = {
     ".common-ink/extensions/weather/extension.json": '{"name": "Weather", "publisher": "Weather Co."}',
     ".common-ink/extensions/weather/installed.json": '{"from": "https://ext.example/weather/extension.json"}',
     ".common-ink/extensions/mine/extension.json": "{}",
-    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "publisher": "Common Ink"}',
-    ".common-ink/extensions/word-count/installed.json": '{"from": "https://app.example/catalog/word-count/extension.json", "catalog": "Common Ink"}',
+    ".common-ink/extensions/reading-time/extension.json": '{"name": "Reading time", "publisher": "Common Ink"}',
+    ".common-ink/extensions/reading-time/installed.json": '{"from": "https://app.example/catalog/reading-time/extension.json", "catalog": "Common Ink"}',
   };
   const { h } = host();
   await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false);
@@ -191,9 +251,27 @@ test("an extension installed from a URL or a catalog says so, and who made it", 
       ["a", "Built-in", null, null],
       ["weather", "From URL", "https://ext.example/weather/extension.json", "Weather Co."],
       ["mine", "Workspace", null, null],
-      ["word-count", "Catalog", "https://app.example/catalog/word-count/extension.json", "Common Ink"],
+      ["reading-time", "Catalog", "https://app.example/catalog/reading-time/extension.json", "Common Ink"],
     ],
   );
+});
+
+test("Word count, taken out of the Catalog, no longer runs or shows where it was installed from it; one you wrote of that id does", async () => {
+  const fromCatalog = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"]);
+  const texts = {
+    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "publisher": "Common Ink"}',
+    ".common-ink/extensions/word-count/installed.json": '{"from": "https://app.example/catalog/word-count/extension.json", "catalog": "Common Ink"}',
+  };
+  const { h } = host();
+  await h.load([builtIn("words", { activate() {} })], fromCatalog, read(texts), [], false);
+  assert.deepEqual(h.installed().map((m) => m.id), ["words"]);
+  const added = await h.add(findWorkspaceExtensions(fromCatalog)[0], read(texts));
+  assert.equal(added, null, "nor when it's put in while the app runs");
+
+  const yours = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js"]);
+  const { h: h2 } = host();
+  await h2.load([builtIn("words", { activate() {} })], yours, read(texts), [], false);
+  assert.deepEqual(h2.installed().map((m) => m.id), ["words", "word-count"]);
 });
 
 test("a workspace extension runs sandboxed unless you trust it; built-ins run in the page", async () => {
@@ -270,8 +348,10 @@ test("in the app, a declared command starts its extension the first time it runs
     me: "you@example.com",
     commands,
     bar: { provide() {}, open() {} } as never,
+    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
+    onChange: [],
     panels: { register: (v: { id: string; render(el: unknown): unknown }) => views.set(v.id, v), toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
-    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => ran.push(`notice: ${m}`) } as never,
+    workbench: { registerView() {}, viewIds: () => [], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice: (m: string) => ran.push(`notice: ${m}`) } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
     settings: () => DEFAULTS,
     files: () => [],
@@ -285,6 +365,8 @@ test("in the app, a declared command starts its extension the first time it runs
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
+    device: laptop,
+    promoted() {},
   });
   const greet: ExtensionModule = {
     activate(ctx) {
@@ -327,7 +409,7 @@ test("the app's catalog lists folders on the app only", async () => {
   const entries = parseCatalog(index, "https://app.example/catalog/index.json", true);
   assert.deepEqual(
     entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]),
-    ["word-count", "boards", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
+    ["boards", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
   );
   for (const e of entries) {
     const m = parseManifest(JSON.parse(readFileSync(`web/public/catalog/${e.id}/extension.json`, "utf8")), e.id);
@@ -345,8 +427,10 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     me: "you@example.com",
     commands: new Commands(),
     bar: { provide() {}, open() {} } as never,
+    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
+    onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
-    workbench: { registerView() {}, openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
+    workbench: { registerView() {}, viewIds: () => [], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async () => ({ text: "", revision: 0 }) } as never,
     settings: () => DEFAULTS,
     files: () => [],
@@ -360,6 +444,8 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
+    device: laptop,
+    promoted() {},
   });
   let ctx!: ExtensionContext;
   await runtime.load([builtIn("copier", { activate: (c) => void (ctx = c) }, { activationEvents: ["onStartup"], permissions: { "clipboard:write": { why: "Copy" } } })], [], [], false, []);

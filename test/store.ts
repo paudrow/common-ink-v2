@@ -3,6 +3,8 @@ import type { Adapter } from "../worker/src/adapter.ts";
 import type { Store } from "../worker/src/operations.ts";
 import { addUpload, type Blobs } from "../worker/src/uploads.ts";
 import { completeTaskIn } from "../worker/src/complete-task.ts";
+import { deleteNote } from "../worker/src/archive.ts";
+import { restoreFromTrash, retentionOf } from "../worker/src/trash.ts";
 import type { DataSources } from "../worker/src/data-sources.ts";
 import type { Files } from "../worker/src/files.ts";
 import { memoryDb } from "./sqlite.ts";
@@ -16,7 +18,7 @@ export function memoryBlobs(): Blobs & { data: Map<string, ArrayBuffer> } {
 /** A workspace the way the Durable Object offers it, on in-memory SQLite, with recorded data sources unless told otherwise. */
 export function memoryStore(settings: SourceSettings = { fixtures: true, google: null }, fetcher?: typeof fetch, adapters: Adapter[] = [], now?: () => number) {
   const db = memoryDb();
-  const { files, sources } = openWorkspace(db, settings, undefined, fetcher, adapters, now);
+  const { files, sources, search } = openWorkspace(db, settings, undefined, fetcher, adapters, now);
   const blobs = memoryBlobs();
   const store: Store & { files: Files; sources: DataSources; blobs: typeof blobs; db: typeof db } = {
     files,
@@ -44,6 +46,12 @@ export function memoryStore(settings: SourceSettings = { fixtures: true, google:
     contacts: (e, q) => sources.contacts(e, q),
     upload: (n, d, a) => addUpload(files, blobs, n, d, a),
     completeTask: (args, a) => completeTaskIn(files, args, a),
+    deleteNote: (w) => deleteNote(files, w),
+    search: (q, options) => search.search(q, options),
+    deleted: (since) => files.deleted(since),
+    restoreDeleted: (d, a) => restoreFromTrash(files, d, a),
+    purge: (deletes, author) => files.purge(deletes, author),
+    retention: () => retentionOf(files),
   };
   return store;
 }

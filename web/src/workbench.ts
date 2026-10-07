@@ -11,7 +11,7 @@ import type { Offline, Unsent } from "./offline.ts";
 import { keptWhen } from "./conflict.ts";
 import { docLabel } from "./describe.ts";
 import { DEFAULTS, isReadOnly, type Settings } from "../../worker/src/settings.ts";
-import { createState, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
+import { createState, forgetHistory, fromServer, reconfigure, replaceText, synced } from "./editor.ts";
 import { Navigation, NEAR_LINES, type Place, type Visit } from "./navigation.ts";
 import * as L from "./layout.ts";
 import { layoutProblems } from "./layout-problems.ts";
@@ -85,6 +85,8 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
+  /** A file was opened (shown, or shown again if it was on show already). */
+  opened?(path: FilePath): void;
   /** Where you are changed: a jump to a new place ("push"), or where you are, updated ("replace"). */
   navigated?(how: "push" | "replace", visit: Visit): void;
 }
@@ -94,6 +96,14 @@ const key = (group: L.GroupId, item: L.Openable) => `${group}\n${L.openableKey(i
 /** Where extensions' CodeMirror extensions go in each editor, so ones added later reach editors already open. */
 const extensionSlot = new Compartment();
 const label = docLabel;
+
+/** The compact width class (phones), where a notice is a bar at the bottom that goes by itself. */
+const COMPACT = "(max-width: 599.98px)";
+/** How long a notice stays on a phone: a little longer when it has a button, such as Undo. */
+const NOTICE_MS = 4000;
+const NOTICE_WITH_ACTIONS_MS = 6000;
+/** How long a wider screen's notice with nothing to do stays: one with actions stays until it's acted on or closed. */
+const NOTICE_WIDE_MS = 8000;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
@@ -125,6 +135,15 @@ export class Workbench {
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
   private chrome: WorkbenchChrome | null = null;
+  /** Where this device's layout is kept (devices/<id>/layout.json), or the workspace's where there's no device file. */
+  layoutPath: FilePath = L.LAYOUT_PATH;
+  /** The layout a device starts from when it has none of its own yet. */
+  firstLayout: () => Promise<L.Layout | null> = async () => null;
+  /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
+  parts: () => Parts = () => ({ tabs: true, splits: true });
+  /** Whether a note that opens takes focus, so you can type at once. */
+  focusOnOpen: () => boolean = () => true;
+  private shown: Parts = { tabs: true, splits: true };
 
   constructor(
     private host: HTMLElement,
@@ -142,9 +161,9 @@ export class Workbench {
    * it comes back as `missing`, for the app to say so.
    */
   async start(first?: FilePath | null): Promise<{ missing?: FilePath }> {
-    const saved = await this.net.read(L.LAYOUT_PATH);
+    const saved = await this.net.read(this.layoutPath);
     this.layoutRevision = saved.revision;
-    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
+    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || (saved.revision === 0 && (await this.firstLayout())) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
     let missing: FilePath | undefined;
     if (first) {
@@ -170,7 +189,13 @@ export class Workbench {
     if (this.started) this.render();
   }
 
-  /** A message in the focused window, with buttons, until its tabs change. */
+  /**
+   * A message in the focused window, with buttons and a ×. Drawing the window again (a note opened in
+   * it) doesn't take it away; × does, as does a newer notice. On a wider screen it sits at the top, and
+   * the note moves down to make room; one with nothing to do goes after a few seconds, one with actions
+   * stays until they're used. On a phone it's a bar at the bottom that goes after a few seconds either
+   * way. A timer waits while you're reaching for it (a finger or the pointer on it, or focus in it).
+   */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
     // Before there's a window to show it in (an extension starting with the app, say): show it once there is.
@@ -190,9 +215,96 @@ export class Workbench {
       });
       box.append(b);
     }
+    // Closed, focus goes back where it was (an editor, so Vim's keys keep working), or else to the note on
+    // show. Held weakly: a notice mustn't keep a closed editor alive.
+    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? new WeakRef(document.activeElement) : null;
+    const close = document.createElement("button");
+    close.className = "notice-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close";
+    close.addEventListener("click", () => {
+      box.remove();
+      const was = before?.deref();
+      if (was?.isConnected) was.focus();
+      else this.focusedView?.focus();
+    });
+    box.append(close);
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
+    this.makeRoom(editors, box);
+    const compact = matchMedia(COMPACT);
+    let held = false;
+    box.addEventListener("pointerdown", () => (held = true));
+    box.addEventListener("pointerleave", () => (held = false));
+    const linger = () => held || box.matches(":hover") || box.contains(document.activeElement);
+    const go = () => {
+      if (!box.isConnected) return;
+      if (linger()) window.setTimeout(go, 1500);
+      else box.remove();
+    };
+    const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
+    if (compact.matches) return void start();
+    if (!actions.length) window.setTimeout(go, NOTICE_WIDE_MS);
+    const narrowed = (e: MediaQueryListEvent) => {
+      if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
+      if (box.isConnected && e.matches) start();
+    };
+    compact.addEventListener("change", narrowed);
+    // Gone (closed, timed out, replaced, its window closed): it stops listening, so nothing keeps it.
+    this.noticeGone.set(box, () => compact.removeEventListener("change", narrowed));
   }
+
+  /** What to undo when a notice goes, by its box. */
+  private noticeGone = new WeakMap<HTMLElement, () => void>();
+
+  /**
+   * On a wider screen the note starts below its window's notice (--notice-room, style.css), and its text
+   * stays where it is on screen as the notice comes and goes: it scrolls by as much as the note moves.
+   */
+  private makeRoom(editors: HTMLElement, box: HTMLElement) {
+    let room = this.rooms.get(editors);
+    if (!room) {
+      let was = 0;
+      const apply = () => {
+        const notice = editors.querySelector<HTMLElement>(":scope > .notice");
+        const now = notice && !matchMedia(COMPACT).matches ? notice.offsetTop + notice.offsetHeight + 8 : 0;
+        if (now === was) return;
+        editors.style.setProperty("--notice-room", `${now}px`);
+        for (const scroller of editors.querySelectorAll<HTMLElement>(":scope > .tab-editor:not([hidden]) .cm-scroller")) scroller.scrollTop += now - was;
+        was = now;
+      };
+      const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+      // A notice put in or taken out, before the next frame is drawn; and one that wraps or unwraps.
+      const changes = new MutationObserver((records) => {
+        for (const r of records) for (const n of r.removedNodes) if (n instanceof HTMLElement && n.classList.contains("notice")) this.goneNotice(n, sizes);
+        apply();
+      });
+      changes.observe(editors, { childList: true });
+      room = { apply, sizes, changes };
+      this.rooms.set(editors, room);
+    }
+    room.sizes?.observe(box);
+    room.apply();
+  }
+
+  private goneNotice(box: HTMLElement, sizes: ResizeObserver | null) {
+    sizes?.unobserve(box);
+    this.noticeGone.get(box)?.();
+    this.noticeGone.delete(box);
+  }
+
+  /** A window closed: stop watching its notices, and let its notice go. */
+  private dropRoom(editors: HTMLElement) {
+    const room = this.rooms.get(editors);
+    if (!room) return;
+    for (const box of editors.querySelectorAll<HTMLElement>(":scope > .notice")) this.goneNotice(box, room.sizes);
+    room.sizes?.disconnect();
+    room.changes.disconnect();
+    this.rooms.delete(editors);
+  }
+
+  private rooms = new WeakMap<HTMLElement, { apply: () => void; sizes: ResizeObserver | null; changes: MutationObserver }>();
 
   get focusedGroup(): L.Group {
     return L.focused(this.layout);
@@ -229,7 +341,7 @@ export class Workbench {
   /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
   pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
     const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
-    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: this.layoutPath, status: "waiting" }] : files;
   }
 
   /**
@@ -252,6 +364,7 @@ export class Workbench {
     }
     // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
+    this.on.opened?.(path);
   }
 
   /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
@@ -284,6 +397,16 @@ export class Workbench {
   /** Views that can open in windows. Extensions register them. */
   registerView(view: View): void {
     this.registered.set(view.id, view);
+  }
+
+  /** The ids of the views registered so far. */
+  viewIds(): string[] {
+    return [...this.registered.keys()];
+  }
+
+  /** The view registered under an id now: a later registration replaces it. */
+  view(id: string): View | undefined {
+    return this.registered.get(id);
   }
 
   /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
@@ -374,7 +497,7 @@ export class Workbench {
     const file = path && this.files.get(path);
     if (!file) return;
     file.session.reload(await this.net.read(file.path));
-    await this.net.release(file.path);
+    await this.net.letGoOwn(file.path);
   }
 
   /** Take in what changed on the server for these files, where nothing is waiting to be saved. */
@@ -393,9 +516,9 @@ export class Workbench {
    * whether the file is open here.
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
-    if (path === L.LAYOUT_PATH) {
+    if (path === this.layoutPath) {
       if (!this.started || revision <= this.layoutRevision || this.layoutSaving) return false;
-      const saved = await this.net.read(L.LAYOUT_PATH);
+      const saved = await this.net.read(this.layoutPath);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;
       if (layout) this.setLayout(layout, { save: false });
@@ -552,7 +675,7 @@ export class Workbench {
       if (unsent) void this.net.hold(unsent);
     }
     if (status === "saved") file.keptAt = undefined;
-    if (status === "saved" && !file.session.dirty) void this.net.release(file.path).then(() => this.net.dropDraft(file.path));
+    if (status === "saved" && !file.session.dirty) void this.net.letGoOwn(file.path);
     if (status === "saved" && !file.exists && file.session.revision > 0) {
       file.exists = true;
       this.on.created(file.path);
@@ -575,12 +698,26 @@ export class Workbench {
       if (other !== view) other.dispatch({ changes: u.changes, annotations: [synced.of(true), Transaction.addToHistory.of(false)] });
     }
     if (u.transactions.some((tr) => tr.annotation(fromServer))) return;
+    const clashed = file.session.status === "conflict";
     file.session.edited();
     if (file.session.status === "conflict") this.holdClash(file);
     const draft = file.session.unsaved;
-    // Back to the text the server has (an undo, say): the draft kept of an edit since is no edit now.
+    // Back to the text it's based on (an undo, say): what was kept of an edit since, as a draft or held
+    // offline, is no edit now.
     if (draft) void this.net.keepDraft(draft);
-    else void this.net.dropDraft(file.path);
+    else void this.net.letGoOwn(file.path);
+    // A clash undone: the note takes in the server's latest, which it held off while it clashed.
+    if (clashed && file.session.status !== "conflict") {
+      // Its undo and redo steps are of text theirs has replaced: they'd land in the wrong places.
+      queueMicrotask(() => file.views.forEach(forgetHistory));
+      const takeTheirs = (): void =>
+        void this.net.latest(file.path).then(
+          (latest) => file.session.absorb(latest),
+          // Offline: theirs is taken in once the page is back online.
+          () => addEventListener("online", takeTheirs, { once: true }),
+        );
+      takeTheirs();
+    }
     // Editing a file keeps its preview tabs open.
     if (L.groups(this.layout).some((g) => g.tabs.some((t) => t.preview && "file" in t && t.file === file.path))) this.setLayout(L.keepFile(this.layout, file.path));
     clearTimeout(file.timer);
@@ -637,8 +774,8 @@ export class Workbench {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {
-      let result = await this.net.write(L.LAYOUT_PATH, text, this.layoutRevision);
-      if (result.status === "conflict" && result.file) result = await this.net.write(L.LAYOUT_PATH, text, result.file.revision);
+      let result = await this.net.write(this.layoutPath, text, this.layoutRevision);
+      if (result.status === "conflict" && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
@@ -647,14 +784,42 @@ export class Workbench {
     }
   }
 
+  /**
+   * The device changed: show or put away tabs and windows side by side, as it now has room for. The
+   * layout itself doesn't change, and isn't saved: what's put away comes back when there's room.
+   */
+  refreshParts(): void {
+    const parts = this.parts();
+    if (parts.tabs === this.shown.tabs && parts.splits === this.shown.splits) return;
+    if (this.started) this.render();
+  }
+
+  /** What this device's layout keeps that doesn't show: windows, when they can't be side by side, and tabs, when there's no room for them. */
+  kept(): { windows: number; tabs: number } {
+    const groups = L.groups(this.layout);
+    const windows = this.shown.splits ? 0 : groups.length - 1;
+    const tabs = this.shown.tabs ? 0 : (this.shown.splits ? groups : [this.focusedGroup]).reduce((n, g) => n + Math.max(0, g.tabs.length - 1), 0);
+    return { windows, tabs };
+  }
+
   private render() {
+    this.shown = this.parts();
+    // What doesn't fit is hidden, not taken out (style.css): its editors and frames keep running.
+    this.host.toggleAttribute("data-no-tabs", !this.shown.tabs);
+    this.host.toggleAttribute("data-no-splits", !this.shown.splits);
     const wanted = new Set<string>();
     for (const g of L.groups(this.layout)) for (const t of g.tabs) wanted.add(key(g.id, t));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
     for (const k of this.viewBoxes.keys()) if (!wanted.has(k)) this.viewBoxes.delete(k);
     const shown = new Set(L.groups(this.layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))));
     for (const [path, file] of this.files) if (!file.views.size && !shown.has(path)) this.files.delete(path);
-    for (const id of this.groupEls.keys()) if (!L.groups(this.layout).some((g) => g.id === id)) this.groupEls.delete(id);
+    for (const [id, el] of this.groupEls)
+      if (!L.groups(this.layout).some((g) => g.id === id)) {
+        this.groupEls.delete(id);
+        // A closed window's watch on its notices goes with it.
+        const editors = el.querySelector<HTMLElement>(".editors");
+        if (editors) this.dropRoom(editors);
+      }
     // Rebuild the windows only when their arrangement changes. Otherwise update them where they are:
     // moving a focused editor's node would blur it (and save) in the middle of a click.
     const shape = shapeOf(this.layout.root);
@@ -709,13 +874,15 @@ export class Workbench {
       box.hidden = !showing;
       return box;
     });
-    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes.
+    // The chrome's own parts (a drop overlay) stay, after the tabs' boxes, and so does a notice: a
+    // window drawn again (a note opened in it) isn't a reason for what it says to go unread.
     const chrome = [...editors.children].filter((c) => c.classList.contains("chrome")) as HTMLElement[];
+    const kept = [...chrome, ...editors.querySelectorAll<HTMLElement>(":scope > .notice")];
     const empty = node.tabs.length ? [] : [editors.querySelector<HTMLElement>(":scope > .window-empty") ?? this.emptyState()];
     // Only what's new goes in, and only what's gone comes out: a box already there is never moved,
     // which would blur a focused editor and reload any frame in it. Order doesn't matter: one shows.
     const wanted = new Set<Node>([...empty, ...boxes]);
-    for (const c of [...editors.children]) if (!wanted.has(c) && !chrome.includes(c as HTMLElement)) c.remove();
+    for (const c of [...editors.children]) if (!wanted.has(c) && !kept.includes(c as HTMLElement)) c.remove();
     for (const n of wanted) if (n.parentNode !== editors) editors.insertBefore(n, chrome[0] ?? null);
     return el;
   }
@@ -731,6 +898,11 @@ export class Workbench {
     }
     const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, file);
     return view.dom.parentElement!;
+  }
+
+  /** Draw a view somewhere outside the windows (the phone's sheet of views about the note). */
+  drawInto(id: string, box: HTMLElement): void {
+    this.drawView(id, box);
   }
 
   /** Draw a view in its box; one that throws says so there, and the windows carry on. */
@@ -849,9 +1021,16 @@ export class Workbench {
     const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
     this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
+    // On a touch screen with no keyboard, a note opens to read: focus would bring the on-screen keyboard up. A tap edits.
+    if (view && !this.focusOnOpen()) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
+}
+
+export interface Parts {
+  tabs: boolean;
+  splits: boolean;
 }
 
 /** The arrangement of splits and windows, without sizes or tabs. */

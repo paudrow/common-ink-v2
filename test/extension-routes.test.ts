@@ -110,7 +110,7 @@ test("installing copies an extension's files in, as changes by you; a built-in's
     (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
     async () => {
       const install = (url: string) => extensionApi(post("/api/extensions/install", { url }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
-      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"] });
+      assert.deepEqual(await (await install("https://ext.example/weather/"))!.json(), { id: "weather", name: "Weather", files: ["extension.json", "index.js", "lib.js", "installed.json"], untrusted: false });
       assert.equal(s.files.read(".common-ink/extensions/weather/lib.js" as FilePath)?.text, "export const x = 1;");
       assert.deepEqual(JSON.parse(s.files.read(".common-ink/extensions/weather/installed.json" as FilePath)!.text), { from: "https://ext.example/weather/extension.json" }, "where it came from, for the app to say");
       assert.deepEqual(s.files.recent({ path: ".common-ink/extensions/weather/index.js" as FilePath })[0].author, you);
@@ -141,6 +141,56 @@ test("installing from a URL never inherits trust left for the same id: it starts
   assert.deepEqual(trusted(".common-ink/users/you@example.com/settings.json"), []);
   assert.deepEqual(trusted(".common-ink/users/sam@example.com/settings.json"), ["timers"]);
   assert.equal(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text)["editor.fontSize"], 15, "the rest of the settings stay");
+});
+
+test("installing says so when it took back trust, and refuses while a settings file that trusts extensions can't be read", async () => {
+  const s = store();
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  const install = () => extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"], ');
+      assert.deepEqual(await (await install())!.json(), {
+        error: ".common-ink/users/sam@example.com/settings.json isn't valid JSON, so weather can't be taken out of the extensions it trusts. Fix it first.",
+      });
+      assert.equal(s.files.read(".common-ink/extensions/weather/index.js" as FilePath), null, "nothing was installed");
+      write(s, ".common-ink/users/sam@example.com/settings.json", '{ "extensions.trusted": ["weather"] }\n');
+      const res = (await (await install())!.json()) as { untrusted?: boolean };
+      assert.equal(res.untrusted, true);
+      assert.equal(((await (await install())!.json()) as { untrusted?: boolean }).untrusted, false);
+    },
+  );
+});
+
+test("installing checks a merged settings change for trust it didn't take out, and takes it out again", async () => {
+  const s = store();
+  write(s, ".common-ink/settings.json", '{ "extensions.trusted": ["weather"] }\n');
+  // Someone trusts it again as the install writes, and the change that comes back, merged, still has it.
+  const realWrite = s.write.bind(s);
+  let raced = false;
+  s.write = async (w) => {
+    if (raced || w.path !== ".common-ink/settings.json") return realWrite(w);
+    raced = true;
+    await realWrite(w);
+    write(s, ".common-ink/settings.json", '{ "extensions.trusted": ["weather"], "editor.fontSize": 15 }\n');
+    return { status: "merged", file: s.files.read(w.path)! };
+  };
+  const files: Record<string, string> = {
+    "https://other.example/weather/extension.json": JSON.stringify({ id: "weather", name: "Weather" }),
+    "https://other.example/weather/index.js": "export default { activate() {} };",
+  };
+  await withFetch(
+    (url) => (files[url] ? new Response(files[url]) : new Response("nope", { status: 404 })),
+    async () => {
+      const res = await extensionApi(post("/api/extensions/install", { url: "https://other.example/weather/" }), new URL("https://app.example/api/extensions/install"), you.email, you, s);
+      assert.equal(res!.status, 200);
+    },
+  );
+  assert.deepEqual(JSON.parse(s.files.read(".common-ink/settings.json" as FilePath)!.text), { "extensions.trusted": [], "editor.fontSize": 15 });
 });
 
 test("the app's policy frames only the sandbox route and connects only to itself", () => {
@@ -181,6 +231,21 @@ test("another catalog's index is read through the safe fetch, and only its compl
       });
       assert.equal((await read("https://friends.example/missing.json"))!.status, 400);
       assert.deepEqual(await (await read("http://localhost:8787/catalog/index.json"))!.json(), { error: "Local names can't be fetched" });
+    },
+  );
+});
+
+test("an untrusted customized copy of a built-in leaves the built-in running, and the brokered fetch judges it as the built-in", async () => {
+  const s = store();
+  write(s, ".common-ink/extensions/link-embeds/extension.json", JSON.stringify({ name: "Link embeds, customized", permissions: { network: { hosts: ["copy.example"], why: "Mine" } } }));
+  const ask = (url: string) => extensionApi(post("/api/extensions/fetch", { extension: "link-embeds", url }), new URL("https://app.example/api/extensions/fetch"), you.email, you, s);
+  await withFetch(
+    () => new Response("a page"),
+    async () => {
+      const shipped = (await (await ask("https://cards.example/pen"))!.json()) as { status?: number; error?: string };
+      assert.deepEqual([shipped.status, shipped.error], [200, undefined], "the built-in reaches any host, as it declares, without asking");
+      write(s, ".common-ink/users/you@example.com/settings.json", JSON.stringify({ "extensions.trusted": ["link-embeds"] }));
+      assert.deepEqual(await (await ask("https://cards.example/pen"))!.json(), { error: "Link embeds, customized doesn't declare cards.example in its extension.json, so it can't reach it" }, "trusted, the copy runs, and is judged by its own manifest");
     },
   );
 });

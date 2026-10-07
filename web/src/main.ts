@@ -3,17 +3,20 @@
 import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type ChangeNotice, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
+import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
+import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
-import { commandForKey, Commands, keyFor } from "./commands.ts";
-import { describeAuthor, docLabel } from "./describe.ts";
-import { connectLive } from "./live.ts";
+import { bindingForKey, Commands, keyFor } from "./commands.ts";
+import { ago, describeAuthor, docLabel } from "./describe.ts";
+import { Search } from "./search.ts";
+import { format } from "../../worker/src/query.ts";
+import { afterBurst, connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import * as L from "./layout.ts";
@@ -26,13 +29,13 @@ import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } 
 import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
-import { createState, editText } from "./editor.ts";
+import { createState, editText, floatsOverEditors } from "./editor.ts";
 import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
-import { parseGrants } from "../../worker/src/permissions.ts";
+import { parseGrants, type Answer } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
-import { idbKV, Offline } from "./offline.ts";
+import { idbKV, Offline, syncLine, unreachable, UNREACHABLE_TEXT } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
@@ -40,6 +43,13 @@ import { StatusItems } from "./status-items.ts";
 import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
+import { Device } from "./device.ts";
+import { Shell, type Action, type Place, type ShellEntry } from "./shell.ts";
+import { isIcon } from "./icons.ts";
+import { barOf, PLACES_PATH } from "../../worker/src/places.ts";
+import { setTopLevelKey } from "./json-edit.ts";
+import { undo as undoTyping } from "@codemirror/commands";
+import { atLeast, deviceOfLayout, here, hereText, needsText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
 const dev = await bootLevers();
@@ -57,6 +67,7 @@ const list = $<HTMLUListElement>("#notes ul");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
+const notSavedLine = $("#not-saved");
 const resolveButton = $<HTMLButtonElement>("#resolve");
 const reloadLine = $("#reload");
 const netLine = $("#net-activity");
@@ -67,7 +78,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   unsaved: "Edited",
   saving: "Saving…",
   conflict: "Not saved: this note changed in the same place elsewhere.",
-  offline: "Not saved: can't reach the server. Trying again.",
+  offline: UNREACHABLE_TEXT,
 };
 
 let files: FileSummary[] = [];
@@ -75,7 +86,12 @@ let settings: Settings = DEFAULTS;
 /** Every setting there is: the app's, and each installed extension's, once their manifests are read. */
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
+/** Back online with edits still held: they go at their next retry, so until one fails again, they're being sent. */
+let sending = false;
+/** What the phone's not-saved pill says now. */
+let notSaying = "";
 const savedListeners: Array<(path: FilePath) => void> = [];
+const changeListeners: Array<(notice: ChangeNotice) => void> = [];
 const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
@@ -126,7 +142,15 @@ const me = await fetch("/api/me")
 // Drafts of unsaved edits are this account's: another one signing in here doesn't see them.
 offline.account = me ?? null;
 const USER_SETTINGS = me ? userSettingsPath(me) : null;
+/** What this browser has, live, and its device file (device.ts). The `device` lever stands in for another. */
+const device = new Device({ me, preset: dev?.levers.device ?? null });
+/** Extensions you turned off on this device, which apply after a reload like turning one off. */
+const offHere = () => Object.entries(device.file.extensions).flatMap(([id, o]) => (o === "off" ? [id] : []));
 const name = docLabel;
+/** The phone shell, made once the app's parts are (below). */
+let shell: Shell | undefined;
+/** What the window showed last, to tell when something new comes on show. */
+let lastShowing: string | null | undefined;
 
 /** Where you've been, kept for this tab's session, so a reload keeps it (navigation.ts). */
 const NAVIGATION_KEY = "common-ink.navigation";
@@ -147,7 +171,8 @@ const browserHistory = (() => {
   let timer = 0;
   let saveTimer = 0;
   const write = () => {
-    if (pending) history.replaceState({ nav: pending.id }, "", addressFor(pending.file));
+    // What the phone shell keeps in the entry (its place) stays with it.
+    if (pending) history.replaceState({ ...history.state, nav: pending.id }, "", addressFor(pending.file));
     pending = null;
   };
   const keep = () => {
@@ -170,7 +195,20 @@ const browserHistory = (() => {
       }
       // The entry being left gets its last update first.
       write();
-      history.pushState({ nav: visit.id }, "", addressFor(visit.file));
+      this.pushVisit(visit);
+    },
+    /** A new entry for a place, with where it is to the phone shell; or, for the note a shell's place went to, the entry you're on. */
+    pushVisit(visit: Visit) {
+      clearTimeout(timer);
+      write();
+      history.pushState({ nav: visit.id, ...shell?.entryFor(L.openableKey(L.fileTab(visit.file))) }, "", addressFor(visit.file));
+    },
+    /** An entry of a place the phone shell shows: a new one, or the one you're on in its place. */
+    place(state: ShellEntry, replace: boolean) {
+      clearTimeout(timer);
+      write();
+      if (replace) history.replaceState(state, "", location.href);
+      else history.pushState(state, "", location.href);
     },
     /** The browser moved to another entry: an update meant for the one it left is dropped. */
     moved() {
@@ -186,10 +224,18 @@ const workbench = new Workbench(
     status(status, message) {
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
+      // A save that failed with the server reachable: it isn't on its way.
+      if (status === "offline") sending = false;
       resolveButton.hidden = status !== "conflict";
       queueMicrotask(() => void renderUnsent());
     },
-    navigated: (how, visit) => browserHistory.follow(how, visit),
+    navigated: (how, visit) => {
+      browserHistory.follow(how, visit);
+      // On a phone, a note opened shows over the place it was opened from.
+      if (how === "push") shell?.showWindow();
+    },
+    // On a phone, a file opened shows over the place, the one on show already included.
+    opened: () => shell?.showWindow(),
     focus(path) {
       // Switching notes is something extensions act on; the first note showing, or focus coming back to the same one, isn't.
       if (path && lastFile && path !== lastFile) extensions.youDid({ kind: "opened", path });
@@ -197,14 +243,21 @@ const workbench = new Workbench(
       for (const fn of focusListeners) fn(path);
       document.title = path ? `${name(path)} · Common Ink` : "Common Ink";
       renderList();
+      // Something new on show in the window (a view a command opened, say) shows over the place on a phone.
+      const tab = L.activeTab(workbench.focusedGroup);
+      const showing = tab && L.openableKey(tab);
+      if (showing !== lastShowing && lastShowing !== undefined) shell?.showWindow();
+      else shell?.update();
+      lastShowing = showing;
     },
     created: () => void refreshList(),
     saved(path) {
       for (const fn of savedListeners) fn(path);
       if (isSettingsFile(path)) void loadSettings();
     },
+    // Keys are hinted only where there's a keyboard to press them.
     shortcut: (command) => {
-      const key = keyFor(command, settings.keybindings);
+      const key = device.has("keyboard") ? keyFor(command, settings.keybindings) : undefined;
       return key && formatKeys(key);
     },
   },
@@ -230,11 +283,14 @@ function navigate(by: -1 | 1) {
 // An entry from before the app kept places, or one it no longer keeps, opens the file its address names.
 addEventListener("popstate", (e) => {
   browserHistory.moved();
+  // On a phone, the shell shows what the entry says: a place's list, a view, or a note.
+  if (shell?.popped(e.state)) return;
   const id = (e.state as { nav?: unknown } | null)?.nav;
-  void (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then((went) => {
+  const restore = (typeof id === "number" ? workbench.goTo(id) : Promise.resolve(false)).then(async (went) => {
     const file = went ? null : fileFromUrl(location.search);
-    if (file) void workbench.open(file, { jump: false });
+    if (file) await workbench.open(file, { jump: false });
   });
+  void (shell ? shell.hold(restore) : restore);
 });
 
 /** Each settings file's settings the last time it could be read. */
@@ -268,11 +324,18 @@ const settingsUi = settingsEditor({
   catalog: () => catalog,
   openJson: (level) => void openSettings(settingsPath(level)),
   changed: () => void loadSettings(),
+  device: (root) =>
+    renderDevice(root, {
+      device,
+      extensions: () => extensions.host.records.filter((r) => !r.broken).map((r) => ({ manifest: r.manifest, here: extensions.here(r.manifest) })),
+      setOverride: (id, value) => setOverride(id, value),
+      openFile: () => device.path && void workbench.open(device.path, { newTab: true }),
+    }),
 });
 workbench.registerView(settingsUi);
 
-/** Open the settings editor at user or workspace settings, searching for `query` if given. */
-function openSettingsUi(level: Level, query = "") {
+/** Open the settings editor at user or workspace settings, searching for `query` if given, or at This device. */
+function openSettingsUi(level: Shown, query = "") {
   settingsUi.level = level;
   settingsUi.query = query;
   workbench.openView(SETTINGS_VIEW, { newTab: true });
@@ -297,25 +360,97 @@ async function refreshList() {
   extensionsChanged();
 }
 
-/** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
+/** Offline, and how many edits are waiting to be sent, only when there's something to say; on a phone, only that something isn't saved. */
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
   // Held edits the server refused, and open notes whose edit clashes with someone else's: said once, as clashes.
   const clashing = [...new Set([...unsent.filter((u) => u.conflict).map((u) => u.path), ...workbench.pending().flatMap((p) => (p.status === "conflict" ? [p.path] : []))])];
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
-  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
-  unsentLine.textContent = parts.filter(Boolean).join(" · ");
+  // Kept in memory only (this browser won't keep site data): they're gone if the page closes before they're sent.
+  const fragile = waiting > 0 && !(await offline.durable());
+  if (!waiting) sending = false;
+  const line = syncLine({ online: offline.online, waiting, fragile, sending, clashing: clashing.map(docLabel) });
+  unsentLine.textContent = line.wide;
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
-  unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
+  unsentLine.dataset.state = line.state;
+  const clash = line.state === "conflict";
+  notSavedLine.dataset.state = line.state;
+  notSavedLine.setAttribute("role", clash ? "button" : "status");
+  if (clash) notSavedLine.tabIndex = 0;
+  else notSavedLine.removeAttribute("tabindex");
+  const showing = !notSavedLine.hidden;
+  notSaying = line.phone;
+  notSavedLine.hidden = !line.phone;
+  if (!line.phone) notSavedLine.textContent = "";
+  else if (showing) {
+    notSavedLine.textContent = line.phone;
+    placeNotSaved();
+  }
+  // Shown first and said a frame later, so screen readers hear the live region change.
+  else
+    requestAnimationFrame(() => {
+      placeNotSaved();
+      notSavedLine.textContent = notSaying;
+      // The line being edited, if the pill now covers it, moves out from under it; otherwise the
+      // scroll stays where you left it. A laptop has no pill (the CSS hides it), so nothing moves there.
+      const view = workbench.focusedView;
+      if (!view || !notSavedLine.getClientRects().length) return;
+      const pill = notSavedLine.getBoundingClientRect();
+      const cursor = view.coordsAtPos(view.state.selection.main.head);
+      if (cursor && cursor.top < pill.bottom && pill.top < cursor.bottom) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
+    });
 }
-offline.onChange(() => void renderUnsent());
-unsentLine.addEventListener("click", async () => {
+let wasOnline = offline.online;
+offline.onChange(() => {
+  sending = offline.online && (sending || !wasOnline);
+  wasOnline = offline.online;
+  void renderUnsent();
+});
+/** Open the first note whose edit can't be merged, and show the two. */
+async function openClash() {
   const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
   if (!clashing) return;
   if (clashing !== workbench.focusedPath) await workbench.open(clashing, { newTab: true });
   await resolveConflict();
+}
+unsentLine.addEventListener("click", () => void openClash());
+/**
+ * Where the pill floats. Over a note, just inside the top of the top right window's editors, whatever
+ * is above them, where a note has an empty margin. Over anything else (a view, a panel, Trash, the
+ * calendar), whose top is its controls, at the bottom, above the on-screen keyboard.
+ */
+function placeNotSaved() {
+  if (notSavedLine.hidden) return;
+  const tops = [...$("#workbench").querySelectorAll<HTMLElement>(".editors")].flatMap((e) => (e.getClientRects().length ? [e.getBoundingClientRect()] : []));
+  const box = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0];
+  const top = box?.top ?? 0;
+  notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
+  // What's there in the windows, under where the pill would sit at the top: a note's editor, or
+  // something else. Overlays above them (Search, a menu, a dialog) aren't what it floats over once they close.
+  const workbenchEl = $("#workbench");
+  const under = box ? document.elementsFromPoint(box.right - 24, top + 16).find((e) => workbenchEl.contains(e)) : null;
+  notSavedLine.dataset.at = under?.closest(".editors .cm-editor") ? "top" : "bottom";
+  const viewport = window.visualViewport;
+  notSavedLine.style.setProperty("--keyboard", `${viewport ? Math.max(0, Math.round(innerHeight - viewport.offsetTop - viewport.height)) : 0}px`);
+}
+// Placed again when the windows move (the page resizing, a bar above them coming or going), the
+// keyboard comes or goes, focus moves, or a panel opens or closes.
+new ResizeObserver(placeNotSaved).observe($("#workbench"));
+window.visualViewport?.addEventListener("resize", placeNotSaved);
+focusListeners.push(() => requestAnimationFrame(placeNotSaved));
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#panel"), { attributes: true, attributeFilter: ["hidden", "class"] });
+// And as a menu or a dialog closes, in case what's under it changed while it was open.
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe(document.body, { childList: true });
+floatsOverEditors(notSavedLine);
+notSavedLine.addEventListener("click", () => void openClash());
+notSavedLine.addEventListener("keydown", (e) => {
+  if (notSavedLine.dataset.state !== "conflict" || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault();
+  void openClash();
 });
+// A tap on the pill leaves the note focused, so a phone's keyboard stays up.
+notSavedLine.addEventListener("mousedown", (e) => e.preventDefault());
 resolveButton.addEventListener("click", () => void resolveConflict());
 
 /**
@@ -397,9 +532,9 @@ function renderList() {
         e.preventDefault();
         void workbench.open(n.path, { newTab: true });
       });
-      a.addEventListener("click", (e) => {
+      a.addEventListener("click", async (e) => {
         e.preventDefault();
-        void workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
+        await workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
       });
       const li = document.createElement("li");
       li.append(a);
@@ -456,9 +591,11 @@ function pick(how: typeof openHow) {
   bar.open();
 }
 
-const commands = new Commands();
+const commands = new Commands((title, why) => workbench.notice(`${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`));
+/** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
+const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
 commands.register(
-  { id: "quickOpen", title: "Open note…", run: () => pick("here") },
+  { id: "quickOpen", title: "Search…", run: () => pick("here") },
   {
     id: "commandBar",
     title: "Show all commands",
@@ -474,12 +611,12 @@ commands.register(
   { id: "note.followLink", title: "Follow link under cursor", run: followLink },
   { id: "go.back", title: "Go back", run: () => navigate(-1) },
   { id: "go.forward", title: "Go forward", run: () => navigate(1) },
-  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab") },
+  { id: "tab.open", title: "Open note in a new tab…", run: () => pick("tab"), off: needs({ width: "medium" }) },
   { id: "tab.close", title: "Close tab", run: () => workbench.closeTab() },
   { id: "media.resetFloat", title: "Reset floating video position", run: () => resetFloats() },
-  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right") },
-  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down") },
-  { id: "window.close", title: "Close window", run: () => workbench.closeGroup() },
+  { id: "window.openRight", title: "Open note in a split to the right…", run: () => pick("right"), off: needs({ width: "expanded" }) },
+  { id: "window.openDown", title: "Open note in a split below…", run: () => pick("down"), off: needs({ width: "expanded" }) },
+  { id: "window.close", title: "Close window", run: () => workbench.closeGroup(), off: needs({ width: "expanded" }) },
   {
     id: "account.signOut",
     title: "Sign out",
@@ -496,7 +633,32 @@ commands.register(
   { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
 );
 
-const bar = new CommandBar();
+/** Folders that hold notes, for completing `in:`. */
+const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.startsWith(".")).flatMap((f) => f.path.split("/").slice(0, -1).map((_, i, parts) => `${parts.slice(0, i + 1).join("/")}/`)))].sort();
+const search = new Search({
+  manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
+  owner: (type) => extensions.ownership.owner("searchType", type),
+  notes: {
+    search: async (query, limit, within) => {
+      const answer = await api.search(format(query), limit, within);
+      return {
+        more: answer.more,
+        results: answer.results.map((r) => ({
+          title: r.title,
+          path: r.path,
+          detail: r.line?.text ?? r.path,
+          aside: `${r.archived ? "archived · " : r.trashed ? "in Trash · " : ""}${ago(r.edited)}`,
+          dim: r.archived === true || r.trashed === true,
+          run: () => (r.trashed ? commands.run("trash.show") : openFromBar(r.path as FilePath)),
+        })),
+      };
+    },
+  },
+  values: (key) => (key === "in" ? folders() : []),
+});
+const bar = new CommandBar({ all: () => search.filters(), extraKeys: () => search.extraKeys() });
+// The pill's place again as Search closes.
+new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#command-bar"), { attributes: true, attributeFilter: ["hidden"] });
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
@@ -504,7 +666,8 @@ const extensions = new ExtensionRuntime({
   me,
   commands,
   bar,
-  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command) => commands.run(command)),
+  search,
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, owner, by) => extensions.runFor(owner, command, by)),
   panels,
   workbench,
   offline,
@@ -513,23 +676,90 @@ const extensions = new ExtensionRuntime({
   openFromBar,
   lastFile: () => lastFile,
   onSaved: savedListeners,
+  onChange: changeListeners,
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
+    await answerGrant(id, key, answer);
     await loadSettings();
   },
   prompt: dev ? dev.prompt(promptFor) : promptFor,
   // It tried something it never asked for: say so once, with where to see what it does ask for.
   undeclared: (denied) => workbench.notice(denied.message, [{ label: changeIn(denied.extension.name), run: () => extensionsUi.showDetails(denied.extension.id) }]),
   changed: () => extensionsChanged(),
+  device,
+  promoted: (id) => {
+    statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()).get(id)!);
+    // Its keybindings join the ones in effect.
+    void loadSettings();
+  },
 });
 /** Who's asking, for a permission prompt: its name, where it's from and who made it, and its details. */
 function askerOf(id: string): Asker {
   const r = extensions.host.records.find((x) => x.id === id);
   return { name: r?.manifest.name ?? id, origin: r ? originOf(r) : "Workspace", publisher: r?.manifest.publisher, showDetails: () => extensionsUi.showDetails(id) };
 }
+
+// The device changed: extensions that now have what they need go in, and views that say what's on here draw again.
+device.onChange((d, was) => {
+  extensions.deviceChanged();
+  workbench.refreshParts();
+  void extensions.promote().then((went) => {
+    if (d.facts.keyboard && !was.keyboard && d.file.keyboard === "auto") {
+      const on = went.length ? `${went.join(", ")} ${went.length === 1 ? "is" : "are"} on` : "shortcuts are on";
+      // On a touch screen it's a guess from the keys pressed: say how to take it back. What went in goes with a reload.
+      if (d.facts.touch)
+        workbench.notice(`Keyboard found: ${on}.`, [
+          { label: "Not a keyboard?", run: () => void device.setKeyboard("no").then(() => went.length && reloadWindow()) },
+          { label: "This device", run: () => openSettingsUi("device") },
+        ]);
+      else workbench.notice(`Keyboard found: ${on} here.`, [{ label: "This device", run: () => openSettingsUi("device") }]);
+    }
+    else if (went.length) workbench.notice(`${went.join(", ")} ${went.length === 1 ? "is" : "are"} on here now.`);
+    extensionsChanged();
+    workbench.refreshView(SETTINGS_VIEW);
+    // Shortcuts are hinted now there's a keyboard (or not, now there isn't).
+    if (d.facts.keyboard !== was.keyboard) workbench.applySettings(settings);
+  });
+});
+
+// Tabs and windows side by side show where the Workbench says they fit; without it, windows need the width they'd need with it.
+workbench.parts = () => {
+  const tabs = extensions.layoutPart("tabs");
+  const splits = extensions.layoutPart("splits");
+  return { tabs: tabs !== undefined ? tabs === null : true, splits: splits !== undefined ? splits === null : device.atLeast("expanded") };
+};
+if (device.layoutPath) workbench.layoutPath = device.layoutPath;
+workbench.firstLayout = firstLayout;
+
+/**
+ * Where a device that has no layout of its own starts: a wide one from the layout of the wide device you
+ * used last (or the workspace's, from before layouts were per device); a narrow one with just what was
+ * on show there, since a phone keeps only what it needs.
+ */
+async function firstLayout(): Promise<L.Layout | null> {
+  const parse = (text: string) => {
+    try {
+      return L.parseLayout(JSON.parse(text));
+    } catch {
+      return null;
+    }
+  };
+  let from: L.Layout | null = null;
+  const layouts = me ? files.filter((f) => f.path !== device.layoutPath && deviceOfLayout(f.path, me)).sort((a, b) => b.revision - a.revision) : [];
+  for (const f of layouts) {
+    const seen = parseDeviceFile((await offline.read(f.path.replace(/layout\.json$/, "device.json") as FilePath)).text).seen;
+    if (seen && atLeast(seen.width, "expanded")) {
+      from = parse((await offline.read(f.path)).text);
+      if (from) break;
+    }
+  }
+  from ??= parse((await offline.read(L.LAYOUT_PATH)).text);
+  return from && (device.atLeast("expanded") ? from : L.onShow(from));
+}
+
+// This device's file changed: in another tab on this device, or by you or an agent. Its changes come in here.
+savedListeners.push((path) => path === device.path && void device.absorb());
 
 // Sandboxed extensions hear of saves and focus changes like trusted ones do.
 savedListeners.push((path) => extensions.broadcast("saved", path));
@@ -545,7 +775,7 @@ const reloadSettingsNow = () =>
   JSON.stringify(
     [...catalog.values()].filter((d) => d.reload).map((d) => settings[d.key]),
   );
-const extensionsNeedReload = () => changedExtensions(statesAtStart, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE));
+const extensionsNeedReload = () => changedExtensions(statesAtStart, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()));
 
 function updateReloadLine() {
   if (reloadSettingsAtStart === null) return;
@@ -592,6 +822,58 @@ async function customize(b: BuiltIn) {
 }
 
 /** Delete a workspace extension's files, as changes that undo can take back. */
+/**
+ * Your answer to one of an extension's permissions, in your settings, beside the others there (or
+ * none, to ask again). Each settings file's answers are edited as that file has them: the settings
+ * combined from all of them take the whole key from one file, and writing those back would copy
+ * another file's answers over, or lose its own.
+ */
+function answerGrant(id: string, key: string, answer: Answer | undefined) {
+  return editSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", (value) => {
+    const grants = parseGrants(value);
+    const mine = { ...grants[id] };
+    if (answer) mine[key] = answer;
+    else delete mine[key];
+    return { ...grants, [id]: mine };
+  });
+}
+
+/** Forget every answer to an extension's permissions, in each settings file that has any. */
+async function forgetGrants(id: string) {
+  for (const path of new Set([USER_SETTINGS, WORKSPACE_SETTINGS].filter((p) => p !== null)))
+    await editSetting(api, path, "extensions.permissions", (value) => {
+      const grants = parseGrants(value);
+      if (!(id in grants)) return value;
+      const { [id]: _forgotten, ...others } = grants;
+      return others;
+    });
+}
+
+/**
+ * Clear away a retired Catalog extension's copy (Word count): its files and your answers to its
+ * permissions, each a change in History that undo can take back. Done once: then there's nothing left.
+ */
+async function clearRetired(found: readonly { id: string; files: FilePath[] }[]) {
+  const kept: FilePath[] = [];
+  for (const w of found) {
+    // The Catalog's files only: anything you added in its folder stays, and you're told.
+    const catalogs = new Set(["extension.json", "index.js", "installed.json"].map((f) => `.common-ink/extensions/${w.id}/${f}`));
+    const theirs = w.files.filter((p) => catalogs.has(p));
+    // Every file in its folder, notes too, which aren't the extension's own files.
+    kept.push(...files.map((f) => f.path).filter((p) => p.startsWith(`.common-ink/extensions/${w.id}/`) && !catalogs.has(p)));
+    workbench.forget(theirs);
+    for (const path of theirs) {
+      const file = await api.read(path).catch(() => null);
+      if (file?.revision) await api.delete(path, file.revision);
+    }
+    await forgetGrants(w.id);
+  }
+  if (!found.length) return;
+  await loadSettings();
+  await refreshList();
+  if (kept.length) workbench.notice(`Word count left the Catalog, and its files are gone. ${kept.length === 1 ? "A file" : `${kept.length} files`} you added in its folder stayed: ${kept.map(docLabel).join(", ")}.`);
+}
+
 async function removeExtension(r: ExtensionRecord) {
   if (!r.workspace) return;
   const paths = [...r.workspace.files];
@@ -623,16 +905,11 @@ const extensionDeps: ExtensionsViewDeps = {
   reload: reloadWindow,
   answer: (r, key) => parseGrants(settings["extensions.permissions"])[r.id]?.[key],
   async setAnswer(r, key, answer) {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    const mine = { ...grants[r.id] };
-    if (answer) mine[key] = answer;
-    else delete mine[key];
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
+    await answerGrant(r.id, key, answer);
     await loadSettings();
   },
   async resetAnswers(r) {
-    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await forgetGrants(r.id);
     await loadSettings();
   },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
@@ -656,10 +933,13 @@ const extensionDeps: ExtensionsViewDeps = {
     );
     if (!url) return;
     try {
-      const { id, name } = await api.installExtension(url);
+      const { id, name, untrusted } = await api.installExtension(url);
+      if (untrusted) await loadSettings();
       await refreshList();
-      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed.`);
-      else workbench.notice(`Installed ${name}. It starts after a reload.`, [{ label: "Reload", run: () => reloadWindow() }]);
+      // Trust given to an earlier extension by this id was taken back, for everyone who'd given it.
+      const taken = untrusted ? `: trust given to an earlier ${name} was taken back, for everyone. Look it over, then Trust it again if you want` : "";
+      if (await goLive(id, { kind: "installed" })) workbench.notice(`Installed ${name}. It runs sandboxed${taken}.`);
+      else workbench.notice(`Installed ${name}. It starts after a reload${taken}.`, [{ label: "Reload", run: () => reloadWindow() }]);
     } catch (err) {
       workbench.notice(`Couldn't install it: ${(err as Error).message}`);
     }
@@ -671,6 +951,13 @@ const extensionDeps: ExtensionsViewDeps = {
     return listed;
   },
   installFromCatalog: (entry) => installAndAnnounce(entry),
+  device: {
+    summary: () => deviceSummary(device),
+    open: () => openSettingsUi("device"),
+    here: (r) => extensions.here(r.manifest),
+    override: (id) => device.override(id),
+    setOverride,
+  },
 };
 const extensionsUi = extensionsView(extensionDeps);
 
@@ -681,7 +968,7 @@ const extensionsUi = extensionsView(extensionDeps);
  */
 async function goLive(id: string, because: Trigger): Promise<boolean> {
   if (SAFE || !(await extensions.addLive(files, id, settings["extensions.trusted"], because))) return false;
-  statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE).get(id)!);
+  statesAtStart.set(id, extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere()).get(id)!);
   catalog = extensions.catalog();
   // Its settings join the catalog, its keybindings the ones in effect, and editors draw its embeds.
   await loadSettings();
@@ -761,11 +1048,77 @@ async function installFromCatalog(entry: CatalogEntry) {
   }
 }
 
-/** Trust an extension to run in the page, or stop: kept in your settings, applied after a reload. */
+/** Turn an extension on or off on this device, or back to Auto: kept in the device file. Turning one on here puts it in at once. */
+async function setOverride(id: string, value: Override | undefined) {
+  await device.setOverride(id, value);
+  extensionsChanged();
+}
+
+/** Where Vim stands here once a choice is saved, said as it is: on, going after a reload, off here and why, or off in settings. */
+function vimHere(): string {
+  const r = extensions.host.records.find((x) => x.id === "vim");
+  if (!r || r.state === "off") return "Vim stays off: it's turned off in your settings (extensions.disabled).";
+  if (r.state === "safe" || r.state === "failed") return `Vim isn't running${r.state === "safe" ? " in safe mode" : ": it failed to start"}.`;
+  const h = extensions.here(r.manifest);
+  // On here: running, or about to go in (the device's change puts it in).
+  if (h.on) return h.by === "you" ? "Vim is on here, keyboard or not." : "Vim is on here.";
+  if (r.state !== "unmet") return "Vim goes after a reload.";
+  return h.by === "you" ? "Vim is off here." : `Vim is off here: it ${needsText(h.needs)}.`;
+}
+
+/** Say what a device choice did. Something still running that's now off here goes after a reload, as turning an extension off does: offer it. */
+function deviceNotice(lead: string) {
+  const going = extensions.host.records.filter((r) => (r.state === "active" || r.state === "inactive") && !extensions.here(r.manifest).on).map((r) => r.manifest.name);
+  const vim = vimHere();
+  const reload = going.filter((n) => n !== "Vim");
+  const text = [lead, vim, reload.length ? `${reload.join(", ")} ${reload.length === 1 ? "goes" : "go"} after a reload.` : ""].filter(Boolean).join(" ");
+  workbench.notice(text, going.length ? [{ label: "Reload", run: () => reloadWindow() }] : [{ label: "This device", run: () => openSettingsUi("device") }]);
+}
+
+// What Settings › This device and the Extensions view's On here do, as commands, so they're in the command
+// bar: for a phone or tablet with a keyboard the app didn't find, or a Vim user on one. Only you run them:
+// an extension that ran them would be choosing what runs on your device.
+commands.register(
+  { id: "device.keyboardYes", title: "Keyboard: this device has a keyboard", appOnly: true, run: () => device.setKeyboard("yes").then(() => deviceNotice("This device has a keyboard.")) },
+  { id: "device.keyboardNo", title: "Keyboard: this device has no keyboard", appOnly: true, run: () => device.setKeyboard("no").then(() => deviceNotice("This device has no keyboard.")) },
+  {
+    id: "device.keyboardAuto",
+    title: "Keyboard: let the app tell whether this device has one",
+    appOnly: true,
+    run: () => device.setKeyboard("auto").then(() => deviceNotice(`The app tells whether this device has a keyboard: ${device.has("keyboard") ? "it has one" : "none found yet"}.`)),
+  },
+  { id: "vim.onHere", title: "Vim: turn on for this device", appOnly: true, run: () => setOverride("vim", "on").then(() => deviceNotice("Vim: On for this device.")) },
+  { id: "vim.offHere", title: "Vim: turn off for this device", appOnly: true, run: () => setOverride("vim", "off").then(() => deviceNotice("Vim: Off for this device.")) },
+  {
+    id: "vim.autoHere",
+    title: "Vim: on here whenever this device has a keyboard",
+    appOnly: true,
+    run: () => setOverride("vim", undefined).then(() => deviceNotice("Vim: Auto for this device, on with a keyboard.")),
+  },
+);
+
+/** The extensions a settings file trusts, or null if it can't be read as JSON. */
+async function trustedIn(path: FilePath): Promise<string[] | null> {
+  try {
+    const value = JSON.parse((await api.read(path)).text || "{}")["extensions.trusted"];
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Trust an extension to run in the page, kept in your settings; or stop, wherever it was trusted (yours
+ * or the workspace's). Applied after a reload.
+ */
 async function setTrust(id: string, trusted: boolean) {
-  const others = settings["extensions.trusted"].filter((x) => x !== id);
-  await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.trusted", trusted ? [...others, id] : others);
+  for (const path of trusted ? [USER_SETTINGS ?? WORKSPACE_SETTINGS] : [USER_SETTINGS, WORKSPACE_SETTINGS]) {
+    if (!path) continue;
+    const list = (await trustedIn(path)) ?? [];
+    if (trusted !== list.includes(id)) await writeSetting(api, path, "extensions.trusted", trusted ? [...list, id] : list.filter((x) => x !== id));
+  }
   await loadSettings();
+  if (!trusted && settings["extensions.trusted"].includes(id)) workbench.notice(`${id} is still trusted: fix the settings file that lists it under extensions.trusted (it isn't valid JSON), then try again.`);
 }
 
 const activityUi = activityView(extensions.broker, { name: (id) => extensions.host.records.find((r) => r.id === id)?.manifest.name ?? id, showDetails: (id) => extensionsUi.showDetails(id) });
@@ -800,11 +1153,12 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
-    // A modal has the keys while it's up: its own, and Tab and Escape.
-    if (modalOpen()) return;
-    const id = commandForKey(e, settings.keybindings);
+    // A modal has the keys while it's up: its own, and Tab and Escape. So does the command bar while
+    // it has focus: off a Mac, its Ctrl-k and Ctrl-p move through what it lists, not open it again.
+    if (modalOpen() || bar.hasFocus) return;
+    const binding = bindingForKey(e, settings.keybindings);
     // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
-    if (!id || !commands.runForKey(id)) return;
+    if (!binding?.command || !commands.runForKey(binding.command, binding.by)) return;
     e.preventDefault();
     e.stopPropagation();
   },
@@ -813,21 +1167,190 @@ window.addEventListener(
 window.addEventListener("focus", () => void learnLayout());
 void learnLayout();
 
+// The phone shell (shell.ts): places, the bottom bar, sheets and the keyboard toolbar, under 840px.
+/** The bottom bar's places, from places.json, kept up to date as it changes. */
+let barIds = barOf("");
+async function loadPlaces() {
+  barIds = barOf((await offline.read(PLACES_PATH).catch(() => ({ text: "" }))).text);
+  shell?.update();
+}
+/**
+ * Write places.json's bar: just that key, the rest of the file as it was (saved searches, order). The
+ * bar changes at once; offline, the write is held like any edit and sent once the server's back.
+ */
+async function setBar(ids: string[]) {
+  barIds = ids;
+  for (let tries = 0; tries < 3; tries++) {
+    const now = await offline.read(PLACES_PATH);
+    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", "bar", ids);
+    if (text === null) return workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.");
+    try {
+      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
+    } catch (err) {
+      if (!unreachable(err)) return workbench.notice(`The bottom bar couldn't be saved: ${(err as Error).message}`);
+      await offline.hold({ path: PLACES_PATH, text, base: now.revision });
+      return workbench.notice("You're offline: the bottom bar is changed here, and saved once you're back.");
+    }
+  }
+}
+/** Whether an extension owns a view (ownership.ts): what names a view reaches only its owner's. */
+const ownsView = (extension: string, view: string) => extensions.ownership.owns(extension, "view", view);
+/** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
+function places(): Place[] {
+  const on = extensions.host.records.filter((r) => r.state === "inactive" || r.state === "active");
+  const placed = new Set(on.flatMap((r) => r.manifest.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
+  /**
+   * Who a place is from, said beside it so no extension's place passes for the app's own: a workspace
+   * extension says so, so one named like the app can't pass for a built-in; a built-in named as its place
+   * (Tasks' Tasks) isn't said twice.
+   */
+  const from = (r: (typeof on)[number], title: string) => {
+    if (r.workspace) return `${r.manifest.name} · workspace extension`;
+    return r.manifest.name.trim().toLowerCase() === title.trim().toLowerCase() ? undefined : r.manifest.name;
+  };
+  const place = (r: (typeof on)[number], p: Omit<Place, "from">): Place => {
+    const by = from(r, p.title);
+    return by ? { ...p, from: by } : p;
+  };
+  return [
+    { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
+    // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
+    // A place runs a command, or shows a view, still the extension's own (the runtime's bindable, and who owns
+    // the view), as its keys and menu items do: none reaches another extension's.
+    ...on.flatMap((r) => r.manifest.contributes.places.filter((p) => ("view" in p ? ownsView(r.id, p.view) : extensions.bindable(r.manifest)(p.command))).map((p) => place(r, { id: `${r.id}.${p.id}`, title: p.title, icon: isIcon(p.icon) ? p.icon : "file-text", open: "view" in p ? { view: p.view } : { command: p.command }, ...extensions.by(r.manifest) }))),
+    ...on.flatMap((r) => (r.manifest.contributes.views.sidebar ?? []).filter((v) => !placed.has(v.id) && ownsView(r.id, v.id)).map((v) => place(r, { id: `view:${v.id}`, title: v.name, icon: "file-text", open: { view: v.id } }))),
+    { id: "extensions", title: "Extensions", icon: "puzzle", open: { view: "extensions" }, end: true },
+    { id: "settings", title: "Settings", icon: "settings", open: { view: SETTINGS_VIEW }, end: true },
+  ];
+}
+/** A command as the shell shows it, with why it's off here. */
+const action = (command: string, more: Partial<Action> = {}): Action => {
+  const c = commands.get(command);
+  return { command, title: c?.title ?? command, off: c?.off?.() ?? null, ...more };
+};
+shell = new Shell({
+  device,
+  places,
+  bar: () => barIds,
+  setBar,
+  openView: (id) => workbench.openView(id),
+  restore: async (show, nav) => {
+    if (show.startsWith("view:")) return workbench.openView(show.slice("view:".length));
+    const file = show.startsWith("file:") ? (show.slice("file:".length) as FilePath) : null;
+    // Its place in Navigation's history brings its window and cursor back; one no longer kept, just the note.
+    const went = typeof nav === "number" && (await workbench.goTo(nav));
+    if (file && (!went || workbench.focusedPath !== file)) await workbench.open(file, { jump: false });
+  },
+  // Done when what the command does is (a note opened); refused at once when it's off here, or app-only and a sandboxed extension's.
+  run: (command, by) => commands.start(command, by),
+  visitId: () => workbench.navigation.here?.id ?? null,
+  notice: (message) => workbench.notice(message),
+  showing: () => {
+    const tab = L.activeTab(workbench.focusedGroup);
+    return tab && { key: L.openableKey(tab), title: workbench.title(tab), note: "file" in tab && isNote(tab.file) };
+  },
+  contextViews: () => extensions.host.on().flatMap((m) => (m.contributes.views.context ?? []).filter((v) => ownsView(m.id, v.id)).map((v) => ({ id: v.id, title: v.name }))),
+  drawView: (id, el) => workbench.drawInto(id, el),
+  menu: () => [...extensions.menu("tabMenu").map((i) => action(i.command, { title: i.title, ...(i.by ? { by: i.by } : {}) })), action("tab.open"), action("window.openRight"), action("tab.close")],
+  // Extensions' buttons, then the core's: a heading, a link, undo.
+  toolbar: () => [
+    ...extensions.host.on().flatMap((m) => m.contributes.toolbar.filter((t) => extensions.bindable(m)(t.command)).map((t) => ({ ...action(t.command), title: t.title, ...(t.icon ? { icon: t.icon } : {}), ...(t.label ? { label: t.label } : {}), off: extensions.offHere(m, t.requires) ?? action(t.command).off, ...extensions.by(m) }))),
+    action("editor.heading", { icon: "heading" }),
+    action("editor.link", { icon: "link", label: "[[" }),
+    action("editor.undo", { icon: "undo-2" }),
+  ],
+  kept: () => workbench.kept(),
+  search: () => bar.open(),
+  newNote: () => void commands.run("note.new"),
+  push: (state) => browserHistory.place(state, false),
+  replace: (state) => browserHistory.place(state, true),
+  back: (n) => history.go(-n),
+});
+workbench.focusOnOpen = () => device.has("keyboard") || !device.has("touch");
+// Without room beside the windows, a panel opens in the window instead.
+panels.elsewhere = (id) => {
+  if (!shell?.active) return false;
+  workbench.openView(id);
+  shell.showWindow();
+  return true;
+};
+device.onChange(() => shell?.update());
+savedListeners.push((path) => path === PLACES_PATH && void loadPlaces());
+
+/** The note in focus's editor, for the keyboard toolbar's core buttons. */
+const onNote = (run: (view: EditorView) => unknown) => () => {
+  const view = workbench.focusedView;
+  if (!view) return false;
+  run(view);
+  view.focus();
+  return true;
+};
+commands.register(
+  {
+    id: "editor.heading",
+    title: "Make this line a heading, or a smaller one",
+    run: onNote((view) => {
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const hashes = /^#{1,6}\s/.exec(line.text)?.[0] ?? "";
+      // # to ## to ### and back to none.
+      const next = hashes.length >= 4 ? "" : hashes ? `#${hashes}` : "# ";
+      view.dispatch({ changes: { from: line.from, to: line.from + hashes.length, insert: next }, userEvent: "input" });
+    }),
+  },
+  {
+    id: "editor.link",
+    title: "Link to a note",
+    run: onNote((view) => {
+      const at = view.state.selection.main;
+      view.dispatch({ changes: { from: at.from, to: at.to, insert: "[[]]" }, selection: { anchor: at.from + 2 }, userEvent: "input" });
+    }),
+  },
+  { id: "editor.undo", title: "Undo typing", run: onNote((view) => undoTyping(view)) },
+);
+
 // Leaving the page: send what's unsaved without waiting for an answer.
 window.addEventListener("pagehide", () => {
   const unsaved = workbench.unsaved();
   // Kept first, where it's sure to be written: the request may never arrive.
   offline.keepDraftsNow(unsaved);
-  for (const u of unsaved) void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  // Then sent as a beacon, which outlives the page more surely than a keepalive request. One the
+  // browser won't take (too big) waits as a draft: a keepalive request would draw on the same budget.
+  for (const u of unsaved) {
+    if (typeof navigator.sendBeacon === "function") api.beacon(u.path, u.text, u.base, u.edit);
+    else void api.write(u.path, u.text, u.base, u.edit, true).catch(() => {});
+  }
 });
 
 // The app's own files, kept by a service worker so it opens offline.
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
 // Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
-let historyTimer2 = 0;
+// Extensions hear of every file that changed, once a burst of changes ends (the history view redraws, say).
+const heardChange = afterBurst(400, (path) => savedListeners.forEach((fn) => fn(path)));
 let recordsTimer = 0;
 connectLive({
   async change(notice) {
+    for (const fn of changeListeners) fn(notice);
+    // A deleted note isn't left open to type into: its windows' tabs close, unless it has changes not yet
+    // saved, which stay, with a word on where it went.
+    if (notice.deleted && isNote(notice.path)) {
+      void refreshList();
+      const who = notice.author.kind === "user" && notice.author.email === me ? "" : ` by ${describeAuthor(notice.author, me)}`;
+      const open = L.groups(workbench.layout).some((g) => g.tabs.some((t) => "file" in t && t.file === notice.path));
+      if (notice.purged) {
+        // Deleted forever: nothing of it stays here, open, kept for offline, or waiting to be sent.
+        if (open) workbench.forget([notice.path]);
+        await offline.forget(notice.path);
+        if (open) workbench.notice(`"${name(notice.path)}" was deleted forever${who}`);
+      } else if (workbench.pending().some((p) => p.path === notice.path)) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}: your changes are still here, and Restore in Trash brings the note back.`);
+      else if (open) {
+        workbench.forget([notice.path]);
+        if (who) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}`);
+      }
+      heardChange(notice.path);
+      return;
+    }
+    // A note deleted forever where another note is now: what this browser kept for the purged one goes.
+    if (notice.purged) await offline.forgetPurged(notice.path, async (r) => (await api.version(notice.path, r).catch(() => "")) === null);
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
     // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.
@@ -844,9 +1367,7 @@ connectLive({
     // A new file, or an extension's (which may have been deleted): list them again.
     if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/extensions/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
-    // Extensions hear of it as of any change to a file (the history view redraws, say).
-    clearTimeout(historyTimer2);
-    historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
+    heardChange(notice.path);
   },
   // Back after a gap: send what's waiting, then catch up on files that changed meanwhile. One path
   // for both, whether the gap was a dropped socket or a whole offline spell.
@@ -870,13 +1391,15 @@ try {
   // The app's settings first, for which extensions are off; then every manifest, whose settings join
   // the catalog; then settings again, read against it.
   await loadSettings();
+  // This device's file first: what it has and your overrides decide which extensions are on here.
+  await device.load({ read: (path) => offline.read(path), write: (path, text, base) => offline.write(path, text, base) });
   await extensions.load(BUILT_IN, files, settings["extensions.disabled"], SAFE, settings["extensions.trusted"]);
   catalog = extensions.catalog();
   extensions.declare();
   // Embeds draw in notes for the languages extensions that are on declare.
   workbench.extend(embeds({ ...extensions.embedHost, needs: embedNeeds }));
   await loadSettings();
-  statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE);
+  statesAtStart = extensionStates(BUILT_IN, files, settings["extensions.disabled"], SAFE, offHere());
   reloadSettingsAtStart = reloadSettingsNow();
   await extensions.start();
   // The Catalog, so a note can offer what its embeds need; editors redraw once it's read.
@@ -884,7 +1407,11 @@ try {
     workbench.applySettings(settings);
     extensionsChanged();
   });
+  await loadPlaces();
   const { missing } = await workbench.start(asked);
+  // On a phone the note the app opens on shows over the Feed: the Feed's entry goes below it, so back goes there first.
+  shell.update();
+  shell.started(history.state);
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {
     workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [
@@ -895,9 +1422,12 @@ try {
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
-  } else if (!workbench.focusedPath) await workbench.open(fallback);
+    // Nothing on show opens a note; on a phone a place's view (Calendar, after a reload there) is something.
+  } else if (!workbench.focusedPath && !(shell?.active && L.activeTab(workbench.focusedGroup))) await workbench.open(fallback);
   renderList();
+  // Once the windows are up, so what it says shows in one.
+  void clearRetired(extensions.host.retired);
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }
-dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings });
+dev?.install({ workbench, extensions, commands, bar, offline, settings: () => settings, device });

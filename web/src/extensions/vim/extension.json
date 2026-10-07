@@ -2,10 +2,11 @@
   "id": "vim",
   "name": "Vim",
   "version": "1.0.0",
-  "description": "Vim keys in every editor: modes, motions, registers and searches, :w, :e, :q, :sp, :vs and :tabe, Ctrl-W to move between windows and split them, gt and gT between tabs, gd to follow a link, and Ctrl-O and Ctrl-I back and forward through where you've been, app-wide (Go back and Go forward): jumps within a note, other notes and other windows. Turn it off for standard keys. Other extensions' Vim sequences (\"vim\" in their keybindings) work while it's on.",
+  "description": "Vim keys in every editor: modes, motions, registers and searches, :w, :e, :q, :sp, :vs and :tabe, Ctrl-W to move between windows and split them, gt and gT between tabs, gd to follow a link, and Ctrl-O and Ctrl-I (or Tab) back and forward through where you've been, app-wide (Go back and Go forward): jumps within a note, other notes and other windows. In insert mode Tab types an indent at the cursor, and Ctrl-T and Ctrl-D indent and dedent the line. Shift-Tab outside insert mode takes the keyboard out of the note, to its tab. Turn it off for standard keys. Other extensions' Vim sequences (\"vim\" in their keybindings) work while it's on.",
   "main": "index.ts",
   "files": ["index.ts"],
   "activationEvents": ["onStartup"],
+  "requires": { "keyboard": true },
   "permissions": {
     "editor": { "why": "Vim keys in every editor, and the mode in the status bar" }
   },
@@ -14,6 +15,7 @@
       { "vim": "gd", "command": "note.followLink" },
       { "vim": "<C-o>", "command": "go.back" },
       { "vim": "<C-i>", "command": "go.forward" },
+      { "vim": "<Tab>", "command": "go.forward" },
       { "vim": "gt", "command": "tab.next" },
       { "vim": "gT", "command": "tab.previous" },
       { "vim": "<C-w>h", "command": "window.left" },

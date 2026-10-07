@@ -4,6 +4,8 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
+import { SearchIndex } from "./search.ts";
+import { ARCHIVE_PATH, archiveAgain, deleteNote, mergeArchive } from "./archive.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -440,8 +442,9 @@ export class DataSources {
         // Unreadable for half an hour of tries, it's refused, so the edits behind it aren't held for good.
         const unreadable = err instanceof Unreadable ? (row.unreadable ?? this.now()) : null;
         if (err instanceof Refusal || (unreadable !== null && this.now() - unreadable >= UNREADABLE_FOR)) {
-          const reason = this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone);
-          if (this.awaited.has(row.seq)) this.refusals.set(row.seq, reason);
+          for (const [seq, reason] of this.refuse(source, adapter.title, row, op, (err as Error).message, err instanceof Gone)) {
+            if (this.awaited.has(seq)) this.refusals.set(seq, reason);
+          }
           continue;
         }
         const message = (err as Error).message;
@@ -497,19 +500,34 @@ export class DataSources {
   /**
    * The source won't take an edit. Drop it and the record's edits queued after it (they build on it,
    * and are sent whole), and put the record back as it was before them, as the sync's change: what the
-   * source has. History keeps the edits. Returns why, in words.
+   * source has. History keeps the edits. Returns why, in words, for each edit dropped, by outbox seq.
    */
-  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): string {
+  private refuse(source: SourceId, title: string, row: { seq: number; path: string; base: string | null }, op: RecordOp, reason: string, gone = false): Map<number, string> {
     const path = row.path as FilePath;
     const current = this.files.read(path);
     const author = SYNC_AUTHOR[source];
     // Deleted in the source, it goes here too: put back, it would stay, as the sync already passed the deletion by while the edit waited.
     const restore: Write[] =
       row.base === null || gone ? (current ? [{ path, text: "", base: current.revision, author, delete: true }] : []) : current?.text === row.base ? [] : [{ path, text: row.base, base: current?.revision ?? 0, author }];
+    const dropped = this.db.all<{ seq: number; op: string }>("SELECT seq, op FROM outbox WHERE path = ? AND seq >= ? ORDER BY seq", path, row.seq);
     this.files.writeAll(restore, () => this.db.run("DELETE FROM outbox WHERE path = ? AND seq >= ?", path, row.seq));
-    const message = `${title} refused the change to ${op.event.title || "an event"}: ${reason.replace(/\.$/, "")}. ${gone ? "It's gone here too" : "It's back as it was"}, and the change is in its history.`;
-    this.setState(source, { conflict: message, error: undefined });
-    return message;
+    const named = (o: RecordOp) => o.event.title || "an event";
+    const why = reason.replace(/\.$/, "");
+    const after = gone ? "It's gone here too" : "It's back as it was";
+    const later = dropped.length - 1;
+    this.setState(source, {
+      conflict: later
+        ? `${title} refused the change to ${named(op)} and the ${later} after it: ${why}. ${after}, and the changes are in its history.`
+        : `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`,
+      error: undefined,
+    });
+    return new Map(
+      dropped.map(({ seq, op: queued }) =>
+        seq === row.seq
+          ? [seq, `${title} refused the change to ${named(op)}: ${why}. ${after}, and the change is in its history.`]
+          : [seq, `${title} refused the change to ${named(op)}, which ${named(JSON.parse(queued) as RecordOp)} built on: ${why}. ${after}, and the changes are in its history.`],
+      ),
+    );
   }
 
   /** An occurrence as its series makes it, with nothing changed on its own; null without its series. */
@@ -720,11 +738,30 @@ export class DataSources {
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
-export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = [], now: () => number = Date.now): { files: Files; sources: DataSources } {
+export function openWorkspace(
+  db: Db,
+  settings: SourceSettings,
+  announce?: (notice: ChangeNotice) => void,
+  fetcher?: typeof fetch,
+  adapters: Adapter[] = [],
+  now: () => number = Date.now,
+): { files: Files; sources: DataSources; search: SearchIndex } {
   const records = new Records(db);
-  const files = new Files(db, Date.now, announce, (path, text) => records.observe(path, text));
+  const search = new SearchIndex(db);
+  const files = new Files(
+    db,
+    Date.now,
+    announce,
+    (path, text, revision, purged) => {
+      records.observe(path, text);
+      search.observe(path, text, revision, purged);
+    },
+    (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
+  );
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters) };
+  // Workspaces from before search, or from before its index's shape, get their index here, once.
+  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
+  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
 }
 
 /** A record file's calendar, or null if its text isn't one. */
@@ -754,8 +791,28 @@ export function readCalendar(text: string): Calendar | null {
 export async function undoChanges(files: Files, sources: DataSources, revisions: Revision[], author: Author): Promise<UndoResult[]> {
   const change = (r: Revision) => files.recent({ before: r + 1, limit: 1 }).find((c) => c.revision === r);
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
-  const plain = revisions.filter((r) => !isRecord(r));
-  const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
+  const plain = [...new Set(revisions.filter((r) => !isRecord(r)))];
+  // A restore (a change that undid a delete) undone while its note is as it left it deletes the note
+  // again, back to Trash, rather than leave it empty. A note's delete undone brings back its archiving
+  // too. All in one transaction.
+  const restoreOf = (r: Revision) => {
+    const c = change(r);
+    return c?.undoes && change(c.undoes)?.deleted && files.read(c.path)?.revision === r ? c : null;
+  };
+  const out: UndoResult[] = plain.length
+    ? files.atomically(() => {
+        const again = plain.flatMap((r): UndoResult[] => {
+          const c = restoreOf(r);
+          if (!c) return [];
+          const result = deleteNote(files, { path: c.path, text: "", base: r, author, undoes: r });
+          return [{ revision: r, status: result.status === "conflict" ? "conflict" : "undone", ...(result.file ? { file: result.file } : {}) }];
+        });
+        const done = new Set(again.map((u) => u.revision));
+        const results = [...again, ...files.undo(plain.filter((r) => !done.has(r)), author)].sort((a, b) => b.revision - a.revision);
+        archiveAgain(files, results.flatMap((u) => (u.status === "undone" && change(u.revision)?.deleted ? [{ path: change(u.revision)!.path, deleted: u.revision }] : [])), author);
+        return results;
+      })
+    : [];
   const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]

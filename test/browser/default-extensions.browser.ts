@@ -17,12 +17,20 @@ const mode = (page: Page) =>
 
 const focusedWindow = (page: Page) => page.evaluate(() => [...document.querySelectorAll(".group")].findIndex((g) => g.contains(document.activeElement)));
 
+/**
+ * The editor on show. The workspace is shared by this file's tests, so the window has the earlier tests'
+ * tabs too, each with its editor: the first one in the page may be a hidden tab's, depending on which
+ * file loaded first.
+ */
+const ON_SHOW = ".tab-editor:not([hidden])";
+const SHOWN = `${ON_SHOW} .cm-content`;
+
 async function open(page: Page, settings: Record<string, unknown>) {
   await page.goto(`${h.base}/?file=Welcome.md`);
-  await page.waitForSelector(".cm-content");
+  await page.waitForSelector(SHOWN);
   await writeFile(page, SETTINGS, JSON.stringify(settings));
   await page.reload();
-  await page.waitForSelector(".cm-content");
+  await page.waitForSelector(SHOWN);
   // Built-ins that start with the app have started once the mode shows, or after a moment without Vim.
   await page.waitForTimeout(500);
 }
@@ -33,7 +41,7 @@ test("Vim is an extension: its mode is in the status bar, and :e, :vs, Ctrl-W, g
   page.on("pageerror", (e) => errors.push(e.message));
   await open(page, {});
   assert.equal(await mode(page), "NORMAL");
-  await page.click(".cm-content");
+  await page.click(SHOWN);
   await page.keyboard.press("i");
   assert.equal(await mode(page), "INSERT");
   await page.keyboard.press("Escape");
@@ -81,10 +89,10 @@ test("with Vim off, the editor has standard keys and no mode; with Live preview 
   await open(page, { "extensions.disabled": ["vim", "live-preview"] });
   assert.equal(await mode(page), null);
   // Welcome's "**Try this PR**" shows its markers only when markdown is raw.
-  const drawn = () => page.evaluate(() => ![...document.querySelectorAll(".cm-line")].some((l) => l.textContent!.includes("**Try this PR**")));
+  const drawn = () => page.evaluate(() => ![...document.querySelectorAll(".tab-editor:not([hidden]) .cm-line")].some((l) => l.textContent!.includes("**Try this PR**")));
   assert.equal(await drawn(), false, "markdown is raw: no live preview");
-  const firstLine = () => page.evaluate(() => document.querySelector(".cm-line")!.textContent);
-  await page.click(".cm-line");
+  const firstLine = () => page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-line")!.textContent);
+  await page.click(".tab-editor:not([hidden]) .cm-line");
   await page.keyboard.press("Home");
   await page.keyboard.type("ix");
   assert.match((await firstLine())!, /^ix/, "i types an i: no Vim");
@@ -104,28 +112,28 @@ test("GFM, Code blocks and LaTeX: a table, highlighted code with Copy, and math 
   page.on("console", (m) => /Content Security Policy|Refused/.test(m.text()) && blocked.push(m.text()));
   page.on("pageerror", (e) => blocked.push(e.message));
   await page.goto(`${h.base}/?file=${encodeURIComponent("Markdown extras.md")}`);
-  await page.waitForSelector(".cm-gfm-table table");
-  assert.equal(await page.locator(".cm-gfm-table th").first().textContent(), "Fruit");
+  await page.waitForSelector(`${ON_SHOW} .cm-gfm-table table`);
+  assert.equal(await page.locator(`${ON_SHOW} .cm-gfm-table th`).first().textContent(), "Fruit");
   // Python's chunk arrives (the inspector says when), then its code is highlighted: def is a keyword. The
   // block is brought into view first:
   // below what the editor draws (a slow machine draws less at first), its code isn't in the page at all.
   await page.waitForFunction(() => (window as unknown as { __commonInk: { parsing(): { loaded: string[] } } }).__commonInk.parsing().loaded.includes("Python"));
   await page.evaluate(`(async () => {
     const { EditorView } = await globalThis.__commonInkLibrary("@codemirror/view");
-    const view = EditorView.findFromDOM(document.querySelector(".cm-editor"));
+    const view = EditorView.findFromDOM(document.querySelector(".tab-editor:not([hidden]) .cm-editor"));
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.toString().indexOf("def fib"), { y: "center" }) });
   })()`);
-  await page.waitForFunction(() => [...document.querySelectorAll(".cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
+  await page.waitForFunction(() => [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-md-codeblock span")].some((s) => s.textContent === "def" && s.className));
   // Each block is a card: its header (language, Wrap, Copy) in place of its opening fence.
-  assert.equal(await page.locator(".cm-code-header .cm-code-lang").first().textContent(), "python");
-  await page.locator(".cm-code-header button", { hasText: "Copy" }).first().click();
-  await page.waitForFunction(() => [...document.querySelectorAll(".cm-code-header button")].some((b) => b.textContent === "Copied"));
+  assert.equal(await page.locator(`${ON_SHOW} .cm-code-header .cm-code-lang`).first().textContent(), "python");
+  await page.locator(`${ON_SHOW} .cm-code-header button`, { hasText: "Copy" }).first().click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".tab-editor:not([hidden]) .cm-code-header button")].some((b) => b.textContent === "Copied"));
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^def fib\(n: int\) -> int:/);
   await page.evaluate(() => {
-    const s = document.querySelector(".cm-scroller")!;
+    const s = document.querySelector(".tab-editor:not([hidden]) .cm-scroller")!;
     s.scrollTop = s.scrollHeight;
   });
-  await page.waitForSelector(".cm-math-display .katex");
+  await page.waitForSelector(`${ON_SHOW} .cm-math-display .katex`);
   await page.waitForFunction(() => [...document.fonts].some((f) => f.family.includes("KaTeX") && f.status === "loaded"));
   assert.deepEqual(blocked, [], "KaTeX's styles and fonts come from the app, within its policy");
   await context.close();

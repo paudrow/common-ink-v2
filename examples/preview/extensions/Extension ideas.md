@@ -1,6 +1,6 @@
 # Extension ideas
 
-Everything past the core is an extension: the command bar's providers, History, Tasks, Calendar, Contacts and Uploads already are. A workspace extension is a folder, `.common-ink/extensions/<id>/`, with an `extension.json` saying what it adds and its code (see `docs/extensions.md`). Word count, in the Catalog at the bottom of the Extensions view, is one.
+Everything past the core is an extension: the command bar's providers, History, Tasks, Calendar, Contacts and Uploads already are. A workspace extension is a folder, `.common-ink/extensions/<id>/`, with an `extension.json` saying what it adds and its code (see `docs/extensions.md`). Boards, in the Catalog at the bottom of the Extensions view, is one.
 
 Ideas for more, each a few lines:
 

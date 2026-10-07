@@ -2,11 +2,14 @@
 // commands and key sequences that run the app's commands, and Ctrl-O and Ctrl-I as the app's Go back
 // and Go forward, as VSCodeVim does: one history of where you've been, jumps within a note included.
 // Every extension's "vim" keybindings are mapped here.
-import { Prec } from "@codemirror/state";
-import { EditorView, ViewPlugin } from "@codemirror/view";
+import { indentLess, indentMore } from "@codemirror/commands";
+import { getIndentUnit } from "@codemirror/language";
+import { countColumn, EditorSelection, Prec } from "@codemirror/state";
+import { EditorView, keymap, ViewPlugin } from "@codemirror/view";
 import { getCM, Vim, vim } from "@replit/codemirror-vim";
 import type { FilePath } from "../../../../worker/src/files.ts";
 import type { ExtensionContext } from "../../extension-api.ts";
+import { insertUndo, modeChanged } from "./undo.ts";
 
 type ExParams = { argString?: string; input?: string };
 type CM = NonNullable<ReturnType<typeof getCM>>;
@@ -28,6 +31,29 @@ function freshJumps() {
   Object.assign(fresh, kept, { jumpList: fresh.jumpList });
 }
 
+/** Whether Vim is in insert mode in this editor; null if Vim isn't running in it. */
+function inInsertMode(view: EditorView): boolean | null {
+  const state = (getCM(view) as unknown as { state?: { vim?: { insertMode?: boolean } } } | null)?.state?.vim;
+  return state ? !!state.insertMode : null;
+}
+
+/** Spaces at each cursor, up to the next indent stop, as Vim's Tab with expandtab and softtabstop. A selection isn't replaced: it's indented. */
+function tabAtCursor(view: EditorView): boolean {
+  const { state } = view;
+  if (state.selection.ranges.some((r) => !r.empty)) return indentMore(view);
+  const unit = getIndentUnit(state);
+  view.dispatch(
+    state.changeByRange((range) => {
+      const line = state.doc.lineAt(range.head);
+      const column = countColumn(line.text.slice(0, range.head - line.from), state.tabSize);
+      const insert = " ".repeat(unit - (column % unit));
+      return { changes: { from: range.head, insert }, range: EditorSelection.cursor(range.head + insert.length) };
+    }),
+    { scrollIntoView: true, userEvent: "input" },
+  );
+  return true;
+}
+
 export default {
   activate(ctx: ExtensionContext) {
     const showMode = (mode: string) => ctx.statusBar.set("vim.mode", mode);
@@ -36,6 +62,7 @@ export default {
     const modeWatch = ViewPlugin.define((view) => {
       const watch = (cm: CM) =>
         cm.on("vim-mode-change", (e: { mode: string; subMode?: string }) => {
+          modeChanged(view, e.mode);
           if (view === ctx.editor.focused()) showMode([e.mode, e.subMode].filter(Boolean).join(" ").toUpperCase());
         });
       const cm = getCM(view);
@@ -44,7 +71,26 @@ export default {
       return {};
     });
     // Before every other keymap, so Vim sees keys first.
-    ctx.editor.extend(Prec.highest([vim(), modeWatch, theme]), { everywhere: true });
+    // Outside insert mode, Tab is Vim's Ctrl-I (jump forward), and Shift-Tab is the keyboard's way out of
+    // the note, to what's before it, as the browser does: Vim has no use for it. Both are settled before the
+    // editor sees the key, in capture, through CodeMirror's tab focus mode: Escape doesn't make the next Tab
+    // leave (its escape hatch, which in Vim would take Ctrl-I away after every Escape), and Shift-Tab does.
+    const tabKeys = ViewPlugin.define((view) => {
+      const keydown = (e: KeyboardEvent) => {
+        if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey || inInsertMode(view) !== false) return;
+        view.setTabFocusMode(e.shiftKey ? 1000 : false);
+      };
+      view.dom.addEventListener("keydown", keydown, true);
+      return { destroy: () => view.dom.removeEventListener("keydown", keydown, true) };
+    });
+    // In insert mode Tab types an indent at the cursor, as in Vim, and Ctrl-T and Ctrl-D indent and dedent
+    // the whole line. Tab's comes after other extensions' (Lists' on a list item), Ctrl-T's before the editor's own.
+    const insertTab = keymap.of([{ key: "Tab", run: (view) => inInsertMode(view) === true && tabAtCursor(view) }]);
+    const lineIndent = keymap.of([
+      { key: "Ctrl-t", run: (view) => inInsertMode(view) === true && indentMore(view) },
+      { key: "Ctrl-d", run: (view) => inInsertMode(view) === true && indentLess(view) },
+    ]);
+    ctx.editor.extend([Prec.highest([tabKeys, insertUndo, vim(), lineIndent, modeWatch, theme]), insertTab], { everywhere: true });
 
     // A different editor took focus: it starts in normal mode, with its own jumps.
     let shown: EditorView | null = null;
@@ -54,6 +100,21 @@ export default {
       shown = view;
       freshJumps();
       showMode("NORMAL");
+    });
+
+    // zt, z<CR>, zz, z., zb and z- as Vim's own, set at once (the motion z<CR> runs after would replace
+    // a scroll request), but with the line at the top kept below the editor's top scroll margin: clear
+    // of the phone's not-saved pill, say. With no margin, they land where Vim's do.
+    Vim.defineAction("scrollToCursor", (cm, args) => {
+      const view = cm.cm6;
+      const line = cm.getCursor().line;
+      const at = cm.charCoords({ line, ch: 0 }, "local");
+      const height = cm.getScrollInfo().clientHeight;
+      const margin = Math.max(0, ...view.state.facet(EditorView.scrollMargins).map((f: (v: EditorView) => { top?: number } | null) => f(view)?.top ?? 0));
+      let y = at.top - margin;
+      if (args.position === "center") y = at.bottom - height / 2;
+      if (args.position === "bottom") y = at.top - height + (cm.charCoords({ line, ch: cm.getLine(line).length - 1 }, "local").bottom - at.top);
+      cm.scrollTo(null, y);
     });
 
     // Ex commands, each the app's command or the workbench's call.
@@ -76,6 +137,9 @@ export default {
       else if (!arg.replace(/^!\s*/, "") && (force || !ctx.workbench.hasUnsavedChanges())) ctx.commands.run("note.reload");
     });
     Vim.defineEx("quit", "q", run("tab.close"));
+    Vim.defineEx("archive", "archive", run("archive.archive"));
+    Vim.defineEx("unarchive", "unarchive", run("archive.unarchive"));
+    Vim.defineEx("trash", "trash", run("trash.note"));
     Vim.defineEx("close", "clo", run("window.close"));
     Vim.defineEx("only", "on", run("window.only"));
     exOpen("split", "sp", (p) => ctx.workbench.split("down", p), run("window.splitDown"));
@@ -95,7 +159,7 @@ export default {
     // Every extension's Vim sequences, this one's included, as normal-mode keys that run their commands.
     // Vim's own Ctrl-W in normal mode does nothing, and as a whole key it would swallow Ctrl-W h and the rest.
     Vim.unmap("<C-w>", "normal");
-    for (const { vim: keys, command, operator } of ctx.commands.keybindings()) {
+    for (const { vim: keys, command, operator, by } of ctx.commands.keybindings()) {
       if (!keys) continue;
       const name = `run:${command}`;
       if (operator) {
@@ -103,7 +167,7 @@ export default {
         // paragraph, or the visual selection), the command acts on the selection, and the cursor stays.
         Vim.defineOperator(name, (cm: CM, _args: unknown, ranges: ReadonlyArray<{ anchor: Pos; head: Pos }>) => {
           const doc = cm.cm6.state.doc;
-          ctx.commands.run(command);
+          ctx.commands.run(command, by);
           // A command that put the cursor somewhere (a list item moved by the outline's rules) keeps it there.
           if (cm.cm6.state.doc !== doc && cm.cm6.state.selection.main.empty) return cm.getCursor();
           // Nothing changed (the outline's rules refused), or the motion's range is still selected (a
@@ -114,7 +178,7 @@ export default {
         Vim.mapCommand(keys, "operator", name, {}, {});
         continue;
       }
-      Vim.defineAction(name, () => void ctx.commands.run(command));
+      Vim.defineAction(name, () => void ctx.commands.run(command, by));
       Vim.mapCommand(keys, "action", name, {}, { context: "normal" });
     }
   },

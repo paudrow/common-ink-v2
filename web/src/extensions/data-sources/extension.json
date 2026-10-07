@@ -7,6 +7,7 @@
   "files": ["index.ts"],
   "activationEvents": ["onStartup"],
   "contributes": {
+    "places": [{ "id": "sources", "title": "Sources", "view": "dataSources", "icon": "database-zap" }],
     "commands": [
       { "command": "dataSources.show", "title": "Show data sources" },
       { "command": "dataSources.reconnect", "title": "Reconnect Google Calendar" }

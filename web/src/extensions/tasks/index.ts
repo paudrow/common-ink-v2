@@ -4,6 +4,7 @@
 // and the ::tasks embed list tasks from across the notes, in the same rows. Ticking a repeating task
 // moves it on to its next date, on the same line. ⌘⇧. opens the quick-add bar anywhere: a task typed
 // the way you'd say it ("Pay rent every month on the 1st"), added to the inbox.
+import { startCompletion } from "@codemirror/autocomplete";
 import { getCM } from "@replit/codemirror-vim";
 import { editorFile } from "common-ink/editor-file";
 import { isNote } from "common-ink/files";
@@ -19,8 +20,10 @@ import type { DailyNotes } from "../daily/daily.ts";
 import { TaskStore, type LogSettings } from "./store.ts";
 import { taskInputPrefs } from "./input.ts";
 import { describeTaskEdit, parseLogLine, parseTask } from "./tasks.ts";
+import { addDue, makeTask } from "./edit.ts";
 import { toast } from "./toasts.ts";
 import { TasksView } from "./view.ts";
+import { findTasks } from "./search.ts";
 import { chipsChanged, openMenuAt, tasksPreview, toggleTaskAt, type TaskEnv } from "./widgets.ts";
 
 const extension: ExtensionModule = {
@@ -49,10 +52,8 @@ const extension: ExtensionModule = {
       const today = daily.pathFor(daily.today());
       return { label: today.replace(/\.md$/, ""), path: today, daily: true };
     };
-    const shortcut = () => {
-      const key = ctx.commands.shortcut("tasks.quickAdd");
-      return key ?? formatKeys("Mod-Shift-.");
-    };
+    // Hinted only where there's a keyboard to press it.
+    const shortcut = () => (ctx.device.has("keyboard") ? (ctx.commands.shortcut("tasks.quickAdd") ?? formatKeys("Mod-Shift-.")) : "");
     const quickAdd: Omit<QuickAddOptions, "added" | "escape"> = {
       add: (text, ignore, to) => store.add(text, ignore, to),
       open: (path, line) => void open(ctx, path as FilePath, line),
@@ -106,6 +107,16 @@ const extension: ExtensionModule = {
       return !!view && openMenuAt(view, env);
     });
     ctx.commands.register("tasks.show", () => ctx.views.toggle("tasks"));
+    ctx.commands.register("tasks.makeTask", () => {
+      const view = ctx.editor.focused();
+      return !!view && makeTask(view);
+    });
+    ctx.commands.register("tasks.addDue", () => {
+      const view = ctx.editor.focused();
+      if (!view || !addDue(view)) return false;
+      startCompletion(view);
+      return true;
+    });
     ctx.commands.register("tasks.quickAdd", () => {
       const editor = ctx.editor.focused();
       // A task typed here types with the editor's keys: Vim's, if the note's editor has Vim.
@@ -119,6 +130,19 @@ const extension: ExtensionModule = {
       });
     });
     ctx.views.register("tasks", { render: (root) => view.render(root) });
+    ctx.search.provide("task", {
+      search: async (query, limit, within) =>
+        findTasks(await store.all(), query, within)
+          .slice(0, limit)
+          .map((t) => ({
+            title: t.summary || t.text,
+            path: t.path,
+            detail: t.title,
+            aside: t.done ? "done" : t.meta.due ? `due ${t.meta.due}` : undefined,
+            dim: t.done,
+            run: () => open(ctx, t.path as FilePath, t.line),
+          })),
+    });
     ctx.editor.extend([tasksPreview(env), taskCompletions(env)]);
     ctx.changes.describe(describeChange);
     await dailyReady;

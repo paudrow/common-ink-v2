@@ -7,6 +7,10 @@ import type { EventFound } from "../../worker/src/operations.ts";
 import type { Contact } from "../../worker/src/sources.ts";
 import type { WorkspaceFile, FilePath, FileSummary, Revision, WriteResult } from "../../worker/src/files.ts";
 import type { Upload } from "../../worker/src/uploads.ts";
+import type { SearchResults } from "../../worker/src/search.ts";
+
+/** What `search` answers: the query as it was read, what's wrong with it, and the notes it found. */
+export type SearchAnswer = SearchResults & { query: string; problems: string[] };
 
 /** An upload as the page knows it: what it is, and its address. */
 export type UploadDone = Upload & { url: string };
@@ -77,11 +81,11 @@ export const api = {
     return (data as { entries: CatalogEntry[] }).entries;
   },
   /** Install an extension from where it's published; `catalog` names the catalog that listed it, if one did. */
-  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[] }> {
+  async installExtension(url: string, catalog?: string): Promise<{ id: string; name: string; files: string[]; untrusted: boolean }> {
     const res = await fetch("/api/extensions/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, catalog }) });
     const data = await res.json();
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status}`);
-    return data as { id: string; name: string; files: string[] };
+    return data as { id: string; name: string; files: string[]; untrusted: boolean };
   },
   /** A file's text at one of its revisions, or null if it has none there. */
   async version(path: FilePath, revision: Revision): Promise<string | null> {
@@ -91,6 +95,16 @@ export const api = {
   /** Whether the edit sent with this id was applied, for a page that never heard back. */
   async editApplied(path: FilePath, edit: string): Promise<boolean> {
     return ((await (await ok(await fetch(`/api/edit?${new URLSearchParams({ path, edit })}`))).json()) as { applied: boolean }).applied;
+  },
+  /**
+   * Send a save as the page goes, with navigator.sendBeacon, which the browser delivers after the page
+   * is gone. Its answer can't be read: `edit` lets the page that opens next ask whether it landed. False
+   * if the browser won't take it (about 64 KB at once, shared by every beacon and keepalive request as
+   * the page goes) or has no sendBeacon.
+   */
+  beacon(path: FilePath, text: string, base: Revision, edit?: string): boolean {
+    // A string, sent as text/plain: a simple request, with no preflight. The text is in the body, never the address.
+    return typeof navigator.sendBeacon === "function" && navigator.sendBeacon("/api/file/beacon", JSON.stringify({ path, text, base, ...(edit ? { edit } : {}) }));
   },
   /** `edit` names the text, to ask later whether it landed; `keepalive` sends it as the page goes. */
   async write(path: FilePath, text: string, base: Revision, edit?: string, keepalive = false): Promise<WriteResult> {
@@ -107,6 +121,10 @@ export const api = {
   },
   async events(from: Date, to: Date, calendars?: string[]): Promise<Occurrence[]> {
     return answer(await fetch(`/api/events?${new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), zone: ZONE, ...(calendars ? { calendars: calendars.join(",") } : {}) })}`));
+  },
+  /** The notes a query finds (docs/queries.md), best first, archived ones last; with `within`, only notes whose paths match one of those globs. */
+  async search(query: string, limit = 20, within?: readonly string[]): Promise<SearchAnswer> {
+    return answer(await fetch(`/api/search?${new URLSearchParams({ query, limit: String(limit), zone: ZONE, ...(within ? { within: JSON.stringify(within) } : {}) })}`));
   },
   async event(address: string): Promise<EventFound | null> {
     return answer(await fetch(`/api/event?${new URLSearchParams({ address, zone: ZONE })}`));

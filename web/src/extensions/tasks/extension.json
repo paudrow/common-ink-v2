@@ -20,7 +20,8 @@
     "view.ts",
     "quickadd.ts",
     "input.ts",
-    "bar.ts"
+    "bar.ts",
+    "search.ts"
   ],
   "activationEvents": [
     "onStartup"
@@ -43,7 +44,23 @@
     }
   },
   "contributes": {
+    "places": [{ "id": "tasks", "title": "Tasks", "view": "tasks", "icon": "list-checks" }],
+    "toolbar": [
+      { "command": "tasks.makeTask", "title": "Make this line a task", "icon": "square-check" },
+      { "command": "tasks.addDue", "title": "Add a due date", "icon": "calendar-clock" }
+    ],
+    "search": {
+      "types": [{ "type": "task", "title": "Tasks" }]
+    },
     "commands": [
+      {
+        "command": "tasks.makeTask",
+        "title": "Make this line a task"
+      },
+      {
+        "command": "tasks.addDue",
+        "title": "Add a due date to this task"
+      },
       {
         "command": "tasks.toggle",
         "title": "Tick task (or reopen it)"

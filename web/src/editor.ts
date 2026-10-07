@@ -2,12 +2,12 @@
 // Everything else (Vim keys, live preview, tasks) comes from extensions, through `extensions`, and what
 // they add to the markdown language (GFM, code blocks' languages, math) through addMarkdownSyntax.
 // Directives (`::timer{…}`, `:::kanban` … `:::`) are core: embeds are written with them.
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { commonmarkLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { HighlightStyle, Language, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
 import type { MarkdownExtension, MarkdownParser } from "@lezer/markdown";
-import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Prec, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, keymap, lineNumbers, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { linePatch } from "./line-diff.ts";
@@ -70,6 +70,25 @@ export function addMarkdownSyntax(extension: MarkdownExtension): void {
 /** The markdown language notes are parsed with now, with what extensions have added. */
 export const markdownLanguageSupport = (): LanguageSupport => markdownSupport;
 
+/** Boxes that float over the editors, such as the phone's not-saved pill: the cursor isn't scrolled under them, at the top or the bottom. */
+const floating: HTMLElement[] = [];
+export function floatsOverEditors(el: HTMLElement): void {
+  floating.push(el);
+}
+const clearOfFloating = EditorView.scrollMargins.of((view) => {
+  const scroller = view.scrollDOM.getBoundingClientRect();
+  let top = 0;
+  let bottom = 0;
+  for (const el of floating) {
+    if (!el.getClientRects().length) continue;
+    const box = el.getBoundingClientRect();
+    if (box.right <= scroller.left || scroller.right <= box.left) continue;
+    if (box.top < scroller.top + scroller.height / 2) top = Math.max(top, box.bottom + 8 - scroller.top);
+    else bottom = Math.max(bottom, scroller.bottom - box.top + 8);
+  }
+  return top > 0 || bottom > 0 ? { top, bottom } : null;
+});
+
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
 const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment(), markdown: new Compartment() };
 
@@ -102,14 +121,19 @@ export function createState(
       slots.wrapping.of(s.wrapping),
       slots.fontSize.of(s.fontSize),
       slots.livePreview.of(s.livePreview),
-      history(),
+      lastEdit,
+      historySlot.of(noteHistory),
       drawSelection(),
       // Several selections at once: Vim's visual block (Ctrl-V) edits every line it covers with them.
       // Only it makes them: a click with ⌘ or Ctrl doesn't add a cursor (a near miss on a link would).
       EditorState.allowMultipleSelections.of(true),
       EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
+      clearOfFloating,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
+      // Tab and Shift-Tab indent the line, so the keyboard stays in the note. Last of all keys, so an
+      // extension's Tab comes first: Lists' on a list item, Vim's at the cursor in insert mode.
+      Prec.low(keymap.of([indentWithTab])),
       // CommonMark and what extensions add (addMarkdownSyntax). markdown() would also load HTML, CSS and JavaScript.
       // Code (an extension's JavaScript) is plain monospaced text, so the bundle needn't carry a JavaScript parser.
       opts.json ? [json(), mono] : opts.code ? mono : slots.markdown.of(s.markdown),
@@ -146,6 +170,45 @@ export function editText(view: EditorView, text: string) {
 
 /** The default keys that add a cursor above or below (⌘⌥↑ and ⌘⌥↓): multiple cursors come from Vim's block only. */
 const ADDS_CURSORS = ["Mod-Alt-ArrowUp", "Mod-Alt-ArrowDown"];
+
+/**
+ * The keys a note's editor takes on one platform, written as shortcuts are ("Mod-z"), and the browser's
+ * copy, cut and paste: a sandboxed extension can't bind them. CodeMirror's ⌘ (Cmd, Meta) is Mod on a Mac.
+ */
+export function editorKeys(mac: boolean): string[] {
+  const keys = [...markdownKeymap, ...defaultKeymap, ...historyKeymap].flatMap((b) => (mac ? [b.mac ?? b.key] : [b.win ?? b.key, b.linux ?? b.key]));
+  return [...keys.flatMap((k) => (k ? [mac ? k.replace(/\b(Cmd|Meta)(?=-)/g, "Mod") : k] : [])), "Mod-c", "Mod-x", "Mod-v"];
+}
+
+/** How close in time two edits side by side are to be one undo step: CodeMirror's history's default. */
+const JOIN_MS = 500;
+const timeOf = (tr: Transaction) => tr.annotation(Transaction.time) ?? Date.now();
+/**
+ * When the last edit the history keeps was made. An undo or redo isn't one to join onto (none, as
+ * CodeMirror's history has it): what's typed next is a step of its own.
+ */
+const lastEdit = StateField.define<number>({
+  create: () => 0,
+  update: (time, tr) => (tr.isUserEvent("undo") || tr.isUserEvent("redo") ? 0 : tr.docChanged && tr.annotation(Transaction.addToHistory) !== false ? timeOf(tr) : time),
+});
+
+/** The editor's undo history, in a slot of its own so it can be started afresh (see forgetHistory). */
+const historySlot = new Compartment();
+// Two quick edits side by side are one undo step, as CodeMirror's history has it by default. Its own
+// time limit is lifted so an extension can join edits further apart (Vim's insert, typed slowly).
+const noteHistory = history({ newGroupDelay: Number.MAX_SAFE_INTEGER, joinToEvent: (tr, adjacent) => adjacent && timeOf(tr) - tr.startState.field(lastEdit) < JOIN_MS });
+
+/** An undo history with nothing in it, to start one afresh from. */
+const emptyHistory = () => EditorState.create({ extensions: history() }).field(historyField);
+
+/**
+ * Start the undo history afresh: the text it would undo and redo has been replaced under it (theirs
+ * taken in where yours clashed), so its steps would land in the wrong places. The one history field
+ * every history config shares (an extension may add its own) starts again empty. Not during an update.
+ */
+export function forgetHistory(view: EditorView): void {
+  view.dispatch({ effects: historySlot.reconfigure([noteHistory, historyField.init(emptyHistory)]) });
+}
 
 /** Replace the editor's text with the server's, line by line so the cursor stays put. `u` doesn't undo it. */
 export function replaceText(view: EditorView, text: string, flash = false) {

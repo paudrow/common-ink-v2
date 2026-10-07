@@ -41,3 +41,21 @@ browserTest(h, "a calendar in a note lists its days, keeps up with edits, makes 
   await app.page.locator('.cal-page.is-embed[data-marker="kept"] .cal-grid').waitFor();
   assert.equal(await app.page.locator('.cal-page.is-embed[data-marker="kept"] .cal-title-text').innerText(), "Oct 5 – 7, 2026");
 });
+
+browserTest(h, "a note's calendar drawn while a Calendar tab's event is open leaves that event open", { scenario: "calendar", open: "Week at a glance", levers: LEVERS }, async (app) => {
+  const embeds = app.page.locator(".cal-page.is-embed");
+  await embeds.nth(1).locator(".cal-event").first().waitFor();
+  await app.keys(":vs<CR>");
+  await app.idle();
+  await app.command("Open calendar");
+  const tab = app.page.locator(".cal-page:not(.is-embed)");
+  await tab.locator(".cal-event", { hasText: "Dentist" }).first().click();
+  const editor = app.page.locator(".cal-editor");
+  await editor.waitFor();
+  // The note gains a calendar, drawn in the other window.
+  const drawn = await embeds.count();
+  await app.writeFile("Week at a glance.md", `${await app.readFile("Week at a glance.md")}\n::calendar{view=agenda days=2}\n`);
+  await app.page.waitForFunction((n) => document.querySelectorAll(".cal-page.is-embed").length > n, drawn);
+  await app.page.waitForTimeout(300);
+  assert.equal(await editor.count(), 1, "the event's editor is still open");
+});

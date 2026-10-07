@@ -9,6 +9,9 @@ import type { View } from "./workbench.ts";
 
 export type Level = "user" | "workspace";
 
+/** What the switch at the top shows: a level of settings, or this device. */
+export type Shown = Level | "device";
+
 export const SETTINGS_VIEW = "settings";
 
 export interface SettingsUiDeps {
@@ -20,6 +23,8 @@ export interface SettingsUiDeps {
   openJson(level: Level): void;
   /** A settings file changed: apply it. */
   changed(): void;
+  /** Settings › This device: drawn by the device's own panel (device-ui.ts). */
+  device?(root: HTMLElement): void;
 }
 
 interface Property {
@@ -53,6 +58,29 @@ const EMPTY = `{\n  "$schema": "/schema/settings.json"\n}\n`;
 
 /** One key set (or removed, with undefined) in a settings file's text. Null if the file isn't a JSON object. */
 export const withSetting = (text: string, key: string, value: unknown) => setTopLevelKey(text.trim() ? text : EMPTY, key, value);
+
+/**
+ * Change one key of a settings file from what that file has for it (not the settings combined from all
+ * of them, which take the whole key from one file), as one change; nothing when it comes out the same.
+ * If the file changes in between, it's read again and the change made again.
+ */
+export async function editSetting(io: Pick<SettingsUiDeps, "read" | "write">, path: FilePath, key: string, change: (current: unknown) => unknown): Promise<void> {
+  for (let tries = 0; tries < 3; tries++) {
+    const latest = await io.read(path);
+    let current: unknown;
+    try {
+      current = latest.text.trim() ? (JSON.parse(latest.text) as Record<string, unknown>)[key] : undefined;
+    } catch {
+      return;
+    }
+    const value = change(current);
+    if (JSON.stringify(value) === JSON.stringify(current)) return;
+    const text = withSetting(latest.text, key, value);
+    if (text === null || text === latest.text) return;
+    const result = await io.write(path, text, latest.revision);
+    if (result.status !== "conflict") return;
+  }
+}
 
 /**
  * Write one key of a settings file (or remove it, with undefined), on top of whatever the file says
@@ -101,16 +129,24 @@ async function valuesIn(deps: SettingsUiDeps, path: FilePath | null): Promise<{ 
 }
 
 /** The settings editor, one view with a User | Workspace switch, as in VSCode. Set `level` (and `query`, to search) before showing it. */
-export function settingsEditor(deps: SettingsUiDeps): View & { level: Level; query: string } {
+export function settingsEditor(deps: SettingsUiDeps): View & { level: Shown; query: string } {
   /** Why the last change didn't save, shown once. */
   let failed = "";
+  /** The latest drawing of each element the editor is drawn in. */
+  const drawings = new WeakMap<HTMLElement, number>();
   const view = {
     id: SETTINGS_VIEW,
     title: "Settings",
-    level: "user" as Level,
+    level: "user" as Shown,
     query: "",
     async render(root: HTMLElement) {
-      const level = view.level;
+      // Each drawing is the latest: one still reading its files when another starts (This device picked
+      // while User was being read) gives way, rather than drawing over it when its reads come back.
+      const turn = (drawings.get(root) ?? 0) + 1;
+      drawings.set(root, turn);
+      const shown = view.level;
+      if (shown === "device") return renderDeviceLevel(root);
+      const level = shown;
       // It's drawn again after every change: keep the keyboard where it was.
       const active = document.activeElement as HTMLElement | null;
       const focusId = active && root.contains(active) ? active.dataset.focus : undefined;
@@ -119,6 +155,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level; que
       // The other level, to say where a value that isn't set here comes from, or what wins over it.
       const user = level === "user" ? values : (await valuesIn(deps, deps.pathFor("user"))).values;
       const workspace = level === "workspace" ? values : (await valuesIn(deps, deps.pathFor("workspace"))).values;
+      if (drawings.get(root) !== turn) return;
 
       const set = async (key: string, value: unknown) => {
         if (!path) return;
@@ -130,25 +167,7 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level; que
         deps.changed();
       };
 
-      const levelSwitch = el(
-        "div",
-        { className: "levels", role: "tablist", ariaLabel: "Which settings" },
-        ...(["user", "workspace"] as const).map((l) =>
-          focusable(
-            el("button", {
-              role: "tab",
-              ariaSelected: String(l === level),
-              textContent: l === "user" ? "User" : "Workspace",
-              title: ABOUT[l],
-              onclick: () => {
-                view.level = l;
-                void view.render(root);
-              },
-            }),
-            `level:${l}`,
-          ),
-        ),
-      );
+      const levelSwitch = switchOf(root, level);
       const search = focusable(el<HTMLInputElement>("input", { type: "search", className: "search", placeholder: "Search settings", value: view.query, ariaLabel: "Search settings" }), "search");
       search.addEventListener("input", () => {
         view.query = search.value;
@@ -227,6 +246,40 @@ export function settingsEditor(deps: SettingsUiDeps): View & { level: Level; que
       if (back) back.focus();
     },
   };
+  /** The User | Workspace | This device switch, with `on` showing. */
+  function switchOf(root: HTMLElement, on: Shown): HTMLElement {
+    const levels: Shown[] = deps.device ? ["user", "workspace", "device"] : ["user", "workspace"];
+    return el(
+      "div",
+      { className: "levels", role: "tablist", ariaLabel: "Which settings" },
+      ...levels.map((l) =>
+        focusable(
+          el("button", {
+            role: "tab",
+            ariaSelected: String(l === on),
+            textContent: l === "user" ? "User" : l === "workspace" ? "Workspace" : "This device",
+            title: l === "device" ? "What this device has, and what's on here" : ABOUT[l],
+            onclick: () => {
+              view.level = l;
+              void view.render(root);
+            },
+          }),
+          `level:${l}`,
+        ),
+      ),
+    );
+  }
+
+  function renderDeviceLevel(root: HTMLElement) {
+    const active = document.activeElement as HTMLElement | null;
+    const focusId = active && root.contains(active) ? active.dataset.focus : undefined;
+    root.classList.add("settings-editor");
+    root.replaceChildren(el("div", { className: "settings-top" }, switchOf(root, "device")));
+    deps.device?.(root);
+    const back = focusId && root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focusId)}"]`);
+    if (back) back.focus();
+  }
+
   return view;
 }
 

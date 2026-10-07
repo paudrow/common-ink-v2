@@ -64,6 +64,9 @@ test("the page may frame only the hosts of link embeds that are on, and drawn in
   assert.ok(!(await embedFrameHosts(s, you.email)).includes("player.vimeo.com"), "a sandboxed extension can't put a frame in the page, so its hosts aren't allowed");
   write(".common-ink/users/you@example.com/settings.json", JSON.stringify({ "extensions.trusted": ["films"], "extensions.disabled": ["link-embeds"] }));
   assert.deepEqual(await embedFrameHosts(s, you.email), ["player.vimeo.com"], "a trusted one's are; one turned off has none");
+  write(".common-ink/users/you@example.com/settings.json", "{}");
+  write(".common-ink/extensions/link-embeds/extension.json", JSON.stringify({ name: "Link embeds, customized", contributes: { urlEmbeds: [{ id: "mine", title: "Mine", pattern: "^https://mine\\.example/", frameHosts: ["mine.example"] }] } }));
+  assert.deepEqual(await embedFrameHosts(s, you.email), ["embed.bsky.app", "open.spotify.com", "platform.twitter.com", "www.youtube-nocookie.com"], "an untrusted copy of a built-in leaves the built-in's");
 });
 
 test("each link embed's pattern takes its own links; anything else is a card", () => {
@@ -88,6 +91,10 @@ test("a link alone on its line is an embed; one in a sentence, a list or code is
   addMarkdownSyntax((await import("@lezer/markdown")).GFM);
   const doc = ["# Links", "", "https://youtu.be/dQw4w9WgXcQ", "", "See https://example.com here.", "", "- https://example.com/in-a-list", "", "<https://example.com/angle>", "", "```", "https://example.com/code", "```", ""].join("\n");
   const view = new EditorView({ state: createState(doc, { json: false, readOnly: false, settings: DEFAULTS, extensions: [], onUpdate: () => {}, onBlur: () => {} }) });
+  // The first parse has a time budget: on a busy machine it can stop before the last lines, as a page's
+  // would. The embeds are read from a whole tree here, as the page reads them once it's parsed.
+  const { forceParsing } = await import("@codemirror/language");
+  forceParsing(view, view.state.doc.length, 5000);
   assert.deepEqual(
     findUrlEmbeds(view.state, { urlEmbed: (url) => (url.includes("youtu") ? "youtube" : "link-card") }).map((e) => [e.url, e.id]),
     [

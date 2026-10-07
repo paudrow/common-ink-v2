@@ -368,12 +368,12 @@ test("deleting a file is a change that undo takes back", () => {
 });
 
 test("JavaScript is a file only as a workspace extension's code", () => {
-  assert.ok(parseFilePath(".common-ink/extensions/word-count/index.js"));
-  assert.ok(parseFilePath(".common-ink/extensions/word-count/lib/model.js"), "any file in its folder");
+  assert.ok(parseFilePath(".common-ink/extensions/reading-time/index.js"));
+  assert.ok(parseFilePath(".common-ink/extensions/reading-time/lib/model.js"), "any file in its folder");
   assert.equal(parseFilePath("notes/script.js"), null);
-  assert.equal(parseFilePath(".common-ink/plugins/word-count/index.js"), null);
+  assert.equal(parseFilePath(".common-ink/plugins/reading-time/index.js"), null);
   assert.equal(parseFilePath(".common-ink/extensions/../index.js"), null);
-  assert.equal(parseFilePath(".common-ink/extensions/word-count/../../x.js"), null);
+  assert.equal(parseFilePath(".common-ink/extensions/reading-time/../../x.js"), null);
 });
 
 test("the last revision given stays the last, even once its changes are gone, as a reset leaves them", () => {
@@ -449,15 +449,28 @@ function nestingDb(): Db {
   };
 }
 
-test("a transaction inside another announces its changes with the outer one's, once it commits; one rolled back announces nothing", () => {
+test("a transaction inside another announces its changes with the outer one's, once it commits", () => {
   const heard: string[] = [];
   const db = nestingDb();
   const files = new Files(db, Date.now, (n) => heard.push(`${n.path}${(db as ReturnType<typeof memoryDb>).raw?.isTransaction ? " (before commit)" : ""}`));
   files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
     files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
-    assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
   });
   assert.deepEqual(heard, ["Outer.md", "Inner.md"]);
+});
+
+test("one inside another that fails takes the outer one with it, even if the outer one catches the error: none of it is kept or heard", () => {
+  const heard: string[] = [];
+  const files = new Files(memoryDb(), Date.now, (n) => heard.push(n.path));
+  assert.throws(() =>
+    files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
+      files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
+      assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+    }),
+  );
+  assert.deepEqual([heard, files.list()], [[], []]);
+  files.write({ path: "After.md" as FilePath, text: "a\n", base: 0, author: ada });
+  assert.deepEqual(heard, ["After.md"], "the next transaction is its own");
 });
 
 test("a page whose announcement fails doesn't keep the others from hearing", () => {
