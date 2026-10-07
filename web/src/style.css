@@ -1009,23 +1009,31 @@ html[data-width="compact"] #not-saved:not([hidden]) {
   margin: 0;
 }
 
-/* A notice sits below a note's top line (an archived note's), not over it. */
-.editors:has(> .tab-editor:not([hidden]) .cm-panels-top) > .notice {
-  top: 3rem;
+/* The note makes room for a notice, so it hides none of its lines: on a wider screen, it starts below
+   the notice (--notice-room, from workbench.ts); on a phone, where a notice is a bar at the bottom, as a
+   snackbar is, it ends above it. */
+.editors:has(> .notice) > .tab-editor {
+  top: var(--notice-room, 3.5rem);
 }
 
-/* On a phone, a notice is a bar at the bottom, as a snackbar is, and the note makes room for it, so it
-   hides none of the note's lines. */
 @media (max-width: 599.98px) {
-  .notice,
-  .editors:has(> .tab-editor:not([hidden]) .cm-panels-top) > .notice {
+  .notice {
     top: auto;
     bottom: 0.75rem;
   }
 
   .editors:has(> .notice) > .tab-editor {
+    top: 0;
     bottom: 4.5rem;
   }
+}
+
+.notice .notice-close {
+  border: none;
+  padding: 0 0.25rem;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .notice button {

@@ -102,6 +102,8 @@ const COMPACT = "(max-width: 599.98px)";
 /** How long a notice stays on a phone: a little longer when it has a button, such as Undo. */
 const NOTICE_MS = 4000;
 const NOTICE_WITH_ACTIONS_MS = 6000;
+/** How long a wider screen's notice with nothing to do stays: one with actions stays until it's acted on or closed. */
+const NOTICE_WIDE_MS = 8000;
 
 export class Workbench {
   layout: L.Layout = L.emptyLayout();
@@ -188,9 +190,11 @@ export class Workbench {
   }
 
   /**
-   * A message in the focused window, with buttons, until its tabs change. On a phone it's a bar at the
-   * bottom that goes after a few seconds, unless you're reaching for it (a finger or the pointer on it,
-   * or focus in it).
+   * A message in the focused window, with buttons and a ×. Drawing the window again (a note opened in
+   * it) doesn't take it away; × does, as does a newer notice. On a wider screen it sits at the top, and
+   * the note moves down to make room; one with nothing to do goes after a few seconds, one with actions
+   * stays until they're used. On a phone it's a bar at the bottom that goes after a few seconds either
+   * way. A timer waits while you're reaching for it (a finger or the pointer on it, or focus in it).
    */
   notice(message: string, actions: Array<{ label: string; run: () => unknown }> = []): void {
     const editors = this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".editors");
@@ -211,9 +215,17 @@ export class Workbench {
       });
       box.append(b);
     }
+    const close = document.createElement("button");
+    close.className = "notice-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close";
+    close.addEventListener("click", () => box.remove());
+    box.append(close);
     editors.querySelector(".notice")?.remove();
     editors.prepend(box);
-    // On a phone it goes by itself; on a wider screen it stays, until the window narrows to a phone's.
+    // On a wider screen the note starts below it (style.css), as far down as it reaches.
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => box.isConnected && editors.style.setProperty("--notice-room", `${box.offsetTop + box.offsetHeight + 8}px`)).observe(box);
     const compact = matchMedia(COMPACT);
     let held = false;
     box.addEventListener("pointerdown", () => (held = true));
@@ -226,6 +238,7 @@ export class Workbench {
     };
     const start = () => window.setTimeout(go, actions.length ? NOTICE_WITH_ACTIONS_MS : NOTICE_MS);
     if (compact.matches) return void start();
+    if (!actions.length) window.setTimeout(go, NOTICE_WIDE_MS);
     const narrowed = (e: MediaQueryListEvent) => {
       if (!box.isConnected || e.matches) compact.removeEventListener("change", narrowed);
       if (box.isConnected && e.matches) start();
