@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author, FilePath } from "../worker/src/files.ts";
 import { ServerAnswer } from "../web/src/api.ts";
-import { idbKV, memoryKV, Offline, type HeldOp, type KV, type Network } from "../web/src/offline.ts";
+import { idbKV, memoryKV, Offline, syncLine, type HeldOp, type KV, type Network } from "../web/src/offline.ts";
 import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -383,6 +383,22 @@ test("of a draft kept as the page went and one typed after it came back, the new
   } finally {
     delete (globalThis as { localStorage?: unknown }).localStorage;
   }
+});
+
+test("the status line says nothing while the server is reached and nothing waits; otherwise what's waiting", () => {
+  assert.deepEqual(syncLine({ online: true, waiting: 0, clashing: [] }), { wide: "", phone: "", state: "" });
+  assert.deepEqual(syncLine({ online: false, waiting: 0, clashing: [] }), { wide: "Offline", phone: "", state: "waiting" });
+  assert.deepEqual(syncLine({ online: false, waiting: 2, clashing: [] }), { wide: "Offline · 2 unsent changes", phone: "Not saved: offline.", state: "waiting" });
+  assert.deepEqual(syncLine({ online: false, waiting: 1, fragile: true, clashing: [] }), { wide: "Offline · 1 unsent change, lost if this page closes", phone: "Not saved: offline. Lost if this page closes.", state: "waiting" });
+  assert.deepEqual(syncLine({ online: true, waiting: 0, clashing: ["Plan", "Trip"] }), { wide: "2 can't be merged: open Plan", phone: "Not saved: changed elsewhere", state: "conflict" });
+});
+
+test("back online, a phone says held edits are being sent until one fails again", () => {
+  assert.deepEqual(syncLine({ online: true, waiting: 1, sending: true, clashing: [] }), { wide: "1 unsent change", phone: "Sending…", state: "waiting" });
+});
+
+test("a phone says an edit isn't saved when it's waiting, even while the server is reachable", () => {
+  assert.deepEqual(syncLine({ online: true, waiting: 1, clashing: [] }), { wide: "1 unsent change", phone: "Not saved: can't reach the server. Trying again.", state: "waiting" });
 });
 
 test("files the list never has, as the default settings the server makes up, stay kept for offline", async () => {

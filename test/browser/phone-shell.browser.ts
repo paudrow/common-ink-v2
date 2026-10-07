@@ -357,3 +357,14 @@ browserTest(h, "a sandboxed extension's place and toolbar button can't run an ap
   assert.equal((await app.extensions.state("vim"))?.state, "unmet");
   assert.deepEqual(await choices(), before, "the device file keeps your choices");
 });
+
+browserTest(h, "the bottom bar says how tall it is, for the not-saved pill to float above, and the keyboard toolbar does in its place", { scenario: "lists", device: "phone" }, async (app) => {
+  const said = () => app.page.evaluate(() => document.documentElement.style.getPropertyValue("--not-saved-bottom"));
+  const bar = await app.page.locator("#shell-bar").evaluate((e) => Math.round((e as HTMLElement).offsetHeight - parseFloat(getComputedStyle(e).paddingBottom)));
+  assert.ok(bar > 0);
+  assert.equal(await said(), `${bar}px`);
+  await app.page.locator(".cm-line", { hasText: "Basil" }).tap();
+  await app.page.locator("#shell-toolbar").waitFor();
+  const toolbar = await app.page.locator("#shell-toolbar").evaluate((e) => (e as HTMLElement).offsetHeight);
+  await app.page.waitForFunction((h) => document.documentElement.style.getPropertyValue("--not-saved-bottom") === `${h}px`, toolbar);
+});

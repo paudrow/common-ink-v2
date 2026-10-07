@@ -194,6 +194,18 @@ export class Shell {
     vv?.addEventListener("resize", fit);
     vv?.addEventListener("scroll", fit);
     fit();
+    // What's along the bottom (the bottom bar, or the keyboard toolbar in its place), for the not-saved
+    // pill to float above when it's at the bottom (--not-saved-bottom, main.ts's placeNotSaved).
+    new ResizeObserver(() => this.sayBottom()).observe(this.bottom);
+    new ResizeObserver(() => this.sayBottom()).observe(this.toolbar);
+  }
+
+  private sayBottom(): void {
+    // The pill adds the safe area itself: the bar's padding for it (its bottom padding) isn't counted twice.
+    const bar = this.bottom.offsetHeight ? this.bottom.offsetHeight - parseFloat(getComputedStyle(this.bottom).paddingBottom) : 0;
+    const height = this.on ? Math.round(Math.max(bar, this.toolbar.offsetHeight)) : 0;
+    if (height) document.documentElement.style.setProperty("--not-saved-bottom", `${height}px`);
+    else document.documentElement.style.removeProperty("--not-saved-bottom");
   }
 
   /** Whether the shell is the way round the app now: under 840px, where windows can't be side by side. */

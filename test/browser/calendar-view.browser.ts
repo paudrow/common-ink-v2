@@ -107,7 +107,8 @@ browserTest(h, "dragging an event moves it, and dragging its bottom edge changes
   await drag(app, { x: p.x + p.width / 2, y: p.y + p.height - 3 }, { x: p.x + p.width / 2, y: end.y });
   await until(app, "planning ends at 15:00", async () => (await event(app, "event:sample/work/planning"))?.end === "2026-10-05T15:00:00");
   assert.equal((await event(app, "event:sample/work/planning"))?.start, "2026-10-05T13:00:00", "its start stayed");
-  const height = async () => (await app.page.locator(".cal-event", { hasText: "Quarterly planning" }).boundingBox())?.height ?? 0;
+  // While a move is drawn, its ghost (.is-moving) is there too: the event is the other one.
+  const height = async () => (await app.page.locator(".cal-event:not(.is-moving)", { hasText: "Quarterly planning" }).boundingBox())?.height ?? 0;
   await until(app, "planning is drawn two hours tall", async () => Math.abs((await height()) - 2 * HOUR) < 4);
 });
 
