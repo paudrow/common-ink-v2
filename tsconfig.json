@@ -23,6 +23,7 @@
       "common-ink/files": ["./worker/src/files.ts"],
       "common-ink/query": ["./worker/src/query.ts"],
       "common-ink/icons": ["./web/src/icons.ts"],
+      "common-ink/swipe": ["./web/src/swipe.ts"],
       "common-ink/recurrence": ["./worker/src/recurrence.ts"],
       "common-ink/calendar": ["./worker/src/calendar.ts"],
       "common-ink/uploads": ["./worker/src/uploads.ts"],
