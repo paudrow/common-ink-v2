@@ -577,13 +577,14 @@ function feedInList(): boolean {
 function renderList() {
   const current = workbench.focusedPath;
   const feed = feedInList();
-  // The column is as wide as the Feed needs from the start, while the Feed is the place, so the note
-  // beside it doesn't change width (and its embeds height) once the Feed has drawn.
-  document.documentElement.toggleAttribute("data-list-feed", feed || ("feed" in listShows && device.atLeast("expanded") && feedOn()));
+  // The Feed is the place but hasn't drawn yet (the app starting): its column waits, empty, at its
+  // width, so the note beside it doesn't change width (and its embeds height) once it has.
+  const coming = !feed && drawFeed && "feed" in listShows && device.atLeast("expanded") && feedOn();
+  document.documentElement.toggleAttribute("data-list-feed", feed || coming);
   feedBox.hidden = !feed;
-  listHead.hidden = list.hidden = feed;
+  listHead.hidden = list.hidden = feed || coming;
   // Behind the Feed, the rows of every note aren't kept: they're drawn again when they show.
-  if (feed) return void list.replaceChildren();
+  if (feed || coming) return void list.replaceChildren();
   if ("saved" in listShows) {
     const { saved, results, more, note } = listShows;
     listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: saved.name }), Object.assign(document.createElement("code"), { textContent: saved.query }));
@@ -874,6 +875,8 @@ function updateReloadLine() {
 }
 
 function extensionsChanged() {
+  // The Feed started (or stopped): the list beside the note is drawn again, if it's the Feed's.
+  if ("feed" in listShows && drawFeed) renderList();
   panels.refresh("extensions");
   workbench.refreshView("extensions");
   panels.refresh("extension-activity");
