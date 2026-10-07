@@ -12,7 +12,14 @@ export interface Keybinding {
   /** The command to run, or null to unbind the key. */
   command: string | null;
   /** Declared by a sandboxed extension: its command runs for it, not for the app (commands.ts, appOnly). */
-  by?: "sandbox";
+  by?: Sandboxed;
+}
+
+/** A sandboxed extension, by its id, that a command runs for: an app-only one refuses (commands.ts). */
+export interface Sandboxed {
+  sandbox: string;
+  /** Its name, for saying what it asked for. */
+  name: string;
 }
 
 interface Declared<T> {

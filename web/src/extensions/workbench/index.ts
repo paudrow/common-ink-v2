@@ -5,7 +5,7 @@
 // are the Vim extension's, bound to these commands.
 import { EditorView } from "@codemirror/view";
 import * as L from "common-ink/layout";
-import type { ExtensionContext } from "../../extension-api.ts";
+import type { ExtensionContext, Sandboxed } from "../../extension-api.ts";
 import { dragged, droppable, dropZone, endDrag, startDrag, tabIndexAt, type Dragged, type Zone } from "./dnd.ts";
 import { SEPARATOR, showMenu, type MenuItem } from "./menu.ts";
 import { syncTabs, type TabActions } from "./tabbar.ts";
@@ -59,7 +59,7 @@ export default {
     const tabMenu = (): Array<MenuItem | null> => {
       const g = focused();
       const tab = g.tabs[g.active];
-      const item = (command: string, label: string, disabled = false, by?: "sandbox"): MenuItem => ({ label, detail: ctx.commands.shortcut(command), disabled, run: () => ctx.commands.run(command, by) });
+      const item = (command: string, label: string, disabled = false, by?: Sandboxed): MenuItem => ({ label, detail: ctx.commands.shortcut(command), disabled, run: () => ctx.commands.run(command, by) });
       return [
         item("tab.close", "Close"),
         item("tab.closeOthers", "Close Others", g.tabs.length < 2),

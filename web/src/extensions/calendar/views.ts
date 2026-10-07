@@ -1,7 +1,7 @@
 // What every Calendar view draws from, and how the page asks things of them. The page (page.ts) owns
 // the events, the focus and the editor; a view draws a stretch of days and reports what you do in it.
 import type { Occurrence } from "common-ink/calendar";
-import { dayOf, type Day, type View } from "./model.ts";
+import { addDays, dayOf, daysBetween, type Day, type View } from "./model.ts";
 
 /** Where an event goes when it's dragged: new days, and for one with times, new minutes from midnight. */
 export type Moved = { allDay: true; startDay: Day; endDay: Day } | { allDay: false; startDay: Day; start: number; endDay: Day; end: number };
@@ -47,6 +47,29 @@ export function localSpan(o: Occurrence): { startDay: Day; endDay: Day; start: n
   const s = new Date(o.start);
   const e = new Date(o.end);
   return { startDay: dayOf(s), endDay: dayOf(e), start: s.getHours() * 60 + s.getMinutes(), end: e.getHours() * 60 + e.getMinutes() };
+}
+
+/** An event moved by whole days, as a bar or in a month: all day stays all day, and timed keeps its times. */
+export function shiftedDays(o: Occurrence, days: number): Moved {
+  const s = localSpan(o);
+  const [startDay, endDay] = [addDays(s.startDay, days), addDays(s.endDay, days)];
+  return o.allDay ? { allDay: true, startDay, endDay } : { allDay: false, startDay, start: s.start, endDay, end: s.end };
+}
+
+/**
+ * Where a timed event goes when it's dropped. A move keeps its length: the whole event moves as far as
+ * the part that was dragged, from `startDay` to `start` minutes into `day`. A resize changes only its
+ * end, to `end` minutes into `day`, whichever day's part was dragged.
+ */
+export function dropped(o: Occurrence, d: { kind: "move" | "resize"; startDay: Day; day: Day; start: number; end: number }): Moved {
+  const s = localSpan(o);
+  if (d.kind === "resize") return { allDay: false, startDay: s.startDay, start: s.start, endDay: d.day, end: d.end };
+  const DAY = 24 * 60;
+  const by = daysBetween(d.startDay, d.day) * DAY + d.start - (s.startDay === d.startDay ? s.start : 0);
+  const at = (day: Day, minutes: number) => [addDays(day, Math.floor((minutes + by) / DAY)), (((minutes + by) % DAY) + DAY) % DAY] as const;
+  const [startDay, start] = at(s.startDay, s.start);
+  const [endDay, end] = at(s.endDay, s.end);
+  return { allDay: false, startDay, start, endDay, end };
 }
 
 /** An event long enough to sit with the all-day ones: all day, or 24 hours or more. */
