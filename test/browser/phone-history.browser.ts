@@ -75,8 +75,7 @@ async function backs(app: App, n: number, gap: number, slow = false) {
   await app.page.waitForTimeout(slow ? 4000 : n * gap + 600);
   if (slow) await app.page.unroute(/\/api\//);
   if (!inApp(app)) {
-    await app.page.goForward();
-    await app.ready();
+    await app.navigate(() => app.page.goForward());
   }
 }
 
@@ -164,8 +163,7 @@ const STEPS: Step[] = [
       await app.page.goBack();
       // Back out of the app is fine; come forward again to go on walking.
       if (!inApp(app)) {
-        await app.page.goForward();
-        await app.ready();
+        await app.navigate(() => app.page.goForward());
       }
     },
   },
