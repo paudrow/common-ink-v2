@@ -403,3 +403,20 @@ browserTest(h, "an event dragged late enough to run past midnight ends on the ne
   await until(app, "the dentist moved to 23:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-06T23:30:00");
   assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T00:15:00", "its 45 minutes, into Wednesday");
 });
+
+browserTest(h, "an event that runs past midnight, dragged by its part on the next day, keeps its length", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = s.scrollHeight));
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const late = await at(app, "2026-10-06", 23 * 60 + 30);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: late.x, y: late.y + 8 });
+  await until(app, "the dentist runs 23:30 to 00:15", async () => (await event(app, "event:sample/personal/dentist"))?.end === "2026-10-07T00:15:00");
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = 0));
+  const part = await box(app, app.page.locator('.cal-day[data-day="2026-10-07"] .cal-event[data-address="event:sample/personal/dentist"]'));
+  const to = await at(app, "2026-10-07", 60);
+  await drag(app, { x: part.x + part.width / 2, y: part.y + 4 }, { x: part.x + part.width / 2, y: to.y + 4 });
+  await until(app, "the dentist moved to Wednesday 00:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T00:30:00");
+  assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T01:15:00", "it keeps its 45 minutes");
+});

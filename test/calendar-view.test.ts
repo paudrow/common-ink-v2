@@ -91,8 +91,8 @@ test("a dropped event keeps its wall-clock times across a month's end and the ni
     // 14:30–15:15 on Saturday 31 October, the night before the clocks go back, dropped on Sunday at 16:15.
     const halloween = timed("2026-10-31T18:30:00.000Z", "2026-10-31T19:15:00.000Z");
     assert.deepEqual(dropped(halloween, { kind: "move", startDay: "2026-10-31", day: "2026-11-01", start: 975, end: 1020 }), { allDay: false, startDay: "2026-11-01", start: 975, endDay: "2026-11-01", end: 1020 });
-    // Dragged late on the same day, it ends past midnight: 24:15 is rolled into the next day when it's saved.
-    assert.deepEqual(dropped(halloween, { kind: "move", startDay: "2026-10-31", day: "2026-10-31", start: 1410, end: 1455 }), { allDay: false, startDay: "2026-10-31", start: 1410, endDay: "2026-10-31", end: 1455 });
+    // Dragged late on the same day, it ends past midnight, on the next day.
+    assert.deepEqual(dropped(halloween, { kind: "move", startDay: "2026-10-31", day: "2026-10-31", start: 1410, end: 1455 }), { allDay: false, startDay: "2026-10-31", start: 1410, endDay: "2026-11-01", end: 15 });
     // 01:30–03:30 on 8 March, across the hour the clocks skip, moved a day on: the same times on the clock.
     const springForward = timed("2026-03-08T06:30:00.000Z", "2026-03-08T07:30:00.000Z");
     assert.deepEqual(dropped(springForward, { kind: "move", startDay: "2026-03-08", day: "2026-03-09", start: 90, end: 210 }), { allDay: false, startDay: "2026-03-09", start: 90, endDay: "2026-03-09", end: 210 });
@@ -103,5 +103,16 @@ test("a dropped event keeps its wall-clock times across a month's end and the ni
     const february = timed("2026-02-28T14:00:00.000Z", "2026-02-28T15:00:00.000Z");
     assert.deepEqual(dropped(february, { kind: "resize", startDay: "2026-02-28", day: "2026-02-28", start: 540, end: 690 }), { allDay: false, startDay: "2026-02-28", start: 540, endDay: "2026-02-28", end: 690 });
     assert.deepEqual(dropped(february, { kind: "move", startDay: "2026-02-28", day: "2026-03-01", start: 540, end: 600 }), { allDay: false, startDay: "2026-03-01", start: 540, endDay: "2026-03-01", end: 600 });
+  });
+});
+
+test("an event that runs past midnight keeps its length when it's moved, and a resize changes only its end", () => {
+  inNewYork(() => {
+    // 22:00 on Monday 5 October to 02:00 on Tuesday: drawn as a part on each day.
+    const late = timed("2026-10-06T02:00:00.000Z", "2026-10-06T06:00:00.000Z");
+    assert.deepEqual(dropped(late, { kind: "resize", startDay: "2026-10-06", day: "2026-10-06", start: 0, end: 180 }), { allDay: false, startDay: "2026-10-05", start: 1320, endDay: "2026-10-06", end: 180 }, "Tuesday's end dragged to 03:00");
+    assert.deepEqual(dropped(late, { kind: "resize", startDay: "2026-10-05", day: "2026-10-05", start: 1320, end: 1380 }), { allDay: false, startDay: "2026-10-05", start: 1320, endDay: "2026-10-05", end: 1380 }, "Monday's end dragged to 23:00");
+    assert.deepEqual(dropped(late, { kind: "move", startDay: "2026-10-05", day: "2026-10-05", start: 1380, end: 1440 }), { allDay: false, startDay: "2026-10-05", start: 1380, endDay: "2026-10-06", end: 180 }, "Monday's part an hour later");
+    assert.deepEqual(dropped(late, { kind: "move", startDay: "2026-10-06", day: "2026-10-07", start: 60, end: 180 }), { allDay: false, startDay: "2026-10-06", start: 1380, endDay: "2026-10-07", end: 180 }, "Tuesday's part to Wednesday at 01:00");
   });
 });

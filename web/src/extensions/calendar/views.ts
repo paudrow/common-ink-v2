@@ -50,17 +50,19 @@ export function localSpan(o: Occurrence): { startDay: Day; endDay: Day; start: n
 }
 
 /**
- * Where a timed event goes when it's dropped: dragged from one day to another and a new start, or its
- * end dragged to a time. `start` and `end` are minutes from midnight on the day it's dropped on.
+ * Where a timed event goes when it's dropped. A move keeps its length: the whole event moves as far as
+ * the part that was dragged, from `startDay` to `start` minutes into `day`. A resize changes only its
+ * end, to `end` minutes into `day`, whichever day's part was dragged.
  */
 export function dropped(o: Occurrence, d: { kind: "move" | "resize"; startDay: Day; day: Day; start: number; end: number }): Moved {
   const s = localSpan(o);
-  const shift = daysBetween(d.startDay, d.day);
-  const startDay = addDays(s.startDay, shift);
-  if (d.kind === "resize") return { allDay: false, startDay, start: s.startDay === d.startDay ? s.start : 0, endDay: d.day, end: d.end };
-  // An event that runs past midnight keeps its end day; one within a day ends on its new day.
-  if (s.startDay !== s.endDay) return { allDay: false, startDay, start: d.start, endDay: addDays(s.endDay, shift), end: s.end };
-  return { allDay: false, startDay, start: d.start, endDay: startDay, end: d.end };
+  if (d.kind === "resize") return { allDay: false, startDay: s.startDay, start: s.start, endDay: d.day, end: d.end };
+  const DAY = 24 * 60;
+  const by = daysBetween(d.startDay, d.day) * DAY + d.start - (s.startDay === d.startDay ? s.start : 0);
+  const at = (day: Day, minutes: number) => [addDays(day, Math.floor((minutes + by) / DAY)), (((minutes + by) % DAY) + DAY) % DAY] as const;
+  const [startDay, start] = at(s.startDay, s.start);
+  const [endDay, end] = at(s.endDay, s.end);
+  return { allDay: false, startDay, start, endDay, end };
 }
 
 /** An event long enough to sit with the all-day ones: all day, or 24 hours or more. */
