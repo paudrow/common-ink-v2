@@ -151,3 +151,20 @@ browserTest(h, "on a touch screen, Not a keyboard? takes a found keyboard back, 
   assert.equal(JSON.parse(await app.readFile(devicePath("lever-phone"))).keyboard, "no");
   assert.equal((await app.extensions.state("keys-demo"))?.state, "unmet", "off again, after the reload");
 });
+
+browserTest(h, "This device picked while user settings are still being read stays on show", { scenario: "empty" }, async (app) => {
+  // Opening the settings editor draws it twice (it opens, and is refreshed), each reading the settings
+  // files. The second drawing's read answers late, so it's still waiting when This device is picked.
+  let reads = 0;
+  await app.page.route(/\/api\/file\?path=.*users.*settings\.json/, async (route) => {
+    if (route.request().method() === "GET" && ++reads === 2) await new Promise((r) => setTimeout(r, 1500));
+    await route.continue().catch(() => null);
+  });
+  await app.command("Open user settings");
+  await app.page.locator('[data-focus="level:device"]').click();
+  const keyboard = app.page.locator(".device-fact", { hasText: "Keyboard" }).getByLabel("Keyboard");
+  await keyboard.waitFor();
+  await app.page.waitForTimeout(2500);
+  await app.page.unroute(/\/api\/file/);
+  assert.equal(await keyboard.count(), 1, "the User level, read late, didn't draw over This device");
+});

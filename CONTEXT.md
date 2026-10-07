@@ -103,6 +103,10 @@ The app with only built-in extensions running, for when a workspace extension br
 
 ## Navigation
 
+**Place**:
+Somewhere you can go in the app: the Feed, Today, Tasks, Calendar, a pinned note, a saved search, Sources, Archive, Trash, Extensions or Settings. Places are a sheet on a phone and a sidebar on a wide screen.
+_Avoid_: Activity, section, tab (a tab holds an open window)
+
 **Query**:
 Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
 _Avoid_: Filter (that's one part of a query), search string
