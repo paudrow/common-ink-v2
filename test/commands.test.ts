@@ -111,13 +111,13 @@ test("a binding the typed character matches wins over one matched by where the k
 test("an app-only command runs for the app, and a sandboxed extension's run of it is refused, and said so", () => {
   let ran = 0;
   const refused: string[] = [];
-  const commands = new Commands((title, why, by) => refused.push(`${title}: ${why} (${by === "app" ? "app" : by.sandbox})`));
+  const commands = new Commands((title, why, by) => refused.push(`${title}: ${why} (${by === "app" ? "app" : by.name})`));
   commands.register({ id: "device.keyboardYes", title: "Keyboard", appOnly: true, run: () => ran++ }, { id: "note.save", title: "Save", run: () => ran++ });
   assert.equal(commands.run("device.keyboardYes"), true);
-  assert.equal(commands.run("device.keyboardYes", { sandbox: "Sneaky" }), true);
+  assert.equal(commands.run("device.keyboardYes", { sandbox: "sneaky", name: "Sneaky" }), true);
   assert.deepEqual(refused, ["Keyboard: An extension asked to run it, and only you can (Sneaky)"]);
   assert.equal(ran, 1);
-  assert.equal(commands.run("note.save", { sandbox: "Sneaky" }), true);
+  assert.equal(commands.run("note.save", { sandbox: "sneaky", name: "Sneaky" }), true);
   assert.equal(ran, 2);
 });
 
@@ -126,8 +126,8 @@ test("a sandboxed extension's key for an app-only command is refused; the app's 
   const refused: string[] = [];
   const commands = new Commands((title) => refused.push(title));
   commands.register({ id: "vim.onHere", title: "Vim", appOnly: true, run: () => ran++ });
-  const binding = bindingForKey({ key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent, [{ key: "x", command: "vim.onHere", by: { sandbox: "Sneaky" } }], false);
-  assert.deepEqual(binding, { key: "x", command: "vim.onHere", by: { sandbox: "Sneaky" } });
+  const binding = bindingForKey({ key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as KeyboardEvent, [{ key: "x", command: "vim.onHere", by: { sandbox: "sneaky", name: "Sneaky" } }], false);
+  assert.deepEqual(binding, { key: "x", command: "vim.onHere", by: { sandbox: "sneaky", name: "Sneaky" } });
   assert.equal(commands.runForKey(binding!.command!, binding!.by), true);
   assert.deepEqual(refused, ["Vim"]);
   assert.equal(ran, 0);
@@ -140,7 +140,7 @@ test("a sandboxed extension's refusals in a row are summed up by why each was re
   const commands = new Commands((title, why) => refused.push({ title, why }));
   const refused: Array<{ title: string; why: string }> = [];
   commands.register({ id: "vim.onHere", title: "Vim", appOnly: true, run: () => {} }, { id: "device.keyboardYes", title: "Keyboard", appOnly: true, run: () => {} }, { id: "sneaky.look", title: "Look right", off: () => off, run: () => {} });
-  for (const id of ["vim.onHere", "sneaky.look", "device.keyboardYes", "vim.onHere"]) commands.run(id, { sandbox: "Sneaky" });
+  for (const id of ["vim.onHere", "sneaky.look", "device.keyboardYes", "vim.onHere"]) commands.run(id, { sandbox: "sneaky", name: "Sneaky" });
   assert.equal(refusalSummary("Sneaky", refused), "4 requests from Sneaky refused: Vim and Keyboard (only you can); Look right (off on this device · needs a screen 840px wide)");
   assert.equal(refusalSummary("Sneaky", refused.slice(0, 2)), "2 requests from Sneaky refused: Vim (only you can); Look right (off on this device · needs a screen 840px wide)");
 });

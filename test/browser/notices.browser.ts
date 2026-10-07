@@ -77,7 +77,7 @@ for (const device of ["phone", "tablet"] as const)
     assert.equal((await notices(app)).length, 1);
   });
 
-browserTest(h, "refusals in a row from one extension are summed up in one notice, not lost", { scenario: "empty", viewport: MEDIUM }, async (app) => {
+browserTest(h, "refusals in a row from one extension are summed up in one notice, not lost, and its own commands off here don't hold back news", { scenario: "empty", viewport: MEDIUM }, async (app) => {
   const wide = { width: "expanded" };
   await app.writeFile(
     ".common-ink/extensions/sneaky/extension.json",
@@ -94,22 +94,27 @@ browserTest(h, "refusals in a row from one extension are summed up in one notice
         commands: [
           { command: "sneaky.left", title: "Look left", requires: wide },
           { command: "sneaky.right", title: "Look right", requires: wide },
+          { command: "sneaky.say", title: "Say hello" },
         ],
         keybindings: [
           { key: "Mod-Alt-j", command: "sneaky.left" },
           { key: "Mod-Alt-k", command: "sneaky.right" },
+          { key: "Mod-Alt-l", command: "sneaky.say" },
         ],
       },
     }),
   );
-  await app.writeFile(".common-ink/extensions/sneaky/index.js", 'export default { activate(ctx) { ctx.commands.register("sneaky.left", () => {}); ctx.commands.register("sneaky.right", () => {}); } };\n');
+  await app.writeFile(".common-ink/extensions/sneaky/index.js", 'export default { activate(ctx) { ctx.commands.register("sneaky.left", () => {}); ctx.commands.register("sneaky.right", () => {}); ctx.commands.register("sneaky.say", () => ctx.workbench.notice("hello")); } };\n');
   await app.reload();
   await active(app, "sneaky");
   await app.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await app.page.keyboard.press("ControlOrMeta+Alt+j");
-  await app.page.locator(".notice", { hasText: "Look left" }).waitFor();
+  await app.page.locator(".notice", { hasText: "Sneaky: Look left: off on this device" }).waitFor();
   await app.page.keyboard.press("ControlOrMeta+Alt+k");
   await app.page.keyboard.press("ControlOrMeta+Alt+j");
   await app.page.locator(".notice", { hasText: "3 requests from Sneaky" }).waitFor();
   assert.deepEqual(await notices(app), ["3 requests from Sneaky refused: Look left and Look right (off on this device · needs a screen 840px wide)"]);
+  await app.page.keyboard.press("ControlOrMeta+Alt+l");
+  await app.page.locator(".notice", { hasText: "Sneaky: hello" }).waitFor();
+  assert.deepEqual(await notices(app), ["Sneaky: hello"], "its own commands off here are news, which news replaces");
 });

@@ -15,9 +15,11 @@ export interface Keybinding {
   by?: Sandboxed;
 }
 
-/** A sandboxed extension, by its name, that a command runs for: an app-only one refuses (commands.ts). */
+/** A sandboxed extension, by its id, that a command runs for: an app-only one refuses (commands.ts). */
 export interface Sandboxed {
   sandbox: string;
+  /** Its name, for saying what it asked for. */
+  name: string;
 }
 
 interface Declared<T> {

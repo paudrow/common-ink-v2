@@ -12,7 +12,7 @@ import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSet
 import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
-import { bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
+import { APP_ONLY, bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
 import { ago, describeAuthor, docLabel } from "./describe.ts";
 import { Search } from "./search.ts";
 import { format } from "../../worker/src/query.ts";
@@ -591,13 +591,15 @@ function pick(how: typeof openHow) {
   bar.open();
 }
 
-/** A sandboxed extension's refusals in a row, while their notice is up: another is summed up with them. */
+/** A sandboxed extension's refusals in a row, by its id, while their notice is up: another is summed up with them. */
 let refusals: { from: string; refused: Array<{ title: string; why: string }>; up: () => boolean } | null = null;
 const commands = new Commands((title, why, by) => {
   const one = `${title}: ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
   if (by === "app") return void workbench.notice(one, [], "alert");
   const refused = [...(refusals?.from === by.sandbox && refusals.up() ? refusals.refused : []), { title, why }];
-  refusals = { from: by.sandbox, refused, up: workbench.notice(refused.length > 1 ? refusalSummary(by.sandbox, refused) : one, [], "alert") };
+  // Its own command off on this device is news: only asking for what only you may run is an alert, so an extension can't hold the alert's place.
+  const urgency = refused.some((r) => r.why === APP_ONLY) ? "alert" : "news";
+  refusals = { from: by.sandbox, refused, up: workbench.notice(refused.length > 1 ? refusalSummary(by.name, refused) : `${by.name}: ${one}`, [], urgency) };
 });
 /** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
 const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
