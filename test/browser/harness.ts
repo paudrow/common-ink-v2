@@ -82,9 +82,11 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
     const app = new App(page, h.base);
     let evidence: Promise<void> | undefined;
     const fail = () => (evidence ??= keepEvidence(name, page, errors, tracing ? (file) => context.tracing.stop({ path: file }) : null));
+    let done = false;
     // Out of time: node:test moves on, but whatever the test awaits in its page would wait on. Closing the
-    // page's context ends it, so the next test has the browser to itself.
-    t.signal.addEventListener("abort", () => void fail().finally(() => context.close()), { once: true });
+    // page's context ends it, so the next test has the browser to itself. node:test aborts the signal
+    // when any test ends, too, passed or failed; by then the body is done and has closed it.
+    t.signal.addEventListener("abort", () => done || void fail().finally(() => context.close()), { once: true });
     try {
       if (o.scenario) await app.reset(o.scenario);
       await app.goto(o.device ? { ...o.levers, device: o.device } : o.levers, o.open);
@@ -100,6 +102,7 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
       await fail();
       throw err;
     } finally {
+      done = true;
       await context.close();
     }
   });

@@ -1,13 +1,19 @@
 // A browser test whose page never answers fails at its timeout, and the rest of its file still runs.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-test("a stuck browser test fails at its timeout, and the next test in its file runs", { timeout: 240_000 }, async () => {
+const RESULTS = path.resolve(import.meta.dirname, "../../test-results");
+const evidence = (test: string) => path.join(RESULTS, test.replace(/[^\w]+/g, "-"));
+
+test("a stuck browser test fails at its timeout, its page is closed, and the next test in its file runs", { timeout: 240_000 }, async () => {
+  for (const t of ["waits on its page forever", "runs after them"]) fs.rmSync(evidence(t), { recursive: true, force: true });
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "--test", "--test-reporter=tap", path.join(import.meta.dirname, "stuck.fixture.ts")], {
     stdio: ["ignore", "pipe", "pipe"],
-    // Its own process group, so a stuck run is stopped with the Worker and the file's process it started.
+    // Its own process group, so a stuck run is stopped with the file's process and the Worker it started.
+    // (Chrome isn't in it: it goes by itself once the pipe to it closes.)
     detached: true,
     // Set, it makes the child a part of this run, which runs no files of its own.
     env: { ...process.env, NODE_TEST_CONTEXT: undefined },
@@ -22,4 +28,6 @@ test("a stuck browser test fails at its timeout, and the next test in its file r
   const results = out.match(/^(?:not )?ok \d+ - .+$/gm);
   assert.deepEqual(results, ["not ok 1 - waits on its page forever", "not ok 2 - holds its page's thread forever", "ok 3 - runs after them"], out);
   assert.equal(out.match(/error: 'test timed out after 5000ms'/g)?.length, 2, out);
+  assert.ok(fs.existsSync(path.join(evidence("waits on its page forever"), "screenshot.png")), "a stuck test keeps its evidence");
+  assert.ok(!fs.existsSync(evidence("runs after them")), "a test that passed keeps none");
 });
