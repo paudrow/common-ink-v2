@@ -11,20 +11,27 @@ const title = (app: App) => app.page.locator("#shell-top h1").innerText();
 const tap = (app: App, selector: string) => app.page.locator(selector).first().tap();
 const closeSheet = (app: App) => app.page.evaluate(() => document.querySelector(".modal-scrim")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
 
+/** Open a note from its card in the Feed, where the app opens on a phone. */
+async function openCard(app: App, title: string) {
+  await app.page.locator(`.feed-card-title:text-is("${title}")`).first().tap();
+  await app.page.locator("#shell-top h1", { hasText: title }).waitFor();
+}
+
 browserTest(h, "on a phone, the bottom bar goes to places, a note opens over the Feed, and back comes up to it", { scenario: "lists", device: "phone" }, async (app) => {
   assert.deepEqual(await bar(app), ["Feed", "Today", "Calendar", "Search", "Places"]);
   await tap(app, '#shell-bar [aria-label="Feed"]');
   assert.equal(await title(app), "Feed");
-  assert.equal(await app.page.locator("#workbench").isVisible(), false, "one screen at a time");
-  await tap(app, '#notes a:text("Lists tour")');
+  await app.page.locator(".feed-card").first().waitFor();
+  assert.equal(await app.page.locator("#workbench .cm-editor").isVisible(), false, "one screen at a time");
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
-  assert.equal(await app.page.locator("#notes").isVisible(), false);
+  assert.equal(await app.page.locator(".feed").isVisible(), false);
   assert.equal(await app.page.evaluate(() => document.activeElement?.closest(".cm-editor") ?? null), null, "opened to read: no on-screen keyboard");
 
   // The system's back gesture goes back to the list.
   await app.page.goBack();
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
-  await tap(app, '#notes a:text("Lists tour")');
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   // And so does the top bar's back.
   await tap(app, '#shell-top [aria-label="Back to Feed"]');
@@ -59,6 +66,8 @@ browserTest(h, "the Places sheet lists what there is, and the bottom bar's place
 });
 
 browserTest(h, "a note's ◷ sheet shows its history, and ⋯ greys what needs a wider screen, with why", { scenario: "lists", device: "phone" }, async (app) => {
+  // The app opens on the Feed: the note is a card there.
+  await openCard(app, "Lists tour");
   await tap(app, '#shell-top [aria-label="History and views about this note"]');
   await app.page.locator(".shell-sheet .shell-switcher", { hasText: "History" }).waitFor();
   await app.page.locator(".shell-sheet .shell-context .change").first().waitFor();
@@ -70,6 +79,8 @@ browserTest(h, "a note's ◷ sheet shows its history, and ⋯ greys what needs a
 });
 
 browserTest(h, "tapping a note edits it, the keyboard toolbar takes the bottom bar's place, and its buttons edit the line", { scenario: "lists", device: "phone" }, async (app) => {
+  // The app opens on the Feed: the note is a card there.
+  await openCard(app, "Lists tour");
   await app.page.locator(".cm-line", { hasText: "Basil" }).tap();
   await app.page.locator("#shell-toolbar").waitFor();
   assert.equal(await app.page.locator("#shell-bar").isVisible(), false);
@@ -97,7 +108,7 @@ browserTest(h, "F1 re-tapping the place you're on, and ‹ back, don't pile up h
   const start = await len(app);
   for (let i = 0; i < 3; i++) await tap(app, '#shell-bar [aria-label="Feed"]');
   assert.equal(await len(app), start, "tapping Feed while on Feed adds no entries");
-  await tap(app, '#notes a:text("Lists tour")');
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   await tap(app, '#shell-top [aria-label="Back to Feed"]');
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
@@ -150,7 +161,7 @@ browserTest(h, "opening a note from a place and coming back up, four times, leav
   await tap(app, '#shell-bar [aria-label="Feed"]');
   const start = await len(app);
   for (let i = 0; i < 4; i++) {
-    await tap(app, '#notes a:text("Lists tour")');
+    await tap(app, '.feed-card-title:text-is("Lists tour")');
     await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
     await tap(app, '#shell-top [aria-label="Back to Feed"]');
     await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
@@ -183,7 +194,7 @@ browserTest(h, "F5 after a view place, opening the note you had open gets its ow
   await tap(app, '#shell-bar [aria-label="Feed"]');
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
   const before = await len(app);
-  await tap(app, '#notes a:text("Lists tour")');
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   await app.page.waitForTimeout(600);
   assert.equal(await len(app), before + 1, "the note has an entry of its own");
@@ -300,7 +311,7 @@ browserTest(h, "H2 after a reload on the Feed, a note opened and ‹ back leave 
   await tap(app, '#shell-bar [aria-label="Feed"]');
   await app.reload();
   await app.page.waitForTimeout(900);
-  await tap(app, '#notes a:text("Lists tour")');
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   await tap(app, '#shell-top [aria-label="Back to Feed"]');
   await app.page.locator("#shell-top h1", { hasText: "Feed" }).waitFor();
@@ -387,6 +398,8 @@ browserTest(h, "a sandboxed extension's places and toolbar buttons run only its 
 });
 
 browserTest(h, "the bottom bar says how tall it is, for the not-saved pill to float above, and the keyboard toolbar does in its place", { scenario: "lists", device: "phone" }, async (app) => {
+  // The app opens on the Feed: the note is a card there.
+  await openCard(app, "Lists tour");
   const said = () => app.page.evaluate(() => document.documentElement.style.getPropertyValue("--not-saved-bottom"));
   const bar = await app.page.locator("#shell-bar").evaluate((e) => Math.round((e as HTMLElement).offsetHeight - parseFloat(getComputedStyle(e).paddingBottom)));
   assert.ok(bar > 0);

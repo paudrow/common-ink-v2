@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Notes deleted in the last 30 days (the trash.retentionDays setting), with who deleted them and the days each has left. Restore one (r, or swipe right) and it comes back where it was, with its history; delete one forever (D, or swipe left) or empty Trash, after it asks, and its text leaves history. A link to a note in Trash says so, with Restore.",
   "main": "index.ts",
-  "files": ["index.ts", "view.ts", "swipe.ts", "links.ts"],
+  "files": ["index.ts", "view.ts", "links.ts"],
   "activationEvents": ["onStartup"],
   "permissions": {
     "history:read": { "why": "List deleted notes, and show their last version" },
