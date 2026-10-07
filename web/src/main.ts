@@ -46,7 +46,8 @@ import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
 import { Shell, type Action, type Place, type ShellEntry } from "./shell.ts";
 import { isIcon } from "./icons.ts";
-import { barOf, GO_KEYS, pinnedOf, PINS_PATH, PLACES_PATH, savedOf, type SavedSearch } from "../../worker/src/places.ts";
+import { barOf, GO_KEYS, PLACES_PATH, savedOf, type SavedSearch } from "../../worker/src/places.ts";
+import { parsePins, PINS_PATH } from "../../worker/src/pins.ts";
 import { GoKeys, Sidebar, type Chosen } from "./sidebar.ts";
 import { withSaved, writePlacesKey } from "./places-file.ts";
 import { undo as undoTyping } from "@codemirror/commands";
@@ -548,8 +549,25 @@ function listRow(path: FilePath, label: string, current: FilePath | null, detail
   return li;
 }
 
+/** The Feed, drawn in the list column on a wide screen (decision 4): the note opens beside it. */
+const feedBox = document.createElement("div");
+feedBox.className = "list-feed";
+feedBox.hidden = true;
+$("#notes").append(feedBox);
+/** Whether the list column shows the Feed extension's view: on a wide screen, with the Feed on. */
+const feedInList = () => "feed" in listShows && device.atLeast("expanded") && extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+
 function renderList() {
   const current = workbench.focusedPath;
+  const feed = feedInList();
+  document.documentElement.toggleAttribute("data-list-feed", feed);
+  feedBox.hidden = !feed;
+  listHead.hidden = list.hidden = feed;
+  if (feed) {
+    // Drawn once: the Feed keeps itself current, and keeps its scroll and selection while it's here.
+    if (!feedBox.childElementCount) workbench.drawInto("feed", feedBox);
+    return;
+  }
   if ("saved" in listShows) {
     const { saved, results, more, note } = listShows;
     listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: saved.name }), Object.assign(document.createElement("code"), { textContent: saved.query }));
@@ -1318,7 +1336,7 @@ let chosen: Chosen = { place: "feed" };
 /** The pinned notes, from pins.json (the Feed's pins, decision 16), kept up to date as it changes. */
 let pinned: FilePath[] = [];
 async function loadPins() {
-  pinned = pinnedOf((await offline.read(PINS_PATH).catch(() => ({ text: "" }))).text);
+  pinned = parsePins((await offline.read(PINS_PATH).catch(() => ({ text: "" }))).text);
   sidebar.render();
 }
 /** How many notes each saved search finds, said beside it: worked out again a moment after notes change. */
@@ -1341,7 +1359,8 @@ function showFeed() {
 /** Go to a place: the Feed in the list beside the note, a view in the window, or a command's place. */
 function goTo(place: Place) {
   chosen = { place: place.id };
-  if ("list" in place.open) showFeed();
+  // The Feed is the list beside the note here, not a view in the window.
+  if ("list" in place.open || place.id === "feed") showFeed();
   else if ("view" in place.open) workbench.openView(place.open.view);
   else void commands.start(place.open.command, place.by);
   sidebar.render();
@@ -1398,6 +1417,7 @@ const wide = () => device.atLeast("expanded");
 function placeSidebar() {
   document.documentElement.toggleAttribute("data-places", wide() && !placesHidden);
   sidebar.render();
+  renderList();
 }
 device.onChange(placeSidebar);
 placeSidebar();

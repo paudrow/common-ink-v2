@@ -1,12 +1,9 @@
 // Places (CONTEXT.md): where you can go in the app. Extensions add theirs (contributes.places); which
 // three a phone's bottom bar holds is yours, in .common-ink/places.json, read here leniently, so a
 // half-written file still leaves a bar. The file can hold more (order, saved searches): it's kept as it is.
-import { isNote, parseFilePath, type FilePath } from "./files.ts";
+import { parseFilePath } from "./files.ts";
 
 export const PLACES_PATH = parseFilePath(".common-ink/places.json")!;
-
-/** The pinned notes (decision 16: the workspace's for now), in pin order: `{"pinned": [paths]}`. */
-export const PINS_PATH = parseFilePath(".common-ink/pins.json")!;
 
 /** The bottom bar's places when places.json doesn't say (decision 6): the Feed, then Daily notes' Today and Calendar's. An extension's place is named `<extension id>.<place id>`. */
 export const DEFAULT_BAR: readonly string[] = ["feed", "daily.today", "calendar.calendar"];
@@ -64,13 +61,6 @@ export function savedOf(text: string): SavedSearch[] {
   const saved = objectOf(text)?.saved;
   if (!saved || typeof saved !== "object" || Array.isArray(saved)) return [];
   return Object.entries(saved).flatMap(([name, query]) => (name.trim() && typeof query === "string" && query.trim() ? [{ name: name.trim(), query: query.trim() }] : []));
-}
-
-/** The pinned notes in pins.json's text, in pin order, each once. */
-export function pinnedOf(text: string): FilePath[] {
-  const pinned = objectOf(text)?.pinned;
-  if (!Array.isArray(pinned)) return [];
-  return [...new Set(pinned.map(parseFilePath).filter((p): p is FilePath => !!p && isNote(p)))];
 }
 
 /**
