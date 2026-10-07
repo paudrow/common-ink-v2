@@ -247,10 +247,37 @@ export class TimeGrid implements CalendarView {
       this.columns.set(column.dataset.day!, column);
       if (column.parentElement !== this.body) this.body.append(column);
     }
-    for (const stray of [...this.body.children]) if (!columns.includes(stray as HTMLElement)) stray.remove();
+    const d = this.drag;
+    for (const stray of [...this.body.children]) if (!columns.includes(stray as HTMLElement) && !(d?.kind === "create" && stray === d.ghost)) stray.remove();
     if (this.scroller.scrollLeft !== left) this.scroller.scrollLeft = left;
     this.onScreen = [...long, ...shown.sort((a, b) => a.day.localeCompare(b.day) || a.start - b.start).map((s) => s.o)];
+    if (d && d.kind !== "create") this.follow(d);
     this.drawNow();
+  }
+
+  /** Drawing again during a drag replaced what it moves: the drag goes on with the event as drawn now. */
+  private follow(d: Exclude<Drag, { kind: "create" }>) {
+    const node = this.drawnIn(d.kind === "moveAllDay" ? this.allDay : this.columns.get(this.dayAt(d.startDay)), d.o.address);
+    if (!node) return;
+    d.node = node;
+    if (d.kind === "moveAllDay") node.style.transform = `translateX(${d.shift * this.col}px)`;
+    else (this.lift(node), this.ghostAt(node, d.day, d.start, d.end));
+  }
+
+  private drawnIn(parent: HTMLElement | undefined, address: string): HTMLElement | undefined {
+    return parent?.querySelector<HTMLElement>(`:scope > [data-address="${CSS.escape(address)}"]`) ?? undefined;
+  }
+
+  /** The event a press found, as drawn now: drawing again since the press replaced the node it found. */
+  private pressedNode(p: NonNullable<TimeGrid["press"]>): HTMLElement | undefined {
+    if (!p.o || !p.node) return undefined;
+    return p.node.isConnected ? p.node : this.drawnIn(p.parent, p.o.address);
+  }
+
+  /** Out of its column, so it sits above the others while it moves. */
+  private lift(node: HTMLElement) {
+    this.body.append(node);
+    node.classList.add("is-moving");
   }
 
   private drawNow() {
@@ -351,18 +378,14 @@ export class TimeGrid implements CalendarView {
       this.body.append(ghost);
       return { kind: "create", day: p.day, from: p.minutes, to: p.minutes, ghost };
     }
-    if (!p.o || !p.node) return null;
-    // Drawing again since the press replaced the node it found, so the drag takes the one drawn now.
-    const node = p.node.isConnected ? p.node : p.parent?.querySelector<HTMLElement>(`:scope > [data-address="${CSS.escape(p.o.address)}"]`);
-    if (!node) return null;
+    const node = this.pressedNode(p);
+    if (!p.o || !node) return null;
     if (node.classList.contains("cal-bar")) return { kind: "moveAllDay", o: p.o, node, grabDay: p.day, shift: 0 };
     const s = localSpan(p.o);
     const day = p.day;
     const start = s.startDay === this.dayAt(day) ? s.start : 0;
     const end = s.endDay === this.dayAt(day) ? s.end : 24 * 60;
-    // Dragged out of its column, so it sits above the others while it moves.
-    this.body.append(node);
-    node.classList.add("is-moving");
+    this.lift(node);
     return { kind: p.edge ? "resize" : "move", o: p.o, node, grab: p.minutes - start, day, start, end, startDay: day };
   }
 
@@ -382,7 +405,8 @@ export class TimeGrid implements CalendarView {
     this.root.classList.remove("is-dragging");
     if (!d) {
       // A click: open an event, or make one where you clicked.
-      if (p.o && p.node) return this.env.open(p.o, p.node.getBoundingClientRect());
+      const node = this.pressedNode(p);
+      if (p.o && node) return this.env.open(p.o, node.getBoundingClientRect());
       if (p.target === "allday") {
         const day = this.dayAt(p.day);
         return this.env.create({ allDay: true, startDay: day, endDay: addDays(day, 1) }, new DOMRect(e.clientX, e.clientY, 1, 1));
