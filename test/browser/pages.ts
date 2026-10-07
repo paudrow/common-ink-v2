@@ -70,17 +70,28 @@ export class App {
   /** Load the app with these levers in its address, wait for it to start, and open a note if asked. */
   async goto(levers: Record<string, string> = {}, open?: string) {
     const params = new URLSearchParams(levers);
-    await this.page.goto(`${this.base}/${params.size ? `?${params}` : ""}`);
-    await this.ready();
+    await this.navigate(() => this.page.goto(`${this.base}/${params.size ? `?${params}` : ""}`));
     if (open) await this.open(open);
   }
 
+  /** Wait for the app on show to have started: the levers' window.__commonInk is set once it has. */
   async ready() {
-    await this.page.waitForFunction(() => "__commonInk" in window);
+    await this.page.waitForFunction(() => !!(window as unknown as { __commonInk?: unknown }).__commonInk && document.readyState === "complete");
   }
 
   async reload() {
-    await this.page.reload();
+    await this.navigate(() => this.page.reload());
+  }
+
+  /**
+   * Go somewhere (a reload, back or forward, an address), then wait for the app there to have started.
+   * The page before is marked first, so what's waited for is the new page, not the one being left: a
+   * navigation can settle before the new page has run anything.
+   */
+  async navigate(go: () => Promise<unknown>) {
+    await this.page.evaluate(() => ((window as unknown as { __leaving?: true }).__leaving = true)).catch(() => {});
+    await go();
+    await this.page.waitForFunction(() => !(window as unknown as { __leaving?: true }).__leaving);
     await this.ready();
   }
 
