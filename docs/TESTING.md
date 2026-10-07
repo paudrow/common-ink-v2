@@ -57,7 +57,7 @@ From a terminal, `COMMON_INK_URL=<Preview> bin/common-ink reset lists` resets it
 ## Add a regression test
 
 1. Reproduce the bug with the probe or the inspector, on the smallest scenario that shows it.
-2. Write a `browserTest` in `test/browser/regressions.browser.ts` (or the file for its feature) that does what a person did and asserts what they saw. Prefer an inspector check (`check.overlaps`, `check.lineShift`, `check.layoutFill`, `check.layoutShifts`) or `state()` to measuring the page in the test.
+2. Write a `browserTest` in `test/browser/regressions.browser.ts`, the `regressions-*.browser.ts` file for its topic, or the file for its feature, that does what a person did and asserts what they saw. Prefer an inspector check (`check.overlaps`, `check.lineShift`, `check.layoutFill`, `check.layoutShifts`) or `state()` to measuring the page in the test.
 3. Take the fix out and run the test. It has to fail. If it passes, it doesn't test the bug yet. Open the window the bug needs (for a race, `__commonInk.slow()` delays requests) and try again.
 4. If the fix is in another pull request that hasn't landed, give the test `todo: "<what>, fixed in #<n>"`. It runs and reports, without failing the run, and says when it starts passing.
 
@@ -133,7 +133,7 @@ Keys are written as Vim writes them: characters as they are, and `<Esc>`, `<CR>`
 
 ## Browser tests
 
-`npm run test:browser` runs `test/browser/*.browser.ts` against the real Worker and headless Chrome (`CHROME_PATH`, or Chrome where it usually is). Each file starts its own Worker and Chrome, with levers on unless it says otherwise. Four files run at a time (`BROWSER_CONCURRENCY`), and `SHARD=1/2` runs half of them. CI runs two shards, two files at a time each.
+`npm run test:browser` runs `test/browser/*.browser.ts` against the real Worker and headless Chrome (`CHROME_PATH`, or Chrome where it usually is). Each file starts its own Worker and Chrome, with levers on unless it says otherwise. Four files run at a time (`BROWSER_CONCURRENCY`), and `SHARD=1/6` runs the first of six shards. CI runs six shards, two files at a time each. A file's tests run one after another, so a file that takes long holds its shard up: keep each under about three minutes in CI, splitting it by topic as `regressions-*.browser.ts` and `phone-walk-*.browser.ts` are, and name the slowest in `SLOW` in `scripts/browser-tests.ts`, which deals those out first so they spread across shards.
 
 `browserTest(h, name, options, body)` in `test/browser/harness.ts` runs one test in a fresh browser context. It resets to `scenario` and opens `open` first, as a `device` (`phone`, `tablet` or `laptop`: its size and touch, and the `device` lever) if it names one, and stubs every other site with an empty page unless `internet: "live"`. Any error the page logs fails the test, except a 404 for a file that doesn't exist yet and what `allowErrors` names. A failed test leaves `screenshot.png`, `state.json` (the inspector's state), `errors.txt` and, in CI or with `TRACE=1`, `trace.zip` in `test-results/<test>/`, which CI uploads. A test that takes two minutes (or its `timeout`, in ms) fails and its page is closed, so the rest of its file still runs; `test/browser/timeouts.browser.ts` checks this. An inspector call through `App.call` that hasn't returned in a minute fails, and names the call.
 

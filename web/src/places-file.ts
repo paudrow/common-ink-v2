@@ -1,37 +1,53 @@
-// Writing .common-ink/places.json from the app: one key at a time (the bottom bar, saved searches), the
-// rest of the file as it was. Offline, a change is held like any edit; a second change made before it's
-// sent builds on the one held, since both are held under the one path.
+// Changing .common-ink/places.json from the app: one key at a time (the bottom bar, a saved search), the
+// rest of the file as it is. A change is held as itself, the key and what to make of it, not as the
+// file's whole text: it's sent (now, or once the server's back) by making it on the server's latest
+// copy. So it can't clash with another device's change to another key, nothing is built on a stale
+// copy, and two changes made offline are both made, in order.
 import { PLACES_PATH } from "../../worker/src/places.ts";
+import { ServerAnswer } from "./api.ts";
 import { setTopLevelKey, topLevelKeys } from "./json-edit.ts";
-import { unreachable, type Offline } from "./offline.ts";
+import type { HeldOp, Offline } from "./offline.ts";
+
+/** A change to one key of places.json: the bar's places, or one saved search set (or, with no query, taken out). */
+export type PlacesChange = { key: "bar"; ids: string[] } | { key: "saved"; name: string; query: string | null };
+
+/** The change a held operation makes to places.json, if it's one. */
+export function placesChangeOf(op: HeldOp): PlacesChange | null {
+  return (op.body.places as PlacesChange | undefined) ?? null;
+}
+
+/** places.json's text with a change made, or null if what it changes can't be read. */
+export function applyPlaces(text: string, change: PlacesChange): string | null {
+  const value = change.key === "bar" ? change.ids : withSaved(text, change.name, change.query);
+  if (value === null) return null;
+  return setTopLevelKey(text.trim() ? text : "{}\n", change.key, value);
+}
 
 /**
- * Set one top-level key of places.json to what `value` makes of the text as it is (null: it can't be
- * read, so nothing's written), and say what happened through `notice` when it's worth saying.
+ * Send a held change: made on the server's latest places.json and written on its revision, again if
+ * another write gets there first. One that can't be made is refused (a 4xx), so it's dropped and said.
  */
-export async function writePlacesKey(offline: Offline, key: string, value: (now: string) => unknown, what: string, notice: (message: string, alert?: boolean) => void): Promise<void> {
-  const What = `${what[0].toUpperCase()}${what.slice(1)}`;
-  for (let tries = 0; tries < 3; tries++) {
-    // A change held here and not yet sent (made offline) comes first: this one builds on it, not on the
-    // server's copy, which would drop it.
-    const held = await offline.unsentFor(PLACES_PATH);
-    const now = held ? { text: held.text, revision: held.base } : await offline.read(PLACES_PATH);
-    const next = value(now.text);
-    if (next === null) return notice(`places.json can't be read: fix it to change ${what}.`, true);
-    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", key, next);
-    if (text === null) return notice(`places.json isn't a JSON object: fix it to change ${what}.`, true);
-    try {
-      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") {
-        if (held) await offline.release(PLACES_PATH);
-        return;
-      }
-    } catch (err) {
-      if (!unreachable(err)) return notice(`${What} couldn't be saved: ${(err as Error).message}`, true);
-      await offline.hold({ path: PLACES_PATH, text, base: now.revision });
-      return notice(`You're offline: ${what} is changed here, and saved once you're back.`);
-    }
+export async function sendPlaces(offline: Offline, change: PlacesChange): Promise<void> {
+  for (let tries = 0; tries < 5; tries++) {
+    const now = await offline.latest(PLACES_PATH);
+    const text = applyPlaces(now.text, change);
+    if (text === null) throw new ServerAnswer("places.json can't be read: fix it, then make the change again", 422);
+    if (text === now.text) return;
+    if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
   }
-  notice(`${What} couldn't be saved: places.json kept changing as it was written. Try again.`, true);
+  throw new ServerAnswer("places.json kept changing as it was written: make the change again", 409);
+}
+
+/**
+ * Make a change to places.json: held, then sent with whatever else is held (`flush`, which says what
+ * the server refused). Offline it waits, and says so.
+ */
+export async function changePlaces(offline: Offline, change: PlacesChange, what: string, flush: () => Promise<unknown>, notice: (message: string) => void): Promise<void> {
+  const op = await offline.holdOp({ method: "PATCH", body: { places: change }, what: `Places: ${what}` });
+  const held = async () => (await offline.ops()).some((o) => o.id === op.id);
+  // A send already under way doesn't have this one: then the next does.
+  for (let tries = 0; tries < 2 && (await held()); tries++) await flush();
+  if (await held()) notice(`You're offline: ${what} is changed here, and saved once you're back.`);
 }
 
 /**

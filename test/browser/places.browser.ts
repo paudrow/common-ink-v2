@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import type { Page } from "playwright-core";
 import { browserTest, harness } from "./harness.ts";
+import type { App } from "./pages.ts";
 
 const h = harness();
 
@@ -93,41 +94,63 @@ browserTest(h, "on a phone there's no sidebar: Places stays the sheet, and ⌘B 
   assert.equal(await page.locator("#places").isVisible(), false);
 });
 
-// The network can come and go between the saves (the browser's offline switch doesn't hold back every
-// request): then a save made on a stale copy is refused (409) and written again on the server's, which is
-// how places.json's writer is meant to end up right. The file at the end is what's checked.
-browserTest(h, "offline, two searches saved one after the other both reach places.json once back", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|status of 409 \(Conflict\)/] }, async (app) => {
+/** What this browser holds to send: whole files (`unsent`) and operations (`ops`), from IndexedDB. */
+const heldHere = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<{ unsent: Array<{ path: string; conflict?: boolean }>; ops: Array<{ body: { places?: unknown } }> }>((done) => {
+        const open = indexedDB.open("common-ink");
+        open.onsuccess = () => {
+          const tx = open.result.transaction(["unsent", "ops"]);
+          const unsent = tx.objectStore("unsent").getAll();
+          const ops = tx.objectStore("ops").getAll();
+          tx.oncomplete = () => done({ unsent: unsent.result, ops: ops.result });
+        };
+      }),
+  );
+const savedSearch = async (page: Page, query: string, name: string) => {
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.locator("#command-bar input").fill(query);
+  await page.keyboard.press("ControlOrMeta+s");
+  await page.locator(".dialog input").fill(name);
+  await page.keyboard.press("Enter");
+  await item(page, name).waitFor();
+};
+/** Once back online: places.json as the server has it, with nothing left held here and no clash. */
+async function settled(app: App, want: (places: { saved?: Record<string, string>; bar?: string[] }) => boolean) {
+  const { page } = app;
+  for (let tries = 0; !want(JSON.parse((await app.readFile(".common-ink/places.json")) || "{}")); tries++) {
+    assert.ok(tries < 80, `places.json is ${await app.readFile(".common-ink/places.json")}`);
+    await page.waitForTimeout(250);
+  }
+  await page.waitForFunction(() => !document.querySelector("#unsent")?.textContent, undefined, { timeout: 10_000 });
+  const held = await heldHere(page);
+  assert.deepEqual([held.unsent, held.ops], [[], []], "nothing left to send");
+  assert.equal(await page.locator("#resolve").isVisible(), false, "no clash");
+}
+
+browserTest(h, "offline, two searches saved one after the other both reach places.json once back", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch/] }, async (app) => {
   const { page } = app;
   await page.locator("#places .place-item").first().waitFor();
   await page.context().setOffline(true);
-  for (const [query, name] of [["garden", "Garden"], ["launch", "Launch"]]) {
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("ControlOrMeta+k");
-    await page.locator("#command-bar input").fill(query);
-    await page.keyboard.press("ControlOrMeta+s");
-    await page.locator(".dialog input").fill(name);
-    await page.keyboard.press("Enter");
-    await item(page, name).waitFor();
-  }
-  // Both are held here, in the one edit waiting to be sent for places.json.
-  await page.waitForFunction(
-    () =>
-      new Promise((done) => {
-        const open = indexedDB.open("common-ink");
-        open.onsuccess = () => {
-          const all = open.result.transaction("unsent").objectStore("unsent").getAll();
-          all.onsuccess = () => done((all.result as Array<{ path: string; text: string }>).some((u) => u.path === ".common-ink/places.json" && u.text.includes('"Garden"') && u.text.includes('"Launch"')));
-        };
-        open.onerror = () => done(false);
-      }),
-    undefined,
-    { timeout: 10_000 },
-  );
+  await savedSearch(page, "garden", "Garden");
+  await savedSearch(page, "launch", "Launch");
+  // Each is held as the change it is, to be made on places.json as the server has it when it's sent.
+  assert.equal((await heldHere(page)).ops.length, 2);
   await page.context().setOffline(false);
-  await page.waitForFunction(async () => {
-    const saved = JSON.parse((await (await fetch("/api/file?path=.common-ink/places.json")).json()).text).saved ?? {};
-    return saved.Garden === "garden" && saved.Launch === "launch" && saved.Tours === "tour";
-  }, undefined, { timeout: 20_000 });
+  await settled(app, (places) => places.saved?.Garden === "garden" && places.saved?.Launch === "launch" && places.saved?.Tours === "tour");
+});
+
+browserTest(h, "a search saved offline on a laptop while the phone changes the bottom bar: both are kept, and nothing clashes", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch/] }, async (app) => {
+  const { page } = app;
+  await page.locator("#places .place-item").first().waitFor();
+  await page.context().setOffline(true);
+  await savedSearch(page, "garden", "Garden");
+  // The phone, meanwhile, writes places.json with a new bar (from outside this page, which is offline).
+  await app.writeFile(".common-ink/places.json", JSON.stringify({ ...JSON.parse(await app.readFile(".common-ink/places.json")), bar: ["feed", "tasks.tasks"] }, null, 2));
+  await page.context().setOffline(false);
+  await settled(app, (places) => places.saved?.Garden === "garden" && places.bar?.join() === "feed,tasks.tasks");
 });
 
 browserTest(h, "a Feed card beside the note is a list row: ⌘-click opens it in a tab of its own, and a double click keeps its tab", { scenario: "preview", open: "Welcome" }, async (app) => {
