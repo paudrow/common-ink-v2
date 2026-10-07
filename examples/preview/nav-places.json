@@ -1,5 +1,5 @@
 {
-  "pr": 0,
+  "pr": 171,
   "title": "Places on wide screens: a sidebar beside the list and the note, saved searches and pins",
   "steps": [
     "On a laptop (840px or wider), Places is a column on the left: Feed, Search, Today, Tasks, Calendar; your pinned notes; saved searches with how many notes each finds; and Sources, Archive, Trash, Extensions and Settings at the bottom.",
