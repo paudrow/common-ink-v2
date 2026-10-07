@@ -28,6 +28,13 @@ export interface AppState {
   notices: string[];
 }
 
+/** `work`, or a failure that names `what` after `ms`: page.evaluate has no timeout of its own. */
+export function bounded<T>(what: string, work: Promise<T>, ms = 60_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`${what} didn't return in ${ms / 1000} s`)), ms)));
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 export class App {
   readonly editor = new Editor(this);
   readonly tabs = new Tabs(this);
@@ -43,7 +50,7 @@ export class App {
 
   /** Call the inspector: `call("idle")`, `call("check.overlaps")`. */
   call<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
-    return this.page.evaluate(
+    return bounded(`__commonInk.${name}()`, this.page.evaluate(
       ([name, args]) => {
         const [first, second] = (name as string).split(".");
         const ci = (window as unknown as { __commonInk: Inspector }).__commonInk;
@@ -51,7 +58,7 @@ export class App {
         return target[second ?? first](...(args as unknown[]));
       },
       [name, args] as const,
-    ) as Promise<T>;
+    ) as Promise<T>);
   }
 
   /** Empty the workspace and fill it from a scenario, as the levers' reset does. */
@@ -107,7 +114,7 @@ export class App {
    */
   async codeShown(language: string) {
     await this.page.waitForFunction((l) => (window as unknown as { __commonInk: { parsing(): { loaded: string[] } } }).__commonInk.parsing().loaded.includes(l), language);
-    await this.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-code-header")?.scrollIntoView({ block: "start" }));
+    await bounded("codeShown's scroll", this.page.evaluate(() => document.querySelector(".tab-editor:not([hidden]) .cm-code-header")?.scrollIntoView({ block: "start" })));
   }
 
   async readFile(path: string): Promise<string> {
