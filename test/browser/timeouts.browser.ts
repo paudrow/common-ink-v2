@@ -28,6 +28,7 @@ test("a stuck browser test fails at its timeout, its page is closed, and the nex
   const results = out.match(/^(?:not )?ok \d+ - .+$/gm);
   assert.deepEqual(results, ["not ok 1 - waits on its page forever", "not ok 2 - holds its page's thread forever", "ok 3 - runs after them"], out);
   assert.equal(out.match(/error: 'test timed out after 5000ms'/g)?.length, 2, out);
-  assert.ok(fs.existsSync(path.join(evidence("waits on its page forever"), "screenshot.png")), "a stuck test keeps its evidence");
+  // Its screenshot, too, unless the machine is so busy that taking one outlasts the evidence's ten seconds.
+  assert.ok(fs.existsSync(path.join(evidence("waits on its page forever"), "errors.txt")), "a stuck test keeps its evidence");
   assert.ok(!fs.existsSync(evidence("runs after them")), "a test that passed keeps none");
 });

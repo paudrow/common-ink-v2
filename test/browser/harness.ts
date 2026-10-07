@@ -84,9 +84,10 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
     const fail = () => (evidence ??= keepEvidence(name, page, errors, tracing ? (file) => context.tracing.stop({ path: file }) : null));
     let done = false;
     // Out of time: node:test moves on, but whatever the test awaits in its page would wait on. Closing the
-    // page's context ends it, so the next test has the browser to itself. node:test aborts the signal
-    // when any test ends, too, passed or failed; by then the body is done and has closed it.
-    t.signal.addEventListener("abort", () => done || void fail().finally(() => context.close()), { once: true });
+    // page's context ends it, so the next test has the browser to itself. The evidence gets ten seconds
+    // first: from a page whose thread is held, a screenshot or a trace can take most of a minute. node:test
+    // aborts the signal when any test ends, too, passed or failed; by then the body is done and has closed it.
+    t.signal.addEventListener("abort", () => done || void bounded("the evidence", fail(), 10_000).catch(() => {}).finally(() => context.close()), { once: true });
     try {
       if (o.scenario) await app.reset(o.scenario);
       await app.goto(o.device ? { ...o.levers, device: o.device } : o.levers, o.open);
@@ -112,7 +113,7 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
 async function keepEvidence(name: string, page: Page, errors: string[], trace: ((file: string) => Promise<void>) | null) {
   const dir = path.join(RESULTS, name.replace(/[^\w]+/g, "-").slice(0, 80));
   fs.mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true, timeout: 10_000 }).catch(() => {});
+  await bounded("the screenshot", page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true, timeout: 10_000 }), 10_000).catch(() => {});
   const state = await bounded("__commonInk.state()", page.evaluate(() => (window as unknown as { __commonInk?: { state(): unknown } }).__commonInk?.state()), 10_000).catch((e: Error) => ({ unavailable: e.message }));
   fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(state ?? { unavailable: "no inspector on the page" }, null, 2));
   fs.writeFileSync(path.join(dir, "errors.txt"), errors.join("\n"));
