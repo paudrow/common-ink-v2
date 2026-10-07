@@ -371,7 +371,7 @@ browserTest(h, "a flood of tiny calls from a sandboxed frame is cut off by count
   // Error subclass per refusal isn't counted here. What any refusal costs is bounded twice more below: no
   // long task, and the flood's CPU time. CallShare's own words and count, and SandboxHost's refusals
   // against the cost of answering at all, are unit tested (sandbox-limits.test.ts), where a number
-  // formatted or an Error made per refusal, however it's spelled, fails on time.
+  // formatted with Intl.NumberFormat or an Error subclass thrown per refusal fails on time.
   await app.page.evaluate(() => {
     const w = window as unknown as { Error: ErrorConstructor; made: { errors: number; numbers: number }; longest: number; longTasks: PerformanceObserver };
     w.made = { errors: 0, numbers: 0 };
