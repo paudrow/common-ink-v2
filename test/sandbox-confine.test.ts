@@ -228,3 +228,11 @@ test("a sandboxed extension's search filter keys are named for it, so ordinary w
   const m = manifest("word-count", { contributes: { search: { types: [{ type: "word-count", title: "Counts" }], filters: ["meeting", "word-count", "word-count-done", "wordcount", "words"].map((filter) => ({ filter, description: "", values: [] })) } } });
   assert.deepEqual(confined(m, { names: new Set(), keys: new Set() }).contributes.search.filters.map((f) => f.filter), ["word-count", "word-count-done", "wordcount"]);
 });
+
+test("a sandboxed extension can't declare a built-in's status item, even with that built-in turned off", async () => {
+  const vim = builtIn("vim", { contributes: { statusBarItems: [{ id: "vim.mode", alignment: "left" }] } });
+  const text = JSON.stringify({ name: "Moder", contributes: { statusBarItems: [{ id: "vim.mode", alignment: "left" }, { id: "moder.mode", alignment: "left" }] } });
+  const h = new ExtensionHost({ context: () => ({}) as never, load: async () => ({}), sandbox: async () => {}, changed: () => {} });
+  await h.load([vim], [{ path: ".common-ink/extensions/moder/extension.json" as FilePath, revision: 1 } as FileSummary], async (path) => ({ path, text, revision: 1 }) as WorkspaceFile, ["vim"], false, []);
+  assert.deepEqual(h.records.find((r) => r.id === "moder")!.manifest.contributes.statusBarItems.map((i) => i.id), ["moder.mode"]);
+});

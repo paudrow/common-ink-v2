@@ -245,6 +245,8 @@ export class ExtensionRuntime {
   /** How each URL embed draws, by its id. */
   private urlDrawers = new Map<string, (el: HTMLElement, link: { url: string; match: string[] }) => void>();
   private sandboxes = new Map<string, SandboxHost>();
+  /** The names each extension declared and lost to another, for its problem in the Extensions view. */
+  private lost = new Map<string, Map<string, string>>();
   /**
    * The command and view each extension put in, by id, as the very objects it registered. A sandboxed
    * extension's calls, keys, menus and status items reach only those, and only while they're still what's
@@ -377,8 +379,16 @@ export class ExtensionRuntime {
   private taken(m: ExtensionManifest, kind: NameKind, name: string): void {
     const record = this.host.records.find((r) => r.manifest === m);
     const owner = this.host.records.find((r) => r.id === this.ownership.owner(kind, name));
-    if (!record || record.error || !owner || owner === record) return;
-    record.error = `${WORDS[kind]} "${name}" is ${owner.manifest.name}'s, so ${m.name}'s is left out`;
+    if (!record || !owner || owner === record) return;
+    const lost = this.lost.get(record.id) ?? new Map<string, string>();
+    // Another problem (it failed to start) says more than names do, so it stays.
+    if (record.error && !this.lost.has(record.id)) return;
+    lost.set(`${WORDS[kind]} "${name}"`, owner.manifest.name);
+    this.lost.set(record.id, lost);
+    const [[what, whose], ...more] = lost;
+    record.error = more.length
+      ? `These are other extensions', so ${m.name}'s are left out: ${[...lost].map(([w, o]) => `${w.charAt(0).toLowerCase()}${w.slice(1)} (${o}'s)`).join(", ")}`
+      : `${what} is ${whose}'s, so ${m.name}'s is left out`;
     this.app.changed();
   }
 

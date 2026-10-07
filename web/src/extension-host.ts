@@ -148,6 +148,7 @@ function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManife
       ...Object.values(m.contributes.views).flat().map((v) => firstWord(v.id)),
       ...m.contributes.search.types.map((t) => t.type),
       ...m.contributes.embeds.map((e) => e.language),
+      ...m.contributes.statusBarItems.map((i) => i.id),
     ]),
   ];
   return new Set(names.flatMap(spellings));
@@ -198,7 +199,7 @@ const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => C
   configuration: (c) => c.configuration,
   viewsContainers: (c, own) => ({ activitybar: c.viewsContainers.activitybar.filter((v) => own.name(v.id)), panel: c.viewsContainers.panel.filter((v) => own.name(v.id)) }),
   views: (c, own) => Object.fromEntries(Object.entries(c.views).map(([where, list]) => [where, list.filter((v) => own.name(v.id))])),
-  statusBarItems: (c, own) => c.statusBarItems.map((i) => (i.command === undefined || own.commands.has(i.command) ? i : { ...i, command: undefined })),
+  statusBarItems: (c, own) => c.statusBarItems.filter((i) => !clashes(i.id, own.claimed.names)).map((i) => (i.command === undefined || own.commands.has(i.command) ? i : { ...i, command: undefined })),
   embeds: (c, own) => c.embeds.filter((e) => !clashes(e.language, own.claimed.names)),
   // Drawn in the page, which only a trusted extension may do.
   urlEmbeds: () => [],

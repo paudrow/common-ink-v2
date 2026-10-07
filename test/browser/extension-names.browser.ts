@@ -76,3 +76,12 @@ browserTest(h, "between two trusted extensions declaring the same command, the f
   await app.page.locator(".notice p", { hasText: "BETA OWN" }).waitFor();
   assert.equal(await app.page.locator(".notice p", { hasText: "BETA SHARED" }).count(), 0);
 });
+
+browserTest(h, "an extension that loses more than one name says which, all in one problem", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["helper"]\n}\n');
+  const manifest = { ...HELPER, contributes: { commands: [...HELPER.contributes.commands, { command: "lists.indent", title: "Helper indent" }] } };
+  await app.writeFile(".common-ink/extensions/helper/extension.json", JSON.stringify(manifest));
+  await app.writeFile(".common-ink/extensions/helper/index.js", HELPER_CODE);
+  await lists(app);
+  assert.equal((await record(app, "helper"))?.error, `These are other extensions', so Helper's are left out: the command "lists.toBullets" (Lists's), the command "lists.indent" (Lists's)`);
+});
