@@ -19,9 +19,9 @@ const AROUND = 3;
 const SLOP = 4;
 
 type Drag =
-  | { kind: "create"; day: number; from: number; to: number; ghost: HTMLElement }
-  | { kind: "move" | "resize"; o: Occurrence; node: HTMLElement; grab: number; day: number; start: number; end: number; startDay: number }
-  | { kind: "moveAllDay"; o: Occurrence; node: HTMLElement; grabDay: number; shift: number };
+  | { kind: "create"; day: Day; from: number; to: number; ghost: HTMLElement }
+  | { kind: "move" | "resize"; o: Occurrence; node: HTMLElement; grab: number; day: Day; start: number; end: number; startDay: Day }
+  | { kind: "moveAllDay"; o: Occurrence; node: HTMLElement; grabDay: Day; shift: number };
 
 export class TimeGrid implements CalendarView {
   readonly root: HTMLElement;
@@ -44,7 +44,7 @@ export class TimeGrid implements CalendarView {
   private settle = 0;
   /** Whether the columns have their width yet. */
   private laidOut = false;
-  private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; day: number; minutes: number; edge: boolean } | null = null;
+  private press: { x: number; y: number; pointer: number; target: "event" | "allday" | "empty"; o?: Occurrence; node?: HTMLElement; parent?: HTMLElement; day: Day; minutes: number; edge: boolean } | null = null;
   private drag: Drag | null = null;
   private onScreen: Occurrence[] = [];
   private columns = new Map<Day, HTMLElement>();
@@ -247,10 +247,37 @@ export class TimeGrid implements CalendarView {
       this.columns.set(column.dataset.day!, column);
       if (column.parentElement !== this.body) this.body.append(column);
     }
-    for (const stray of [...this.body.children]) if (!columns.includes(stray as HTMLElement)) stray.remove();
+    const d = this.drag;
+    for (const stray of [...this.body.children]) if (!columns.includes(stray as HTMLElement) && !(d?.kind === "create" && stray === d.ghost)) stray.remove();
     if (this.scroller.scrollLeft !== left) this.scroller.scrollLeft = left;
     this.onScreen = [...long, ...shown.sort((a, b) => a.day.localeCompare(b.day) || a.start - b.start).map((s) => s.o)];
+    if (d && d.kind !== "create") this.follow(d);
     this.drawNow();
+  }
+
+  /** Drawing again during a drag replaced what it moves: the drag goes on with the event as drawn now. */
+  private follow(d: Exclude<Drag, { kind: "create" }>) {
+    const node = this.drawnIn(d.kind === "moveAllDay" ? this.allDay : this.columns.get(d.startDay), d.o.address);
+    if (!node) return;
+    d.node = node;
+    if (d.kind === "moveAllDay") node.style.transform = `translateX(${d.shift * this.col}px)`;
+    else (this.lift(node), this.ghostAt(node, d.day, d.start, d.end));
+  }
+
+  private drawnIn(parent: HTMLElement | undefined, address: string): HTMLElement | undefined {
+    return parent?.querySelector<HTMLElement>(`:scope > [data-address="${CSS.escape(address)}"]`) ?? undefined;
+  }
+
+  /** The event a press found, as drawn now: drawing again since the press replaced the node it found. */
+  private pressedNode(p: NonNullable<TimeGrid["press"]>): HTMLElement | undefined {
+    if (!p.o || !p.node) return undefined;
+    return p.node.isConnected ? p.node : this.drawnIn(p.parent, p.o.address);
+  }
+
+  /** Out of its column, so it sits above the others while it moves. */
+  private lift(node: HTMLElement) {
+    this.body.append(node);
+    node.classList.add("is-moving");
   }
 
   private drawNow() {
@@ -304,7 +331,8 @@ export class TimeGrid implements CalendarView {
       target: event ? "event" : inAllDay ? "allday" : "empty",
       o,
       node: event ?? undefined,
-      day: this.dayIndexAt(e),
+      parent: event?.parentElement ?? undefined,
+      day: this.dayAt(this.dayIndexAt(e)),
       minutes: this.minutesAt(e),
       edge: target.classList.contains("cal-resize"),
     };
@@ -323,7 +351,7 @@ export class TimeGrid implements CalendarView {
     }
     const d = this.drag;
     const minutes = this.minutesAt(e);
-    const day = Math.max(0, Math.min(this.windowDays - 1, this.dayIndexAt(e)));
+    const day = this.dayAt(Math.max(0, Math.min(this.windowDays - 1, this.dayIndexAt(e))));
     if (d.kind === "create") {
       const { start, end } = dragRange(d.from, minutes);
       d.to = minutes;
@@ -339,7 +367,7 @@ export class TimeGrid implements CalendarView {
       d.end = Math.max(d.start + 15, Math.min(24 * 60, snap(minutes)));
       this.ghostAt(d.node, d.day, d.start, d.end);
     } else if (d.kind === "moveAllDay") {
-      d.shift = day - d.grabDay;
+      d.shift = daysBetween(d.grabDay, day);
       d.node.style.transform = `translateX(${d.shift * this.col}px)`;
     }
   }
@@ -350,21 +378,20 @@ export class TimeGrid implements CalendarView {
       this.body.append(ghost);
       return { kind: "create", day: p.day, from: p.minutes, to: p.minutes, ghost };
     }
-    if (!p.o || !p.node) return null;
-    if (p.node.classList.contains("cal-bar")) return { kind: "moveAllDay", o: p.o, node: p.node, grabDay: p.day, shift: 0 };
+    const node = this.pressedNode(p);
+    if (!p.o || !node) return null;
+    if (node.classList.contains("cal-bar")) return { kind: "moveAllDay", o: p.o, node, grabDay: p.day, shift: 0 };
     const s = localSpan(p.o);
     const day = p.day;
-    const start = s.startDay === this.dayAt(day) ? s.start : 0;
-    const end = s.endDay === this.dayAt(day) ? s.end : 24 * 60;
-    // Dragged out of its column, so it sits above the others while it moves.
-    this.body.append(p.node);
-    p.node.classList.add("is-moving");
-    return { kind: p.edge ? "resize" : "move", o: p.o, node: p.node, grab: p.minutes - start, day, start, end, startDay: day };
+    const start = s.startDay === day ? s.start : 0;
+    const end = s.endDay === day ? s.end : 24 * 60;
+    this.lift(node);
+    return { kind: p.edge ? "resize" : "move", o: p.o, node, grab: p.minutes - start, day, start, end, startDay: day };
   }
 
   /** Put a block over a day's column, from one time to another. */
-  private ghostAt(node: HTMLElement, day: number, start: number, end: number) {
-    Object.assign(node.style, { left: `${day * this.col + 1}px`, width: `${this.col - 4}px`, top: `${(start / 60) * HOUR}px`, height: `${((end - start) / 60) * HOUR - 2}px` });
+  private ghostAt(node: HTMLElement, day: Day, start: number, end: number) {
+    Object.assign(node.style, { left: `${daysBetween(this.first, day) * this.col + 1}px`, width: `${this.col - 4}px`, top: `${(start / 60) * HOUR}px`, height: `${((end - start) / 60) * HOUR - 2}px` });
     const time = node.querySelector(".cal-event-time") ?? node.appendChild(el("span", { class: "cal-event-time" }));
     time.textContent = `${clock(start)} – ${clock(end)}`;
   }
@@ -378,23 +405,23 @@ export class TimeGrid implements CalendarView {
     this.root.classList.remove("is-dragging");
     if (!d) {
       // A click: open an event, or make one where you clicked.
-      if (p.o && p.node) return this.env.open(p.o, p.node.getBoundingClientRect());
+      const node = this.pressedNode(p);
+      if (p.o && node) return this.env.open(p.o, node.getBoundingClientRect());
       if (p.target === "allday") {
-        const day = this.dayAt(p.day);
-        return this.env.create({ allDay: true, startDay: day, endDay: addDays(day, 1) }, new DOMRect(e.clientX, e.clientY, 1, 1));
+        return this.env.create({ allDay: true, startDay: p.day, endDay: addDays(p.day, 1) }, new DOMRect(e.clientX, e.clientY, 1, 1));
       }
       if (p.target === "empty") {
         const start = Math.min(24 * 60 - 30, Math.floor(p.minutes / 15) * 15);
         const ghost = el("div", { class: "cal-event cal-ghost" }, el("span", { class: "cal-event-title" }, "New event"));
         this.body.append(ghost);
         this.ghostAt(ghost, p.day, start, start + 30);
-        return this.env.create({ allDay: false, day: this.dayAt(p.day), start, end: start + 30 }, ghost.getBoundingClientRect(), ghost);
+        return this.env.create({ allDay: false, day: p.day, start, end: start + 30 }, ghost.getBoundingClientRect(), ghost);
       }
       return;
     }
     if (d.kind === "create") {
       const { start, end } = dragRange(d.from, d.to);
-      return this.env.create({ allDay: false, day: this.dayAt(d.day), start, end }, d.ghost.getBoundingClientRect(), d.ghost);
+      return this.env.create({ allDay: false, day: d.day, start, end }, d.ghost.getBoundingClientRect(), d.ghost);
     }
     if (d.kind === "moveAllDay") {
       const s = localSpan(d.o);
@@ -402,13 +429,13 @@ export class TimeGrid implements CalendarView {
       return this.env.move(d.o, { allDay: true, startDay: addDays(s.startDay, d.shift), endDay: addDays(s.endDay, d.shift) }, d.node.getBoundingClientRect());
     }
     const s = localSpan(d.o);
-    const dayShift = d.day - d.startDay;
+    const dayShift = daysBetween(d.startDay, d.day);
     const startDay = addDays(s.startDay, dayShift);
     // An event that runs past midnight keeps its end day; one within a day ends on its new day.
     const endDay = s.startDay === s.endDay ? startDay : addDays(s.endDay, dayShift);
-    const start = d.kind === "resize" ? (s.startDay === this.dayAt(d.startDay) ? s.start : 0) : d.start;
+    const start = d.kind === "resize" ? (s.startDay === d.startDay ? s.start : 0) : d.start;
     const end = d.kind === "resize" ? d.end : s.startDay === s.endDay ? d.end : s.end;
-    this.env.move(d.o, { allDay: false, startDay, start, endDay: d.kind === "resize" ? this.dayAt(d.day) : endDay, end }, d.node.getBoundingClientRect());
+    this.env.move(d.o, { allDay: false, startDay, start, endDay: d.kind === "resize" ? d.day : endDay, end }, d.node.getBoundingClientRect());
   }
 
   private cancel() {
