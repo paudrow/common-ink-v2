@@ -1,7 +1,7 @@
 // What every Calendar view draws from, and how the page asks things of them. The page (page.ts) owns
 // the events, the focus and the editor; a view draws a stretch of days and reports what you do in it.
 import type { Occurrence } from "common-ink/calendar";
-import { dayOf, type Day, type View } from "./model.ts";
+import { addDays, dayOf, daysBetween, type Day, type View } from "./model.ts";
 
 /** Where an event goes when it's dragged: new days, and for one with times, new minutes from midnight. */
 export type Moved = { allDay: true; startDay: Day; endDay: Day } | { allDay: false; startDay: Day; start: number; endDay: Day; end: number };
@@ -47,6 +47,20 @@ export function localSpan(o: Occurrence): { startDay: Day; endDay: Day; start: n
   const s = new Date(o.start);
   const e = new Date(o.end);
   return { startDay: dayOf(s), endDay: dayOf(e), start: s.getHours() * 60 + s.getMinutes(), end: e.getHours() * 60 + e.getMinutes() };
+}
+
+/**
+ * Where a timed event goes when it's dropped: dragged from one day to another and a new start, or its
+ * end dragged to a time. `start` and `end` are minutes from midnight on the day it's dropped on.
+ */
+export function dropped(o: Occurrence, d: { kind: "move" | "resize"; startDay: Day; day: Day; start: number; end: number }): Moved {
+  const s = localSpan(o);
+  const shift = daysBetween(d.startDay, d.day);
+  const startDay = addDays(s.startDay, shift);
+  if (d.kind === "resize") return { allDay: false, startDay, start: s.startDay === d.startDay ? s.start : 0, endDay: d.day, end: d.end };
+  // An event that runs past midnight keeps its end day; one within a day ends on its new day.
+  if (s.startDay !== s.endDay) return { allDay: false, startDay, start: d.start, endDay: addDays(s.endDay, shift), end: s.end };
+  return { allDay: false, startDay, start: d.start, endDay: startDay, end: d.end };
 }
 
 /** An event long enough to sit with the all-day ones: all day, or 24 hours or more. */
