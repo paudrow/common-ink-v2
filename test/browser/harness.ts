@@ -8,7 +8,7 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import type { Browser, Page } from "playwright-core";
 import { ensureBuilt, isExpectedConsoleError, launchChrome, startWorker, type LocalWorker } from "./launch.ts";
-import { App } from "./pages.ts";
+import { App, bounded } from "./pages.ts";
 import { PRESETS, type Preset } from "../../web/src/device.ts";
 
 /** Start the Worker and Chrome before this file's tests, and stop them after. `vars` replace the Worker's dev ones. */
@@ -55,6 +55,8 @@ export interface BrowserTestOptions {
   sites?: Record<string, string>;
   /** Known to fail, and why: the pull request that fixes it. The test runs, and its failure is reported but doesn't fail the run. */
   todo?: string;
+  /** How long it may take, in ms, before it fails and its page is closed: two minutes unless it says. */
+  timeout?: number;
 }
 
 const RESULTS = path.resolve(import.meta.dirname, "../../test-results");
@@ -62,7 +64,7 @@ const tracing = !!(process.env.CI || process.env.TRACE);
 
 /** One browser test, in its own context, as a person would meet the app: see BrowserTestOptions. */
 export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
-  test(name, o.todo ? { todo: o.todo } : {}, async (t) => {
+  test(name, { timeout: o.timeout ?? 120_000, ...(o.todo ? { todo: o.todo } : {}) }, async (t) => {
     const preset = o.device && PRESETS[o.device];
     const touch = !!preset?.touch || !!o.touch;
     const viewport = o.viewport ?? (preset ? { width: preset.width, height: preset.height } : { width: 1200, height: 800 });
@@ -78,6 +80,14 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("console", (m) => m.type() === "error" && !isExpectedConsoleError(m.text(), m.location().url) && errors.push(m.text()));
     const app = new App(page, h.base);
+    let evidence: Promise<void> | undefined;
+    const fail = () => (evidence ??= keepEvidence(name, page, errors, tracing ? (file) => context.tracing.stop({ path: file }) : null));
+    let done = false;
+    // Out of time: node:test moves on, but whatever the test awaits in its page would wait on. Closing the
+    // page's context ends it, so the next test has the browser to itself. The evidence gets ten seconds
+    // first: from a page whose thread is held, a screenshot or a trace can take most of a minute. node:test
+    // aborts the signal when any test ends, too, passed or failed; by then the body is done and has closed it.
+    t.signal.addEventListener("abort", () => done || void bounded("the evidence", fail(), 10_000).catch(() => {}).finally(() => context.close()), { once: true });
     try {
       if (o.scenario) await app.reset(o.scenario);
       await app.goto(o.device ? { ...o.levers, device: o.device } : o.levers, o.open);
@@ -90,9 +100,10 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
       if (tracing) await context.tracing.stop();
       if (o.todo) t.diagnostic(`This passes now: take its todo off (${o.todo})`);
     } catch (err) {
-      await keepEvidence(name, page, errors, tracing ? (file) => context.tracing.stop({ path: file }) : null);
+      await fail();
       throw err;
     } finally {
+      done = true;
       await context.close();
     }
   });
@@ -102,8 +113,8 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
 async function keepEvidence(name: string, page: Page, errors: string[], trace: ((file: string) => Promise<void>) | null) {
   const dir = path.join(RESULTS, name.replace(/[^\w]+/g, "-").slice(0, 80));
   fs.mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true }).catch(() => {});
-  const state = await page.evaluate(() => (window as unknown as { __commonInk?: { state(): unknown } }).__commonInk?.state()).catch((e: Error) => ({ unavailable: e.message }));
+  await bounded("the screenshot", page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true, timeout: 10_000 }), 10_000).catch(() => {});
+  const state = await bounded("__commonInk.state()", page.evaluate(() => (window as unknown as { __commonInk?: { state(): unknown } }).__commonInk?.state()), 10_000).catch((e: Error) => ({ unavailable: e.message }));
   fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(state ?? { unavailable: "no inspector on the page" }, null, 2));
   fs.writeFileSync(path.join(dir, "errors.txt"), errors.join("\n"));
   await trace?.(path.join(dir, "trace.zip")).catch(() => {});
@@ -111,21 +122,21 @@ async function keepEvidence(name: string, page: Page, errors: string[], trace: (
 
 /** Run a command from the command bar, by its title. */
 export const runCommand = (page: Page, title: string) =>
-  page.evaluate((title) => {
+  bounded(`runCommand(${JSON.stringify(title)})`, page.evaluate((title) => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", metaKey: true, ctrlKey: !navigator.platform.includes("Mac"), shiftKey: true, bubbles: true }));
     const input = document.querySelector<HTMLInputElement>("#command-bar input")!;
     input.value = `>${title}`;
     input.dispatchEvent(new Event("input"));
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  }, title);
+  }, title));
 
 /** Write a file as the signed-in person. */
 export const writeFile = (page: Page, path: string, text: string) =>
-  page.evaluate(
+  bounded(`writeFile(${JSON.stringify(path)})`, page.evaluate(
     async ([path, text]) => {
       const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
       const base = res.status === 200 ? (await res.json()).revision : 0;
       await fetch("/api/file", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, text, base }) });
     },
     [path, text],
-  );
+  ));

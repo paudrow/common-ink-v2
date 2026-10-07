@@ -61,6 +61,12 @@ test("a sandboxed extension can't read the app's cookies, storage, page or notes
   await page.reload();
   await page.waitForSelector(".cm-content");
   await runCommand(page, "Run probe");
+  // Its own notice, sent after, can't hide the refusal of what it never asked for: it waits for that to be closed.
+  const refusal = page.locator(".notice", { hasText: "it never asked for that" });
+  await refusal.waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator(".notice", { hasText: /PROBE \{/ }).count(), 0, "its news waits behind the refusal");
+  await refusal.locator(".notice-close").click();
   await page.waitForFunction(() => [...document.querySelectorAll(".notice p")].some((p) => p.textContent?.includes("PROBE")));
   const said = await page.evaluate(() => [...document.querySelectorAll(".notice p")].map((p) => p.textContent).find((t) => t?.includes("PROBE"))!);
   assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), {

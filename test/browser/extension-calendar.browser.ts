@@ -90,6 +90,10 @@ browserTest(h, "an extension that may only change events learns nothing about th
   );
   await app.reload();
   await app.command("Run Planner");
+  // Its status call is refused, and said so: its own notice waits until that's closed.
+  const denial = app.page.locator(".notice", { hasNotText: /WRITER \{/ });
+  await denial.waitFor();
+  await denial.locator(".notice-close").click();
   const said = (await app.page.locator(".notice p", { hasText: "WRITER" }).textContent())!;
   assert.deepEqual(JSON.parse(said.slice(said.indexOf("{"))), { edit: { status: "saved", address: "event:sample/work/standup" }, status: "refused" });
 });
