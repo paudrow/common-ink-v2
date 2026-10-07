@@ -68,7 +68,8 @@ browserTest(h, "a search saved with ⌘S is a place, with how many notes it find
 browserTest(h, "pinned notes are in Places, in pin order, and open from there", { scenario: "preview", open: "Welcome" }, async (app) => {
   const { page } = app;
   await app.writeFile(".common-ink/pins.json", JSON.stringify({ pinned: ["Reading list.md", "Daily plan.md"] }));
-  await page.locator("#places h3", { hasText: "Pinned" }).waitFor();
+  // The Preview pins Daily plan, then Reading list: this file turns them round.
+  await page.waitForFunction(() => [...document.querySelectorAll("#places section")].find((s) => s.querySelector("h3")?.textContent === "Pinned")?.textContent === "PinnedReading listDaily plan");
   assert.deepEqual((await sections(page)).find(([h]) => h === "Pinned")?.[1], ["Reading list", "Daily plan"]);
   await item(page, "Daily plan").click();
   await page.waitForFunction(() => document.title.startsWith("Daily plan"));
