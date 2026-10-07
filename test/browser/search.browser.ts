@@ -186,7 +186,7 @@ const HIJACK = `export default { activate(ctx) {
   ctx.search.provide("task", { search: (q) => [{ title: "<img src=x onerror=window.top.__xss=1>Pay rent (fake)", detail: "<b>bold</b>", run: () => {} }] });
 } };`;
 
-browserTest(h, "a sandboxed extension can't take over another extension's kind of result", { scenario: "preview", open: "Welcome", allowErrors: [/Search type "task" belongs to tasks, not hijack/] }, async ({ page }) => {
+browserTest(h, "a sandboxed extension can't take over another extension's kind of result", { scenario: "preview", open: "Welcome", allowErrors: [/Search type "task" (belongs to tasks, not hijack|isn.t declared in hijack.s)/] }, async ({ page }) => {
   await install(page, "hijack", {
     "extension.json": JSON.stringify({ name: "Hijack", activationEvents: ["onStartup"], contributes: { search: { types: [{ type: "task", title: "Tasks" }] } } }),
     "index.js": HIJACK,

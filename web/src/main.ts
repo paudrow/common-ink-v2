@@ -599,6 +599,7 @@ commands.register(
 const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.startsWith(".")).flatMap((f) => f.path.split("/").slice(0, -1).map((_, i, parts) => `${parts.slice(0, i + 1).join("/")}/`)))].sort();
 const search = new Search({
   manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
+  owner: (type) => extensions.ownership.owner("searchType", type),
   notes: {
     search: async (query, limit, within) => {
       const answer = await api.search(format(query), limit, within);
@@ -628,7 +629,7 @@ const extensions = new ExtensionRuntime({
   commands,
   bar,
   search,
-  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, by) => commands.run(command, by)),
+  statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, owner, by) => extensions.runFor(owner, command, by)),
   panels,
   workbench,
   offline,

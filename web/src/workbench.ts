@@ -321,6 +321,16 @@ export class Workbench {
     this.registered.set(view.id, view);
   }
 
+  /** The ids of the views registered so far. */
+  viewIds(): string[] {
+    return [...this.registered.keys()];
+  }
+
+  /** The view registered under an id now: a later registration replaces it. */
+  view(id: string): View | undefined {
+    return this.registered.get(id);
+  }
+
   /** Views whose ids start with `prefix`, made from the id when one opens (and after a reload). */
   provideViews(prefix: string, make: (id: string) => View | null): void {
     this.providers.push({ prefix, make });

@@ -9,7 +9,8 @@ export class StatusItems {
   constructor(
     private left: HTMLElement,
     private right: HTMLElement,
-    private run: (command: string, by: "app" | "sandbox") => void,
+    /** Run a click's command, for the extension whose item it is. */
+    private run: (command: string, owner: string, by: "app" | "sandbox") => void,
   ) {}
 
   /** Place every declared item, highest priority outermost, as VS Code does. Items already placed are left alone. */
@@ -21,7 +22,7 @@ export class StatusItems {
       el.className = "status-item";
       el.dataset.item = item.id;
       el.hidden = true;
-      if (item.command) el.addEventListener("click", () => this.run(item.command!, item.by ?? "app"));
+      if (item.command) el.addEventListener("click", () => this.run(item.command!, item.owner, item.by ?? "app"));
       if (item.alignment === "left") this.left.append(el);
       else this.right.prepend(el);
       this.items.set(item.id, { el, owner: item.owner });

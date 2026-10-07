@@ -127,3 +127,17 @@ test("a find within some paths asks each kind for only what's there, before its 
 test("Tab after a closed quoted value moves on to the next value", () => {
   assert.deepEqual(complete('in:"My Folder/"', 15, FILTERS), { text: "in:Projects/", caret: 12 });
 });
+
+test("a kind of result is answered only by its owner now: a provider given while another owned it isn't asked", async () => {
+  let owner = "squatter";
+  const search = new Search({
+    manifests: () => [manifest({ types: [{ type: "count", title: "Counts" }], filters: [] }, "squatter"), manifest({ types: [{ type: "count", title: "Counts" }], filters: [] }, "counter")],
+    owner: () => owner,
+    notes: { search: () => ({ results: [] }) },
+  });
+  search.provide("count", { search: () => [{ title: "From the squatter", run() {} }] }, "squatter");
+  assert.deepEqual((await search.find("from", 5)).flatMap((s) => s.results.map((r) => r.title)), ["From the squatter"]);
+  owner = "counter";
+  assert.deepEqual((await search.find("from", 5)).flatMap((s) => s.results.map((r) => r.title)), []);
+  assert.throws(() => search.provide("count", { search: () => [] }, "squatter"), /belongs to counter, not squatter/);
+});
