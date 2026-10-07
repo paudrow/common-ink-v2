@@ -1349,7 +1349,7 @@ function goTo(place: Place) {
   // The Feed takes the list back to every note, and (with the Feed extension on) shows the Feed in the window.
   if ("list" in place.open || place.id === "feed") showFeed();
   if ("view" in place.open) workbench.openView(place.open.view);
-  else void commands.start(place.open.command, place.by);
+  else if ("command" in place.open) void commands.start(place.open.command, place.by);
   sidebar.render();
 }
 async function saveSearch(query: string) {
