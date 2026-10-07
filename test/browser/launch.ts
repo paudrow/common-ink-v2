@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { unstable_dev } from "wrangler";
+import { oneAtATime } from "./lock.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 
@@ -45,16 +46,26 @@ function newest(dir: string): number {
   return latest;
 }
 
-/** Build the app and its seeds if they're missing or older than the code and samples they come from. */
+function built(): boolean {
+  const seeds = path.join(root, "dist/levers/scenarios.json");
+  const stamp = existsSync(seeds) ? statSync(seeds).mtimeMs : 0;
+  return stamp > Math.max(...["web", "worker/src", "examples", "test/scenarios", "test/fixtures"].map((d) => newest(path.join(root, d))));
+}
+
+/**
+ * Build the app and its seeds if they're missing or older than the code and samples they come from.
+ * Test files run side by side, and a build empties dist under the others' Workers, so one builds while
+ * the rest wait for it.
+ */
 export function ensureBuilt(): void {
-  const built = path.join(root, "dist/levers/scenarios.json");
-  const stamp = existsSync(built) ? statSync(built).mtimeMs : 0;
-  const sources = Math.max(...["web", "worker/src", "examples", "test/scenarios", "test/fixtures"].map((d) => newest(path.join(root, d))));
-  if (stamp > sources) return;
-  for (const script of ["build", "seed"]) {
-    const done = spawnSync("npm", ["run", "--silent", script], { cwd: root, stdio: ["ignore", "ignore", "inherit"] });
-    if (done.status !== 0) throw new Error(`npm run ${script} failed`);
-  }
+  if (built()) return;
+  oneAtATime(path.join(root, "node_modules/.common-ink-build"), () => {
+    if (built()) return;
+    for (const script of ["build", "seed"]) {
+      const done = spawnSync("npm", ["run", "--silent", script], { cwd: root, stdio: ["ignore", "ignore", "inherit"] });
+      if (done.status !== 0) throw new Error(`npm run ${script} failed`);
+    }
+  });
 }
 
 /**

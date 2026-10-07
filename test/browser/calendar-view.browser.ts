@@ -147,46 +147,79 @@ browserTest(h, "an event clicked as the calendar draws again opens its editor be
   assert.ok(Math.abs(editor.x - (now.x + now.width + 8)) < 4, `the editor starts just right of the dentist (${editor.x} vs ${now.x + now.width + 8})`);
 });
 
-browserTest(h, "what's dragged stays under the pointer while the calendar draws again", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+/** Press at one place, move halfway, draw again, move the rest, check `during`, and let go. */
+async function dragAcrossRedraw(app: App, from: { x: number; y: number }, to: { x: number; y: number }, during: () => Promise<void>) {
+  await app.page.mouse.move(from.x, from.y);
+  await app.page.mouse.down();
+  const step = (i: number) => app.page.mouse.move(from.x + ((to.x - from.x) * i) / 8, from.y + ((to.y - from.y) * i) / 8);
+  for (let i = 1; i <= 4; i++) await step(i);
+  await redraw(app);
+  for (let i = 5; i <= 8; i++) await step(i);
+  await during();
+  await app.page.mouse.up();
+}
+
+browserTest(h, "an event dragged while the calendar draws again stays under the pointer", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
   await openCalendar(app);
-  /** Press at one place, move halfway, draw again, move the rest, check `during`, and let go. */
-  async function dragAcrossRedraw(from: { x: number; y: number }, to: { x: number; y: number }, during: () => Promise<void>) {
-    await app.page.mouse.move(from.x, from.y);
-    await app.page.mouse.down();
-    const step = (i: number) => app.page.mouse.move(from.x + ((to.x - from.x) * i) / 8, from.y + ((to.y - from.y) * i) / 8);
-    for (let i = 1; i <= 4; i++) await step(i);
-    await redraw(app);
-    for (let i = 5; i <= 8; i++) await step(i);
-    await during();
-    await app.page.mouse.up();
-  }
   const dentist = app.page.locator('.cal-event[data-address="event:sample/personal/dentist"]');
   const d = await box(app, dentist);
   const to = await at(app, "2026-10-07", 16 * 60 + 15);
-  await dragAcrossRedraw({ x: d.x + d.width / 2, y: d.y + 8 }, { x: to.x, y: to.y + 8 }, async () => {
+  await dragAcrossRedraw(app, { x: d.x + d.width / 2, y: d.y + 8 }, { x: to.x, y: to.y + 8 }, async () => {
     assert.equal(await dentist.count(), 1, "one dentist while it's dragged");
     const moving = await box(app, app.page.locator(".cal-event.is-moving"));
     assert.ok(Math.abs(moving.y - to.y) < 4, `the dentist is drawn at 16:15 while it's dragged (${moving.y} vs ${to.y})`);
   });
   await until(app, "the dentist moved to Wednesday 16:15", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T16:15:00");
+});
 
+browserTest(h, "an all-day event dragged while the calendar draws again stays under the pointer", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
   const offsite = app.page.locator('.cal-bar[data-address="event:sample/work/offsite"]');
   const o = await box(app, offsite);
   const col = (await box(app, app.page.locator('.cal-day[data-day="2026-10-08"]'))).width;
-  await dragAcrossRedraw({ x: o.x + 10, y: o.y + o.height / 2 }, { x: o.x + 10 + col, y: o.y + o.height / 2 }, async () => {
+  await dragAcrossRedraw(app, { x: o.x + 10, y: o.y + o.height / 2 }, { x: o.x + 10 + col, y: o.y + o.height / 2 }, async () => {
     assert.equal(await offsite.count(), 1, "one offsite while it's dragged");
     const moved = await box(app, offsite);
     assert.ok(Math.abs(moved.x - (o.x + col)) < 4, `the offsite is drawn a day later while it's dragged (${moved.x} vs ${o.x + col})`);
   });
   await until(app, "the offsite moved a day later", async () => (await event(app, "event:sample/work/offsite"))?.start === "2026-10-09");
+});
 
-  const from = await at(app, "2026-10-09", 14 * 60 + 5);
-  await dragAcrossRedraw(from, await at(app, "2026-10-09", 15 * 60 + 20), async () => {
+browserTest(h, "a new event dragged out while the calendar draws again stays drawn", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await dragAcrossRedraw(app, await at(app, "2026-10-09", 14 * 60 + 5), await at(app, "2026-10-09", 15 * 60 + 20), async () => {
     assert.equal(await app.page.locator(".cal-ghost").count(), 1, "the new event is drawn while it's dragged");
   });
   const editor = app.page.locator(".cal-editor");
   await editor.waitFor();
   assert.deepEqual(await editor.locator('input[type="time"]').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value)), ["14:00", "15:30"]);
+});
+
+browserTest(h, "a new event dragged out as the keys jump weeks ahead keeps the day it was dragged on", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const from = await at(app, "2026-10-09", 14 * 60 + 5);
+  const to = await at(app, "2026-10-09", 15 * 60 + 20);
+  await app.page.mouse.move(from.x, from.y);
+  await app.page.mouse.down();
+  for (let i = 1; i <= 8; i++) await app.page.mouse.move(from.x, from.y + ((to.y - from.y) * i) / 8);
+  for (const key of ["l", "l", "l"]) await app.page.keyboard.press(key);
+  await app.page.locator('.cal-day[data-day="2026-11-15"]').waitFor({ state: "attached" });
+  await app.page.mouse.up();
+  const editor = app.page.locator(".cal-editor");
+  await editor.waitFor();
+  assert.deepEqual(await editor.locator('input[type="date"], input[type="time"]').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value)), ["2026-10-09", "14:00", "2026-10-09", "15:30"]);
+});
+
+browserTest(h, "after an event is dragged, the calendar's keys still work", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const to = await at(app, "2026-10-07", 16 * 60 + 15);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
+  await until(app, "the dentist moved to Wednesday 16:15", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T16:15:00");
+  const heading = app.page.locator(".cal-title-text");
+  assert.equal(await heading.textContent(), "Oct 5 – 11, 2026");
+  await app.page.keyboard.press("l");
+  await until(app, "l goes to the next week", async () => (await heading.textContent()) === "Oct 12 – 18, 2026");
 });
 
 browserTest(h, "a repeating event's edits ask which ones: this event, this and following, all", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
@@ -369,4 +402,21 @@ browserTest(h, "an event dragged late enough to run past midnight ends on the ne
   await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: to.x, y: to.y + 8 });
   await until(app, "the dentist moved to 23:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-06T23:30:00");
   assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T00:15:00", "its 45 minutes, into Wednesday");
+});
+
+browserTest(h, "an event that runs past midnight, dragged by its part on the next day, keeps its length", { scenario: "calendar", open: "Calendar tour", levers: LEVERS }, async (app) => {
+  await openCalendar(app);
+  await app.page.waitForFunction(() => document.querySelector(".cal-scroll")!.scrollLeft > 0);
+  await app.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = s.scrollHeight));
+  const dentist = await box(app, app.page.locator(".cal-event", { hasText: "Dentist" }));
+  const late = await at(app, "2026-10-06", 23 * 60 + 30);
+  await drag(app, { x: dentist.x + dentist.width / 2, y: dentist.y + 8 }, { x: late.x, y: late.y + 8 });
+  await until(app, "the dentist runs 23:30 to 00:15", async () => (await event(app, "event:sample/personal/dentist"))?.end === "2026-10-07T00:15:00");
+  await app.page.locator(".cal-scroll").evaluate((s) => (s.scrollTop = 0));
+  const part = await box(app, app.page.locator('.cal-day[data-day="2026-10-07"] .cal-event[data-address="event:sample/personal/dentist"]'));
+  const to = await at(app, "2026-10-07", 60);
+  await drag(app, { x: part.x + part.width / 2, y: part.y + 4 }, { x: part.x + part.width / 2, y: to.y + 4 });
+  await until(app, "the dentist moved to Wednesday 00:30", async () => (await event(app, "event:sample/personal/dentist"))?.start === "2026-10-07T00:30:00");
+  assert.equal((await event(app, "event:sample/personal/dentist"))?.end, "2026-10-07T01:15:00", "it keeps its 45 minutes");
 });
