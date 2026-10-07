@@ -14,6 +14,7 @@ import { parseUploads, UPLOADS_PATH, uploadUrl, type UploadResult } from "./uplo
 import { inGlobs } from "./globs.ts";
 import { asksFor, format, parse, problems, titleOf, type Query } from "./query.ts";
 import { ARCHIVE_PATH, archiveText, parseArchive, readArchive, withArchived } from "./archive.ts";
+import { PINS_PATH, parsePins, pinsText, readPins, withPinned } from "./pins.ts";
 import { present, type SearchOptions, type SearchResults } from "./search.ts";
 import { isNote, parseFilePath, type Deleted, type Author, type FileDiff, type FilePath, type Change, type WorkspaceFile, type FileSummary, type HistoryQuery, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 
@@ -570,7 +571,7 @@ export const OPERATIONS = {
       const inside = within ? inGlobs(within) : () => true;
       const found = asksFor(q, "trashed")
         ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit, offset })
-        : await store.search(q, { ctx, limit, offset, archived: await archivedIn(store), within });
+        : await store.search(q, { ctx, limit, offset, archived: await archivedIn(store), pinned: await pinnedIn(store), within });
       return { query: format(q), problems: problems(q), ...found };
     },
   }),
@@ -632,6 +633,22 @@ export const OPERATIONS = {
     input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
     parse: (a) => notePaths(a.paths),
     run: async (store, { paths }, author) => setArchived(store, paths, false, author),
+  }),
+  pin: op<{ paths: FilePath[] }>({
+    description:
+      "Pin notes: they stay first in the Feed, under Pinned, in the order they were pinned, and is:pinned finds them. It's one change to .common-ink/pins.json, by you; undo its revision to take it back. Says the change's revision (null if they were all pinned already) and every pinned path, in order.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => {
+      for (const path of paths) if (!(await store.read(path))) throw new OperationError(`There's no note at ${path}`);
+      return setPinned(store, paths, true, author);
+    },
+  }),
+  unpin: op<{ paths: FilePath[] }>({
+    description: "Unpin notes: one change to .common-ink/pins.json, by you. Says the change's revision (null if none of them was pinned) and every pinned path, in order.",
+    input: { type: "object", properties: { paths: { type: "array", items: PATH, minItems: 1, maxItems: 500 } }, required: ["paths"] },
+    parse: (a) => notePaths(a.paths),
+    run: async (store, { paths }, author) => setPinned(store, paths, false, author),
   }),
   list_embeds: op<Record<string, never>>({
     description:
@@ -737,6 +754,22 @@ async function setArchived(store: Store, paths: FilePath[], archived: boolean, a
   const result = await store.write({ path: ARCHIVE_PATH, text: archiveText(next), base: file?.revision ?? 0, author });
   if (result.status === "conflict") throw new OperationError("The archive changed meanwhile and couldn't be merged; try again");
   return { revision: result.file.revision, archived: parseArchive(result.file.text) };
+}
+
+/** Pin or unpin notes: one change to the pins file, merged as an ordered set with any other (pins.ts). */
+async function setPinned(store: Store, paths: FilePath[], pinned: boolean, author: Author): Promise<{ revision: Revision | null; pinned: FilePath[] }> {
+  const file = await store.read(PINS_PATH);
+  const current = readPins(file?.text ?? "");
+  if (!current) throw new OperationError(`${PINS_PATH} isn't valid JSON with a "pinned" list, so it wasn't changed. Fix it, or put back an earlier version from History.`);
+  const next = withPinned(current, paths, pinned);
+  if (next.pinned.join("\n") === current.pinned.join("\n")) return { revision: null, pinned: next.pinned };
+  const result = await store.write({ path: PINS_PATH, text: pinsText(next), base: file?.revision ?? 0, author });
+  if (result.status === "conflict") throw new OperationError("The pins changed meanwhile and couldn't be merged; try again");
+  return { revision: result.file.revision, pinned: parsePins(result.file.text) };
+}
+
+async function pinnedIn(store: Store): Promise<Set<string>> {
+  return new Set(parsePins((await store.read(PINS_PATH))?.text ?? ""));
 }
 
 /** An operation couldn't be done, for a reason the caller can act on: it comes back as an error, not a crash. */
