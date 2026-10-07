@@ -6,7 +6,7 @@
 import { ago, describeAuthor } from "common-ink/describe";
 import { icon } from "common-ink/icons";
 import type { Author } from "../../../../worker/src/files.ts";
-import { swipeable } from "./swipe.ts";
+import { swipeable } from "common-ink/swipe";
 
 /** A note in Trash, as the trash operation lists it. */
 export interface Trashed {

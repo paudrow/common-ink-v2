@@ -150,6 +150,25 @@ function longPress(b: HTMLElement, held: () => void): void {
   );
 }
 
+const LAST_PLACE = "common-ink.place";
+
+/** The place you were last on, on this device: its browser keeps it. */
+function lastPlace(): string | null {
+  try {
+    return localStorage.getItem(LAST_PLACE);
+  } catch {
+    return null;
+  }
+}
+
+function remember(id: string): void {
+  try {
+    localStorage.setItem(LAST_PLACE, id);
+  } catch {
+    // No storage (a private window): the app opens on the Feed.
+  }
+}
+
 export class Shell {
   readonly top = el("header", { id: "shell-top" });
   readonly bottom = el("nav", { id: "shell-bar", ariaLabel: "Places" });
@@ -163,6 +182,7 @@ export class Shell {
   private awaitingRoot = false;
   /** History is reconciled with what's on show once the app has started, and not while an entry is restored. */
   private ready = false;
+  private openedEarly = false;
   private holding = 0;
   /**
    * Entries being restored (the browser's back and forward, a reload), one after another: each waits for
@@ -253,6 +273,7 @@ export class Shell {
       if (!this.awaitingRoot) return this.update();
     }
     this.place = id;
+    remember(id);
     this.root = null;
     this.awaitingRoot = false;
     if ("list" in place.open) this.screen = "list";
@@ -316,15 +337,25 @@ export class Shell {
   }
 
   /**
-   * The app has started. A reload shows what its entry says. Otherwise the Feed's own entry goes under
-   * what's on show, so back goes to the Feed, and then leaves.
+   * The app has started. A reload shows what its entry says. Opened afresh, it shows the place you were
+   * last on, on this device (decision 21; the Feed at first), unless its address names a note: then the
+   * note shows over the Feed, whose own entry goes under it, so back goes to the Feed, and then leaves.
    */
-  started(state: unknown): void {
+  started(state: unknown, how: { note?: boolean } = {}): void {
     if (!this.on) return void (this.ready = true);
     const kept = entryOf(state);
     if (kept) {
       this.ready = true;
       return this.restore(kept);
+    }
+    if (!how.note && !this.openedEarly) {
+      const last = lastPlace();
+      const place = this.deps.places().find((p) => p.id === last) ?? this.deps.places().find((p) => p.id === "feed");
+      if (place) {
+        this.deps.replace({ place: place.id, show: "list", own: true, above: 0 });
+        this.ready = true;
+        return this.go(place.id, { push: false });
+      }
     }
     this.deps.replace({ place: this.place, show: "list", own: true, above: 0 });
     if (!this.deps.showing()) this.screen = "list";
@@ -334,6 +365,8 @@ export class Shell {
 
   /** Something came on show in the window (a note opened, a view): it shows over the place. */
   showWindow(): void {
+    // Before the app has started, something opened already (a link, a script) is what to show, not the last place.
+    if (!this.ready) this.openedEarly = true;
     this.screen = "window";
     if (this.awaitingRoot) [this.root, this.awaitingRoot] = [this.deps.showing()?.key ?? null, false];
     this.update();
@@ -360,6 +393,7 @@ export class Shell {
         this.sheet?.close();
         const place = this.deps.places().find((p) => p.id === entry.place);
         this.place = entry.place;
+        remember(entry.place);
         this.awaitingRoot = false;
         this.screen = entry.show === "list" ? "list" : "window";
         // What the place itself shows, for telling it from what's over it: its view, or the note its command went to.

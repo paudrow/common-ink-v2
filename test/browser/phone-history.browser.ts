@@ -97,15 +97,18 @@ const STEPS: Step[] = [
       await tap(app, '#shell-bar [aria-label="Search"]');
       await app.page.locator("#command-bar:not([hidden]) input").waitFor();
       await app.page.keyboard.insertText("Basil");
-      const hit = app.page.locator("#command-bar li", { hasText: "Lists tour" }).first();
+      // The search's own hit: until it answers, the list is still the empty query's (Recent, which has
+      // Lists tour too), and a tap on that as it's drawn again can land on nothing.
+      await app.page.locator("#command-bar-items:not([aria-busy])").waitFor();
+      const hit = app.page.locator("#command-bar li", { hasText: "Lists tour" }).filter({ hasText: "Basil" }).first();
       await hit.waitFor();
       await hit.tap();
     },
   },
   {
-    name: "a note in the list",
-    can: async (app) => (await app.page.locator("#notes a").count()) > 0 && (await app.page.locator("#notes").isVisible()),
-    run: async (app) => tap(app, "#notes a"),
+    name: "a card in the Feed",
+    can: async (app) => (await app.page.locator(".feed-card-title").count()) > 0 && (await app.page.locator(".feed").isVisible()),
+    run: async (app) => tap(app, ".feed-card-title"),
   },
   { name: "‹", can: async (app) => (await app.page.locator('#shell-top [aria-label^="Back to"]').count()) > 0, run: (app) => tap(app, '#shell-top [aria-label^="Back to"]') },
   ...["Trash", "Archive", "Contacts", "Extensions"].map((p) => ({
@@ -228,7 +231,7 @@ const title = (app: App) => app.page.locator("#shell-top h1").innerText();
 /** ⋯ › Add label on a note shows History in the window, over the Feed. */
 async function historyOverNote(app: App) {
   await tap(app, '#shell-bar [aria-label="Feed"]');
-  await tap(app, '#notes a:text("Lists tour")');
+  await tap(app, '.feed-card-title:text-is("Lists tour")');
   await app.page.locator("#shell-top h1", { hasText: "Lists tour" }).waitFor();
   await tap(app, '#shell-top [aria-label="More"]');
   await app.page.locator(".shell-sheet .shell-action", { hasText: "Add label" }).tap();
@@ -278,7 +281,7 @@ for (const [gap, slow] of [[0, false], [150, false], [400, true]] as const) {
     for (const n of ["Lists tour", "Second", "Third"]) {
       await tap(app, '#shell-bar [aria-label="Feed"]');
       await settle(app);
-      await tap(app, `#notes a:text("${n}")`);
+      await tap(app, `.feed-card-title:text-is("${n}")`);
       await settle(app);
       if (n !== "Third") {
         await tap(app, '#shell-bar [aria-label="Calendar"]');
