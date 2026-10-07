@@ -19,17 +19,16 @@ browserTest(h, "on a wide screen Places is a sidebar beside the list and the not
   assert.deepEqual(top[1].slice(0, 3), ["Feed", "Search", "Today"]);
   assert.ok(top[1].includes("Tasks") && top[1].includes("Calendar"), JSON.stringify(top));
   assert.deepEqual(bottom[1], ["Sources", "Archive", "Trash", "Extensions", "Settings"]);
-  // The Feed is the list beside the note (decision 4): a card opens its note in the window, and the Feed stays.
-  await page.locator("#notes .list-feed .feed-card").first().waitFor();
-  await page.locator("#notes .list-feed .feed-card", { hasText: "Chores" }).first().click();
-  await page.waitForFunction(() => document.title.startsWith("Chores"));
-  assert.equal(await page.locator("#notes .list-feed").isVisible(), true);
+  // Beside the note, every note; the Feed opens in the window.
+  assert.equal(await page.locator("#notes .list-head h2").textContent(), "All notes");
+  await item(page, "Feed").click();
+  await app.tabs.tab(0, "Feed").waitFor();
   // A view place opens in the window, and is marked.
   await item(page, "Tasks").click();
   await app.tabs.tab(0, "Tasks").waitFor();
   assert.deepEqual(await current(page), ["Tasks"]);
   // The go keys, outside text.
-  await page.locator("#places h3").first().click().catch(() => page.locator("#status").click());
+  await page.locator("#notes .list-head").click();
   await page.keyboard.press("g");
   await page.keyboard.press("x");
   await app.tabs.tab(0, "Trash").waitFor();
@@ -64,8 +63,7 @@ browserTest(h, "a search saved with ⌘S is a place, with how many notes it find
   assert.equal(JSON.parse(await app.readFile(".common-ink/places.json")).saved["Tour notes"], "tour");
   // The Feed takes the list back; removing the search takes it out of places.json.
   await item(page, "Feed").click();
-  await page.locator("#notes .list-feed .feed-card").first().waitFor();
-  assert.equal(await page.locator("#notes .list-head").isVisible(), false);
+  assert.equal(await page.locator("#notes .list-head h2").textContent(), "All notes");
   await item(page, "Tour notes").hover();
   await row(page, "Tour notes").locator(".place-remove").click();
   await item(page, "Tour notes").waitFor({ state: "detached" });
