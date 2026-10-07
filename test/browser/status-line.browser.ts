@@ -286,10 +286,13 @@ browserTest(h, "typing in a 20,000-line note, each edit's count reads only the l
   await app.call("cursor", 3, 1);
   await app.keys("A");
   // Each of Words' counts is a performance measure, with how many lines it read (words/index.ts).
+  // And every long task, whoever's: work outside those measures (a second pass, a doc.toString()) shows there.
   await app.page.evaluate(() => {
-    const w = window as unknown as { counts: Array<{ lines: number; ms: number }> };
+    const w = window as unknown as { counts: Array<{ lines: number; ms: number }>; longTasks: number[] };
     w.counts = [];
+    w.longTasks = [];
     new PerformanceObserver((list) => w.counts.push(...list.getEntries().filter((e) => e.name === "Words: count").map((e) => ({ lines: (e as PerformanceMeasure).detail.lines as number, ms: e.duration })))).observe({ type: "measure" });
+    new PerformanceObserver((list) => w.longTasks.push(...list.getEntries().map((e) => Math.round(e.duration)))).observe({ type: "longtask" });
   });
   const typed = " one two three";
   for (const key of typed) {
@@ -302,5 +305,9 @@ browserTest(h, "typing in a 20,000-line note, each edit's count reads only the l
   assert.deepEqual(counts.map((c) => c.lines), Array(typed.length).fill(1), "one count per key, of the one line it changed");
   // Loose, as a busy machine is slow: counting a line is a fraction of a millisecond.
   assert.ok(counts.every((c) => c.ms < 200), `no count took long: ${counts.map((c) => Math.round(c.ms)).join(", ")} ms`);
+  // One long task is allowed: CodeMirror's first keystroke after the cursor moves reparses around it,
+  // over 50 ms on a slow machine, with or without Words. A pass over the whole note per key is many.
+  const longTasks = await app.page.evaluate(() => (window as unknown as { longTasks: number[] }).longTasks);
+  assert.ok(longTasks.length <= 1, `at most the first keystroke's long task: ${longTasks.join(", ")} ms`);
   assert.equal(Number((await words(app).textContent())!.replace(/\D/g, "")), Number(before!.replace(/\D/g, "")) + 3);
 });
