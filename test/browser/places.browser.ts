@@ -90,7 +90,10 @@ browserTest(h, "on a phone there's no sidebar: Places stays the sheet, and ⌘B 
   assert.equal(await page.locator("#places").isVisible(), false);
 });
 
-browserTest(h, "offline, two searches saved one after the other both reach places.json once back", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch/] }, async (app) => {
+// The network can come and go between the saves (the browser's offline switch doesn't hold back every
+// request): then a save made on a stale copy is refused (409) and written again on the server's, which is
+// how places.json's writer is meant to end up right. The file at the end is what's checked.
+browserTest(h, "offline, two searches saved one after the other both reach places.json once back", { scenario: "preview", open: "Welcome", allowErrors: [/ERR_INTERNET_DISCONNECTED|Failed to fetch|status of 409 \(Conflict\)/] }, async (app) => {
   const { page } = app;
   await page.locator("#places .place-item").first().waitFor();
   await page.context().setOffline(true);
