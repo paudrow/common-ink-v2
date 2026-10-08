@@ -9,13 +9,7 @@ const SLOW = [
   "regressions-saving.browser.ts",
   "regressions-undone-edits.browser.ts",
   "regressions.browser.ts",
-  "phone-walk-reload-seeds-14-16.browser.ts",
-  "phone-walk-reload-seeds-11-13.browser.ts",
   "regressions-undo.browser.ts",
-  "status-line.browser.ts",
-  "phone-walk-seeds-1-4.browser.ts",
-  "phone-walk-seeds-5-8.browser.ts",
-  "phone-shell.browser.ts",
   "leaks.browser.ts",
 ];
 
