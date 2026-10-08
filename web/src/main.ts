@@ -371,7 +371,9 @@ async function resolveConflict(): Promise<boolean> {
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
   // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
-  const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
+  // navigation-1-14 held its changes to places.json here too, with `places` in the body. This version keeps
+  // no places, so they're let go, unsent.
+  const { refused } = await offline.flushOps((op) => ("places" in op.body ? Promise.resolve() : api.editEvent(op.method, op.body, op.extension)));
   for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`, [], "alert");
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
