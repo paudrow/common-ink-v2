@@ -162,6 +162,7 @@ browserTest(h, "a Feed card beside the note is a list row: ⌘-click opens it in
   assert.ok((await app.tabs.windows())[0].tabs.some((t) => t.label === "Welcome"), "Welcome's tab stays");
   await app.listItem("Shopping.md").dblclick();
   await page.waitForFunction(() => document.title.startsWith("Shopping"));
-  const shopping = (await app.tabs.windows())[0].tabs.find((t) => t.label === "Shopping");
-  assert.equal(shopping?.preview ?? false, false, "kept, not the preview tab");
+  const shopping = (await app.tabs.windows())[0].tabs.filter((t) => t.label === "Shopping");
+  assert.equal(shopping.length, 1, "one Shopping tab");
+  assert.equal(shopping[0].preview, false, "kept, not the preview tab");
 });
