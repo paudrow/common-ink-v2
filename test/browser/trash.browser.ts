@@ -123,7 +123,7 @@ browserTest(h, "after :trash the note's tab closes and it leaves the notes list"
   await page.locator(".tab-editor:not([hidden]) .cm-content").first().focus();
   await app.keys("<Esc>:trash<CR>");
   await page.locator(".notice", { hasText: "Moved" }).waitFor();
-  await page.waitForFunction(() => !document.querySelector(`#notes [data-open='{"file":"Draft.md"}']`));
+  await page.waitForFunction(() => ![...document.querySelectorAll("#notes a")].some((a) => a.textContent === "Draft"));
   const tabs = ((await app.call("state")) as { windows: Array<{ tabs: Array<{ label: string }> }> }).windows.flatMap((w) => w.tabs.map((t) => t.label));
   assert.equal(tabs.includes("Draft"), false, JSON.stringify(tabs));
 });

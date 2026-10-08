@@ -130,7 +130,7 @@ async function scrollTo(app: App, where: "top" | "bottom") {
   }, where);
 }
 const floating = (app: App, yes: boolean) => app.page.waitForSelector(yes ? `${BOX}.is-floating` : `${BOX}:not(.is-floating)`, { state: "attached" });
-const openWelcomeInNewTab = (app: App) => app.listItem("Welcome.md").click({ modifiers: ["ControlOrMeta"] });
+const openWelcomeInNewTab = (app: App) => app.page.locator("#notes a", { hasText: "Welcome" }).click({ modifiers: ["ControlOrMeta"] });
 const floatButton = (app: App, name: string) => app.page.locator(`${BOX} .media-float-bar button[aria-label='${name}']`);
 
 /** Where the box is on the page, and whether it shows. */

@@ -6,7 +6,6 @@
 // don't move the list: a pill says how many, and a tap on it brings them in at the top.
 import type { Author, FilePath } from "common-ink/files";
 import { icon } from "common-ink/icons";
-import { IS_MAC } from "common-ink/keys";
 import { swipeable, type SwipeAction } from "common-ink/swipe";
 import { dateGroup, previewLines, type PreviewLine } from "./cards.ts";
 
@@ -29,8 +28,7 @@ export interface FeedEnv {
   pinned(): Promise<Card[]>;
   /** A note's text, for its card's lines. */
   text(path: FilePath): Promise<string>;
-  /** Open a note: in the window's preview tab, or in a tab of its own (`newTab`). */
-  open(path: FilePath, how?: { newTab?: boolean }): void;
+  open(path: FilePath): void;
   archive(paths: FilePath[]): Promise<boolean>;
   trash(paths: FilePath[]): Promise<boolean>;
   pin(paths: FilePath[], pinned: boolean): Promise<boolean>;
@@ -376,11 +374,6 @@ export class FeedView {
     if (picked) li.classList.add("picked");
     const body = el("button", "feed-card-body");
     body.type = "button";
-    // As a row of the notes list: ⌘-click (Ctrl off a Mac) opens it in a tab of its own, a double click
-    // keeps its tab, and it drags into a window (data-open, which the Workbench reads).
-    body.dataset.open = JSON.stringify({ file: card.path });
-    body.dataset.title = card.title;
-    body.draggable = !this.selected;
     const top = el("span", "feed-card-top");
     const folder = card.path.includes("/") ? card.path.slice(0, card.path.lastIndexOf("/")) : "";
     top.append(el("span", "feed-card-title", card.title), folder ? el("span", "feed-card-folder", folder) : "", el("span", "feed-card-when", this.env.when(card.edited)));
@@ -405,12 +398,7 @@ export class FeedView {
       // The finger a long press lifts lands on the card drawn again for the selection: that isn't a tap.
       if ((e as PointerEvent).pointerId === this.held) return void (this.held = null);
       if (this.selected) this.toggle(card.path);
-      else this.env.open(card.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
-    });
-    body.addEventListener("dblclick", (e) => {
-      if (this.selected) return;
-      e.preventDefault();
-      this.env.open(card.path, { newTab: true });
+      else this.env.open(card.path);
     });
     li.append(body);
     swipeable(li, body, {

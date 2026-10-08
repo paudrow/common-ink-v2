@@ -15,9 +15,9 @@ browserTest(h, "the browser's Back and Forward go through the notes you opened; 
   await until(page, "Welcome");
   const entries = () => page.evaluate(() => history.length);
   const start = await entries();
-  await page.locator(`#notes [data-open='{"file":"Chores.md"}']:visible`).click();
+  await page.locator("#notes a", { hasText: "Chores" }).click();
   await until(page, "Chores");
-  await page.locator(`#notes [data-open='{"file":"Shopping.md"}']:visible`).click();
+  await page.locator("#notes a", { hasText: "Shopping" }).click();
   await until(page, "Shopping");
   assert.equal(await entries(), start + 2, "a browser entry for each note opened");
   // Moving the cursor about isn't a place: no entries for it.
