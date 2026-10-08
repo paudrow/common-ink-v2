@@ -9,7 +9,6 @@ import { after, before, test } from "node:test";
 import type { Browser, Page } from "playwright-core";
 import { ensureBuilt, isExpectedConsoleError, launchChrome, startWorker, type LocalWorker } from "./launch.ts";
 import { App, bounded } from "./pages.ts";
-import { PRESETS, type Preset } from "../../web/src/device.ts";
 
 /** Start the Worker and Chrome before this file's tests, and stop them after. `vars` replace the Worker's dev ones. */
 export function harness(vars?: Record<string, string>) {
@@ -38,10 +37,6 @@ export interface BrowserTestOptions {
   /** The note to open first, by name or path. */
   open?: string;
   viewport?: { width: number; height: number };
-  /** A touch screen, as a phone has: taps, and no mouse to hover. */
-  touch?: boolean;
-  /** Stand in for a phone, a tablet or a laptop: its size (unless `viewport` says), touch, and the `device` lever. */
-  device?: Preset;
   dark?: boolean;
   /** The browser's time zone, such as "America/Chicago": the machine's otherwise. */
   timezone?: string;
@@ -65,10 +60,7 @@ const tracing = !!(process.env.CI || process.env.TRACE);
 /** One browser test, in its own context, as a person would meet the app: see BrowserTestOptions. */
 export function browserTest(h: ReturnType<typeof harness>, name: string, o: BrowserTestOptions, body: (app: App) => Promise<void>) {
   test(name, { timeout: o.timeout ?? 120_000, ...(o.todo ? { todo: o.todo } : {}) }, async (t) => {
-    const preset = o.device && PRESETS[o.device];
-    const touch = !!preset?.touch || !!o.touch;
-    const viewport = o.viewport ?? (preset ? { width: preset.width, height: preset.height } : { width: 1200, height: 800 });
-    const context = await h.browser.newContext({ viewport, colorScheme: o.dark ? "dark" : "light", hasTouch: touch, isMobile: touch, ...(o.timezone ? { timezoneId: o.timezone } : {}) });
+    const context = await h.browser.newContext({ viewport: o.viewport ?? { width: 1200, height: 800 }, colorScheme: o.dark ? "dark" : "light", ...(o.timezone ? { timezoneId: o.timezone } : {}) });
     // TypeScript run by the test runner names functions with a helper that pages passed them don't have.
     await context.addInitScript("window.__name = (f) => f");
     if (o.grant) await context.grantPermissions(o.grant, { origin: h.base });
@@ -90,7 +82,7 @@ export function browserTest(h: ReturnType<typeof harness>, name: string, o: Brow
     t.signal.addEventListener("abort", () => done || void bounded("the evidence", fail(), 10_000).catch(() => {}).finally(() => context.close()), { once: true });
     try {
       if (o.scenario) await app.reset(o.scenario);
-      await app.goto(o.device ? { ...o.levers, device: o.device } : o.levers, o.open);
+      await app.goto(o.levers, o.open);
       await body(app);
       assert.deepEqual(
         errors.filter((e) => !o.allowErrors?.some((r) => r.test(e))),

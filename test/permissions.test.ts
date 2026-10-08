@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseManifest, type ExtensionManifest } from "../worker/src/extensions.ts";
-import { coveringKey, decide, globMatches, hostMatches, parseGrants, type Grants } from "../worker/src/permissions.ts";
+import { coveringKey, decide, globMatches, hostMatches, parseGrants, readableIn, type Grants } from "../worker/src/permissions.ts";
 import { PermissionBroker, PermissionDenied, type Choice } from "../web/src/broker.ts";
 import type { Trigger } from "../web/src/permission-words.ts";
 
@@ -195,4 +195,14 @@ test("a request in flight shows as busy and lands in the log", async () => {
   await running;
   assert.deepEqual(b.busy(), []);
   assert.deepEqual([b.log[0].ask, b.log[0].url, b.log[0].outcome], [{ kind: "network", target: "api.weather.gov" }, "https://api.weather.gov/points", "allowed"]);
+});
+
+test("what an extension may list is what it may read: the first declared scope that covers a path decides", () => {
+  const scopes = ["Notes/**", "Notes/Secret/**", "Journal/**"];
+  const may = readableIn(scopes, [false, true, true]);
+  const m = parseManifest({ name: "Lister", permissions: { "files:read": { paths: scopes, why: "List" } } }, "lister") as ExtensionManifest;
+  const grants: Grants = { lister: { "files:read:Notes/**": "deny", "files:read:Notes/Secret/**": "allow", "files:read:Journal/**": "allow" } };
+  const paths = ["Notes/Secret/Plan.md", "Notes/Plan.md", "Journal/2026-10-08.md", "Other.md"];
+  assert.deepEqual(paths.filter(may), ["Journal/2026-10-08.md"]);
+  assert.deepEqual(paths.filter(may), paths.filter((target) => decide(m, { kind: "files:read", target }, grants).outcome === "allow"), "as files.read decides");
 });

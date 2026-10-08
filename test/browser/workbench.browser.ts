@@ -31,7 +31,7 @@ test("with Workbench, windows have tab bars; notes drag into windows to split th
   // A note dropped on a window's right edge opens in a new window to its right.
   const editors = page.locator(".group .editors").first();
   const box = (await editors.boundingBox())!;
-  await page.locator(`#notes [data-open='{"file":"Chores.md"}']:visible`).dragTo(editors, { targetPosition: { x: box.width - 10, y: box.height / 2 } });
+  await page.locator("#notes a", { hasText: "Chores" }).dragTo(editors, { targetPosition: { x: box.width - 10, y: box.height / 2 } });
   await page.waitForFunction(() => document.querySelectorAll(".group").length === 2);
   assert.equal(await page.locator(".resizer").count(), 1, "with a border between them to resize");
   assert.deepEqual(await page.locator(".group").nth(1).locator(".tab .name").allTextContents(), ["Chores"]);
@@ -58,7 +58,7 @@ test("without Workbench, each window shows its tab on show, and commands, settin
   await open(page, { "extensions.disabled": ["workbench"] });
   assert.equal(await page.locator(".tabs").count(), 0, "no tab bar");
   assert.equal(await windows(page), 1);
-  await page.locator(`#notes [data-open='{"file":"Chores.md"}']:visible`).click();
+  await page.locator("#notes a", { hasText: "Chores" }).click();
   await page.waitForFunction(() => document.title.startsWith("Chores"));
   assert.equal(await page.locator(".group .tab-editor:not([hidden])").count(), 1, "one view in the window");
   await runCommand(page, "Open user settings");
@@ -90,7 +90,7 @@ test("a Workbench that throws while drawing leaves the plain windows, and says i
   await row.locator(".extension-open").click();
   assert.match((await page.locator(".extension-details .extension-error").textContent())!, /broken tab bar/, "and its details say what");
   await page.keyboard.press("Escape");
-  await runCommand(page, "Search…");
+  await runCommand(page, "Open note…");
   await page.waitForSelector("#command-bar:not([hidden])");
   await page.close();
 });

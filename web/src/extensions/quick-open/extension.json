@@ -1,8 +1,8 @@
 {
   "id": "quick-open",
-  "name": "Search",
-  "version": "2.0.0",
-  "description": "⌘K or ⌘P: search notes by their words, and tasks and events, with filters like in:Projects/ or from:agent (docs/queries.md). Open a note or any other file by name, run a command, or make a new note.",
+  "name": "Open by name",
+  "version": "1.0.0",
+  "description": "⌘P: open a note or any other file by name, or make a new note.",
   "main": "index.js",
   "activationEvents": ["onStartup"],
   "permissions": {

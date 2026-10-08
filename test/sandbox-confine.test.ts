@@ -29,8 +29,8 @@ const APP_IDS = ["quickOpen", "commandBar", "note.save", "settings.user", "setti
 const BUILT_INS = [
   builtIn("lists", { contributes: { commands: [{ command: "lists.indent", title: "Indent" }], keybindings: [{ key: "Alt-ArrowRight", command: "lists.indent" }, { vim: ">", command: "lists.indent" }] } }),
   builtIn("data-sources", { contributes: { commands: [{ command: "dataSources.show", title: "Show" }] } }),
-  builtIn("calendar", { contributes: { commands: [{ command: "google.connect", title: "Connect" }], search: { types: [{ type: "event", title: "Events" }] } } }),
-  builtIn("tasks", { contributes: { commands: [{ command: "tasks.toggle", title: "Toggle" }], search: { types: [{ type: "task", title: "Tasks" }] }, embeds: [{ language: "kanban", title: "Board", description: "" }] } }),
+  builtIn("calendar", { contributes: { commands: [{ command: "google.connect", title: "Connect" }] } }),
+  builtIn("tasks", { contributes: { commands: [{ command: "tasks.toggle", title: "Toggle" }], embeds: [{ language: "kanban", title: "Board", description: "" }] } }),
   builtIn("quick-open"),
 ];
 
@@ -99,7 +99,7 @@ test("a trusted extension's key is taken too, and a sandboxed extension binds no
 });
 
 test("a sandboxed extension can't be named for the app's or a built-in's commands and views, in any spelling", async () => {
-  const refused = ["settings", "Settings", "SETTINGS", "extensions", "extension-activity", "levers", "dev", "lists.indent", "Lists.Indent", "dataSources", "datasources", "DataSources", "google", "quickOpen", "quickopen", "command-bar", "tab", "account", "note", "note.helper", "task", "event", "kanban"];
+  const refused = ["settings", "Settings", "SETTINGS", "extensions", "extension-activity", "levers", "dev", "lists.indent", "Lists.Indent", "dataSources", "datasources", "DataSources", "google", "quickOpen", "quickopen", "command-bar", "tab", "account", "note", "note.helper", "kanban"];
   const fine = ["word-count", "settingsy", "my.settings", "listsy", "tabby", "notes-plus"];
   const h = await load(Object.fromEntries([...refused, ...fine].map((id) => [id, {}])));
   const states = Object.fromEntries(h.records.filter((r) => r.workspace).map((r) => [r.id, r.state]));
@@ -144,49 +144,23 @@ test("confined drops anything named in a name the app or a built-in uses, even u
       views: { sidebar: [{ id: "settings", name: "Settings" }] },
       menus: { commandBar: [{ command: "settings.workspaceJson" }] },
       statusBarItems: [{ id: "x", alignment: "left", command: "settings.workspaceJson" }],
-      search: { types: [{ type: "task", title: "Tasks" }, { type: "settings-hits", title: "Hits" }] },
       embeds: [{ language: "kanban", title: "Board", description: "" }],
       urlEmbeds: [{ id: "films", title: "Films", pattern: "^https://films\\.example/", frameHosts: ["films.example"] }],
     },
   });
   const c = confined(m, { names: new Set(["settings", "task", "kanban"]), keys: new Set() }).contributes;
   assert.deepEqual(
-    [c.commands, c.keybindings, Object.values(c.views).flat(), c.menus.commandBar, c.statusBarItems.map((i) => i.command), c.search.types, c.embeds, c.urlEmbeds],
-    [[], [], [], [], [undefined], [{ type: "settings-hits", title: "Hits" }], [], []],
+    [c.commands, c.keybindings, Object.values(c.views).flat(), c.menus.commandBar, c.statusBarItems.map((i) => i.command), c.embeds, c.urlEmbeds],
+    [[], [], [], [], [undefined], [], []],
   );
 });
 
 test("a sandboxed extension's contributions are kept only by a rule for their kind", () => {
   const m = manifest("word-count", { contributes: { commands: [{ command: "wordCount.go", title: "Go" }] } });
-  const withNewKind = { ...m, contributes: { ...m.contributes, widgets: [{ command: "settings.workspaceJson" }], gadgets: [{ command: "account.signOut" }] } };
+  const withNewKind = { ...m, contributes: { ...m.contributes, toolbar: [{ command: "settings.workspaceJson" }], places: [{ command: "account.signOut" }] } };
   const kept = confined(withNewKind as ExtensionManifest, { names: new Set(), keys: new Set() }).contributes as unknown as Record<string, unknown>;
-  assert.equal("widgets" in kept || "gadgets" in kept, false, "a kind confined() has no rule for isn't kept");
+  assert.equal("toolbar" in kept || "places" in kept, false, "a kind confined() has no rule for isn't kept");
   assert.deepEqual(kept.commands, [{ command: "wordCount.go", title: "Go" }]);
-});
-
-test("a sandboxed extension's places and toolbar buttons keep only its own commands and views", () => {
-  const m = manifest("sneaky", {
-    contributes: {
-      commands: [{ command: "sneaky.hello", title: "Hello" }],
-      views: { sidebar: [{ id: "sneaky.list", name: "List" }] },
-      places: [
-        { id: "own", title: "Own", command: "sneaky.hello" },
-        { id: "view", title: "View", view: "sneaky.list" },
-        { id: "core", title: "Core", command: "settings.workspaceJson" },
-        { id: "other", title: "Other", command: "lists.indent" },
-        { id: "theirs", title: "Theirs", view: "settings" },
-        { id: "undeclared", title: "Undeclared", view: "sneaky.nothere" },
-      ],
-      toolbar: [
-        { command: "sneaky.hello", title: "Own", label: "O" },
-        { command: "lists.indent", title: "Other", label: "L" },
-        { command: "note.save", title: "Core", label: "S" },
-      ],
-    },
-  });
-  const c = confined(m, { names: new Set(["settings"]), keys: new Set() }).contributes;
-  assert.deepEqual(c.places.map((p) => p.id), ["own", "view"]);
-  assert.deepEqual(c.toolbar.map((t) => t.command), ["sneaky.hello"]);
 });
 
 test("a sandboxed extension's command bar prefix starts with its own name, as a word", () => {
@@ -219,8 +193,6 @@ test("a command the app registers after a sandboxed extension's, under the same 
     me: "you@example.com",
     commands,
     bar: { provide() {}, open() {} } as never,
-    search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
-    onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView: (v: { id: string }) => views.set(v.id, v), view: (id: string) => views.get(id), viewIds: () => [...views.keys()], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async (path: string) => ({ path, text: JSON.stringify(manifest), revision: 1 }) } as never,
@@ -236,8 +208,6 @@ test("a command the app registers after a sandboxed extension's, under the same 
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
-    device: { facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true }, override: () => undefined, has: () => true, atLeast: () => true, why: () => "", onChange: () => () => {}, describe: () => ({}) } as never,
-    promoted() {},
   });
   await runtime.load([], [{ path: ".common-ink/extensions/late/extension.json" as FilePath, revision: 1 } as FileSummary], [], false, []);
   runtime.declare();
@@ -247,11 +217,6 @@ test("a command the app registers after a sandboxed extension's, under the same 
   assert.deepEqual(theirs(), [[], []]);
   runtime.runFor("late", "late.go");
   assert.deepEqual(ran, [], "its status item's click doesn't run the app's command");
-});
-
-test("a sandboxed extension's search filter keys are named for it, so ordinary words stay searchable", () => {
-  const m = manifest("word-count", { contributes: { search: { types: [{ type: "word-count", title: "Counts" }], filters: ["meeting", "word-count", "word-count-done", "wordcount", "words"].map((filter) => ({ filter, description: "", values: [] })) } } });
-  assert.deepEqual(confined(m, { names: new Set(), keys: new Set() }).contributes.search.filters.map((f) => f.filter), ["word-count", "word-count-done", "wordcount"]);
 });
 
 test("a sandboxed extension can't declare a built-in's status item, even with that built-in turned off", async () => {

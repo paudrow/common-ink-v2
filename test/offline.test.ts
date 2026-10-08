@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Author, FilePath } from "../worker/src/files.ts";
 import { ServerAnswer } from "../web/src/api.ts";
-import { idbKV, memoryKV, Offline, syncLine, type HeldOp, type KV, type Network } from "../web/src/offline.ts";
+import { idbKV, memoryKV, Offline, type HeldOp, type KV, type Network } from "../web/src/offline.ts";
 import { memoryStore } from "./store.ts";
 
 const you: Author = { kind: "user", email: "you@example.com" };
@@ -385,50 +385,6 @@ test("of a draft kept as the page went and one typed after it came back, the new
   }
 });
 
-test("the status line says nothing while the server is reached and nothing waits; otherwise what's waiting", () => {
-  assert.deepEqual(syncLine({ online: true, waiting: 0, clashing: [] }), { wide: "", phone: "", state: "" });
-  assert.deepEqual(syncLine({ online: false, waiting: 0, clashing: [] }), { wide: "Offline", phone: "", state: "waiting" });
-  assert.deepEqual(syncLine({ online: false, waiting: 2, clashing: [] }), { wide: "Offline · 2 unsent changes", phone: "Not saved: offline.", state: "waiting" });
-  assert.deepEqual(syncLine({ online: false, waiting: 1, fragile: true, clashing: [] }), { wide: "Offline · 1 unsent change, lost if this page closes", phone: "Not saved: offline. Lost if this page closes.", state: "waiting" });
-  assert.deepEqual(syncLine({ online: true, waiting: 0, clashing: ["Plan", "Trip"] }), { wide: "2 can't be merged: open Plan", phone: "Not saved: changed elsewhere", state: "conflict" });
-});
-
-test("back online, a phone says held edits are being sent until one fails again", () => {
-  assert.deepEqual(syncLine({ online: true, waiting: 1, sending: true, clashing: [] }), { wide: "1 unsent change", phone: "Sending…", state: "waiting" });
-});
-
-test("a phone says an edit isn't saved when it's waiting, even while the server is reachable", () => {
-  assert.deepEqual(syncLine({ online: true, waiting: 1, clashing: [] }), { wide: "1 unsent change", phone: "Not saved: can't reach the server. Trying again.", state: "waiting" });
-});
-
-test("files the list never has, as the default settings the server makes up, stay kept for offline", async () => {
-  const defaults = ".common-ink/defaults/settings.json" as FilePath;
-  const kv = memoryKV();
-  const down = () => Promise.reject(new TypeError("Failed to fetch"));
-  const online = new Offline(kv, { list: async () => [], read: async (path) => ({ path, text: '{ "editor.fontSize": 16 }', revision: 0 }), write: down, editApplied: down });
-  await online.read(defaults);
-  await online.list();
-  const offline = new Offline(kv, { list: down, read: down, write: down, editApplied: down });
-  assert.equal((await offline.read(defaults)).text, '{ "editor.fontSize": 16 }');
-});
-
-test("a note deleted forever at a path another note has now takes the edits kept for it, not those for the note there now", async () => {
-  const { store, offline } = setup();
-  const old = store.files.write({ path: PLAN, text: "# Plan\nsecret", base: 0, author: you }).file!.revision;
-  await offline.keepDraft({ path: PLAN, text: "# Plan\nsecret, more", base: old, edit: "d1" });
-  await offline.hold({ path: PLAN, text: "# Plan\nsecret, held", base: old, edit: "h1" });
-  const d = store.files.write({ path: PLAN, text: "", base: old, author: you, delete: true }).file!.revision;
-  const now = store.files.write({ path: PLAN, text: "# Plan\nnew", base: 0, author: you }).file!.revision;
-  store.files.purge([d], you);
-  const gone = async (r: number) => store.files.versionAt(PLAN, r) === null;
-  await offline.forgetPurged(PLAN, gone);
-  assert.deepEqual([await offline.unsent(), await offline.keptEdit(store.files.read(PLAN)!)], [[], undefined]);
-  // An edit for the note there now stays.
-  await offline.hold({ path: PLAN, text: "# Plan\nnew, held", base: now, edit: "h2" });
-  await offline.forgetPurged(PLAN, gone);
-  assert.deepEqual((await offline.unsent()).map((u) => u.edit), ["h2"]);
-});
-
 test("a clash typed back to the server's own text is no clash when the note opens", async () => {
   const s = await kept();
   s.store.files.write({ path: TRIP, text: "# Trip\n- b\n", base: 1, author: you });
@@ -587,16 +543,4 @@ test("with no account remembered, an edit held and undone as its page went isn't
   } finally {
     done();
   }
-});
-
-test("a note deleted forever goes from this browser, but a new note made here at its path meanwhile stays", async () => {
-  const { offline } = setup();
-  offline.account = "you@example.com";
-  await offline.hold({ path: "Q.md" as FilePath, text: "# Q\nmade offline, a new note", base: 0, edit: "q1" });
-  await offline.keepDraft({ path: "Q.md" as FilePath, text: "# Q\nnew typing", base: 0, edit: "q2" });
-  await offline.forget("Q.md" as FilePath);
-  assert.equal((await offline.unsentFor("Q.md" as FilePath))?.text, "# Q\nmade offline, a new note");
-  await offline.hold({ path: "Q.md" as FilePath, text: "# Q\nold note, more", base: 4, edit: "q3" });
-  await offline.forget("Q.md" as FilePath);
-  assert.equal(await offline.unsentFor("Q.md" as FilePath), undefined);
 });

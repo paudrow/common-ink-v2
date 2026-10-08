@@ -201,6 +201,32 @@ test("problems point at an unknown key, a wrong value, or where the JSON breaks"
   assert.deepEqual(settingsProblems('{"editor.fontSize": 12}'), []);
 });
 
+test("a drawing still reading its files gives way to a newer one, instead of drawing over it", async () => {
+  const { root, files } = setup('{\n  "editor.fontSize": 18\n}\n');
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  // The first drawing's read of the user settings is slow; the second's isn't.
+  let userReads = 0;
+  const ui = settingsEditor({
+    pathFor: (level) => (level === "user" ? USER : WORKSPACE),
+    read: async (path) => {
+      if (path === USER && userReads++ === 0) await held;
+      return { ...files.get(path)! };
+    },
+    write: async () => ({ status: "saved", revision: 2 }) as never,
+    catalog: () => CORE_CATALOG,
+    openJson: () => {},
+    changed: () => {},
+  });
+  const first = ui.render(root);
+  ui.level = "workspace";
+  await ui.render(root);
+  assert.equal(root.querySelector('[role=tab][aria-selected="true"]')?.textContent, "Workspace");
+  release();
+  await first;
+  await settle();
+  assert.equal(root.querySelector('[role=tab][aria-selected="true"]')?.textContent, "Workspace", "the older drawing drew nothing");
+});
 test("a key is changed from what its own file has, so another file's value for it isn't copied over or lost", async () => {
   const files: Record<string, { text: string; revision: number }> = {
     user: { text: JSON.stringify({ "extensions.permissions": { boards: { "files:read:**/*.md": "allow" }, "word-count": { "files:read:**/*.md": "deny" } } }), revision: 1 },

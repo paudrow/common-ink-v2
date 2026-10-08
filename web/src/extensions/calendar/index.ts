@@ -6,7 +6,6 @@ import type { SourceState } from "../../../../worker/src/data-sources.ts";
 import type { ExtensionContext, ExtensionModule } from "../../extension-api.ts";
 import type { EventFound } from "../../../../worker/src/operations.ts";
 import { EventLinks, dayOfEvent, dayOfOccurrence, linkTo } from "./links.ts";
-import { findEvents, SEARCH_AHEAD, SEARCH_BACK } from "./search.ts";
 import { dayOf } from "./model.ts";
 import { notesSection } from "./notes.ts";
 import type { CalendarPage, Embedded, PageState } from "./page.ts";
@@ -166,27 +165,6 @@ const calendar: ExtensionModule = {
             editor.focus();
           },
         }));
-      },
-    });
-    // Search: events by name, opening Calendar on the event's day with it selected. A search asks
-    // again for each letter typed, so the year of events is kept for half a minute, or until one changes.
-    let searched: { at: number; events: Promise<Occurrence[]> } | null = null;
-    ctx.data.calendar.onChange(() => (searched = null));
-    ctx.search.provide("event", {
-      async search(query, limit) {
-        const now = Date.now();
-        if (!searched || now - searched.at > 30_000) searched = { at: now, events: ctx.data.calendar.events(new Date(now - SEARCH_BACK), new Date(now + SEARCH_AHEAD)).catch(() => [] as Occurrence[]) };
-        return findEvents(await searched.events, query, now)
-          .slice(0, limit)
-          .map((o) => ({
-            title: o.title || "(No title)",
-            detail: o.allDay ? `${o.start} · all day` : new Date(o.start).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-            aside: o.location,
-            run: () => {
-              reveal = { address: o.address, day: dayOfOccurrence(o) };
-              ctx.views.open("calendar", { newTab: true });
-            },
-          }));
       },
     });
     let target: ReturnType<ExtensionContext["editor"]["focused"]> = null;

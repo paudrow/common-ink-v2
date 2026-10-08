@@ -42,10 +42,12 @@ const EXT_CODE = `export default { activate(ctx) {
   void ctx.views.open("extensions");
 } };`;
 
+const PHONE = { width: 375, height: 812 };
+
 const reason = (id: string) => `"${id}" is a name the app or a built-in extension uses for its own commands and views, so an extension in a folder named that can't run sandboxed. Rename its folder`;
 
 for (const device of ["laptop", "phone"] as const) {
-  browserTest(h, `on a ${device}, a sandboxed extension in a folder named for the app's or a built-in's commands doesn't run, and the Extensions view says why`, { scenario: "empty", device, allowErrors: [/./] }, async (app) => {
+  browserTest(h, `on a ${device}, a sandboxed extension in a folder named for the app's or a built-in's commands doesn't run, and the Extensions view says why`, { scenario: "empty", ...(device === "phone" ? { viewport: PHONE } : {}), allowErrors: [/./] }, async (app) => {
     await app.writeFile(".common-ink/settings.json", '{\n  "extensions.trusted": []\n}\n');
     await app.writeFile("Plan.md", "# Plan\n\n- one\n- two\n");
     const folders: Array<[string, object, string]> = [
@@ -269,7 +271,7 @@ browserTest(h, "a sandboxed extension can't take Vim's Ctrl-r (redo) from the ed
 });
 
 for (const device of ["laptop", "phone"] as const) {
-  browserTest(h, `on a ${device}, an untrusted customized copy of Lists waits for your trust, and the built-in keeps working meanwhile`, { scenario: "empty", device, allowErrors: [/./] }, async (app) => {
+  browserTest(h, `on a ${device}, an untrusted customized copy of Lists waits for your trust, and the built-in keeps working meanwhile`, { scenario: "empty", ...(device === "phone" ? { viewport: PHONE } : {}), allowErrors: [/./] }, async (app) => {
     const manifest = JSON.stringify({ ...JSON.parse(readFileSync("web/src/extensions/lists/extension.json", "utf8")), name: "Lists, customized", main: "index.js", files: ["index.js"] });
     await app.writeFile(".common-ink/extensions/lists/extension.json", manifest);
     await app.writeFile(".common-ink/extensions/lists/index.js", "export default { activate() {} };");

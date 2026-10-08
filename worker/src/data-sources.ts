@@ -4,9 +4,6 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
-import { SearchIndex } from "./search.ts";
-import { ARCHIVE_PATH, archiveAgain, deleteNote, mergeArchive } from "./archive.ts";
-import { mergePins, PINS_PATH } from "./pins.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -736,33 +733,26 @@ export class DataSources {
 }
 
 /**
+ * Drop every table of a workspace's database (the test levers' reset). Virtual tables go first, with the
+ * tables they keep: a workspace that ran navigation-1-14 has its search index, an FTS5 table, whose own
+ * tables are gone once it is.
+ */
+export function emptyWorkspace(db: Db): void {
+  db.tx(() => {
+    const tables = db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY sql NOT LIKE 'CREATE VIRTUAL%'");
+    for (const { name } of tables) db.run(`DROP TABLE IF EXISTS "${name}"`);
+  });
+}
+
+/**
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
-export function openWorkspace(
-  db: Db,
-  settings: SourceSettings,
-  announce?: (notice: ChangeNotice) => void,
-  fetcher?: typeof fetch,
-  adapters: Adapter[] = [],
-  now: () => number = Date.now,
-): { files: Files; sources: DataSources; search: SearchIndex } {
+export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = [], now: () => number = Date.now): { files: Files; sources: DataSources } {
   const records = new Records(db);
-  const search = new SearchIndex(db);
-  const files = new Files(
-    db,
-    Date.now,
-    announce,
-    (path, text, revision, purged) => {
-      records.observe(path, text);
-      search.observe(path, text, revision, purged);
-    },
-    (path) => (path === ARCHIVE_PATH ? mergeArchive : path === PINS_PATH ? mergePins : undefined),
-  );
+  const files = new Files(db, Date.now, announce, (path, text) => records.observe(path, text));
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  // Workspaces from before search, or from before its index's shape, get their index here, once.
-  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
-  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
+  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters) };
 }
 
 /** A record file's calendar, or null if its text isn't one. */
@@ -792,28 +782,8 @@ export function readCalendar(text: string): Calendar | null {
 export async function undoChanges(files: Files, sources: DataSources, revisions: Revision[], author: Author): Promise<UndoResult[]> {
   const change = (r: Revision) => files.recent({ before: r + 1, limit: 1 }).find((c) => c.revision === r);
   const isRecord = (r: Revision) => isRecordPath(change(r)?.path ?? "");
-  const plain = [...new Set(revisions.filter((r) => !isRecord(r)))];
-  // A restore (a change that undid a delete) undone while its note is as it left it deletes the note
-  // again, back to Trash, rather than leave it empty. A note's delete undone brings back its archiving
-  // too. All in one transaction.
-  const restoreOf = (r: Revision) => {
-    const c = change(r);
-    return c?.undoes && change(c.undoes)?.deleted && files.read(c.path)?.revision === r ? c : null;
-  };
-  const out: UndoResult[] = plain.length
-    ? files.atomically(() => {
-        const again = plain.flatMap((r): UndoResult[] => {
-          const c = restoreOf(r);
-          if (!c) return [];
-          const result = deleteNote(files, { path: c.path, text: "", base: r, author, undoes: r });
-          return [{ revision: r, status: result.status === "conflict" ? "conflict" : "undone", ...(result.file ? { file: result.file } : {}) }];
-        });
-        const done = new Set(again.map((u) => u.revision));
-        const results = [...again, ...files.undo(plain.filter((r) => !done.has(r)), author)].sort((a, b) => b.revision - a.revision);
-        archiveAgain(files, results.flatMap((u) => (u.status === "undone" && change(u.revision)?.deleted ? [{ path: change(u.revision)!.path, deleted: u.revision }] : [])), author);
-        return results;
-      })
-    : [];
+  const plain = revisions.filter((r) => !isRecord(r));
+  const out: UndoResult[] = plain.length ? files.undo(plain, author) : [];
   const chosen = new Set(revisions);
   // What each record goes back to, worked out first, so a changed occurrence is judged against its series as this undo leaves it, whatever order they go in.
   const reverts = [...new Set(revisions.filter(isRecord))]

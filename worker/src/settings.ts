@@ -50,14 +50,12 @@ const int = (description: string, value: number, minimum: number, maximum: numbe
 });
 
 export const DEFAULT_KEYBINDINGS: Keybinding[] = [
-  { key: "Mod-k", command: "quickOpen" },
   { key: "Mod-p", command: "quickOpen" },
   { key: "Mod-Shift-p", command: "commandBar" },
   { key: "Mod-s", command: "note.save" },
   { key: "Mod-,", command: "settings.user" },
   { key: "Mod-[", command: "go.back" },
   { key: "Mod-]", command: "go.forward" },
-  { key: "Mod-b", command: "places.toggle" },
 ];
 
 const keybindings: Declared<Keybinding[]> = {
@@ -103,7 +101,6 @@ export const SETTINGS = {
   "editor.livePreview": bool("Show markdown as it reads: headings, emphasis and links drawn, tasks as checkboxes, images shown. The line you're on always shows its raw text.", true),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
-  "trash.retentionDays": int("Days a deleted note stays in Trash, where you can restore it, before it's purged: its text is taken out of history. A workspace setting.", 30, 1, 3650),
   "extensions.disabled": { ...strings('Extensions to turn off, by id, such as "history" or "quick-open".'), reload: true as const },
   "extensions.trusted": {
     ...strings("Workspace extensions you trust to run in the app's page, by id. A trusted extension can change note editors and draw straight into the page, and it can get around the permissions it asks for. Everything else runs sandboxed."),

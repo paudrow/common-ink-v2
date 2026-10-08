@@ -69,16 +69,24 @@ async function liveObjects(app: App) {
 browserTest(h, "a window with a notice in it, closed, leaves neither its editor nor the notice's watchers behind", { scenario: "empty" }, async (app) => {
   await app.writeFile("Alpha.md", "# Alpha\n\nWords.\n");
   for (let i = 0; i < 10; i++) await app.writeFile(`Note ${i}.md`, `# Note ${i}\n\nWords.\n`);
+  // A trusted extension whose command shows a notice with Undo in the focused window: one with a button
+  // stays until it's used or its window closes, so no timer of its own holds the window a while.
+  await app.writeFile(".common-ink/users/tester@localhost/settings.json", '{\n  "extensions.trusted": ["sayer"]\n}\n');
+  await app.writeFile(
+    ".common-ink/extensions/sayer/extension.json",
+    JSON.stringify({ id: "sayer", name: "Sayer", version: "1.0.0", description: "test", main: "index.js", files: ["index.js"], activationEvents: ["onStartup"], contributes: { commands: [{ command: "sayer.say", title: "Say hello" }] } }),
+  );
+  await app.writeFile(".common-ink/extensions/sayer/index.js", 'export default { activate(ctx) { ctx.commands.register("sayer.say", () => ctx.workbench.notice("hello", [{ label: "Undo", run() {} }])); } };\n');
   await app.goto({}, "Alpha");
   await app.idle();
-  // Open a note in a split, archive it (a notice with Undo, which stays), and close the split.
+  // Open a note in a split, show a notice with Undo in it, and close the split.
   const cycle = async (i: number) => {
     await app.keys(":vs<CR>");
     await app.page.waitForTimeout(150);
     await app.open(`Note ${i}`);
     await app.idle();
-    await app.command("Archive this note");
-    await app.page.locator(".notice", { hasText: "Archived" }).waitFor();
+    await app.command("Say hello");
+    await app.page.locator(".notice", { hasText: "hello" }).waitFor();
     await app.keys("<C-w>c");
     await app.page.waitForTimeout(150);
   };

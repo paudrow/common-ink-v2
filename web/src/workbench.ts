@@ -85,8 +85,6 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
-  /** A file was opened (shown, or shown again if it was on show already). */
-  opened?(path: FilePath): void;
   /** Where you are changed: a jump to a new place ("push"), or where you are, updated ("replace"). */
   navigated?(how: "push" | "replace", visit: Visit): void;
 }
@@ -148,15 +146,6 @@ export class Workbench {
   /** The arrangement of windows on screen, to tell when it has to be rebuilt. */
   private shape = "";
   private chrome: WorkbenchChrome | null = null;
-  /** Where this device's layout is kept (devices/<id>/layout.json), or the workspace's where there's no device file. */
-  layoutPath: FilePath = L.LAYOUT_PATH;
-  /** The layout a device starts from when it has none of its own yet. */
-  firstLayout: () => Promise<L.Layout | null> = async () => null;
-  /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
-  parts: () => Parts = () => ({ tabs: true, splits: true });
-  /** Whether a note that opens takes focus, so you can type at once. */
-  focusOnOpen: () => boolean = () => true;
-  private shown: Parts = { tabs: true, splits: true };
 
   constructor(
     private host: HTMLElement,
@@ -174,9 +163,9 @@ export class Workbench {
    * it comes back as `missing`, for the app to say so.
    */
   async start(first?: FilePath | null): Promise<{ missing?: FilePath }> {
-    const saved = await this.net.read(this.layoutPath);
+    const saved = await this.net.read(L.LAYOUT_PATH);
     this.layoutRevision = saved.revision;
-    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || (saved.revision === 0 && (await this.firstLayout())) || L.emptyLayout();
+    let layout = (saved.text && L.parseLayout(safeJson(saved.text))) || L.emptyLayout();
     await Promise.all([...new Set(L.groups(layout).flatMap((g) => g.tabs.flatMap((t) => ("file" in t ? [t.file] : []))))].map((p) => this.load(p)));
     let missing: FilePath | undefined;
     if (first) {
@@ -375,7 +364,7 @@ export class Workbench {
   /** What's still to reach the server, with why: open files not yet saved, and the layout while its save waits. */
   pending(): Array<{ path: FilePath; status: SaveStatus | "waiting" }> {
     const files = [...this.files.values()].filter((f) => f.session.dirty || f.session.status === "saving").map((f) => ({ path: f.path, status: f.session.status }));
-    return this.layoutTimer || this.layoutSaving ? [...files, { path: this.layoutPath, status: "waiting" }] : files;
+    return this.layoutTimer || this.layoutSaving ? [...files, { path: L.LAYOUT_PATH, status: "waiting" }] : files;
   }
 
   /**
@@ -398,7 +387,6 @@ export class Workbench {
     }
     // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
-    this.on.opened?.(path);
   }
 
   /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
@@ -550,10 +538,10 @@ export class Workbench {
    * whether the file is open here.
    */
   async remoteChange(path: FilePath, revision: number): Promise<boolean> {
-    if (path === this.layoutPath) {
+    if (path === L.LAYOUT_PATH) {
       // A change here that isn't saved yet is newer than theirs: it's saved over theirs (last write wins), not lost to it.
       if (!this.started || revision <= this.layoutRevision || this.layoutSaving || this.layoutTimer) return false;
-      const saved = await this.net.read(this.layoutPath);
+      const saved = await this.net.read(L.LAYOUT_PATH);
       const layout = L.parseLayout(safeJson(saved.text));
       this.layoutRevision = saved.revision;
       if (layout) this.setLayout(layout, { save: false });
@@ -809,9 +797,9 @@ export class Workbench {
     const text = `${JSON.stringify(this.layout, null, 2)}\n`;
     this.layoutSaving = true;
     try {
-      let result = await this.net.write(this.layoutPath, text, this.layoutRevision);
+      let result = await this.net.write(L.LAYOUT_PATH, text, this.layoutRevision);
       // Another tab's save came first: this one goes over it as it is, neither refused nor merged line by line with it.
-      if ((result.status === "conflict" || (result.status === "merged" && result.file.text !== text)) && result.file) result = await this.net.write(this.layoutPath, text, result.file.revision);
+      if ((result.status === "conflict" || (result.status === "merged" && result.file.text !== text)) && result.file) result = await this.net.write(L.LAYOUT_PATH, text, result.file.revision);
       if (result.file) this.layoutRevision = result.file.revision;
     } catch {
       // Offline: the next change tries again.
@@ -820,29 +808,7 @@ export class Workbench {
     }
   }
 
-  /**
-   * The device changed: show or put away tabs and windows side by side, as it now has room for. The
-   * layout itself doesn't change, and isn't saved: what's put away comes back when there's room.
-   */
-  refreshParts(): void {
-    const parts = this.parts();
-    if (parts.tabs === this.shown.tabs && parts.splits === this.shown.splits) return;
-    if (this.started) this.render();
-  }
-
-  /** What this device's layout keeps that doesn't show: windows, when they can't be side by side, and tabs, when there's no room for them. */
-  kept(): { windows: number; tabs: number } {
-    const groups = L.groups(this.layout);
-    const windows = this.shown.splits ? 0 : groups.length - 1;
-    const tabs = this.shown.tabs ? 0 : (this.shown.splits ? groups : [this.focusedGroup]).reduce((n, g) => n + Math.max(0, g.tabs.length - 1), 0);
-    return { windows, tabs };
-  }
-
   private render() {
-    this.shown = this.parts();
-    // What doesn't fit is hidden, not taken out (style.css): its editors and frames keep running.
-    this.host.toggleAttribute("data-no-tabs", !this.shown.tabs);
-    this.host.toggleAttribute("data-no-splits", !this.shown.splits);
     const wanted = new Set<string>();
     for (const g of L.groups(this.layout)) for (const t of g.tabs) wanted.add(key(g.id, t));
     for (const [k, view] of this.views) if (!wanted.has(k)) this.dropView(k, view);
@@ -934,11 +900,6 @@ export class Workbench {
     }
     const view = this.views.get(key(group, L.fileTab(path))) ?? this.makeEditor(group, file);
     return view.dom.parentElement!;
-  }
-
-  /** Draw a view somewhere outside the windows (the phone's sheet of views about the note). */
-  drawInto(id: string, box: HTMLElement): void {
-    this.drawView(id, box);
   }
 
   /** Draw a view in its box; one that throws says so there, and the windows carry on. */
@@ -1057,16 +1018,9 @@ export class Workbench {
     const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
     this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
-    // On a touch screen with no keyboard, a note opens to read: focus would bring the on-screen keyboard up. A tap edits.
-    if (view && !this.focusOnOpen()) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }
-}
-
-export interface Parts {
-  tabs: boolean;
-  splits: boolean;
 }
 
 /** The arrangement of splits and windows, without sizes or tabs. */

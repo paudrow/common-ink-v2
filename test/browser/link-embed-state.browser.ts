@@ -87,7 +87,7 @@ browserTest(h, "a link embed's iframe never loads again, has its src written or 
   await app.keys("jj");
   await app.keys("jj");
   assert.deepEqual(await watched(app), untouched, "the cursor on its line and off");
-  await app.listItem("Welcome.md").click({ modifiers: ["ControlOrMeta"] });
+  await app.page.locator("#notes a", { hasText: "Welcome" }).click({ modifiers: ["ControlOrMeta"] });
   await app.page.waitForFunction(() => document.title.startsWith("Welcome"));
   // As painted: the title changes as the tab does, and the box goes when the frame lays the tab out (its
   // editor's size observed), after the frame callbacks a check made then would run in.
@@ -154,7 +154,7 @@ browserTest(h, "a calendar in a note is never drawn again, moved or loaded again
   await app.keys("j");
   await shown(true);
   assert.deepEqual(await calendarWatched(app), untouched, "the cursor on its line and off");
-  await app.listItem("Calendar tour.md").click({ modifiers: ["ControlOrMeta"] });
+  await app.page.locator("#notes a", { hasText: "Calendar tour" }).click({ modifiers: ["ControlOrMeta"] });
   await app.page.waitForFunction(() => document.title.startsWith("Calendar tour"));
   await shown(false);
   await app.page.locator(".tab", { hasText: "Calendar note" }).first().click();

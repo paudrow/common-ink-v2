@@ -15,8 +15,6 @@ export interface Levers {
   net?: "live" | "replay";
   /** The page acts as if it can't reach the server. */
   offline?: boolean;
-  /** The page stands in for a phone, a tablet or a laptop: framed to its size, with its touch, pointer and keyboard (web/src/device.ts). */
-  device?: "phone" | "tablet" | "laptop";
 }
 
 export const LEVERS_COOKIE = "common-ink-levers";
@@ -29,7 +27,6 @@ const PARSE: { [K in keyof Levers]-?: (v: string) => Levers[K] } = {
   permissions: (v) => (v === "allow" || v === "deny" || v === "ask" ? v : undefined),
   net: (v) => (v === "live" || v === "replay" ? v : undefined),
   offline: (v) => (v === "1" || v === "true" ? true : v === "0" || v === "false" ? false : undefined),
-  device: (v) => (v === "phone" || v === "tablet" || v === "laptop" ? v : undefined),
 };
 
 /** The address parameters that are levers. */

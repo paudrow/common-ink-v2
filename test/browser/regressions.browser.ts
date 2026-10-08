@@ -99,13 +99,13 @@ browserTest(h, "a tab click lands even when the tabs redraw between the press an
 });
 
 browserTest(h, "one answer to a permission prompt is enough, however many times the extension asks while it's up or being kept", { scenario: "extensions" }, async (app) => {
-  await app.command("Show line count");
+  await app.command("Show word count");
   await app.prompt.waitFor();
-  // A note saved while the prompt is up: Line count counts again, and that ask joins the prompt on screen.
+  // A note saved while the prompt is up: Word count counts again, and that ask joins the prompt on screen.
   await app.writeFile("Extension ideas.md", "# Extension ideas\n\nOne more.\n");
   await app.page.waitForTimeout(800);
   assert.equal(await app.prompt.dialog().count(), 1);
-  // Keeping the answer in settings takes a while here, and another save makes Line count ask in that while.
+  // Keeping the answer in settings takes a while here, and another save makes Word count ask in that while.
   await app.call("slow", "^PUT /api/file", 2500);
   await app.prompt.answer("Don't allow");
   await app.writeFile("Extension ideas.md", "# Extension ideas\n\nAnd another.\n");
@@ -115,8 +115,8 @@ browserTest(h, "one answer to a permission prompt is enough, however many times 
   await app.page.frameLocator("iframe.webview").locator("body", { hasText: "you don't allow it" }).waitFor();
   await app.idle();
   const shown = await app.prompt.shown();
-  assert.deepEqual(shown.map(({ extension, answer }) => ({ extension, answer })), [{ extension: "line-count", answer: "deny" }]);
-  assert.deepEqual((await app.state()).permissions.grants, { "line-count": { "files:read:**/*.md": "deny" } });
+  assert.deepEqual(shown.map(({ extension, answer }) => ({ extension, answer })), [{ extension: "word-count", answer: "deny" }]);
+  assert.deepEqual((await app.state()).permissions.grants, { "word-count": { "files:read:**/*.md": "deny" } });
 });
 
 browserTest(h, "j visits every line of a note in order, through tables, math, code blocks and embeds, and k comes back the same way", { scenario: "embeds" }, async (app) => {
@@ -253,7 +253,7 @@ browserTest(h, "a drag from outside the page opens a note at most: crafted drops
     for (const payload of [
       { item: { file: ".common-ink/settings.json" }, from: { group: "g1", index: 0 } },
       { item: { file: ".common-ink/layout.json" } },
-      { item: { file: ".common-ink/extensions/line-count/main.js" } },
+      { item: { file: ".common-ink/extensions/word-count/main.js" } },
       { item: { view: "extensions" } },
       { item: { file: "../x.md" } },
       { item: "Shopping.md" },
@@ -443,7 +443,7 @@ browserTest(h, "with reduced motion asked for, nothing on screen pulses or flash
   assert.deepEqual(looping, []);
 });
 
-// Two tabs on one device share its layout file. A tab's change to the layout that isn't saved yet is newer
+// Two tabs share the workspace's layout file. A tab's change to the layout that isn't saved yet is newer
 // than another tab's save that lands meanwhile: it was taking that older layout in, so what it had just
 // opened went away (the flake in "an edit held offline and undone in a tab that closes at once…").
 browserTest(h, "a layout change not yet saved in one tab isn't lost to another tab's older save landing meanwhile", { scenario: "empty" }, async (app) => {
@@ -460,9 +460,8 @@ browserTest(h, "a layout change not yet saved in one tab isn't lost to another t
   await saved;
   await other.page.waitForTimeout(300);
   assert.match(await other.page.title(), /^Other/, "the second tab keeps what it opened");
-  // Its own save comes after, over the first's: last write wins, and the device's layout shows Other.
-  const id = await other.page.evaluate(() => localStorage.getItem("common-ink.device"));
-  const layout = `.common-ink/users/tester@localhost/devices/${id}/layout.json`;
+  // Its own save comes after, over the first's: last write wins, and the layout shows Other.
+  const layout = ".common-ink/layout.json";
   for (let i = 0; i < 40 && !(await app.readFile(layout)).includes('"Other.md"'); i++) await other.page.waitForTimeout(100);
   assert.match(await app.readFile(layout), /"Other\.md"/);
   assert.match(await other.page.title(), /^Other/);

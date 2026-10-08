@@ -45,7 +45,7 @@ export interface Asker {
 const detailsLink = (who: Asker, text: string, id: string) => focusable(el("button", { type: "button", className: "link", textContent: text, onclick: () => who.showDetails() }), id);
 
 /**
- * "Boards wants to read the note This week", answering, in order: who's asking, what exactly (the
+ * "Word count wants to read the note This week", answering, in order: who's asking, what exactly (the
  * technical scope behind a Details disclosure), why now (what you did that it's acting on), and why at
  * all (its own reason, as it says it). Then Allow this time, Always allow, or Don't allow.
  */
@@ -100,24 +100,23 @@ export function askPermission(who: Asker, extension: ExtensionManifest, asks: Ar
 }
 
 /** Yes or no, with what yes means spelled out. */
-export function confirmDialog(title: string, text: string, yes: string, danger = false): Promise<boolean> {
+export function confirmDialog(title: string, text: string, yes: string): Promise<boolean> {
   return dialog<boolean>(title, (settle) => ({
     body: [
       el("h2", { textContent: title }),
       el("p", { textContent: text }),
-      // Something that can't be undone says so in red.
-      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, className: danger ? "danger" : "", onclick: () => settle(true) })),
+      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, onclick: () => settle(true) })),
     ],
     escape: false,
   }));
 }
 
-/** One line of text (a URL, unless `type` says otherwise), or null if you back out. */
-export function textDialog(title: string, text: string, placeholder: string, yes: string, type: "url" | "text" = "url"): Promise<string | null> {
+/** One line of text, or null if you back out. */
+export function textDialog(title: string, text: string, placeholder: string, yes: string): Promise<string | null> {
   return dialog<string | null>(
     title,
     (settle) => {
-      const input = el<HTMLInputElement>("input", { type, placeholder, ariaLabel: title });
+      const input = el<HTMLInputElement>("input", { type: "url", placeholder, ariaLabel: title });
       input.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
         // Taken here: the dialog closes, and the Enter mustn't go on to press whatever has focus next.

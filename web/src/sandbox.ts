@@ -161,7 +161,7 @@ export class SandboxHost {
   }
 
   /** Load the frame and start the extension's code from `code`. Resolves once it's activated; rejects with its error. */
-  async start(code: string, settings: Record<string, unknown>, me: string | undefined, device: unknown): Promise<void> {
+  async start(code: string, settings: Record<string, unknown>, me: string | undefined): Promise<void> {
     const frame = (this.frame = document.createElement("iframe"));
     frame.setAttribute("sandbox", "allow-scripts");
     frame.title = `${this.extension.name} (extension host)`;
@@ -176,7 +176,7 @@ export class SandboxHost {
       this.stop();
     });
     const started = this.talk(port);
-    port.postMessage({ t: "start", extension: this.extension, code, settings, me, device });
+    port.postMessage({ t: "start", extension: this.extension, code, settings, me });
     await started;
   }
 

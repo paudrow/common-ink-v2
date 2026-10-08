@@ -24,14 +24,14 @@ browserTest(h, "a scenario's clock dates its tasks, ?now= moves the page's clock
 });
 
 browserTest(h, "permissions=allow answers a sandboxed extension's prompt with Allow once and keeps nothing; deny refuses it for the session", { scenario: "extensions", levers: { permissions: "allow" } }, async (app) => {
-  await app.command("Show line count");
+  await app.command("Show word count");
   const view = app.page.frameLocator("iframe.webview");
-  await view.locator("body", { hasText: /\d+ lines?/ }).waitFor();
+  await view.locator("body", { hasText: /\d+ words?/ }).waitFor();
   const shown = await app.prompt.shown();
-  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "line-count", asks: ["files:read:**/*.md"], auto: true, answer: "once" }]);
+  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "word-count", asks: ["files:read:**/*.md"], auto: true, answer: "once" }]);
   assert.deepEqual((await app.state()).permissions.grants, {}, "nothing kept in settings");
   await app.goto({ permissions: "deny" });
-  await app.command("Show line count");
+  await app.command("Show word count");
   await view.locator("body", { hasText: "you didn't allow it this time" }).waitFor();
   assert.equal(await app.prompt.dialog().count(), 0, "no dialog either way");
 });
@@ -64,10 +64,7 @@ browserTest(h, "reset empties the workspace back to its scenario, revisions keep
   await reloaded;
   await app.ready();
   const after = await app.state();
-  const paths = [...new Set(after.history.map((c) => c.path))].sort();
-  const devices = paths.filter((p) => /^\.common-ink\/users\/[^/]+\/devices\/[^/]+\/device\.json$/.test(p));
-  assert.equal(devices.length, 1, "the page writes this device's file as it starts");
-  assert.deepEqual(paths.filter((p) => !devices.includes(p)), [".common-ink/layout.json", "Lists tour.md"]);
+  assert.deepEqual([...new Set(after.history.map((c) => c.path))].sort(), [".common-ink/layout.json", "Lists tour.md"]);
   assert.ok(Math.min(...after.history.map((c) => c.revision)) > before, "the new seed's revisions come after the old ones");
   assert.equal(after.focus.path, "Lists tour.md", "opens on the scenario's note");
 });

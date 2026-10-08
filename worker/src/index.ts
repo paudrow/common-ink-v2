@@ -191,13 +191,6 @@ function signInConfig(env: Env): SignInConfig | null {
 /** The API routes, each running one workspace operation with its arguments from the query and the body. */
 const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
-  "GET /api/search": "search",
-  "POST /api/archive": "archive",
-  "GET /api/trash": "trash",
-  "POST /api/purge": "purge",
-  "POST /api/unarchive": "unarchive",
-  "POST /api/pin": "pin",
-  "POST /api/unpin": "unpin",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
   // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.

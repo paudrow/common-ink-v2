@@ -10,9 +10,7 @@ export default {
       items: (query) =>
         ctx.util.fuzzyFilter(query, ctx.commands.all(), (c) => c.title).map((c) => ({
           label: c.title,
-          // One that's off on this device is listed greyed, with why: choosing it says so again.
-          detail: c.off ?? ctx.commands.shortcut(c.id),
-          ...(c.off ? { off: true } : {}),
+          detail: ctx.commands.shortcut(c.id),
           run: () => ctx.commands.run(c.id),
         })),
     });

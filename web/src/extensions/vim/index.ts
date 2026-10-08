@@ -102,21 +102,6 @@ export default {
       showMode("NORMAL");
     });
 
-    // zt, z<CR>, zz, z., zb and z- as Vim's own, set at once (the motion z<CR> runs after would replace
-    // a scroll request), but with the line at the top kept below the editor's top scroll margin: clear
-    // of the phone's not-saved pill, say. With no margin, they land where Vim's do.
-    Vim.defineAction("scrollToCursor", (cm, args) => {
-      const view = cm.cm6;
-      const line = cm.getCursor().line;
-      const at = cm.charCoords({ line, ch: 0 }, "local");
-      const height = cm.getScrollInfo().clientHeight;
-      const margin = Math.max(0, ...view.state.facet(EditorView.scrollMargins).map((f: (v: EditorView) => { top?: number } | null) => f(view)?.top ?? 0));
-      let y = at.top - margin;
-      if (args.position === "center") y = at.bottom - height / 2;
-      if (args.position === "bottom") y = at.top - height + (cm.charCoords({ line, ch: cm.getLine(line).length - 1 }, "local").bottom - at.top);
-      cm.scrollTo(null, y);
-    });
-
     // Ex commands, each the app's command or the workbench's call.
     const exArg = (params: ExParams) => (params.argString ?? "").trim();
     const run = (command: string) => () => void ctx.commands.run(command);
@@ -137,9 +122,6 @@ export default {
       else if (!arg.replace(/^!\s*/, "") && (force || !ctx.workbench.hasUnsavedChanges())) ctx.commands.run("note.reload");
     });
     Vim.defineEx("quit", "q", run("tab.close"));
-    Vim.defineEx("archive", "archive", run("archive.archive"));
-    Vim.defineEx("unarchive", "unarchive", run("archive.unarchive"));
-    Vim.defineEx("trash", "trash", run("trash.note"));
     Vim.defineEx("close", "clo", run("window.close"));
     Vim.defineEx("only", "on", run("window.only"));
     exOpen("split", "sp", (p) => ctx.workbench.split("down", p), run("window.splitDown"));

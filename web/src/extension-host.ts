@@ -40,8 +40,6 @@ export type ExtensionState =
   | "active"
   /** Turned off in settings. */
   | "off"
-  /** On in settings, but off on this device: it needs something the device hasn't, or you turned it off here. */
-  | "unmet"
   /** Its manifest is wrong, or its code threw while loading or starting. */
   | "failed"
   /** A workspace extension, not loaded because this is safe mode. */
@@ -90,13 +88,6 @@ function installedFrom(text: string): { installedFrom?: string; catalog?: string
   }
 }
 
-/**
- * Extensions taken out of the Catalog. A copy installed from it no longer runs or shows: Word count
- * gave way to Words, built in. One of the same id you wrote yourself isn't touched.
- */
-const RETIRED = new Set(["word-count"]);
-const retired = (id: string, from: { catalog?: string }) => RETIRED.has(id) && from.catalog === "Common Ink";
-
 /** The workspace extensions among the files: a folder with an extension.json. */
 export function findWorkspaceExtensions(files: readonly FileSummary[]): WorkspaceExtension[] {
   const byId = new Map<string, FileSummary[]>();
@@ -117,8 +108,8 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 export interface Claimed {
   /**
    * Names the app and the built-ins use, in every spelling `spellings` gives: the first word of each of
-   * their commands and views ("settings" for settings.user), the built-ins' ids, and their search types
-   * and embeds. A sandboxed extension can't be named with one, or add anything named in one.
+   * their commands and views ("settings" for settings.user), the built-ins' ids, and their embeds and
+   * status items. A sandboxed extension can't be named with one, or add anything named in one.
    */
   names: ReadonlySet<string>;
   /** Key presses taken, as `chord`s on a Mac ("mac:meta-s") and elsewhere ("other:ctrl-s"). */
@@ -146,7 +137,6 @@ function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManife
       m.id,
       ...m.contributes.commands.map((c) => firstWord(c.command)),
       ...Object.values(m.contributes.views).flat().map((v) => firstWord(v.id)),
-      ...m.contributes.search.types.map((t) => t.type),
       ...m.contributes.embeds.map((e) => e.language),
       ...m.contributes.statusBarItems.map((i) => i.id),
     ]),
@@ -182,8 +172,6 @@ interface Own {
   /** Its commands, as kept. */
   commands: ReadonlySet<string>;
   claimed: Claimed;
-  /** Its names, lowercased, as search filter keys may start with them. */
-  words: readonly string[];
 }
 
 /**
@@ -203,17 +191,7 @@ const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => C
   embeds: (c, own) => c.embeds.filter((e) => !clashes(e.language, own.claimed.names)),
   // Drawn in the page, which only a trusted extension may do.
   urlEmbeds: () => [],
-  layout: () => [],
   dataSources: (c) => c.dataSources,
-  // Not a kind of result the app or a built-in answers for (notes, tasks, events): their results are theirs.
-  // Filter keys named for it ("word-count:", "word-count-done:"), so a word you search for (meeting:) stays a word.
-  search: (c, own) => ({
-    types: c.search.types.filter((t) => !clashes(t.type, own.claimed.names)),
-    filters: c.search.filters.filter((f) => own.words.some((w) => f.filter === w || f.filter.startsWith(`${w}-`))),
-  }),
-  // A place goes to a view it declares under its own name, or runs its own command; a toolbar button runs its own command.
-  places: (c, own) => c.places.filter((p) => ("command" in p ? own.commands.has(p.command) : own.name(p.view) && Object.values(c.views).some((list) => list.some((v) => v.id === p.view)))),
-  toolbar: (c, own) => c.toolbar.filter((t) => own.commands.has(t.command)),
 };
 
 /**
@@ -227,14 +205,14 @@ export function confined(m: ExtensionManifest, claimed: Claimed): ExtensionManif
   const names = namesOf(m.id);
   const name = (id: string) => names.some((n) => id === n || id.startsWith(`${n}.`)) && !clashes(id, claimed.names);
   const commands = new Set(m.contributes.commands.filter((x) => name(x.command) && x.command.includes(".")).map((x) => x.command));
-  const own: Own = { name, commands, claimed, words: names.map((n) => n.toLowerCase()) };
+  const own: Own = { name, commands, claimed };
   const contributes = Object.fromEntries(Object.entries(CONFINE).map(([kind, keep]) => [kind, (keep as (c: Contributions, own: Own) => unknown)(m.contributes, own)])) as unknown as Contributions;
   return { ...m, contributes };
 }
 
 /**
  * Whether a sandboxed extension may take queries starting with `prefix` in the command bar: one that
- * starts with its own name, as a word ("word-count " or "wordCount:"). Search's "", commands' ">" and
+ * starts with its own name, as a word ("word-count " or "wordCount:"). Quick open's "", commands' ">" and
  * every other provider's stay theirs.
  */
 export function ownPrefix(id: string, prefix: string): boolean {
@@ -258,7 +236,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [], places: [], toolbar: [], search: { types: [], filters: [] } },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [] },
 });
 
 export interface HostOptions {
@@ -277,8 +255,6 @@ export interface HostOptions {
 /** Every extension, and starting them as their activation events happen. */
 export class ExtensionHost {
   records: ExtensionRecord[] = [];
-  /** Copies of retired Catalog extensions found at the last load, for the app to clear away. */
-  retired: WorkspaceExtension[] = [];
   private modules = new Map<string, () => Promise<ExtensionModule>>();
   private activations = new Map<string, Promise<void>>();
   /** What the app, the built-ins and trusted extensions have, which a sandboxed extension can't take. */
@@ -296,7 +272,6 @@ export class ExtensionHost {
     trusted: readonly string[] = [],
   ): Promise<void> {
     const workspace = new Map(findWorkspaceExtensions(files).map((w) => [w.id, w]));
-    this.retired = [];
     const manifests = new Map<string, ExtensionManifest | string>();
     for (const w of workspace.values()) {
       // extension.json is only data, so it's read even in safe mode, for the extension's name.
@@ -323,18 +298,14 @@ export class ExtensionHost {
       this.modules.set(b.manifest.id, () => b.load());
     }
     for (const w of workspace.values()) {
-      const from = w.files.includes(installedPath(w.id)) ? installedFrom((await read(installedPath(w.id))).text) : {};
-      if (retired(w.id, from)) {
-        this.retired.push(w);
-        continue;
-      }
       const builtIn = builtIns.find((b) => b.manifest.id === w.id);
       if (builtIn && (safe || !trusted.includes(w.id))) continue;
       const manifest = manifests.get(w.id)!;
       // A workspace extension runs sandboxed unless you trust it.
       const tier: Tier = trusted.includes(w.id) ? "page" : "sandbox";
       const parsed = typeof manifest === "string" ? brokenManifest(w.id, builtIn?.manifest.name) : manifest;
-      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive", ...from };
+      const record: ExtensionRecord = { id: w.id, tier, manifest: tier === "sandbox" ? confined(parsed, this.claimed) : parsed, builtIn, workspace: w, state: "inactive" };
+      if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
       records.push(record);
       const reserved = tier === "sandbox" ? reservedName(w.id, this.claimed) : null;
       if (typeof manifest === "string") [record.state, record.error, record.broken] = ["failed", manifest, true];
@@ -361,11 +332,10 @@ export class ExtensionHost {
   async add(w: WorkspaceExtension, read: (path: FilePath) => Promise<WorkspaceFile>): Promise<ExtensionRecord | null> {
     const existing = this.records.find((r) => r.id === w.id);
     if (existing?.builtIn || (existing && existing.state !== "off")) return null;
-    const from = w.files.includes(installedPath(w.id)) ? installedFrom((await read(installedPath(w.id))).text) : {};
-    if (retired(w.id, from)) return null;
     const manifest = parseManifest((await read(w.manifestPath)).text, w.id);
     if (typeof manifest === "string") return null;
-    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.claimed), workspace: w, state: "inactive", ...from };
+    const record: ExtensionRecord = { id: w.id, tier: "sandbox", manifest: confined(manifest, this.claimed), workspace: w, state: "inactive" };
+    if (w.files.includes(installedPath(w.id))) Object.assign(record, installedFrom((await read(installedPath(w.id))).text));
     this.records = [...this.records.filter((r) => r.id !== w.id), record];
     const reserved = reservedName(w.id, this.claimed);
     if (reserved) {
@@ -452,16 +422,14 @@ export function guarded<A extends unknown[], R>(fn: (...args: A) => R, failed: (
 }
 
 /**
- * Each extension's state as far as a reload is concerned: on or off (everywhere, or here by your
- * override), and which version of its files. When this differs from what it was at start, the extension
- * needs a reload to match. What the device has isn't in it: an extension that becomes met goes in live.
+ * Each extension's state as far as a reload is concerned: on or off, and which version of its files. When
+ * this differs from what it was at start, the extension needs a reload to match.
  */
-export function extensionStates(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean, offHere: readonly string[] = []): Map<string, string> {
+export function extensionStates(builtIns: readonly BuiltIn[], files: readonly FileSummary[], disabled: readonly string[], safe: boolean): Map<string, string> {
   const states = new Map<string, string>();
-  const on = (id: string) => !disabled.includes(id) && !offHere.includes(id);
-  for (const b of builtIns) states.set(b.manifest.id, `${on(b.manifest.id)}`);
+  for (const b of builtIns) states.set(b.manifest.id, `${!disabled.includes(b.manifest.id)}`);
   if (safe) return states;
-  for (const w of findWorkspaceExtensions(files)) states.set(w.id, `${on(w.id)}:${w.version}`);
+  for (const w of findWorkspaceExtensions(files)) states.set(w.id, `${!disabled.includes(w.id)}:${w.version}`);
   return states;
 }
 

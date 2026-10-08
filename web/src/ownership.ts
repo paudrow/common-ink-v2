@@ -1,20 +1,19 @@
 // Who owns each name extensions register things under: a command id, a view id, an embed's language, a
-// status item, a kind of search result, a command bar prefix. One rule for all of them, which every
-// registry keyed by such a name consults, as things are registered and again as they're used:
+// status item, a command bar prefix. One rule for all of them, which every registry keyed by such a name
+// consults, as things are registered and again as they're used:
 //
 // - An extension that runs in the page (a built-in, or one you trust) owns every name its manifest
-//   declares, from the moment extensions load, even while it's off on this device, but not while you've
-//   turned it off. A built-in keeps its own names against any other; between two others, the first listed
+//   declares, from the moment extensions load, before it starts, but not while you've turned it off. A built-in keeps its own names against any other; between two others, the first listed
 //   keeps it.
 // - A sandboxed extension owns a name only if no extension in the page declares it, and it's the first
 //   sandboxed one that's on and declares it.
 //
-// What else names a command or a view (keys, menus, a status item's click, places, the toolbar) reaches
+// What else names a command or a view (keys, menus, a status item's click) reaches
 // it only while it's owned by the extension that contributes it.
 import type { ExtensionManifest } from "../../worker/src/extensions.ts";
 import { namesOf, type ExtensionRecord } from "./extension-host.ts";
 
-export type NameKind = "command" | "view" | "embed" | "statusItem" | "searchType" | "prefix";
+export type NameKind = "command" | "view" | "embed" | "statusItem" | "prefix";
 
 /** The names of each kind a manifest declares. A new kind of name needs a row here, and one in the ownership test's table. */
 export const DECLARED: { [K in NameKind]: (m: ExtensionManifest) => readonly string[] } = {
@@ -22,7 +21,6 @@ export const DECLARED: { [K in NameKind]: (m: ExtensionManifest) => readonly str
   view: (m) => Object.values(m.contributes.views).flat().map((v) => v.id),
   embed: (m) => m.contributes.embeds.map((e) => e.language),
   statusItem: (m) => m.contributes.statusBarItems.map((i) => i.id),
-  searchType: (m) => m.contributes.search.types.map((t) => t.type),
   // A command bar prefix starts with its extension's name, as a word (ownPrefix): the names are its id's.
   prefix: (m) => namesOf(m.id).map((n) => n.toLowerCase()),
 };

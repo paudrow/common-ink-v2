@@ -15,13 +15,11 @@ import type { Sandboxed } from "../../worker/src/settings.ts";
 export type { Sandboxed };
 import type { UploadDone } from "./api.ts";
 import type { Item, Provider } from "./commandbar.ts";
-import type { SearchProvider, SearchSection } from "./search.ts";
 import type { Embed } from "./embeds.ts";
 import type { MediaHandle, MediaKind, MediaSpec } from "./media.ts";
 import type { LinkCard } from "../../worker/src/link-card.ts";
 import type { GroupId, Layout, Openable, Tab } from "./layout.ts";
 import type { Urgency, WorkbenchChrome } from "./workbench.ts";
-import type { WidthClass } from "../../worker/src/devices.ts";
 
 export type { Embed, Item, Provider };
 export type { MediaHandle, MediaSpec };
@@ -93,29 +91,9 @@ export interface EventInput {
   recurrence?: string | string[] | null;
 }
 
-/**
- * The device the app is open in, for code that adapts to it (what a manifest's `requires` can't say):
- * Calendar draws an agenda on a phone, a board drags by long-press on touch.
- */
-export interface DeviceApi {
-  /** Whether it has a keyboard (assumed on a desktop, found elsewhere, and kept once found), or a touch screen. */
-  has(capability: "keyboard" | "touch"): boolean;
-  /** The window's width class: compact under 600px, medium, expanded from 840, large from 1200. Changes live. */
-  readonly width: WidthClass;
-  atLeast(min: WidthClass): boolean;
-  /** "fine" with a mouse or trackpad, "coarse" with touch alone. */
-  readonly pointer: "fine" | "coarse";
-  readonly touch: boolean;
-  /** Why the app thinks what it does about one: "a key was pressed that a touch screen's keyboard doesn't send". */
-  why(capability: "keyboard" | "width" | "pointer" | "touch"): string;
-  /** After the width class, the pointer, touch or the keyboard changes. */
-  onChange(fn: (device: DeviceApi) => void): void;
-}
-
 export interface ExtensionContext {
   /** This extension, as its manifest says. */
   extension: ExtensionManifest;
-  device: DeviceApi;
   /** The signed-in person's email, if a person is signed in. */
   me: string | undefined;
   settings: {
@@ -127,8 +105,8 @@ export interface ExtensionContext {
     register(id: string, run: () => unknown): void;
     /** Run a command. `by` runs one a sandboxed extension's contribution names (its key, its menu item) for that extension, so an app-only command refuses. */
     run(id: string, by?: Sandboxed): boolean;
-    /** Every command, with its title, and why it's off on this device if it is ("Off on this device · needs a keyboard"). */
-    all(): Array<{ id: string; title: string; off?: string }>;
+    /** Every command, with its title. */
+    all(): Array<{ id: string; title: string }>;
     /** A command's shortcut as shown (⌘P, Ctrl+P), from the keybindings in effect, if it has one. */
     shortcut(id: string): string | undefined;
     /** Every keybinding in effect: keys, and the Vim sequences extensions declare (the Vim extension maps those). */
@@ -160,31 +138,10 @@ export interface ExtensionContext {
   statusBar: {
     /** Show `text` in one of them, or hide it with "". */
     set(id: string, text: string, tooltip?: string): void;
-    /** Be told whether the status bar shows, now and each time that changes: a phone has none. In the page only. */
-    onShown(fn: (shown: boolean) => void): void;
   };
   commandBar: {
     provide(provider: Provider): void;
     open(text?: string): void;
-  };
-  /** Search (docs/queries.md): one query across notes and the kinds of result extensions add. */
-  search: {
-    /**
-     * Answer a kind of result the manifest declares in contributes.search.types, given the query read
-     * with `common-ink/query`. Given `within`, answer only with results in files whose paths match one
-     * of those globs (`inGlobs` from `common-ink/query`), before the limit: what's outside is taken out anyway.
-     */
-    provide(type: string, provider: SearchProvider): void;
-    /**
-     * What a query finds, a section per kind of result, as the search screen shows it; `progress` hears
-     * the sections found so far as each comes. A section with `more` stopped before it read every note it
-     * might find. A sandboxed extension searches only what it could read itself, as if nothing else were
-     * there: notes and tasks in the files:read scopes it's allowed, events with data:calendar:read, and
-     * its own kinds.
-     */
-    find(text: string, limit?: number, progress?: (sections: SearchSection[]) => void): Promise<SearchSection[]>;
-    /** The filter keys extensions add (`due`), for `parse(text, keys)`. */
-    filterKeys(): string[];
   };
   views: {
     /** How a view the manifest declares draws: as a webview (`resolve`), or, for trusted extensions, in the page (`render`). */
@@ -328,8 +285,6 @@ export interface ExtensionContext {
     refreshFromServer(paths: FilePath[]): Promise<void>;
     /** A short message over the focused window, with buttons. An alert (something refused, or gone wrong) isn't replaced by news that comes after it. */
     notice(message: string, actions?: Array<{ label: string; run(): unknown }>, urgency?: Urgency): void;
-    /** Ask before something that can't be undone: true if the person said `yes`. Trusted extensions only. */
-    confirm(title: string, text: string, yes: string, how?: { danger?: boolean }): Promise<boolean>;
     /** Whether there's a place to go back (-1) or forward (1) to: what Go back and Go forward would do. */
     canGo(by: -1 | 1): boolean;
   };
@@ -338,7 +293,7 @@ export interface ExtensionContext {
     /** The items that fuzzily match `query`, best first. */
     fuzzyFilter<T>(query: string, items: readonly T[], text: (item: T) => string): T[];
     /** The note a name like "Projects/Plan" means, or null if it can't be one. */
-    notePathFor(name: string, from?: FilePath): FilePath | null;
+    notePathFor(name: string): FilePath | null;
     /** A file's name as people see it: "Projects/Plan", "User settings". */
     label(path: FilePath): string;
   };
@@ -355,8 +310,6 @@ export interface ExtensionContext {
     onSaved(fn: (path: FilePath) => void): void;
     /** After the focused tab changes. */
     onFocus(fn: (path: FilePath | null) => void): void;
-    /** Each change as it's recorded, by anyone: its path and revision, and whether it deleted the file, undid another change, or purged a note there. Trusted extensions only. */
-    onChange(fn: (change: { path: FilePath; revision: number; deleted?: true; undoes?: number; purged?: true }) => void): void;
   };
 }
 
