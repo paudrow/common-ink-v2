@@ -207,8 +207,7 @@ export class SettingsEditor extends Part {
 export class ExtensionsView extends Part {
   async show() {
     await this.app.command("Show extensions");
-    // In the panel, or, on a phone (the shell), in the window, where panels open there.
-    await this.page.locator("#panel .extensions-view, #workbench .extensions-view").first().waitFor();
+    await this.page.waitForSelector("#panel .extensions-view");
   }
   row(id: string): Locator {
     return this.page.locator(`.extension-row[data-extension="${id}"]`);

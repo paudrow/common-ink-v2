@@ -4,7 +4,6 @@
 // and the ::tasks embed list tasks from across the notes, in the same rows. Ticking a repeating task
 // moves it on to its next date, on the same line. ⌘⇧. opens the quick-add bar anywhere: a task typed
 // the way you'd say it ("Pay rent every month on the 1st"), added to the inbox.
-import { startCompletion } from "@codemirror/autocomplete";
 import { getCM } from "@replit/codemirror-vim";
 import { editorFile } from "common-ink/editor-file";
 import { isNote } from "common-ink/files";
@@ -20,7 +19,6 @@ import type { DailyNotes } from "../daily/daily.ts";
 import { TaskStore, type LogSettings } from "./store.ts";
 import { taskInputPrefs } from "./input.ts";
 import { describeTaskEdit, parseLogLine, parseTask } from "./tasks.ts";
-import { addDue, makeTask } from "./edit.ts";
 import { toast } from "./toasts.ts";
 import { TasksView } from "./view.ts";
 import { findTasks } from "./search.ts";
@@ -107,16 +105,6 @@ const extension: ExtensionModule = {
       return !!view && openMenuAt(view, env);
     });
     ctx.commands.register("tasks.show", () => ctx.views.toggle("tasks"));
-    ctx.commands.register("tasks.makeTask", () => {
-      const view = ctx.editor.focused();
-      return !!view && makeTask(view);
-    });
-    ctx.commands.register("tasks.addDue", () => {
-      const view = ctx.editor.focused();
-      if (!view || !addDue(view)) return false;
-      startCompletion(view);
-      return true;
-    });
     ctx.commands.register("tasks.quickAdd", () => {
       const editor = ctx.editor.focused();
       // A task typed here types with the editor's keys: Vim's, if the note's editor has Vim.

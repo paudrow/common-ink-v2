@@ -296,8 +296,7 @@ browserTest(h, "a floating window stays on the page: dragged to a corner and the
 
   // A spot kept from a bigger page, on a small one: on the page.
   await app.page.evaluate(() => localStorage.setItem("common-ink.media-float", JSON.stringify({ right: 1080, bottom: 677.53 })));
-  // Still wide enough for the notes list: under 840px the phone shell takes over (shell.ts).
-  await app.page.setViewportSize({ width: 860, height: 500 });
+  await app.page.setViewportSize({ width: 800, height: 500 });
   await playVideo(app);
   await openWelcomeInNewTab(app);
   await floating(app, true);

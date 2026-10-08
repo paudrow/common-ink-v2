@@ -399,7 +399,7 @@ export class ExtensionRuntime {
   }
 
   /** What an extension that's on may bind or list: a sandboxed one, only commands that went in for it. */
-  bindable(m: ExtensionManifest): (command: string) => boolean {
+  private bindable(m: ExtensionManifest): (command: string) => boolean {
     return this.sandboxed(m) ? (command) => this.owns(m, "command", command) : () => true;
   }
 
@@ -417,7 +417,7 @@ export class ExtensionRuntime {
 
   /** Every keybinding in effect, with the Vim sequences extensions declare (never a sandboxed one's). */
   /** Who what an extension's manifest contributes (a key, a menu item, a status item) runs its command for: a sandboxed one's runs for it, so app-only commands refuse. */
-  by(m: ExtensionManifest): { by?: Sandboxed } {
+  private by(m: ExtensionManifest): { by?: Sandboxed } {
     return this.host.records.find((r) => r.id === m.id)?.tier === "sandbox" ? { by: { sandbox: m.id, name: m.name } } : {};
   }
 

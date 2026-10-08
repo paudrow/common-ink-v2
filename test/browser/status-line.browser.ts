@@ -248,8 +248,7 @@ browserTest(h, "on a phone there's no status line and no counting; offline, a pi
   await app.page.locator("#not-saved", { hasText: /^Not saved: offline\.$/ }).waitFor();
   assert.equal(await top(app, "#workbench"), noteTop, "the note stays where it was");
   const pill = (await app.page.locator("#not-saved").boundingBox())!;
-  // At the top of the note: just inside its window, under the phone's top bar.
-  assert.ok(pill.y >= noteTop && pill.y + pill.height < noteTop + 40 && pill.x + pill.width <= PHONE.width, `the pill is at the top of the note (${noteTop}px), on screen: ${JSON.stringify(pill)}`);
+  assert.ok(pill.y >= 0 && pill.y + pill.height < 80 && pill.x + pill.width <= PHONE.width, `the pill is at the top, on screen: ${JSON.stringify(pill)}`);
 
   await app.page.context().setOffline(false);
   await app.page.locator("#not-saved").waitFor({ state: "hidden" });

@@ -158,35 +158,10 @@ test("confined drops anything named in a name the app or a built-in uses, even u
 
 test("a sandboxed extension's contributions are kept only by a rule for their kind", () => {
   const m = manifest("word-count", { contributes: { commands: [{ command: "wordCount.go", title: "Go" }] } });
-  const withNewKind = { ...m, contributes: { ...m.contributes, widgets: [{ command: "settings.workspaceJson" }], gadgets: [{ command: "account.signOut" }] } };
+  const withNewKind = { ...m, contributes: { ...m.contributes, toolbar: [{ command: "settings.workspaceJson" }], places: [{ command: "account.signOut" }] } };
   const kept = confined(withNewKind as ExtensionManifest, { names: new Set(), keys: new Set() }).contributes as unknown as Record<string, unknown>;
-  assert.equal("widgets" in kept || "gadgets" in kept, false, "a kind confined() has no rule for isn't kept");
+  assert.equal("toolbar" in kept || "places" in kept, false, "a kind confined() has no rule for isn't kept");
   assert.deepEqual(kept.commands, [{ command: "wordCount.go", title: "Go" }]);
-});
-
-test("a sandboxed extension's places and toolbar buttons keep only its own commands and views", () => {
-  const m = manifest("sneaky", {
-    contributes: {
-      commands: [{ command: "sneaky.hello", title: "Hello" }],
-      views: { sidebar: [{ id: "sneaky.list", name: "List" }] },
-      places: [
-        { id: "own", title: "Own", command: "sneaky.hello" },
-        { id: "view", title: "View", view: "sneaky.list" },
-        { id: "core", title: "Core", command: "settings.workspaceJson" },
-        { id: "other", title: "Other", command: "lists.indent" },
-        { id: "theirs", title: "Theirs", view: "settings" },
-        { id: "undeclared", title: "Undeclared", view: "sneaky.nothere" },
-      ],
-      toolbar: [
-        { command: "sneaky.hello", title: "Own", label: "O" },
-        { command: "lists.indent", title: "Other", label: "L" },
-        { command: "note.save", title: "Core", label: "S" },
-      ],
-    },
-  });
-  const c = confined(m, { names: new Set(["settings"]), keys: new Set() }).contributes;
-  assert.deepEqual(c.places.map((p) => p.id), ["own", "view"]);
-  assert.deepEqual(c.toolbar.map((t) => t.command), ["sneaky.hello"]);
 });
 
 test("a sandboxed extension's command bar prefix starts with its own name, as a word", () => {

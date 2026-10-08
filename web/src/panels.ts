@@ -34,12 +34,9 @@ export class Panels {
     return this.showing;
   }
 
-  /** Where a panel shows instead, when the app has no room beside the windows (the phone shell): true if it did. */
-  elsewhere: (id: string) => boolean = () => false;
-
   show(id: string): void {
     const panel = this.panels.get(id);
-    if (!panel || this.elsewhere(id)) return;
+    if (!panel) return;
     this.showing = id;
     this.title.textContent = panel.title;
     this.title.dataset.open = JSON.stringify({ view: id });

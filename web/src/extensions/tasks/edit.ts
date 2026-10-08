@@ -166,23 +166,3 @@ export function convertPhrases(state: EditorState, n: number, today: string, onl
   const text = parseQuickAdd(m[4], today, keep, { targets: false }).line.match(TASK_LINE)![4];
   return { changes: { from: line.to - m[4].length, to: line.to, insert: text }, userEvent: "input.task" };
 }
-
-/** The keyboard toolbar's ☐: the cursor's line as a task. A list item keeps its indent; a task stays as it is. */
-export function makeTask(view: EditorView): boolean {
-  const line = view.state.doc.lineAt(view.state.selection.main.head);
-  if (TASK_LINE.test(line.text)) return false;
-  const item = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line.text);
-  const [indent, text] = item ? [item[1], item[2]] : [/^\s*/.exec(line.text)![0], line.text.trimStart()];
-  const insert = `${indent}- [ ] ${text}`;
-  view.dispatch({ changes: { from: line.from, to: line.to, insert }, selection: { anchor: line.from + insert.length }, userEvent: "input" });
-  return true;
-}
-
-/** The keyboard toolbar's due: ` due:` at the end of the cursor's task, for its completions to offer dates. */
-export function addDue(view: EditorView): boolean {
-  const line = view.state.doc.lineAt(view.state.selection.main.head);
-  if (!TASK_LINE.test(line.text)) return false;
-  const insert = `${/\s$/.test(line.text) ? "" : " "}due:`;
-  view.dispatch({ changes: { from: line.to, insert }, selection: { anchor: line.to + insert.length }, userEvent: "input" });
-  return true;
-}

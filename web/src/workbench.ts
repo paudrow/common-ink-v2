@@ -85,8 +85,6 @@ export interface WorkbenchEvents {
   saved(path: FilePath): void;
   /** How a command's shortcut is shown (⌘P, Ctrl+P), if it has one: from the keybindings in effect. */
   shortcut(command: string): string | undefined;
-  /** A file was opened (shown, or shown again if it was on show already). */
-  opened?(path: FilePath): void;
   /** Where you are changed: a jump to a new place ("push"), or where you are, updated ("replace"). */
   navigated?(how: "push" | "replace", visit: Visit): void;
 }
@@ -154,8 +152,6 @@ export class Workbench {
   firstLayout: () => Promise<L.Layout | null> = async () => null;
   /** Which parts of the layout show on this device: tabs, and windows side by side. What doesn't is put away, and kept. */
   parts: () => Parts = () => ({ tabs: true, splits: true });
-  /** Whether a note that opens takes focus, so you can type at once. */
-  focusOnOpen: () => boolean = () => true;
   private shown: Parts = { tabs: true, splits: true };
 
   constructor(
@@ -398,7 +394,6 @@ export class Workbench {
     }
     // Opening a file is a jump: a place of its own to come back to, after the one it was opened from.
     if (from?.file !== path || how.pos !== undefined) this.arrive(how.jump !== false);
-    this.on.opened?.(path);
   }
 
   /** Show this editor's tab, focused, and scroll to `pos` in it (a floating video's Back to note). */
@@ -936,11 +931,6 @@ export class Workbench {
     return view.dom.parentElement!;
   }
 
-  /** Draw a view somewhere outside the windows (the phone's sheet of views about the note). */
-  drawInto(id: string, box: HTMLElement): void {
-    this.drawView(id, box);
-  }
-
   /** Draw a view in its box; one that throws says so there, and the windows carry on. */
   private drawView(id: string, box: HTMLElement) {
     const view = this.viewFor(id);
@@ -1057,8 +1047,6 @@ export class Workbench {
     const file = this.focusedPath ? this.files.get(this.focusedPath) : undefined;
     this.on.status(file?.session.status ?? null, file && this.saying(file));
     if (document.querySelector("#command-bar:not([hidden])")) return;
-    // On a touch screen with no keyboard, a note opens to read: focus would bring the on-screen keyboard up. A tap edits.
-    if (view && !this.focusOnOpen()) return;
     if (view && !view.hasFocus) view.focus();
     else if (!view) this.groupEls.get(this.layout.focus)?.querySelector<HTMLElement>(".tab-view:not([hidden])")?.focus();
   }

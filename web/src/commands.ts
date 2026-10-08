@@ -54,15 +54,6 @@ export class Commands {
     return true;
   }
 
-  /** Run a command, and hand back what its run returns (a promise, for one that's done later); undefined if there's none, or it's refused (and said so). */
-  start(id: string, by: RunBy = "app"): unknown {
-    const command = this.byId.get(id);
-    if (!command) return undefined;
-    const off = this.refusal(command, by);
-    if (off) return void this.refused(command.title, off, by);
-    return command.run();
-  }
-
   /** Why a command won't run for whoever asked: an app-only one a sandboxed extension asked for, or one off on this device. */
   private refusal(command: Command, by: RunBy): string | null | undefined {
     return command.appOnly && by !== "app" ? APP_ONLY : command.off?.();

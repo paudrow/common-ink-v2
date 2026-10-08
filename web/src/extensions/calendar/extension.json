@@ -14,7 +14,6 @@
     "editor": { "why": "Draw links to events in notes as their time and title" }
   },
   "contributes": {
-    "places": [{ "id": "calendar", "title": "Calendar", "view": "calendar", "icon": "calendar" }],
     "search": {
       "types": [{ "type": "event", "title": "Events" }]
     },

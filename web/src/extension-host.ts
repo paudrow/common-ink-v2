@@ -211,9 +211,6 @@ const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => C
     types: c.search.types.filter((t) => !clashes(t.type, own.claimed.names)),
     filters: c.search.filters.filter((f) => own.words.some((w) => f.filter === w || f.filter.startsWith(`${w}-`))),
   }),
-  // A place goes to a view it declares under its own name, or runs its own command; a toolbar button runs its own command.
-  places: (c, own) => c.places.filter((p) => ("command" in p ? own.commands.has(p.command) : own.name(p.view) && Object.values(c.views).some((list) => list.some((v) => v.id === p.view)))),
-  toolbar: (c, own) => c.toolbar.filter((t) => own.commands.has(t.command)),
 };
 
 /**
@@ -258,7 +255,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [], places: [], toolbar: [], search: { types: [], filters: [] } },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [], search: { types: [], filters: [] } },
 });
 
 export interface HostOptions {
