@@ -196,8 +196,6 @@ const ROUTES: Record<string, OperationName> = {
   "GET /api/trash": "trash",
   "POST /api/purge": "purge",
   "POST /api/unarchive": "unarchive",
-  "POST /api/pin": "pin",
-  "POST /api/unpin": "unpin",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
   // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.

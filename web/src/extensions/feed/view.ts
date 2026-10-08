@@ -1,9 +1,7 @@
-// The Feed's view: pinned cards first, then the rest, newest change first, under date groups, read a page
-// at a time as you scroll. By touch a card swipes (common-ink/swipe) to archive, trash or pin it, as the
-// feed.swipe settings say, and a long press starts a selection that the bar at the bottom acts on. With a
-// keyboard, j and k move between cards, ↵ opens one, e archives, # or dd trashes, p pins, x selects and u
-// undoes the last of those (study, sections 5.2 and 9.3). Changes that arrive while you're scrolled down
-// don't move the list: a pill says how many, and a tap on it brings them in at the top.
+// The Feed's view: cards, newest change first, under date groups, read a page at a time as you scroll.
+// By touch a card swipes (common-ink/swipe) to archive or trash it, as the feed.swipe settings say, and a
+// long press starts a selection that the bar at the bottom acts on. Changes that arrive while you're
+// scrolled down don't move the list: a pill says how many, and a tap on it brings them in at the top.
 import type { Author, FilePath } from "common-ink/files";
 import { icon } from "common-ink/icons";
 import { swipeable, type SwipeAction } from "common-ink/swipe";
@@ -16,24 +14,18 @@ export interface Card {
   edited: number;
   author: Author;
   lines?: PreviewLine[];
-  pinned?: boolean;
 }
 
-export type SwipeChoice = "archive" | "trash" | "pin" | "none";
+export type SwipeChoice = "archive" | "trash" | "none";
 
 export interface FeedEnv {
-  /** A page of the cards that aren't pinned, in the Feed's order, and how many there are in all. */
+  /** A page of cards, in the Feed's order, and how many there are in all. */
   page(offset: number, limit: number): Promise<{ cards: Card[]; total: number }>;
-  /** The pinned cards, in the order they were pinned. */
-  pinned(): Promise<Card[]>;
   /** A note's text, for its card's lines. */
   text(path: FilePath): Promise<string>;
   open(path: FilePath): void;
   archive(paths: FilePath[]): Promise<boolean>;
   trash(paths: FilePath[]): Promise<boolean>;
-  pin(paths: FilePath[], pinned: boolean): Promise<boolean>;
-  /** Take back the last archive, trash or pin, if there is one to take back. */
-  undo(): void;
   swipe(side: "right" | "left"): SwipeChoice;
   /** Who made a change, as the Feed says it ("you", "Claude"), and whether that's an agent. */
   who(author: Author): { name: string; agent: boolean };
@@ -48,13 +40,10 @@ const NEAR_END_PX = 600;
 /** Scrolled down further than this, a change waits under the pill rather than moving the list. */
 const AT_TOP_PX = 40;
 
-const ACTIONS: Record<"archive" | "trash", { label: string; tone: string }> = {
+const ACTIONS: Record<Exclude<SwipeChoice, "none">, { label: string; tone: string }> = {
   archive: { label: "Archive", tone: "archive" },
   trash: { label: "Trash", tone: "delete" },
 };
-
-/** How long after a first d a second one makes dd. */
-const DD_MS = 800;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -65,10 +54,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text 
 
 export class FeedView {
   private cards: Card[] = [];
-  private pins: Card[] = [];
-  /** The card the keyboard is on. */
-  private current: FilePath | null = null;
-  private lastD = 0;
   private total = 0;
   private loaded = false;
   private loading: Promise<void> | null = null;
@@ -88,95 +73,21 @@ export class FeedView {
   private problem = "";
 
   constructor(private env: FeedEnv) {
-    this.root.addEventListener("focusin", (e) => {
-      const path = (e.target as HTMLElement).closest<HTMLElement>(".feed-card")?.dataset.path;
-      if (path) this.current = path as FilePath;
-    });
-  }
-
-  /** Every card, as listed: pinned ones first. */
-  private all(): Card[] {
-    return [...this.pins, ...this.cards];
-  }
-
-  /**
-   * The Feed's keys, matched on the character typed (so they work on any layout), only while the Feed
-   * has focus and never with ⌘, Ctrl or Alt held. ↵ is the focused card's own: it's a button.
-   */
-  private key(e: KeyboardEvent): void {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
-    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable]")) return;
-    const cards = this.all();
-    const at = cards.findIndex((c) => c.path === this.current);
-    const card = cards[at] ?? null;
-    const targets = (): FilePath[] => (this.selected?.size ? [...this.selected] : card ? [card.path] : []);
-    const dd = e.key === "d" && Date.now() - this.lastD < DD_MS;
-    this.lastD = e.key === "d" && !dd ? Date.now() : 0;
-    switch (e.key) {
-      case "j":
-      case "ArrowDown":
-        this.move(cards, at < 0 ? 0 : Math.min(cards.length - 1, at + 1));
-        break;
-      case "k":
-      case "ArrowUp":
-        this.move(cards, Math.max(0, at - 1));
-        break;
-      case "e":
-        if (targets().length) void this.act("archive", targets());
-        break;
-      case "#":
-        if (targets().length) void this.act("trash", targets());
-        break;
-      case "d":
-        if (dd && targets().length) void this.act("trash", targets());
-        break;
-      case "p":
-        if (targets().length) void this.act(cards.filter((c) => targets().includes(c.path)).every((c) => c.pinned) ? "unpin" : "pin", targets());
-        break;
-      case "x":
-        if (!card) return;
-        this.selected ??= new Set();
-        if (this.selected.has(card.path)) this.selected.delete(card.path);
-        else this.selected.add(card.path);
-        if (!this.selected.size) this.selected = null;
-        this.draw();
-        break;
-      case "u":
-        this.env.undo();
-        break;
-      case "Escape":
-        if (!this.selected) return;
+    this.root.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.selected) {
         this.selected = null;
         this.draw();
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  /** Put the keyboard on a card, scrolled into sight. */
-  private move(cards: Card[], to: number) {
-    const card = cards[to];
-    if (!card) return;
-    this.current = card.path;
-    const body = this.root.querySelector<HTMLElement>(`.feed-card[data-path="${CSS.escape(card.path)}"] .feed-card-body`);
-    body?.focus();
-    body?.scrollIntoView({ block: "nearest" });
-    // Near the end of what's read, the next page comes.
-    if (cards.length - to < 5) void this.more();
+        e.stopPropagation();
+      }
+    });
   }
 
   /** Draw into the view's box: the cards as they were, where you were, and read again from the top. */
   render(box: HTMLElement): void {
     if (this.box !== box) {
       this.box?.removeEventListener("scroll", this.remember);
-      this.box?.removeEventListener("keydown", this.keys);
       this.box = box;
       box.addEventListener("scroll", this.remember, { passive: true });
-      // On the view's box, which has focus when the Feed opens, as well as on its cards.
-      box.addEventListener("keydown", this.keys);
     }
     box.classList.add("feed-box");
     if (this.root.parentElement !== box) box.replaceChildren(this.root);
@@ -184,8 +95,6 @@ export class FeedView {
     box.scrollTop = this.scroll;
     void (this.loaded ? this.refresh() : this.reload());
   }
-
-  private keys = (e: KeyboardEvent) => this.key(e);
 
   private remember = () => {
     if (!this.box) return;
@@ -243,20 +152,18 @@ export class FeedView {
         found.push(...page.cards);
         if (page.cards.length < 100) break;
       }
-      const pins = fromTop ? await this.env.pinned() : this.pins;
-      const known = new Map(this.all().map((c) => [c.path, c]));
+      const known = new Map(this.cards.map((c) => [c.path, c]));
       await Promise.all(
-        [...found, ...(fromTop ? pins : [])].map(async (c) => {
+        found.map(async (c) => {
           const was = known.get(c.path);
           c.lines = was && was.edited === c.edited && was.lines ? was.lines : previewLines(await this.env.text(c.path).catch(() => ""));
         }),
       );
       if (turn !== this.generation) return;
       this.cards = fromTop ? found : [...this.cards, ...found.filter((c) => !known.has(c.path))];
-      this.pins = pins.map((c) => ({ ...c, pinned: true }));
       this.total = total;
       this.loaded = true;
-      if (this.selected) this.selected = new Set([...this.selected].filter((p) => this.all().some((c) => c.path === p)));
+      if (this.selected) this.selected = new Set([...this.selected].filter((p) => this.cards.some((c) => c.path === p)));
       this.draw();
     })();
     this.loading = work;
@@ -272,32 +179,21 @@ export class FeedView {
     }
   }
 
-  /** Archive or trash cards, taking them out at once when it's done; or pin or unpin them, read again into their places. */
-  private async act(kind: "archive" | "trash" | "pin" | "unpin", paths: FilePath[]) {
+  /** Archive or trash cards, taking them out at once when it's done. */
+  private async act(kind: "archive" | "trash", paths: FilePath[]) {
     this.ownChanges(paths);
-    // The keyboard goes on to the card after the last one acted on, so it stays in the list.
-    const cards = this.all();
-    const last = Math.max(...paths.map((p) => cards.findIndex((c) => c.path === p)));
-    const next = cards.slice(last + 1).find((c) => !paths.includes(c.path)) ?? [...cards].reverse().find((c) => !paths.includes(c.path));
-    // Whether the keyboard was in the Feed: moving a note to Trash closes its tabs, which can move focus meanwhile.
-    const keyboard = !!this.box?.contains(document.activeElement);
-    const done = await (kind === "archive" ? this.env.archive(paths) : kind === "trash" ? this.env.trash(paths) : this.env.pin(paths, kind === "pin"));
+    const done = await (kind === "archive" ? this.env.archive(paths) : this.env.trash(paths));
     if (!done) return;
-    this.selected = null;
-    if (kind === "pin" || kind === "unpin") return void (await this.reload());
     const gone = new Set<string>(paths);
     this.cards = this.cards.filter((c) => !gone.has(c.path));
-    this.pins = this.pins.filter((c) => !gone.has(c.path));
     this.total = Math.max(0, this.total - paths.length);
-    if (this.current && gone.has(this.current)) this.current = next?.path ?? null;
+    this.selected = null;
     this.draw();
-    if (keyboard && this.current) this.move(this.all(), this.all().findIndex((c) => c.path === this.current));
   }
 
   private swipeAction(side: "right" | "left", card: Card): SwipeAction | undefined {
     const choice = this.env.swipe(side);
     if (choice === "none") return undefined;
-    if (choice === "pin") return { label: card.pinned ? "Unpin" : "Pin", tone: "pin", run: () => this.act(card.pinned ? "unpin" : "pin", [card.path]) };
     return { ...ACTIONS[choice], run: () => this.act(choice, [card.path]) };
   }
 
@@ -325,18 +221,12 @@ export class FeedView {
     }
     parts.push(el("p", "feed-query", "-is:archived sort:edited"));
     if (this.problem) parts.push(el("p", "feed-problem", this.problem));
-    if (this.loaded && !this.cards.length && !this.pins.length && !this.problem) {
+    if (this.loaded && !this.cards.length && !this.problem) {
       const empty = el("div", "feed-empty");
       empty.append(el("b", "", "Inbox zero for notes."), el("span", "", " Everything is archived or in Trash."));
       parts.push(empty);
     }
     const list = el("div", "feed-list");
-    if (this.pins.length) {
-      const pinned = el("ul", "feed-group pinned");
-      pinned.setAttribute("aria-label", "Pinned");
-      for (const card of this.pins) pinned.append(this.cardEl(card));
-      list.append(el("h2", "feed-group-title", "Pinned"), pinned);
-    }
     let group = "";
     let section: HTMLElement | null = null;
     for (const card of this.cards) {
@@ -350,7 +240,7 @@ export class FeedView {
       section.append(this.cardEl(card));
     }
     parts.push(list);
-    if (this.loaded && this.all().length) {
+    if (this.loaded && this.cards.length) {
       const end = el("p", "feed-end", this.cards.length < this.total ? "Loading older notes…" : "That's everything not archived.");
       parts.push(end);
       this.observer?.disconnect();
@@ -361,10 +251,7 @@ export class FeedView {
     }
     if (this.selected) parts.push(this.selectionBar(this.selected));
     this.root.classList.toggle("selecting", !!this.selected);
-    // Drawing again keeps the keyboard on its card.
-    const keyboard = this.root.contains(document.activeElement);
     this.root.replaceChildren(...parts);
-    if (keyboard && this.current) this.root.querySelector<HTMLElement>(`.feed-card[data-path="${CSS.escape(this.current)}"] .feed-card-body`)?.focus({ preventScroll: true });
   }
 
   private cardEl(card: Card): HTMLElement {
@@ -377,12 +264,6 @@ export class FeedView {
     const top = el("span", "feed-card-top");
     const folder = card.path.includes("/") ? card.path.slice(0, card.path.lastIndexOf("/")) : "";
     top.append(el("span", "feed-card-title", card.title), folder ? el("span", "feed-card-folder", folder) : "", el("span", "feed-card-when", this.env.when(card.edited)));
-    if (card.pinned) {
-      const pin = icon("pin", "0.9em");
-      pin.setAttribute("aria-label", "Pinned");
-      pin.removeAttribute("aria-hidden");
-      top.prepend(pin);
-    }
     const who = this.env.who(card.author);
     const meta = el("span", "feed-card-meta");
     meta.append(el("span", who.agent ? "feed-who agent" : "feed-who", who.name));
@@ -417,11 +298,10 @@ export class FeedView {
 
   /** What a selection can do: archive or trash them all, as one undo each, or stop selecting. */
   private selectionBar(selected: Set<FilePath>): HTMLElement {
-    const allPinned = this.all().filter((c) => selected.has(c.path)).every((c) => c.pinned);
     const bar = el("div", "feed-selection");
     bar.setAttribute("role", "toolbar");
     bar.setAttribute("aria-label", "Selected notes");
-    const button = (name: "x" | "archive" | "trash-2" | "pin" | "pin-off", label: string, run: () => void) => {
+    const button = (name: "x" | "archive" | "trash-2", label: string, run: () => void) => {
       const b = el("button", "feed-selection-button");
       b.type = "button";
       b.append(icon(name, "1.1em"), el("span", "", label));
@@ -435,7 +315,6 @@ export class FeedView {
         this.draw();
       }),
       el("span", "feed-selection-count", `${selected.size} selected`),
-      button(allPinned ? "pin-off" : "pin", allPinned ? "Unpin" : "Pin", () => void this.act(allPinned ? "unpin" : "pin", paths)),
       button("archive", "Archive", () => void this.act("archive", paths)),
       button("trash-2", "Trash", () => void this.act("trash", paths)),
     );

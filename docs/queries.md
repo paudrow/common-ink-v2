@@ -22,7 +22,7 @@ Case doesn't matter, and nor do accents where they're optional: on Latin, Greek,
 
 | Filter | Example | Means |
 | --- | --- | --- |
-| `is:` | `is:archived` `is:pinned` `is:trashed` | A state. Archived notes are listed in `.common-ink/archive.json`, pinned ones in `.common-ink/pins.json` (in the order pinned). Notes in Trash show only with `is:trashed`. Tasks add `is:open` and `is:done`. |
+| `is:` | `is:archived` `is:pinned` `is:trashed` | A state. Notes in Trash show only with `is:trashed`. Tasks add `is:open` and `is:done`. |
 | `in:` | `in:Projects/` | In a folder, at any depth. Case doesn't matter. |
 | `from:` | `from:me` `from:agent` `from:claude` `from:sync` `from:extension` | Who made the last change: you, any agent, an agent or extension by name, or a data source's sync. |
 | `type:` | `type:note` `type:task` `type:event` | One kind of result. |

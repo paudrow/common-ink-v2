@@ -6,7 +6,6 @@
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
 import { SearchIndex } from "./search.ts";
 import { ARCHIVE_PATH, archiveAgain, deleteNote, mergeArchive } from "./archive.ts";
-import { mergePins, PINS_PATH } from "./pins.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -757,7 +756,7 @@ export function openWorkspace(
       records.observe(path, text);
       search.observe(path, text, revision, purged);
     },
-    (path) => (path === ARCHIVE_PATH ? mergeArchive : path === PINS_PATH ? mergePins : undefined),
+    (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
   );
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
   // Workspaces from before search, or from before its index's shape, get their index here, once.

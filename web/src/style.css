@@ -3129,15 +3129,11 @@ html[data-shell] #shell-toolbar:not([hidden]) {
 .feed-card[data-swipe~="delete"] {
   background: var(--bad);
 }
-.feed-card[data-swipe~="pin"] {
-  background: var(--accent);
-}
 .feed-card[data-swipe~="armed"] {
   filter: saturate(1.5) brightness(1.08);
 }
 .feed-card[data-swipe~="archive"]::before,
-.feed-card[data-swipe~="delete"]::before,
-.feed-card[data-swipe~="pin"]::before {
+.feed-card[data-swipe~="delete"]::before {
   content: var(--swipe-label);
   position: absolute;
   top: 50%;
@@ -3209,13 +3205,4 @@ html[data-shell] #shell-toolbar:not([hidden]) {
   margin: 0.5rem 0;
   font-size: 0.85rem;
   color: var(--warn-ink);
-}
-.feed-card-top .icon-pin {
-  flex: none;
-  align-self: center;
-  color: var(--accent);
-}
-:is(#panel, .tab-view) .feed .feed-card-body:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }

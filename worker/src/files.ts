@@ -393,7 +393,7 @@ export class Files {
     private announce: (notice: ChangeNotice) => void = () => {},
     /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files; and of a purge, after which no index may keep the purged text. */
     private observe: (path: FilePath, text: string | null, revision: Revision, purged?: boolean) => void = () => {},
-    /** How a file merges, if not line by line: the archive and the pins merge as sets (archive.ts, pins.ts). */
+    /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
     private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
