@@ -16,7 +16,7 @@ import { APP_ONLY, bindingForKey, Commands, keyFor, refusalSummary } from "./com
 import { ago, describeAuthor, docLabel } from "./describe.ts";
 import { Search } from "./search.ts";
 import { format } from "../../worker/src/query.ts";
-import { afterBurst, connectLive } from "./live.ts";
+import { connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
 import * as L from "./layout.ts";
@@ -984,8 +984,7 @@ window.addEventListener("pagehide", () => {
 // The app's own files, kept by a service worker so it opens offline.
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => {});
 // Live: hear of every change as it's recorded, from agents, the CLI, other tabs and other devices.
-// Extensions hear of every file that changed, once a burst of changes ends (the history view redraws, say).
-const heardChange = afterBurst(400, (path) => savedListeners.forEach((fn) => fn(path)));
+let historyTimer2 = 0;
 let recordsTimer = 0;
 connectLive({
   async change(notice) {
@@ -1005,7 +1004,9 @@ connectLive({
     // A new file, or an extension's (which may have been deleted): list them again.
     if (!files.some((f) => f.path === notice.path) || notice.path.startsWith(".common-ink/extensions/")) void refreshList();
     if (isSettingsFile(notice.path)) void loadSettings();
-    heardChange(notice.path);
+    // Extensions hear of it as of any change to a file (the history view redraws, say).
+    clearTimeout(historyTimer2);
+    historyTimer2 = window.setTimeout(() => savedListeners.forEach((fn) => fn(notice.path)), 400);
   },
   // Back after a gap: send what's waiting, then catch up on files that changed meanwhile. One path
   // for both, whether the gap was a dropped socket or a whole offline spell.

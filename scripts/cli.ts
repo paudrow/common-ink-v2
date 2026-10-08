@@ -7,8 +7,6 @@
 //   common-ink upload <file> [--name N] upload a file; prints the link to put in a note
 //   common-ink search <query...> [--limit N]
 //                                      notes the query finds (docs/queries.md), best first
-//   common-ink archive <note...>      archive notes (out of the Feed, last in search); undo brings them back
-//   common-ink unarchive <note...>
 //   common-ink history [path] [--author KEY] [--limit N]
 //   common-ink show <revision>         one change's diff
 //   common-ink undo <revision...>      undo changes (undoing an undo redoes it)
@@ -144,14 +142,6 @@ const commands: Record<string, () => Promise<void>> = {
       ].join("\n"),
     );
   },
-  async archive() {
-    const { data } = await api<{ revision: number | null; archived: string[] }>("POST", "/api/archive", { paths: positional() });
-    print(data, () => (data.revision === null ? "Archived already." : `Archived at revision ${data.revision} (undo ${data.revision} takes it back).`));
-  },
-  async unarchive() {
-    const { data } = await api<{ revision: number | null; archived: string[] }>("POST", "/api/unarchive", { paths: positional() });
-    print(data, () => (data.revision === null ? "Not archived." : `Unarchived at revision ${data.revision}.`));
-  },
   async history() {
     const author = take("--author", true);
     const limit = take("--limit", true);
@@ -222,7 +212,7 @@ const commands: Record<string, () => Promise<void>> = {
 const run = commands[command ?? ""];
 if (!run) {
   console.error(
-    "Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | search <query...> [--limit N] | archive <note...> | unarchive <note...> | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | calendars | events [--from T] [--to T] [--days N] | event <address> | event add <title> --start T | event set <address> [--start T] [--scope S] | event rm <address> [--scope S] | event link <address> <note> | reset [scenario]  [--json] [--zone Z]",
+    "Usage: common-ink ls | cat <path> | write <path> [--base N] | rm <path> [--base N] | upload <file> [--name N] | search <query...> [--limit N] | history [path] [--author KEY] [--limit N] | show <revision> | undo <revision...> | calendars | events [--from T] [--to T] [--days N] | event <address> | event add <title> --start T | event set <address> [--start T] [--scope S] | event rm <address> [--scope S] | event link <address> <note> | reset [scenario]  [--json] [--zone Z]",
   );
   process.exit(2);
 }

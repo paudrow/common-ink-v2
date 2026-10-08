@@ -192,8 +192,6 @@ function signInConfig(env: Env): SignInConfig | null {
 const ROUTES: Record<string, OperationName> = {
   "GET /api/files": "list_files",
   "GET /api/search": "search",
-  "POST /api/archive": "archive",
-  "POST /api/unarchive": "unarchive",
   "GET /api/file": "read_file",
   "PUT /api/file": "write_file",
   // A page's last save as it goes away (navigator.sendBeacon): the same write, its JSON sent as text/plain.

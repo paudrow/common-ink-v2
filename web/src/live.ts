@@ -1,7 +1,7 @@
 // The page's live connection to its workspace: a WebSocket that hears of every change as it's recorded
 // (ADR 0001). It reconnects on its own, waiting longer each time, and says when it's back so the page
 // can catch up on what it missed.
-import type { ChangeNotice, FilePath } from "../../worker/src/files.ts";
+import type { ChangeNotice } from "../../worker/src/files.ts";
 
 export function connectLive(on: { change(notice: ChangeNotice): void; open(): void }): void {
   let wait = 1000;
@@ -25,22 +25,4 @@ export function connectLive(on: { change(notice: ChangeNotice): void; open(): vo
     });
   };
   connect();
-}
-
-/**
- * Hand on the paths of changes that come in a burst, once it ends: each path once, every one of them,
- * `ms` after the last change. A burst's last path isn't its only one.
- */
-export function afterBurst(ms: number, fire: (path: FilePath) => void): (path: FilePath) => void {
-  const waiting = new Set<FilePath>();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return (path) => {
-    waiting.add(path);
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      const paths = [...waiting];
-      waiting.clear();
-      for (const p of paths) fire(p);
-    }, ms);
-  };
 }

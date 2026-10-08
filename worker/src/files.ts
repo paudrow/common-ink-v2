@@ -236,8 +236,6 @@ export class Files {
     private announce: (notice: ChangeNotice) => void = () => {},
     /** Told of every file's new text (null: deleted), and the change's revision, inside its transaction, to keep indexes of files. */
     private observe: (path: FilePath, text: string | null, revision: Revision) => void = () => {},
-    /** How a file merges, if not line by line: the archive merges as a set (archive.ts). */
-    private mergeFor: (path: FilePath) => Merge | undefined = () => undefined,
   ) {
     db.run("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     db.tx(() => SCHEMA.forEach((step) => step(db)));
@@ -247,49 +245,35 @@ export class Files {
   private heard: ChangeNotice[] = [];
   /** How many transactions deep the write running now is: only the outermost one's commit is kept. */
   private depth = 0;
-  /** A transaction inside the one running now failed: the outer one is rolled back too, even if it caught the error. */
-  private innerFailed = false;
 
   /**
    * A transaction of writes. Open pages hear of its changes only once the outermost one commits, so
-   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest. One
-   * inside another is part of the outer one, since SQLite has one transaction at a time: it can't be
-   * rolled back alone, so if it fails, the outer one fails as it ends, whether or not it caught the
-   * error, and none of either is kept.
+   * never of a revision that was rolled back, and one page's socket failing doesn't stop the rest.
    */
   private tx<T>(fn: () => T): T {
+    const mark = this.heard.length;
     this.depth++;
     try {
-      if (this.depth > 1) return fn();
-      this.innerFailed = false;
-      const out = this.db.tx(() => {
-        const out = fn();
-        if (this.innerFailed) throw new Error("A write inside this one failed, so none of them were kept");
-        return out;
-      });
-      const notices = this.heard;
-      this.heard = [];
-      for (const notice of notices) {
-        try {
-          this.announce(notice);
-        } catch (err) {
-          console.error("Announcing a change failed:", err);
+      const out = this.db.tx(fn);
+      if (this.depth === 1) {
+        const notices = this.heard;
+        this.heard = [];
+        for (const notice of notices) {
+          try {
+            this.announce(notice);
+          } catch (err) {
+            console.error("Announcing a change failed:", err);
+          }
         }
       }
       return out;
     } catch (err) {
-      if (this.depth > 1) this.innerFailed = true;
-      // Rolled back: nobody hears of any of it.
-      else this.heard = [];
+      // This transaction's changes were rolled back; an outer one's stay.
+      this.heard.length = mark;
       throw err;
     } finally {
       this.depth--;
     }
-  }
-
-  /** Run `fn` as one transaction: its writes all happen, or none do, and nothing comes between them. */
-  atomically<T>(fn: () => T): T {
-    return this.tx(fn);
   }
 
   /** Every file but data sources' records, which are listed by their kind (records.ts). */
@@ -375,7 +359,7 @@ export class Files {
           const after = this.textAt(change.path, revision) ?? "";
           const before = patch(lines(after), invert(change.diff)).join("\n");
           const current = this.read(change.path);
-          const undone = (this.mergeFor(change.path) ?? merge)(current?.text ?? "", after, before);
+          const undone = merge(current?.text ?? "", after, before);
           if (undone === null) return { revision, status: "conflict" as const, file: current ?? undefined };
           if (current && undone === current.text) return { revision, status: "unchanged" as const, file: current };
           const result = this.apply({ path: change.path, text: undone, base: current?.revision ?? 0, author, undoes: revision });
@@ -549,7 +533,7 @@ export class Files {
     let status: "saved" | "merged" = "saved";
     if (!deleting && base !== (current?.revision ?? 0)) {
       const baseText = this.textAt(path, base);
-      const merged = baseText === null ? null : (this.mergeFor(path) ?? merge)(text, baseText, currentText);
+      const merged = baseText === null ? null : merge(text, baseText, currentText);
       if (merged === null) return { status: "conflict", file: current };
       [next, status] = [merged, merged === text ? "saved" : "merged"];
     }
@@ -588,9 +572,6 @@ export class Files {
     return text.join("\n");
   }
 }
-
-/** A three-way merge of a file's text: mine and theirs, from base. Null when they can't be merged. */
-export type Merge = (mine: string, base: string, theirs: string) => string | null;
 
 /** Three-way merge by line, or null when both sides changed the same lines differently. */
 export function merge(mine: string, base: string, theirs: string): string | null {
