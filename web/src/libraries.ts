@@ -20,7 +20,6 @@ const LOADERS: Record<LibraryName, () => Promise<unknown>> = {
   "common-ink/editor-file": () => import("./editor-file.ts"),
   "common-ink/layout": () => import("./layout.ts"),
   "common-ink/files": () => import("../../worker/src/files.ts"),
-  "common-ink/query": () => import("../../worker/src/query.ts"),
   "common-ink/recurrence": () => import("../../worker/src/recurrence.ts"),
   "common-ink/calendar": () => import("../../worker/src/calendar.ts"),
   "common-ink/uploads": () => import("../../worker/src/uploads.ts"),
