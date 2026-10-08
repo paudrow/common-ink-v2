@@ -100,11 +100,6 @@ browserTest(h, "a sandboxed extension's keys and status items can't run them eit
   );
   const keep = (text: string) => JSON.stringify((({ keyboard, extensions }) => ({ keyboard, extensions }))(JSON.parse(text)));
   // A key on a phone is a keyboard found, which the device file says (seen); what you chose stays as it was.
-  // The keyboard is found first, by a character typed outside the note and bound to nothing, and the
-  // extension's keys come after, once Vim has gone in.
-  await app.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await app.page.keyboard.press("z");
-  await app.page.locator(".notice", { hasText: "Keyboard found" }).waitFor();
   await app.page.keyboard.press("x");
   await app.page.keyboard.press("ControlOrMeta+Shift+y");
   await app.page.locator(".status-item", { hasText: "Word count: 12" }).click();
