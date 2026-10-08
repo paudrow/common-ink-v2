@@ -752,9 +752,9 @@ export function openWorkspace(
     db,
     Date.now,
     announce,
-    (path, text, revision, purged) => {
+    (path, text, revision) => {
       records.observe(path, text);
-      search.observe(path, text, revision, purged);
+      search.observe(path, text, revision);
     },
     (path) => (path === ARCHIVE_PATH ? mergeArchive : undefined),
   );

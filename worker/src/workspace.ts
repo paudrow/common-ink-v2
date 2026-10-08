@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
 import type { Author, ChangeNotice, Db, Deleted, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
-import { DAY, purgeExpired, restoreFromTrash, retentionOf } from "./trash.ts";
+import { restoreFromTrash } from "./trash.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
 import { wallTimeAt } from "./calendar.ts";
@@ -41,9 +41,6 @@ export interface SeededScenario {
   pinned: boolean;
 }
 
-/** How soon after Delete forever the search index is merged: long enough to take a run of them, or Empty Trash, in one. */
-const MERGE_AFTER = 30_000;
-
 export class Workspace extends DurableObject<WorkspaceEnv> {
   private db: Db;
   /** The fake Google a browser test's Worker uses (FAKE_GOOGLE), kept while the object lives. */
@@ -61,8 +58,6 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
       tx: (fn) => ctx.storage.transactionSync(fn),
     };
     [this.files, this.sources, this.index] = this.open();
-    // Trash retention needs the alarm even in a workspace that never syncs.
-    void ctx.blockConcurrencyWhile(() => this.scheduleAlarm());
   }
 
   /** The workspace's files and data sources on its database, shaping the database first if need be. */
@@ -163,17 +158,6 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return restoreFromTrash(this.files, d, author);
   }
 
-  /** Delete notes forever; the search index is merged soon after, by the alarm, once for any number of purges. */
-  async purge(deletes: Revision[], author: Author) {
-    const purged = this.files.purge(deletes, author);
-    if (this.index.mergeDue()) await this.scheduleAlarm();
-    return purged;
-  }
-
-  retention() {
-    return retentionOf(this.files);
-  }
-
   search(query: Query, options: SearchOptions) {
     return this.index.search(query, options);
   }
@@ -255,50 +239,16 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
     return ok;
   }
 
-  /**
-   * The one alarm a Durable Object has, for three timers: Trash retention's purge, once a day; merging
-   * the search index soon after a purge, so no purged words stay in its blocks; and syncing while Google
-   * is connected (every 10 minutes, and soon after connecting). Each runs whatever the others do, and the
-   * next alarm is always set.
-   */
+  /** Sync on a timer while Google is connected: every 10 minutes, and soon after connecting. */
   async alarm() {
-    try {
-      const now = Date.now();
-      if (now >= this.retentionDue()) {
-        try {
-          purgeExpired(this.files, now);
-        } finally {
-          this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(now + DAY));
-        }
-      }
-    } catch (err) {
-      console.error("Trash retention failed:", err);
-    }
-    try {
-      this.index.mergePurged();
-    } catch (err) {
-      console.error("Merging the search index failed:", err);
-    }
-    try {
-      await this.sources.sealTokens();
-      await this.sources.sync();
-    } finally {
-      await this.scheduleAlarm();
-    }
+    await this.sources.sealTokens();
+    await this.sources.sync();
+    await this.scheduleSync();
   }
 
-  /** When Trash retention next purges: a minute after the workspace first opens, then daily. */
-  private retentionDue(): number {
-    const [row] = this.db.all<{ value: string }>("SELECT value FROM meta WHERE key = 'retention-next'");
-    if (row) return Number(row.value);
-    const first = Date.now() + 60_000;
-    this.db.run("INSERT INTO meta(key, value) VALUES ('retention-next', ?)", String(first));
-    return first;
-  }
-
-  /** Set the alarm for whichever comes first: the next sync, the next purge, or a merge of the search index a purge left due. */
-  private async scheduleAlarm() {
-    const next = Math.min(this.sources.syncs ? Date.now() + SYNC_EVERY : Infinity, this.retentionDue(), this.index.mergeDue() ? Date.now() + MERGE_AFTER : Infinity);
+  private async scheduleSync() {
+    if (!this.sources.syncs) return;
+    const next = Date.now() + SYNC_EVERY;
     const set = await this.ctx.storage.getAlarm();
     if (!set || set > next) await this.ctx.storage.setAlarm(next);
   }
@@ -306,7 +256,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
   /** Sync now if it hasn't in the last half minute (a calendar view opening asks); always, if `force`. */
   async syncSources(force = false) {
     if (force || this.sources.due(30_000)) await this.sources.sync();
-    await this.scheduleAlarm();
+    await this.scheduleSync();
     return this.sources.status("").sources[0];
   }
 

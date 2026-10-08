@@ -65,7 +65,6 @@ test("a person's request is theirs, unless it names the agent working for them",
   const ada = { kind: "user" as const, email: "ada@example.com" };
   assert.deepEqual(authorFor(ada, null), { kind: "user", email: "ada@example.com" });
   assert.deepEqual(authorFor(ada, " Claude "), { kind: "agent", name: "Claude", by: "ada@example.com" });
-  assert.deepEqual([authorFor(ada, ""), authorFor(ada, "   ")], [{ kind: "agent", name: "Unnamed agent", by: "ada@example.com" }, { kind: "agent", name: "Unnamed agent", by: "ada@example.com" }], "an empty agent header is never the person");
   assert.deepEqual(authorFor({ kind: "service", id: "abc.access" }, null), { kind: "agent", name: "abc.access" });
   assert.deepEqual(authorFor({ kind: "service", id: "abc.access" }, "Nightly"), { kind: "agent", name: "Nightly" });
 });

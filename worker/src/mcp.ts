@@ -1,7 +1,7 @@
 // The MCP server at /mcp: JSON-RPC over HTTP POST (MCP's Streamable HTTP transport, answering with
 // plain JSON). Its tools are the workspace operations (operations.ts), so agents use what the UI uses.
 import type { Author } from "./files.ts";
-import { isOperation, offeredToAgents, OPERATIONS, runOperation, type OperationName, type Store } from "./operations.ts";
+import { isOperation, OPERATIONS, runOperation, type Store } from "./operations.ts";
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -38,13 +38,11 @@ export async function mcp(req: globalThis.Request, store: Store, author: Author)
       return reply(msg.id, {});
     case "tools/list":
       return reply(msg.id, {
-        tools: Object.entries(OPERATIONS)
-          .filter(([name]) => offeredToAgents(name as OperationName))
-          .map(([name, o]) => ({ name, description: o.description, inputSchema: o.input })),
+        tools: Object.entries(OPERATIONS).map(([name, o]) => ({ name, description: o.description, inputSchema: o.input })),
       });
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
-      if (!isOperation(name) || !offeredToAgents(name)) return error(msg.id, -32602, `No tool named ${name}`);
+      if (!isOperation(name)) return error(msg.id, -32602, `No tool named ${name}`);
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       const result = await runOperation(name, args, store, author);
       if (!result.ok) return reply(msg.id, { content: [{ type: "text", text: result.error }], isError: true });

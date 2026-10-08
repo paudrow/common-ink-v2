@@ -100,13 +100,12 @@ export function askPermission(who: Asker, extension: ExtensionManifest, asks: Ar
 }
 
 /** Yes or no, with what yes means spelled out. */
-export function confirmDialog(title: string, text: string, yes: string, danger = false): Promise<boolean> {
+export function confirmDialog(title: string, text: string, yes: string): Promise<boolean> {
   return dialog<boolean>(title, (settle) => ({
     body: [
       el("h2", { textContent: title }),
       el("p", { textContent: text }),
-      // Something that can't be undone says so in red.
-      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, className: danger ? "danger" : "", onclick: () => settle(true) })),
+      el("div", { className: "dialog-actions" }, el("button", { textContent: "Cancel", onclick: () => settle(false) }), el("button", { textContent: yes, onclick: () => settle(true) })),
     ],
     escape: false,
   }));

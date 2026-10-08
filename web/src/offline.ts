@@ -68,9 +68,6 @@ const KNOWN_DAYS = 29;
 /** What a kept edit is, against the server's latest: there already, to send, or a clash to show. */
 type Verdict = "landed" | "send" | "clash";
 
-/** Files the workspace's list never has: the default settings the server makes up, and data sources' records, listed by kind. */
-const unlisted = (path: string) => path.startsWith(".common-ink/defaults/") || path.startsWith(".common-ink/records/");
-
 /** Where a note's unsaved edit is kept, by path, as the page goes. */
 const DRAFT = "common-ink.draft:";
 /** Where a page marks the notes it let go of its edits of: by page and path. */
@@ -129,10 +126,6 @@ export class Offline {
       const files = await this.net.list();
       this.reached(true);
       await this.kv.set("meta", "list", files);
-      // Copies of files the workspace no longer has (deleted, or deleted forever) aren't kept. Files a
-      // list never has stay: the default settings the server makes up, and data sources' records.
-      const there = new Set(files.map((f) => f.path));
-      for (const path of await this.kv.keys("files")) if (!there.has(path as FilePath) && !unlisted(path)) await this.kv.del("files", path);
       return files;
     } catch (err) {
       if (!unreachable(err)) throw err;
@@ -210,17 +203,6 @@ export class Offline {
     const time = unsent.time ?? (before && before.edit === unsent.edit ? before.time : undefined) ?? Date.now();
     await this.kv.set("unsent", unsent.path, { ...unsent, time, owner: unsent.owner ?? this.page, seq });
     this.changed();
-  }
-
-  /**
-   * A note was deleted forever at a path another note has now: the held edit and the draft kept for
-   * it, made on a revision that's `gone`, go too. Those for the note there now stay.
-   */
-  async forgetPurged(path: FilePath, gone: (revision: Revision) => Promise<boolean>): Promise<void> {
-    const held = await this.unsentFor(path);
-    if (held && held.base > 0 && (await gone(held.base))) await this.release(path);
-    const draft = await this.draftFor(path);
-    if (draft && draft.base > 0 && (await gone(draft.base))) await this.dropDraft(path);
   }
 
   /** The edit reached the server: let it go. */
@@ -486,16 +468,6 @@ export class Offline {
       if (unreachable(err)) this.reached(false);
       throw err;
     }
-  }
-
-  /**
-   * A note was deleted forever: nothing of it stays in this browser. Its kept copy, its draft and an
-   * edit held to send all go, so it can't be opened offline, and a held edit can't bring it back. A new
-   * note made here at the path meanwhile (based on no revision) isn't it, and stays.
-   */
-  async forget(path: FilePath): Promise<void> {
-    await this.kv.del("files", path);
-    await this.forgetPurged(path, async () => true);
   }
 
   /** A kept edit the server has: held or drafted, it goes. */
