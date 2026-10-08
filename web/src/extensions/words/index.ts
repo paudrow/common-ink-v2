@@ -7,18 +7,6 @@ import { WordTally } from "./count.ts";
 
 const number = new Intl.NumberFormat();
 
-/**
- * Run a count as a performance measure, "Words: count", with how many lines it read in its detail, so
- * a profile or a test tells Words' work from the rest. Only the latest stays in the timeline; a
- * PerformanceObserver sees each.
- */
-function measure(count: () => number): void {
-  const start = performance.now();
-  const lines = count();
-  performance.clearMeasures("Words: count");
-  performance.measure("Words: count", { start, detail: { lines } });
-}
-
 export default {
   activate(ctx: ExtensionContext) {
     const tallies = new WeakMap<EditorView, WordTally>();
@@ -35,15 +23,10 @@ export default {
     const show = () => {
       const view = counted();
       if (!view) return say("");
-      const doc = view.state.doc;
+      let tally = tallies.get(view);
       // Counted afresh only when its text changed while it wasn't counted: opened, or edited from elsewhere out of focus.
-      if (tallies.get(view)?.doc !== doc)
-        measure(() => {
-          tallies.set(view, new WordTally(doc));
-          return doc.lines;
-        });
-      const total = tallies.get(view)!.total;
-      say(`${number.format(total)} ${total === 1 ? "word" : "words"}`);
+      if (tally?.doc !== view.state.doc) tallies.set(view, (tally = new WordTally(view.state.doc)));
+      say(`${number.format(tally.total)} ${tally.total === 1 ? "word" : "words"}`);
     };
     // Focus moves before the note's editor is there: shown once it is.
     let timer = 0;
@@ -58,7 +41,7 @@ export default {
           update(u) {
             if (!u.docChanged || counted() !== view) return;
             const tally = tallies.get(view);
-            if (tally?.doc === u.startState.doc) measure(() => tally.update(u.changes, u.state.doc));
+            if (tally?.doc === u.startState.doc) tally.update(u.changes, u.state.doc);
             show();
           },
         };
