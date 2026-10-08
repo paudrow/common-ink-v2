@@ -3,7 +3,7 @@
 // of every change as it's recorded; the sockets use the Hibernation API, so idle ones cost nothing. It also keeps data source
 // connections.
 import { DurableObject } from "cloudflare:workers";
-import { DataSources, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
+import { DataSources, emptyWorkspace, openWorkspace, restoreFile, undoChanges, type EventEdit } from "./data-sources.ts";
 import type { Author, ChangeNotice, Db, FilePath, Files, HistoryQuery, Revision, Seed, Write } from "./files.ts";
 import { DATA_SCOPES, type Granted } from "./google.ts";
 import { SAMPLE_ZONE, sampleGoogle, type FakeGoogle } from "./fake-google.ts";
@@ -184,11 +184,7 @@ export class Workspace extends DurableObject<WorkspaceEnv> {
    */
   reset(seed: Seed, pinned: boolean) {
     const last = this.files.lastRevision();
-    this.db.tx(() => {
-      for (const { name } of this.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")) {
-        this.db.run(`DROP TABLE "${name}"`);
-      }
-    });
+    emptyWorkspace(this.db);
     [this.files, this.sources] = this.open();
     if (last) {
       this.db.run("DELETE FROM sqlite_sequence WHERE name = 'changes'");

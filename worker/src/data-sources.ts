@@ -733,6 +733,18 @@ export class DataSources {
 }
 
 /**
+ * Drop every table of a workspace's database (the test levers' reset). Virtual tables go first, with the
+ * tables they keep: a workspace that ran navigation-1-14 has its search index, an FTS5 table, whose own
+ * tables are gone once it is.
+ */
+export function emptyWorkspace(db: Db): void {
+  db.tx(() => {
+    const tables = db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY sql NOT LIKE 'CREATE VIRTUAL%'");
+    for (const { name } of tables) db.run(`DROP TABLE IF EXISTS "${name}"`);
+  });
+}
+
+/**
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
