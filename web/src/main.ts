@@ -9,7 +9,7 @@ import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
+import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level } from "./settings-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { APP_ONLY, bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
 import { describeAuthor, docLabel } from "./describe.ts";
@@ -30,7 +30,7 @@ import { createState, editText } from "./editor.ts";
 import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
-import { parseGrants } from "../../worker/src/permissions.ts";
+import { parseGrants, type Answer } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
 import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
@@ -513,6 +513,33 @@ const bar = new CommandBar();
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
+/**
+ * Your answer to one of an extension's permissions, in your settings, beside the others there (or none,
+ * to ask again). Each settings file's answers are edited as that file has them: the settings combined
+ * from all of them take the whole key from one file, so writing those back could copy another file's
+ * answers over, or lose its own.
+ */
+function answerGrant(id: string, key: string, answer: Answer | undefined) {
+  return editSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", (value) => {
+    const grants = parseGrants(value);
+    const mine = { ...grants[id] };
+    if (answer) mine[key] = answer;
+    else delete mine[key];
+    return { ...grants, [id]: mine };
+  });
+}
+
+/** Forget every answer to an extension's permissions, in each settings file that has any. */
+async function forgetGrants(id: string) {
+  for (const path of new Set([USER_SETTINGS, WORKSPACE_SETTINGS].filter((p) => p !== null)))
+    await editSetting(api, path, "extensions.permissions", (value) => {
+      const grants = parseGrants(value);
+      if (!(id in grants)) return value;
+      const { [id]: _forgotten, ...others } = grants;
+      return others;
+    });
+}
+
 const extensions = new ExtensionRuntime({
   me,
   commands,
@@ -529,8 +556,7 @@ const extensions = new ExtensionRuntime({
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
+    await answerGrant(id, key, answer);
     await loadSettings();
   },
   prompt: dev ? dev.prompt(promptFor) : promptFor,
@@ -636,16 +662,11 @@ const extensionDeps: ExtensionsViewDeps = {
   reload: reloadWindow,
   answer: (r, key) => parseGrants(settings["extensions.permissions"])[r.id]?.[key],
   async setAnswer(r, key, answer) {
-    const grants = parseGrants(settings["extensions.permissions"]);
-    const mine = { ...grants[r.id] };
-    if (answer) mine[key] = answer;
-    else delete mine[key];
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
+    await answerGrant(r.id, key, answer);
     await loadSettings();
   },
   async resetAnswers(r) {
-    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
-    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
+    await forgetGrants(r.id);
     await loadSettings();
   },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),

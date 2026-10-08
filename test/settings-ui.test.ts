@@ -7,7 +7,7 @@ import { CORE_CATALOG, DEFAULTS } from "../worker/src/settings.ts";
 const { window } = new JSDOM("<!doctype html><body></body>");
 Object.assign(globalThis, { document: window.document, CSS: { escape: (s: string) => s.replace(/["\\]/g, "\\$&") } });
 
-const { describeKey, settingsEditor, withSetting } = await import("../web/src/settings-ui.ts");
+const { describeKey, editSetting, settingsEditor, withSetting } = await import("../web/src/settings-ui.ts");
 const { settingsCompletions, settingsProblems } = await import("../web/src/settings-json.ts");
 
 test("setting names read as titles under their section", () => {
@@ -226,4 +226,27 @@ test("a drawing still reading its files gives way to a newer one, instead of dra
   await first;
   await settle();
   assert.equal(root.querySelector('[role=tab][aria-selected="true"]')?.textContent, "Workspace", "the older drawing drew nothing");
+});
+test("a key is changed from what its own file has, so another file's value for it isn't copied over or lost", async () => {
+  const files: Record<string, { text: string; revision: number }> = {
+    user: { text: JSON.stringify({ "extensions.permissions": { boards: { "files:read:**/*.md": "allow" }, "word-count": { "files:read:**/*.md": "deny" } } }), revision: 1 },
+    workspace: { text: JSON.stringify({ "extensions.permissions": { "word-count": { "files:read:**/*.md": "allow" }, timer: { notifications: "allow" } } }), revision: 1 },
+  };
+  const io = {
+    read: async (path: FilePath) => ({ path, ...files[path] }),
+    write: async (path: FilePath, text: string, base: Revision) => {
+      assert.equal(base, files[path].revision);
+      files[path] = { text, revision: files[path].revision + 1 };
+      return { status: "ok" as const, file: { path, ...files[path] } };
+    },
+  };
+  const forget = (value: unknown) => {
+    const { "word-count": _gone, ...others } = (value ?? {}) as Record<string, unknown>;
+    return others;
+  };
+  for (const path of ["user", "workspace"] as FilePath[]) await editSetting(io as never, path, "extensions.permissions", forget);
+  assert.deepEqual(JSON.parse(files.user.text)["extensions.permissions"], { boards: { "files:read:**/*.md": "allow" } });
+  assert.deepEqual(JSON.parse(files.workspace.text)["extensions.permissions"], { timer: { notifications: "allow" } });
+  await editSetting(io as never, "user" as FilePath, "extensions.permissions", forget);
+  assert.equal(files.user.revision, 2, "nothing to change, nothing written");
 });

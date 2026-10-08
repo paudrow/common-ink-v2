@@ -55,6 +55,29 @@ const EMPTY = `{\n  "$schema": "/schema/settings.json"\n}\n`;
 export const withSetting = (text: string, key: string, value: unknown) => setTopLevelKey(text.trim() ? text : EMPTY, key, value);
 
 /**
+ * Change one key of a settings file from what that file has for it (not the settings combined from all
+ * of them, which take the whole key from one file), as one change; nothing when it comes out the same.
+ * If the file changes in between, it's read again and the change made again.
+ */
+export async function editSetting(io: Pick<SettingsUiDeps, "read" | "write">, path: FilePath, key: string, change: (current: unknown) => unknown): Promise<void> {
+  for (let tries = 0; tries < 3; tries++) {
+    const latest = await io.read(path);
+    let current: unknown;
+    try {
+      current = latest.text.trim() ? (JSON.parse(latest.text) as Record<string, unknown>)[key] : undefined;
+    } catch {
+      return;
+    }
+    const value = change(current);
+    if (JSON.stringify(value) === JSON.stringify(current)) return;
+    const text = withSetting(latest.text, key, value);
+    if (text === null || text === latest.text) return;
+    const result = await io.write(path, text, latest.revision);
+    if (result.status !== "conflict") return;
+  }
+}
+
+/**
  * Write one key of a settings file (or remove it, with undefined), on top of whatever the file says
  * now, as one change. If the file changes in between, it's read again and the key applied again.
  */
