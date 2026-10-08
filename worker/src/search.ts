@@ -29,8 +29,6 @@ export interface SearchResults {
 export interface SearchOptions {
   ctx: MatchContext;
   limit: number;
-  /** How many of the matches to skip first: the next page of a list read a page at a time (the Feed). */
-  offset?: number;
   /** The paths in the archive, which come last. */
   archived?: ReadonlySet<string>;
   /**
@@ -154,7 +152,7 @@ export class SearchIndex {
    * right ones however many notes there are, `more` says some were never read, and `total` counts only
    * those that were.
    */
-  search(query: Query, { ctx, limit, offset = 0, archived = new Set(), within }: SearchOptions): SearchResults {
+  search(query: Query, { ctx, limit, archived = new Set(), within }: SearchOptions): SearchResults {
     const fts = ftsQuery(query);
     const inside = within ? inGlobs(within) : () => true;
     const authors = new Map<string, Author>();
@@ -165,7 +163,7 @@ export class SearchIndex {
         ...(fts ? [fts] : []),
       )
       .flatMap((r) => (inside(r.path) ? [{ path: r.path, title: r.title, text: "", edited: r.time, author: author(r.author), ...(archived.has(r.path) ? { archived: true } : {}) }] : []));
-    if (!query.terms.some(needsText)) return present(query, notes, { ctx, limit, offset });
+    if (!query.terms.some(needsText)) return present(query, notes, { ctx, limit });
     const known: Query = { terms: query.terms.filter((t) => !needsText(t)) };
     const candidates = ordered(query, notes.filter((n) => matches(known, n, ctx)));
     const read = candidates.slice(0, MAX_CANDIDATES);
@@ -178,20 +176,20 @@ export class SearchIndex {
         const note = { ...n, text: texts.get(n.path) ?? "" };
         if (!matches(query, note, ctx)) continue;
         total++;
-        if (found.length < offset + limit) found.push(note);
+        if (found.length < limit) found.push(note);
       }
     }
-    return { ...present(query, found, { ctx, limit, offset }), total, ...(candidates.length > MAX_CANDIDATES ? { more: true as const } : {}) };
+    return { ...present(query, found, { ctx, limit }), total, ...(candidates.length > MAX_CANDIDATES ? { more: true as const } : {}) };
   }
 }
 
-/** The notes that match, in the query's order, `limit` of them after the first `offset`, each with the first line that has a word searched for. */
-export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit, offset = 0 }: Pick<SearchOptions, "ctx" | "limit" | "offset">): SearchResults {
+/** The notes that match, in the query's order, the first `limit` of them, each with the first line that has a word searched for. */
+export function present(query: Query, notes: readonly NoteFacts[], { ctx, limit }: Pick<SearchOptions, "ctx" | "limit">): SearchResults {
   const found = select(query, notes, ctx);
   const wanted = query.terms.flatMap((t) => (t.kind === "words" && !t.negated && tokens(t.text).length ? [tokens(t.text)] : []));
   return {
     total: found.length,
-    results: found.slice(offset, offset + limit).map((n) => {
+    results: found.slice(0, limit).map((n) => {
       const lines = n.text.split("\n");
       const at = wanted.length ? lines.findIndex((l) => wanted.some((w) => holds(tokens(l), w))) : -1;
       return {

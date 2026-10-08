@@ -1204,13 +1204,10 @@ async function setBar(ids: string[]) {
 }
 /** Whether an extension owns a view (ownership.ts): what names a view reaches only its owner's. */
 const ownsView = (extension: string, view: string) => extensions.ownership.owns(extension, "view", view);
-/** Every place, in order: the Feed (the Feed extension's view, or the notes list without it), extensions' places, views that aren't places yet, Extensions and Settings. */
+/** Every place, in order: the Feed (the notes list, until the Feed exists), extensions' places, views that aren't places yet, Extensions and Settings. */
 function places(): Place[] {
   const on = extensions.host.records.filter((r) => r.state === "inactive" || r.state === "active");
   const placed = new Set(on.flatMap((r) => r.manifest.contributes.places.flatMap((p) => ("view" in p ? [p.view] : []))));
-  // The Feed is the core's place; its view is the Feed extension's, while that's on (and isn't listed again as a view).
-  const feed = on.some((r) => r.id === "feed") && ownsView("feed", "feed");
-  if (feed) placed.add("feed");
   /**
    * Who a place is from, said beside it so no extension's place passes for the app's own: a workspace
    * extension says so, so one named like the app can't pass for a built-in; a built-in named as its place
@@ -1225,7 +1222,7 @@ function places(): Place[] {
     return by ? { ...p, from: by } : p;
   };
   return [
-    { id: "feed", title: "Feed", icon: "inbox", open: feed ? { view: "feed" } : { list: true } },
+    { id: "feed", title: "Feed", icon: "inbox", open: { list: true } },
     // An extension's places are named for it, so none can be the core's (feed, extensions, settings) or another's.
     // A place runs a command, or shows a view, still the extension's own (the runtime's bindable, and who owns
     // the view), as its keys and menu items do: none reaches another extension's.
@@ -1421,9 +1418,9 @@ try {
   });
   await loadPlaces();
   const { missing } = await workbench.start(asked);
-  // On a phone the app opens on the place you were last on, or a note its address names over the Feed.
+  // On a phone the note the app opens on shows over the Feed: the Feed's entry goes below it, so back goes there first.
   shell.update();
-  shell.started(history.state, { note: !!asked });
+  shell.started(history.state);
   const failed = extensions.host.records.find((r) => r.state === "failed");
   if (failed) {
     workbench.notice(`Extension ${failed.manifest.name} didn't start: ${failed.error}`, [
@@ -1434,8 +1431,8 @@ try {
   if (missing) {
     // An old or edited address: say so, and only offer to make it if it's a note. JSON files are never made by accident.
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
-    // Nothing on show opens a note. On a phone, the place is what's on show (the Feed, or what an entry says, still coming).
-  } else if (!workbench.focusedPath && !shell?.active) await workbench.open(fallback);
+    // Nothing on show opens a note; on a phone a place's view (Calendar, after a reload there) is something.
+  } else if (!workbench.focusedPath && !(shell?.active && L.activeTab(workbench.focusedGroup))) await workbench.open(fallback);
   renderList();
   // Once the windows are up, so what it says shows in one.
   void clearRetired(extensions.host.retired);

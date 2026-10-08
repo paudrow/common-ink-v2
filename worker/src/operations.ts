@@ -547,12 +547,12 @@ export const OPERATIONS = {
       throw new OperationError("The labels file kept changing; try again");
     },
   }),
-  search: op<{ query: string; limit: number; offset: number; zone: string; within?: string[] }>({
+  search: op<{ query: string; limit: number; zone: string; within?: string[] }>({
     description:
-      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. `within` searches only notes whose paths its globs admit: the first glob a path matches decides, a glob admitting it and a "!glob" leaving it out, as in ["!Projects/Old/**", "Projects/**"]. A search reads the text of at most 1000 notes, in its order, so its first results are right: `more` says there were more to read (then `total` counts those read), so add words or filters. `offset` skips that many matches first, for the next page. Events are list_events\'.',
+      'Search notes with the query language: words and "phrases" (the last word of each matches the start of a word, so laun finds launch), -word to leave out, and filters: is:archived, is:pinned, in:Projects/, from:me, from:agent, from:<name>, edited:today, edited:<7d, edited:>3m, has:task, has:embed, has:event, sort:edited, sort:title. Negate a filter with -, as -is:archived. Notes whose titles match come first, archived notes last (marked `archived`). Each result has its path, title, when and by whom it last changed, and the first line with a word searched for. `zone` is the person\'s time zone, for edited:today. `within` searches only notes whose paths its globs admit: the first glob a path matches decides, a glob admitting it and a "!glob" leaving it out, as in ["!Projects/Old/**", "Projects/**"]. A search reads the text of at most 1000 notes, in its order, so its first results are right: `more` says there were more to read (then `total` counts those read), so add words or filters. Events are list_events\'.',
     input: {
       type: "object",
-      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, offset: { type: "integer", minimum: 0 }, zone: ZONE, within: { type: "array", items: { type: "string" }, maxItems: 50 } },
+      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 }, zone: ZONE, within: { type: "array", items: { type: "string" }, maxItems: 50 } },
       required: ["query"],
     },
     parse: (a) => {
@@ -561,16 +561,16 @@ export const OPERATIONS = {
       if (!zone) return fail('"zone" is a time zone, like America/New_York');
       const within = globsOf(a.within);
       if (within === null) return fail('"within" is a list of up to 50 path globs, like ["Projects/**"] (in a URL, as JSON)');
-      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), offset: count(a.offset) ?? 0, zone, ...(within ? { within } : {}) });
+      return ok({ query: a.query, limit: Math.min(count(a.limit) || 20, 100), zone, ...(within ? { within } : {}) });
     },
-    run: async (store, { query, limit, offset, zone, within }) => {
+    run: async (store, { query, limit, zone, within }) => {
       const q = parse(query);
       const ctx = { now: Date.now(), zone };
       // Notes in Trash aren't in the index: they're searched only when the query asks for them.
       const inside = within ? inGlobs(within) : () => true;
       const found = asksFor(q, "trashed")
-        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit, offset })
-        : await store.search(q, { ctx, limit, offset, archived: await archivedIn(store), within });
+        ? present(q, (await Promise.all((await notesInTrash(store, ctx.now)).filter((d) => inside(d.path)).map((d) => withText(store, d)))).map((d) => ({ path: d.path, title: titleOf(d.path, d.text), text: d.text, edited: d.time, author: d.author, trashed: true })), { ctx, limit })
+        : await store.search(q, { ctx, limit, archived: await archivedIn(store), within });
       return { query: format(q), problems: problems(q), ...found };
     },
   }),

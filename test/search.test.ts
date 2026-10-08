@@ -139,17 +139,3 @@ test("within takes globs in order, the first a path matches deciding, as an exte
   assert.deepEqual(await paths(["**/*.md", "!Secret/**"]), ["Public/Decoy.md", "Secret/Plan.md"]);
   assert.deepEqual(await paths(["!Secret/**", "**/*.md"]), ["Public/Decoy.md"]);
 });
-
-test("search pages through its matches with offset, with or without words", async () => {
-  const store = memoryStore();
-  for (let i = 0; i < 7; i++) store.files.write({ path: `N${i}.md` as FilePath, text: `# N${i}\nbeta ${i}`, base: 0, author: ada });
-  const page = async (query: string, offset: number) => {
-    const out = await runOperation("search", { query, zone: "UTC", limit: 3, offset }, store, ada);
-    assert.ok(out.ok, JSON.stringify(out));
-    return (out.value as { total: number; results: Array<{ path: string }> }).results.map((r) => r.path);
-  };
-  for (const query of ["sort:title", "beta sort:title"]) {
-    const pages = [await page(query, 0), await page(query, 3), await page(query, 6)];
-    assert.deepEqual(pages, [["N0.md", "N1.md", "N2.md"], ["N3.md", "N4.md", "N5.md"], ["N6.md"]], query);
-  }
-});

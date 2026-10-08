@@ -69,19 +69,18 @@ browserTest(h, "layout is per device: a new wide device starts from the last wid
   await laptop.context.close();
 
   const phone = await open("phone");
-  const s = L(await phone.other.state(), ["feed"]);
-  // And the Feed it opens on (decision 21), beside it.
+  const s = L(await phone.other.state());
   assert.deepEqual([s.groups, s.tabs], [1, 1], "a phone keeps only the window and tab on show");
   await phone.context.close();
 });
 
-/** How many windows and tabs a layout has, leaving out tabs of the views named. */
-function L(state: { layout: unknown }, leaveOut: string[] = []) {
-  type N = { kind: "group"; tabs: Array<{ view?: string }> } | { kind: "split"; children: N[] };
-  const groups: Array<{ tabs: Array<{ view?: string }> }> = [];
+/** How many windows and tabs a layout has. */
+function L(state: { layout: unknown }) {
+  type N = { kind: "group"; tabs: unknown[] } | { kind: "split"; children: N[] };
+  const groups: Array<{ tabs: unknown[] }> = [];
   const walk = (n: N) => (n.kind === "group" ? groups.push(n) : n.children.forEach(walk));
   walk((state.layout as { root: N }).root);
-  return { groups: groups.length, tabs: groups.reduce((t, g) => t + g.tabs.filter((tab) => !leaveOut.includes(tab.view ?? "")).length, 0) };
+  return { groups: groups.length, tabs: groups.reduce((t, g) => t + g.tabs.length, 0) };
 }
 
 browserTest(h, "on a phone Vim is off and keys aren't hinted until a keyboard is found; then both are, without a reload", { scenario: "empty", device: "phone" }, async (app) => {

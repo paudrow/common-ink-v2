@@ -103,9 +103,9 @@ const STEPS: Step[] = [
     },
   },
   {
-    name: "a card in the Feed",
-    can: async (app) => (await app.page.locator(".feed-card-title").count()) > 0 && (await app.page.locator(".feed").isVisible()),
-    run: async (app) => tap(app, ".feed-card-title"),
+    name: "a note in the list",
+    can: async (app) => (await app.page.locator("#notes a").count()) > 0 && (await app.page.locator("#notes").isVisible()),
+    run: async (app) => tap(app, "#notes a"),
   },
   { name: "‹", can: async (app) => (await app.page.locator('#shell-top [aria-label^="Back to"]').count()) > 0, run: (app) => tap(app, '#shell-top [aria-label^="Back to"]') },
   ...["Trash", "Archive", "Contacts", "Extensions"].map((p) => ({
