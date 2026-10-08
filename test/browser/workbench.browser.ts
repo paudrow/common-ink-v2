@@ -90,7 +90,7 @@ test("a Workbench that throws while drawing leaves the plain windows, and says i
   await row.locator(".extension-open").click();
   assert.match((await page.locator(".extension-details .extension-error").textContent())!, /broken tab bar/, "and its details say what");
   await page.keyboard.press("Escape");
-  await runCommand(page, "Search…");
+  await runCommand(page, "Open note…");
   await page.waitForSelector("#command-bar:not([hidden])");
   await page.close();
 });

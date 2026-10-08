@@ -13,9 +13,7 @@ import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } f
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { APP_ONLY, bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
-import { ago, describeAuthor, docLabel } from "./describe.ts";
-import { Search } from "./search.ts";
-import { format } from "../../worker/src/query.ts";
+import { describeAuthor, docLabel } from "./describe.ts";
 import { connectLive } from "./live.ts";
 import { formatKeys, IS_MAC, learnLayout } from "./keys.ts";
 import { fileFromUrl, urlForFile } from "./address.ts";
@@ -488,7 +486,7 @@ const commands = new Commands((title, why, by) => {
 /** Why a core command is off on this device, if it is: what it needs and the device hasn't. */
 const needs = (requires: Requires) => () => hereText(here(requires, device.facts));
 commands.register(
-  { id: "quickOpen", title: "Search…", run: () => pick("here") },
+  { id: "quickOpen", title: "Open note…", run: () => pick("here") },
   {
     id: "commandBar",
     title: "Show all commands",
@@ -526,30 +524,7 @@ commands.register(
   { id: "settings.defaults", title: "Open default settings (JSON)", run: () => openSettings(DEFAULT_SETTINGS) },
 );
 
-/** Folders that hold notes, for completing `in:`. */
-const folders = () => [...new Set(files.filter((f) => isNote(f.path) && !f.path.startsWith(".")).flatMap((f) => f.path.split("/").slice(0, -1).map((_, i, parts) => `${parts.slice(0, i + 1).join("/")}/`)))].sort();
-const search = new Search({
-  manifests: () => extensions.host.records.filter((r) => r.state !== "off").map((r) => r.manifest),
-  owner: (type) => extensions.ownership.owner("searchType", type),
-  notes: {
-    search: async (query, limit, within) => {
-      const answer = await api.search(format(query), limit, within);
-      return {
-        more: answer.more,
-        results: answer.results.map((r) => ({
-          title: r.title,
-          path: r.path,
-          detail: r.line?.text ?? r.path,
-          aside: `${r.archived ? "archived · " : ""}${ago(r.edited)}`,
-          dim: r.archived === true,
-          run: () => openFromBar(r.path as FilePath),
-        })),
-      };
-    },
-  },
-  values: (key) => (key === "in" ? folders() : []),
-});
-const bar = new CommandBar({ all: () => search.filters(), extraKeys: () => search.extraKeys() });
+const bar = new CommandBar();
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
@@ -557,7 +532,6 @@ const extensions = new ExtensionRuntime({
   me,
   commands,
   bar,
-  search,
   statusItems: new StatusItems($("#status-left"), $("#status-right"), (command, owner, by) => extensions.runFor(owner, command, by)),
   panels,
   workbench,
@@ -954,9 +928,8 @@ commands.register(
 window.addEventListener(
   "keydown",
   (e) => {
-    // A modal has the keys while it's up: its own, and Tab and Escape. So does the command bar while
-    // it has focus: off a Mac, its Ctrl-k and Ctrl-p move through what it lists, not open it again.
-    if (modalOpen() || bar.hasFocus) return;
+    // A modal has the keys while it's up: its own, and Tab and Escape.
+    if (modalOpen()) return;
     const binding = bindingForKey(e, settings.keybindings);
     // A command that declines the key (it doesn't apply here) leaves it to do what it would have.
     if (!binding?.command || !commands.runForKey(binding.command, binding.by)) return;

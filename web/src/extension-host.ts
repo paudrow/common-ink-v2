@@ -139,7 +139,6 @@ function claimedNames(ids: readonly string[], builtIns: readonly ExtensionManife
       m.id,
       ...m.contributes.commands.map((c) => firstWord(c.command)),
       ...Object.values(m.contributes.views).flat().map((v) => firstWord(v.id)),
-      ...m.contributes.search.types.map((t) => t.type),
       ...m.contributes.embeds.map((e) => e.language),
       ...m.contributes.statusBarItems.map((i) => i.id),
     ]),
@@ -175,8 +174,6 @@ interface Own {
   /** Its commands, as kept. */
   commands: ReadonlySet<string>;
   claimed: Claimed;
-  /** Its names, lowercased, as search filter keys may start with them. */
-  words: readonly string[];
 }
 
 /**
@@ -198,12 +195,6 @@ const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => C
   urlEmbeds: () => [],
   layout: () => [],
   dataSources: (c) => c.dataSources,
-  // Not a kind of result the app or a built-in answers for (notes, tasks, events): their results are theirs.
-  // Filter keys named for it ("word-count:", "word-count-done:"), so a word you search for (meeting:) stays a word.
-  search: (c, own) => ({
-    types: c.search.types.filter((t) => !clashes(t.type, own.claimed.names)),
-    filters: c.search.filters.filter((f) => own.words.some((w) => f.filter === w || f.filter.startsWith(`${w}-`))),
-  }),
 };
 
 /**
@@ -217,7 +208,7 @@ export function confined(m: ExtensionManifest, claimed: Claimed): ExtensionManif
   const names = namesOf(m.id);
   const name = (id: string) => names.some((n) => id === n || id.startsWith(`${n}.`)) && !clashes(id, claimed.names);
   const commands = new Set(m.contributes.commands.filter((x) => name(x.command) && x.command.includes(".")).map((x) => x.command));
-  const own: Own = { name, commands, claimed, words: names.map((n) => n.toLowerCase()) };
+  const own: Own = { name, commands, claimed };
   const contributes = Object.fromEntries(Object.entries(CONFINE).map(([kind, keep]) => [kind, (keep as (c: Contributions, own: Own) => unknown)(m.contributes, own)])) as unknown as Contributions;
   return { ...m, contributes };
 }
@@ -248,7 +239,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [], search: { types: [], filters: [] } },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [] },
 });
 
 export interface HostOptions {

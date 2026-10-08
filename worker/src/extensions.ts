@@ -204,21 +204,6 @@ export interface DataSourceContribution {
 }
 
 /**
- * What an extension adds to search (docs/queries.md): kinds of result it answers for (`type:event`), in
- * their own section, and filters for them (`due:`), offered and completed before its code runs.
- */
-export interface SearchContribution {
-  types: Array<{ type: string; title: string }>;
-  filters: Array<{ filter: string; description: string; values: string[] }>;
-}
-
-/**
- * Filter keys an extension can't take: the ones every note has (query.ts), and words that come before a
- * colon in ordinary text, which would stop being searched for as words.
- */
-const CORE_FILTERS = ["is", "in", "from", "type", "edited", "has", "sort", "http", "https", "www", "ftp", "mailto", "file", "note"];
-
-/**
  * A part of the windows' layout an extension draws, and what it needs from the device: the Workbench's
  * "tabs" and "splits". Where it isn't met, the part is put away (the layout keeps it), and it's back when it is.
  */
@@ -240,7 +225,6 @@ export interface Contributions {
   embeds: EmbedContribution[];
   urlEmbeds: UrlEmbedContribution[];
   dataSources: DataSourceContribution[];
-  search: SearchContribution;
   layout: LayoutContribution[];
 }
 
@@ -316,24 +300,6 @@ function setting(v: unknown, at: string): SettingSchema {
   return s as unknown as SettingSchema;
 }
 
-function searchContribution(v: unknown): SearchContribution {
-  const o = v === undefined ? {} : object(v, "contributes.search");
-  return {
-    types: list(o.types, "contributes.search.types", (item, at) => {
-      const t = object(item, at);
-      const type = text(t.type, `${at}.type`);
-      if (!/^[a-z][a-z-]*$/.test(type) || type === "note") throw new ManifestError(`${at}.type must be lowercase letters and dashes, and not "note"`);
-      return { type, title: text(t.title, `${at}.title`) };
-    }),
-    filters: list(o.filters, "contributes.search.filters", (item, at) => {
-      const f = object(item, at);
-      const filter = text(f.filter, `${at}.filter`).replace(/:$/, "").toLowerCase();
-      if (!/^[a-z][a-z-]*$/.test(filter) || CORE_FILTERS.includes(filter)) throw new ManifestError(`${at}.filter must be a word like "due:", and not one of ${CORE_FILTERS.join(", ")}`);
-      return { filter, description: text(f.description, `${at}.description`, true), values: list(f.values, `${at}.values`, (x, w) => text(x, w)) };
-    }),
-  };
-}
-
 function contributions(v: unknown, id: string): Contributions {
   const c = v === undefined ? {} : object(v, "contributes");
   const container = (item: unknown, at: string): ViewContainerContribution => {
@@ -392,7 +358,6 @@ function contributions(v: unknown, id: string): Contributions {
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
     }),
-    search: searchContribution(c.search),
     layout: list(c.layout, "contributes.layout", (item, at) => {
       const o = object(item, at);
       return { id: text(o.id, `${at}.id`), title: text(o.title, `${at}.title`), ...requires(o.requires, `${at}.requires`) };
@@ -487,8 +452,6 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       if (kind === "files:read" || kind === "files:write") {
         out.paths = strings("paths");
         if (!out.paths.length) throw new ManifestError(`${at}.paths must name the files it may touch, like "Journal/**"`);
-        const bad = out.paths.find((p) => p.startsWith("!"));
-        if (bad) throw new ManifestError(`${at}.paths are the files it may touch, so none starts with "!": "${bad}" does`);
       }
       if (kind === "settings:write") {
         out.keys = strings("keys");

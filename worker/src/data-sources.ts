@@ -4,7 +4,6 @@
 // adapter; what the source changes comes back through sync as changes by its sync. The Sample
 // calendar is a source with nothing behind it, so Previews and local development behave the same
 // way without Google. Contacts are read straight from Google (or recorded fixtures) for now.
-import { SearchIndex } from "./search.ts";
 import { findTarget, mergeEvents, newEventId, occurrences, parseTiming, planDelete, planRevert, planUpdate, type Calendar, type CalendarEvent, type EventChange, type EventTiming, type Occurrence, type RecordOp, type Scope } from "./calendar.ts";
 import { authorKey, Files, type Author, type ChangeNotice, type Db, type FilePath, type Revision, type UndoResult, type Write, type WriteResult } from "./files.ts";
 import { accessToken, contacts, DATA_SCOPES, type GoogleConfig, type Granted } from "./google.ts";
@@ -737,24 +736,11 @@ export class DataSources {
  * A workspace's files and data sources on its database: files tell the records index what they
  * write, and record files written before the index existed are indexed once.
  */
-export function openWorkspace(
-  db: Db,
-  settings: SourceSettings,
-  announce?: (notice: ChangeNotice) => void,
-  fetcher?: typeof fetch,
-  adapters: Adapter[] = [],
-  now: () => number = Date.now,
-): { files: Files; sources: DataSources; search: SearchIndex } {
+export function openWorkspace(db: Db, settings: SourceSettings, announce?: (notice: ChangeNotice) => void, fetcher?: typeof fetch, adapters: Adapter[] = [], now: () => number = Date.now): { files: Files; sources: DataSources } {
   const records = new Records(db);
-  const search = new SearchIndex(db);
-  const files = new Files(db, Date.now, announce, (path, text, revision) => {
-    records.observe(path, text);
-    search.observe(path, text, revision);
-  });
+  const files = new Files(db, Date.now, announce, (path, text) => records.observe(path, text));
   if (!records.counts().length) records.rebuild(files.under(RECORDS_DIR));
-  // Workspaces from before search, or from before its index's shape, get their index here, once.
-  if (!search.complete(files.lastRevision())) search.rebuild(files.under(""), files.lastRevision());
-  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters), search };
+  return { files, sources: new DataSources(db, files, records, settings, fetcher, now, adapters) };
 }
 
 /** A record file's calendar, or null if its text isn't one. */

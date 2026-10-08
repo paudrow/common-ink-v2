@@ -13,7 +13,6 @@ const CASES: Record<NameKind, { name: string; contributes: Record<string, unknow
   view: { name: "wordCount", contributes: { views: { sidebar: [{ id: "wordCount", name: "Counts" }] } } },
   embed: { name: "wordcount", contributes: { embeds: [{ language: "wordcount", title: "Count", description: "" }] } },
   statusItem: { name: "vim.mode", contributes: { statusBarItems: [{ id: "vim.mode", alignment: "left" }] } },
-  searchType: { name: "word-count", contributes: { search: { types: [{ type: "word-count", title: "Counts" }] } } },
   prefix: { name: "wordcount", contributes: {} },
 };
 
@@ -30,7 +29,6 @@ async function runtimeWith(contributes: Record<string, unknown>) {
     me: "you@example.com",
     commands: new Commands(),
     bar: { provide() {}, open() {} } as never,
-    search: { provide() {}, find: async () => [], extraKeys: () => [], ownerOf: () => undefined } as never,
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView: (v: { id: string }) => views.set(v.id, v), view: (id: string) => views.get(id), viewIds: () => [...views.keys()], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async (path: string) => ({ path, text: JSON.stringify(manifests[path.split("/")[2]]), revision: 1 }) } as never,

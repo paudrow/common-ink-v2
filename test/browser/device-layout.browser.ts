@@ -85,12 +85,12 @@ function L(state: { layout: unknown }) {
 
 browserTest(h, "on a phone Vim is off and keys aren't hinted until a keyboard is found; then both are, without a reload", { scenario: "empty", device: "phone" }, async (app) => {
   assert.equal((await app.extensions.state("vim"))?.state, "unmet");
-  /** What the command list says beside "Search…" (⌘K): its shortcut, if keys are hinted. */
+  /** What the command list says beside "Open note…": its shortcut, if keys are hinted. */
   const hint = async () => {
     await app.command("Show all commands");
     // Filled in, not typed: typed keys would be a keyboard.
-    await app.page.locator("#command-bar input").fill(">Search");
-    const item = app.page.locator("#command-bar li", { hasText: "Search…" }).first();
+    await app.page.locator("#command-bar input").fill(">Open note");
+    const item = app.page.locator("#command-bar li", { hasText: "Open note…" }).first();
     await item.waitFor();
     return (await item.locator(".detail").count()) ? await item.locator(".detail").innerText() : "";
   };
@@ -100,5 +100,5 @@ browserTest(h, "on a phone Vim is off and keys aren't hinted until a keyboard is
   await app.page.keyboard.press("Escape");
   await app.page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
   await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "vim")?.state === "active"));
-  assert.match(await hint(), /^(⌘K|Ctrl\+K)$/, "hinted now");
+  assert.match(await hint(), /^(⌘P|Ctrl\+P)$/, "hinted now");
 });

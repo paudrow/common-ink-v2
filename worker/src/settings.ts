@@ -50,7 +50,6 @@ const int = (description: string, value: number, minimum: number, maximum: numbe
 });
 
 export const DEFAULT_KEYBINDINGS: Keybinding[] = [
-  { key: "Mod-k", command: "quickOpen" },
   { key: "Mod-p", command: "quickOpen" },
   { key: "Mod-Shift-p", command: "commandBar" },
   { key: "Mod-s", command: "note.save" },
