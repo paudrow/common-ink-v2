@@ -103,11 +103,17 @@ export class CallShare {
     this.tooMuch = `${name} is sending too much at once: it can send ${counted(limits.size)} characters' worth ${every}`;
   }
 
-  /** Null if a call of `size` fits in what's left of the moment at `now`, and counts it; otherwise why it doesn't. */
-  take(size: number, now: number): string | null {
+  /** Why no call fits in the moment at `now`, whatever its size: there have been as many as it takes. Null if one may. */
+  full(now: number): string | null {
     while (this.first < this.calls.length && now - this.calls[this.first].at >= this.limits.ms) this.total -= this.calls[this.first++].size;
     if (this.first > 1024 && this.first * 2 > this.calls.length) [this.calls, this.first] = [this.calls.slice(this.first), 0];
-    if (this.calls.length - this.first >= this.limits.calls) return this.tooOften;
+    return this.calls.length - this.first >= this.limits.calls ? this.tooOften : null;
+  }
+
+  /** Null if a call of `size` fits in what's left of the moment at `now`, and counts it; otherwise why it doesn't. */
+  take(size: number, now: number): string | null {
+    const full = this.full(now);
+    if (full) return full;
     if (this.total + size > this.limits.size) return this.tooMuch;
     this.calls.push({ at: now, size });
     this.total += size;
@@ -199,11 +205,15 @@ export class SandboxHost {
 
   /** Why a call can't be made, or null: not plain data, too big, or past its share of the moment. */
   private refusal(method: unknown, args: unknown): string | null {
+    // performance.now() only goes forward: a clock set back can't hold a frame's moment open.
+    const now = performance.now();
+    // Counted before it's measured: in a flood, measuring each call cost several times its message.
+    const full = this.share.full(now);
+    if (full) return full;
     const size = typeof method === "string" && Array.isArray(args) ? measure(args, MAX_CALL) : null;
     if (size === null) return this.notPlain;
     if (size > MAX_CALL) return this.tooBig.call;
-    // performance.now() only goes forward: a clock set back can't hold a frame's moment open.
-    return this.share.take(size, performance.now());
+    return this.share.take(size, now);
   }
 
   private async answer(id: string, method: string, args: unknown[]) {
