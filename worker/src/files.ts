@@ -198,6 +198,13 @@ const SCHEMA: Array<(db: Db) => void> = [
     db.run("CREATE TABLE IF NOT EXISTS edits(path TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL, time INTEGER NOT NULL, PRIMARY KEY(path, id))");
     db.run("CREATE INDEX IF NOT EXISTS edits_by_time ON edits(time)");
   },
+  // 5. A workspace that ran navigation-1-14 has each change's note (`note`, indexed) and `purge_by_hand`.
+  // This version doesn't keep them up to date, and navigation works them out again from history only
+  // when `note` is missing, so they go. `purges` stays: it marks a purge's own change.
+  (db) => {
+    db.run("DROP INDEX IF EXISTS changes_by_note");
+    for (const column of ["note", "purge_by_hand"]) if (hasColumn(db, "changes", column)) db.run(`ALTER TABLE changes DROP COLUMN ${column}`);
+  },
 ];
 
 /** How long an edit's id is kept: a page that went asks about it when its note next opens there. */

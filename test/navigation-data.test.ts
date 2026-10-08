@@ -76,3 +76,25 @@ test("the test levers' reset empties a workspace navigation wrote, search index 
   const { files } = openWorkspace(db, { fixtures: false, google: null });
   assert.deepEqual(files.list(), []);
 });
+
+test("navigation's note of each change goes, so it works them out again if it comes back; its purge marks stay, and so does a new workspace's shape", () => {
+  const { db, files } = navigationWorkspace();
+  const columns = () => db.all<{ name: string }>("SELECT name FROM pragma_table_info('changes')").map((c) => c.name);
+  const indexes = () => db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'changes'").map((i) => i.name);
+  assert.deepEqual(columns(), ["revision", "path", "author", "base", "diff", "time", "undoes", "deletes", "purges"]);
+  assert.deepEqual(indexes(), ["changes_by_path"]);
+  assert.deepEqual(
+    db.all<{ path: string }>("SELECT path FROM changes WHERE purges = 1 ORDER BY revision").map((c) => c.path),
+    ["Purged.md", "Expired.md"],
+  );
+  const made = files.write({ path: "After.md" as FilePath, text: "# After\n", base: 0, author: ada }).file!;
+  assert.deepEqual(Object.keys(db.all("SELECT * FROM changes WHERE revision = ?", made.revision)[0]), columns());
+  openWorkspace(db, { fixtures: false, google: null });
+  assert.deepEqual(columns(), ["revision", "path", "author", "base", "diff", "time", "undoes", "deletes", "purges"], "a second start changes nothing");
+  const fresh = memoryDb();
+  openWorkspace(fresh, { fixtures: false, google: null });
+  assert.deepEqual(
+    fresh.all<{ name: string }>("SELECT name FROM pragma_table_info('changes')").map((c) => c.name),
+    ["revision", "path", "author", "base", "diff", "time", "undoes", "deletes"],
+  );
+});
