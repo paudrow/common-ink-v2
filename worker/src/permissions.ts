@@ -40,6 +40,18 @@ export function globMatches(glob: string, path: string): boolean {
   return new RegExp(`^${re}$`).test(path);
 }
 
+/**
+ * The paths an extension's declared files:read scopes let it read, as files.read decides each: the first
+ * scope that covers a path decides, so with ["Notes/**", "Notes/Secret/**"] and only the second allowed,
+ * Notes/Secret/Plan.md can't be read, and so isn't listed either.
+ */
+export function readableIn(scopes: readonly string[], allowed: readonly boolean[]): (path: string) => boolean {
+  return (path) => {
+    const i = scopes.findIndex((scope) => globMatches(scope, path));
+    return i >= 0 && allowed[i];
+  };
+}
+
 /** Whether a declared host covers a host: exactly, "*.example.com" for its subdomains, or "*" for any. */
 export function hostMatches(pattern: string, host: string): boolean {
   const h = host.toLowerCase();

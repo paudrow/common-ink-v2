@@ -5,7 +5,7 @@
 // anything sensitive goes through the permission broker first.
 import { statePath, type ExtensionManifest, type MenuId } from "../../worker/src/extensions.ts";
 import { parseFilePath, type Change, type FilePath, type FileSummary } from "../../worker/src/files.ts";
-import { decide, decidesTrust, globMatches, parseGrants, type Ask } from "../../worker/src/permissions.ts";
+import { decide, decidesTrust, parseGrants, readableIn, type Ask } from "../../worker/src/permissions.ts";
 import { settingsCatalog, type Keybinding, type Sandboxed, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
 import { api, type ExtensionResponse } from "./api.ts";
 import { drawSafely, showDrawError } from "./boundary.ts";
@@ -614,11 +614,11 @@ export class ExtensionRuntime {
         return api.writeAs(m.id, path, text, base);
       },
       list: async () => {
-        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files in the ones allowed are listed.
+        // Each declared scope is asked about as a whole, all at once, so they're one prompt; files are listed as files.read decides them.
         const scopes = m.permissions["files:read"]?.paths ?? [];
         const answers = await Promise.allSettled(scopes.map((scope) => check({ kind: "files:read", scope })));
-        const allowed = scopes.filter((_, i) => answers[i].status === "fulfilled");
-        return app.files().filter((f) => allowed.some((glob) => globMatches(glob, f.path)));
+        const may = readableIn(scopes, answers.map((a) => a.status === "fulfilled"));
+        return app.files().filter((f) => may(f.path));
       },
       fetch: async (url, init) => {
         const host = hostOf(url);
