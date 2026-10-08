@@ -87,8 +87,7 @@ export function layoutFill(layout: L.Layout, host: HTMLElement): string[] {
   const els = [...host.querySelectorAll<HTMLElement>("section.group")];
   if (els.length !== groups.length) return [`${els.length} windows on screen for ${groups.length} in the layout`];
   const area = host.getBoundingClientRect();
-  // Too narrow for windows side by side, the focused one fills the area and the rest are kept, unseen.
-  const shares = host.hasAttribute("data-no-splits") ? new Map(groups.map((g) => [g.id, g.id === layout.focus ? { w: 1, h: 1 } : { w: 0, h: 0 }])) : L.rects(layout.root);
+  const shares = L.rects(layout.root);
   return groups.flatMap((g, i) => {
     const want = shares.get(g.id)!;
     const got = els[i].getBoundingClientRect();

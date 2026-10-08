@@ -193,7 +193,6 @@ const CONFINE: { [K in keyof Contributions]-?: (c: Contributions, own: Own) => C
   embeds: (c, own) => c.embeds.filter((e) => !clashes(e.language, own.claimed.names)),
   // Drawn in the page, which only a trusted extension may do.
   urlEmbeds: () => [],
-  layout: () => [],
   dataSources: (c) => c.dataSources,
 };
 
@@ -239,7 +238,7 @@ const brokenManifest = (id: string, name = id): ExtensionManifest => ({
   files: [],
   activationEvents: [],
   permissions: {},
-  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [], layout: [] },
+  contributes: { commands: [], keybindings: [], menus: {}, configuration: null, viewsContainers: { activitybar: [], panel: [] }, views: {}, statusBarItems: [], embeds: [], urlEmbeds: [], dataSources: [] },
 });
 
 export interface HostOptions {

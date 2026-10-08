@@ -203,16 +203,6 @@ export interface DataSourceContribution {
   description?: string;
 }
 
-/**
- * A part of the windows' layout an extension draws, and what it needs from the device: the Workbench's
- * "tabs" and "splits". Where it isn't met, the part is put away (the layout keeps it), and it's back when it is.
- */
-export interface LayoutContribution {
-  id: string;
-  title: string;
-  requires?: Requires;
-}
-
 export interface Contributions {
   commands: CommandContribution[];
   keybindings: KeybindingContribution[];
@@ -225,7 +215,6 @@ export interface Contributions {
   embeds: EmbedContribution[];
   urlEmbeds: UrlEmbedContribution[];
   dataSources: DataSourceContribution[];
-  layout: LayoutContribution[];
 }
 
 export interface ExtensionManifest {
@@ -357,10 +346,6 @@ function contributions(v: unknown, id: string): Contributions {
         priority: typeof o.priority === "number" ? o.priority : 0,
         ...(typeof o.command === "string" ? { command: o.command } : {}),
       };
-    }),
-    layout: list(c.layout, "contributes.layout", (item, at) => {
-      const o = object(item, at);
-      return { id: text(o.id, `${at}.id`), title: text(o.title, `${at}.title`), ...requires(o.requires, `${at}.requires`) };
     }),
     dataSources: list(c.dataSources, "contributes.dataSources", (item, at) => {
       const o = object(item, at);

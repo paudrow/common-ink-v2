@@ -101,17 +101,6 @@ export const DEVICE_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 export const devicePath = (email: string, id: string): FilePath | null => (DEVICE_ID.test(id) ? parseFilePath(`${devicesDir(email)}${id}/device.json`) : null);
 
-/** A device's layout of windows and tabs: each device has its own. */
-export const deviceLayoutPath = (email: string, id: string): FilePath | null => (DEVICE_ID.test(id) ? parseFilePath(`${devicesDir(email)}${id}/layout.json`) : null);
-
-/** Which device a layout file is, by its path: the person's devices folder, and the device's id. */
-export function deviceOfLayout(path: string, email: string): string | null {
-  const dir = devicesDir(email);
-  if (!path.startsWith(dir) || !path.endsWith("/layout.json")) return null;
-  const id = path.slice(dir.length, -"/layout.json".length);
-  return DEVICE_ID.test(id) ? id : null;
-}
-
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** A device file's contents, as far as they make sense: anything missing or wrong is left out, so it's worked out afresh. */

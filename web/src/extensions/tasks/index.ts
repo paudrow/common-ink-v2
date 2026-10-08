@@ -49,8 +49,10 @@ const extension: ExtensionModule = {
       const today = daily.pathFor(daily.today());
       return { label: today.replace(/\.md$/, ""), path: today, daily: true };
     };
-    // Hinted only where there's a keyboard to press it.
-    const shortcut = () => (ctx.device.has("keyboard") ? (ctx.commands.shortcut("tasks.quickAdd") ?? formatKeys("Mod-Shift-.")) : "");
+    const shortcut = () => {
+      const key = ctx.commands.shortcut("tasks.quickAdd");
+      return key ?? formatKeys("Mod-Shift-.");
+    };
     const quickAdd: Omit<QuickAddOptions, "added" | "escape"> = {
       add: (text, ignore, to) => store.add(text, ignore, to),
       open: (path, line) => void open(ctx, path as FilePath, line),

@@ -54,8 +54,7 @@ The manifest's `permissions` are the most an extension may ever ask for, each wi
 - **contributes.keybindings.** A `key` like `"Mod-Shift-c"` (Mod is ⌘ on a Mac and Ctrl elsewhere, matched by the character typed) or a Vim normal-mode sequence like `"gC"`, which works while the Vim extension is on. A Vim key with `"operator": true` takes the place of Vim's operator of that key: Lists binds `>` and `<` so `>>`, `>j`, `>ip` and `>` on a selection move list items with their children. Settings can rebind keys. A sandboxed extension binds no Vim sequences, and no plain Ctrl+letter key (Vim's, and off a Mac Mod+letter too): its keys use Alt, or Mod or Ctrl with Shift or Alt.
 - **contributes.configuration.** The extension's settings, as JSON Schema: `type`, `default`, `description`, `enum`, `minimum`, `maximum`, and `appliesAfterReload`. Their keys start with the extension's id. They get their own section in the settings editor, and `ctx.settings.get(key)` reads them.
 - **permissions.** The most the extension may ask for, each with why. See ADR 0006 for the kinds and how asking works.
-- **contributes.layout.** Parts of the windows' layout the extension draws, each with an `id`, a `title` and what it `requires`. The core knows two: `tabs` and `splits` (windows side by side). The Workbench declares tabs from medium width and splits from expanded. Where a part doesn't fit, it's put away and kept: see [Devices](#devices).
-- **requires.** What the extension, or one of its commands, views, embeds or layout parts, needs from the device: `"requires": { "keyboard": true }`, `{ "width": "medium" }` (a width class: `compact`, `medium` from 600px, `expanded` from 840px, `large` from 1200px) or `{ "pointer": "fine" }` (a mouse or trackpad). Each one named must hold. See [Devices](#devices).
+- **requires.** What the extension, or one of its commands, views or embeds, needs from the device: `"requires": { "keyboard": true }`, `{ "width": "medium" }` (a width class: `compact`, `medium` from 600px, `expanded` from 840px, `large` from 1200px) or `{ "pointer": "fine" }` (a mouse or trackpad). Each one named must hold. See [Devices](#devices).
 
 ## Devices
 
@@ -69,10 +68,6 @@ Whether an extension is on, on a device:
 2. This device's override: "On here" runs it whatever it needs; "Off here" turns it off on this device.
 3. Its `requires`, checked against what the device has.
 4. Otherwise it's on.
-
-Vim needs a keyboard, so it's off on a phone until one is found, and then it starts in the open editors. Without a keyboard, no shortcut is hinted anywhere: `ctx.commands.shortcut()` answers nothing.
-
-Each device keeps its own layout of windows and tabs, beside its device file (`devices/<id>/layout.json`). A new device that's expanded or wider starts from the layout of the wide device you used last; a narrower one starts from just the window and tab that were on show there (or, before any device had a layout, from the workspace's `.common-ink/layout.json`). Within a device, the width changing never closes anything: windows that can't be side by side are put away and the focused one fills the area, tabs are put away below medium, and both come back when there's room. The layout file is written only when you change the layout.
 
 An extension whose requirements aren't met doesn't start, and the Extensions view says why: "Off on this device · needs a keyboard". When they become met, because a keyboard is found or you choose On here, it goes in as the app runs: a sandboxed extension starts at once, and a trusted one that changes editors reaches the open ones through their compartment. Turning one off here applies after a reload. A command, view or embed whose own requirements aren't met stays listed, greyed with why, and comes back when they are: a narrower window puts away what needs width, and doesn't stop anything.
 
