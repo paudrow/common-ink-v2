@@ -107,14 +107,6 @@ The app with only built-in extensions running, for when a workspace extension br
 Somewhere you can go in the app: the Feed, Today, Tasks, Calendar, a pinned note, a saved search, Sources, Archive, Trash, Extensions or Settings. Places are a sheet on a phone and a sidebar on a wide screen.
 _Avoid_: Activity, section, tab (a tab holds an open window)
 
-**Saved search**:
-A query with a name, kept in `.common-ink/places.json`'s `saved` and listed in Places with how many notes it finds. On a wide screen it lists its notes beside the note. Save one with ⌘S in search.
-_Avoid_: Smart folder (v1's word), filter, view
-
-**Pinned note**:
-A note listed in Places, in `.common-ink/pins.json`'s `pinned` order. Pins are the workspace's for now, and each person's once workspaces are shared.
-_Avoid_: Starred, favorite
-
 **Query**:
 Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
 _Avoid_: Filter (that's one part of a query), search string

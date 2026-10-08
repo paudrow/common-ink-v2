@@ -35,7 +35,7 @@ import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.t
 import { activityView } from "./activity.ts";
 import { parseGrants, type Answer } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
-import { idbKV, Offline, syncLine, UNREACHABLE_TEXT } from "./offline.ts";
+import { idbKV, Offline, syncLine, unreachable, UNREACHABLE_TEXT } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
@@ -46,10 +46,8 @@ import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
 import { Shell, type Action, type Place, type ShellEntry } from "./shell.ts";
 import { isIcon } from "./icons.ts";
-import { barOf, GO_KEYS, PLACES_PATH, savedOf, type SavedSearch } from "../../worker/src/places.ts";
-import { parsePins, PINS_PATH } from "../../worker/src/pins.ts";
-import { GoKeys, Sidebar, type Chosen } from "./sidebar.ts";
-import { changePlaces, placesChangeOf, sendPlaces, type PlacesChange } from "./places-file.ts";
+import { barOf, PLACES_PATH } from "../../worker/src/places.ts";
+import { setTopLevelKey } from "./json-edit.ts";
 import { undo as undoTyping } from "@codemirror/commands";
 import { atLeast, deviceOfLayout, here, hereText, needsText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
@@ -506,11 +504,7 @@ async function resolveConflict(): Promise<boolean> {
 /** Send what's waiting. Open editors send their own; the rest go from here, and land in open tabs and the list. */
 async function sendUnsent() {
   // Edits of records go first, in the order they were made; one the server refuses is said and dropped.
-  // A change to places.json is made on the file as the server has it now; the rest are records' edits.
-  const { refused } = await offline.flushOps((op) => {
-    const places = placesChangeOf(op);
-    return places ? sendPlaces(offline, places) : api.editEvent(op.method, op.body, op.extension);
-  });
+  const { refused } = await offline.flushOps((op) => api.editEvent(op.method, op.body, op.extension));
   for (const { op, error } of refused) workbench.notice(`${op.what} couldn't be made: ${error}`, [], "alert");
   const { sent } = await offline.flush((path) => workbench.isOpen(path));
   if (sent.length) {
@@ -521,71 +515,32 @@ async function sendUnsent() {
 window.setInterval(() => void sendUnsent(), 5000);
 window.addEventListener("online", () => void sendUnsent());
 
-/**
- * What the list beside the note shows (decision 4): the Feed (every note, until the Feed lists them by
- * their changes), or the notes a saved search finds. On a phone it's the Feed's screen.
- */
-let listShows: { feed: true } | { saved: SavedSearch; results: Array<{ path: FilePath; title: string; line?: string }> | null; more?: boolean; note?: string } = { feed: true };
-const listHead = document.createElement("header");
-listHead.className = "list-head";
-$("#notes").prepend(listHead);
-
-/** A row of the list: a note, opened in the window beside (⌘-click or a double click, in a tab of its own). */
-function listRow(path: FilePath, label: string, current: FilePath | null, detail?: string) {
-  const a = document.createElement("a");
-  a.href = urlForFile(path);
-  a.textContent = label;
-  if (detail) a.append(Object.assign(document.createElement("small"), { textContent: detail }));
-  if (path === current) a.setAttribute("aria-current", "page");
-  // What it opens, for the Workbench extension's dragging into windows.
-  a.dataset.open = JSON.stringify(L.fileTab(path));
-  // Double-click opens it kept, not as the preview tab.
-  a.addEventListener("dblclick", (e) => {
-    e.preventDefault();
-    void workbench.open(path, { newTab: true });
-  });
-  a.addEventListener("click", async (e) => {
-    e.preventDefault();
-    await workbench.open(path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
-  });
-  const li = document.createElement("li");
-  li.append(a);
-  return li;
-}
-
 function renderList() {
   const current = workbench.focusedPath;
-  if ("saved" in listShows) {
-    const { saved, results, more, note } = listShows;
-    listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: saved.name }), Object.assign(document.createElement("code"), { textContent: saved.query }));
-    const rows = (results ?? []).map((r) => listRow(r.path, r.title, current, r.line));
-    const say = (text: string) => Object.assign(document.createElement("li"), { className: "list-note", textContent: text });
-    list.replaceChildren(...rows, ...(note ? [say(note)] : results === null ? [say("Searching…")] : !rows.length ? [say("No notes match.")] : more ? [say("More notes match than one search reads: add words or filters.")] : []));
-    return;
-  }
-  // Every note: the Feed's list until the Feed extension is on; with it, the Feed opens in the window.
-  listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: feedOn() ? "All notes" : "Feed" }));
   const notes = files.filter((d) => isNote(d.path));
   if (current && isNote(current) && !notes.some((n) => n.path === current)) notes.push({ path: current, revision: 0 });
-  list.replaceChildren(...notes.map((n) => listRow(n.path, name(n.path), current)));
-}
-
-/** Whether the Feed extension is on, so the Feed is its view, not the list of every note. */
-const feedOn = () => extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
-
-/** Show a saved search's notes in the list, and keep them current as notes change. */
-async function showSaved(saved: SavedSearch) {
-  if (!("saved" in listShows) || listShows.saved.name !== saved.name || listShows.saved.query !== saved.query) listShows = { saved, results: null };
-  renderList();
-  try {
-    const found = await api.search(saved.query, 200);
-    if (!("saved" in listShows) || listShows.saved.query !== saved.query) return;
-    listShows = { saved, results: found.results.map((r) => ({ path: r.path as FilePath, title: r.title, line: r.line?.text })), more: found.more };
-  } catch {
-    if (!("saved" in listShows) || listShows.saved.query !== saved.query) return;
-    listShows = { saved, results: [], note: "Searching needs a connection." };
-  }
-  renderList();
+  list.replaceChildren(
+    ...notes.map((n) => {
+      const a = document.createElement("a");
+      a.href = urlForFile(n.path);
+      a.textContent = name(n.path);
+      if (n.path === current) a.setAttribute("aria-current", "page");
+      // What it opens, for the Workbench extension's dragging into windows.
+      a.dataset.open = JSON.stringify(L.fileTab(n.path));
+      // Double-click opens it kept, not as the preview tab.
+      a.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        void workbench.open(n.path, { newTab: true });
+      });
+      a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        await workbench.open(n.path, { newTab: IS_MAC ? e.metaKey : e.ctrlKey });
+      });
+      const li = document.createElement("li");
+      li.append(a);
+      return li;
+    }),
+  );
 }
 
 function followLink() {
@@ -1224,25 +1179,28 @@ void learnLayout();
 // The phone shell (shell.ts): places, the bottom bar, sheets and the keyboard toolbar, under 840px.
 /** The bottom bar's places, from places.json, kept up to date as it changes. */
 let barIds = barOf("");
-/** The saved searches, from places.json, kept up to date as it changes. */
-let savedSearches: SavedSearch[] = [];
 async function loadPlaces() {
-  const text = (await offline.read(PLACES_PATH).catch(() => ({ text: "" }))).text;
-  barIds = barOf(text);
-  savedSearches = savedOf(text);
+  barIds = barOf((await offline.read(PLACES_PATH).catch(() => ({ text: "" }))).text);
   shell?.update();
-  // A saved search on show that's renamed or removed: the list goes back to the Feed.
-  const shown = listShows;
-  if ("saved" in shown && !savedSearches.some((q) => q.name === shown.saved.name)) showFeed();
-  void countSaved();
-  sidebar.render();
 }
-/** Write one key of places.json (places-file.ts), saying what happened in a notice. */
-/** Change one key of places.json (places-file.ts): held, and sent with the rest of what's held. */
-const writePlaces = (change: PlacesChange, what: string) => changePlaces(offline, change, what, sendUnsent, (message) => workbench.notice(message));
+/**
+ * Write places.json's bar: just that key, the rest of the file as it was (saved searches, order). The
+ * bar changes at once; offline, the write is held like any edit and sent once the server's back.
+ */
 async function setBar(ids: string[]) {
   barIds = ids;
-  await writePlaces({ key: "bar", ids }, "the bottom bar");
+  for (let tries = 0; tries < 3; tries++) {
+    const now = await offline.read(PLACES_PATH);
+    const text = setTopLevelKey(now.text.trim() ? now.text : "{}\n", "bar", ids);
+    if (text === null) return void workbench.notice("places.json isn't a JSON object: fix it to change the bottom bar.", [], "alert");
+    try {
+      if ((await offline.write(PLACES_PATH, text, now.revision)).status !== "conflict") return;
+    } catch (err) {
+      if (!unreachable(err)) return void workbench.notice(`The bottom bar couldn't be saved: ${(err as Error).message}`, [], "alert");
+      await offline.hold({ path: PLACES_PATH, text, base: now.revision });
+      return void workbench.notice("You're offline: the bottom bar is changed here, and saved once you're back.");
+    }
+  }
 }
 /** Whether an extension owns a view (ownership.ts): what names a view reaches only its owner's. */
 const ownsView = (extension: string, view: string) => extensions.ownership.owns(extension, "view", view);
@@ -1330,154 +1288,6 @@ panels.elsewhere = (id) => {
 };
 device.onChange(() => shell?.update());
 savedListeners.push((path) => path === PLACES_PATH && void loadPlaces());
-
-// Places on wide screens (sidebar.ts): the sidebar, the list beside the note, ⌘B and the go keys, at 840px and over.
-/** What's chosen in the sidebar. */
-let chosen: Chosen = { place: "feed" };
-/** The pinned notes, from pins.json (the Feed's pins, decision 16), kept up to date as it changes. */
-let pinned: FilePath[] = [];
-async function loadPins() {
-  pinned = parsePins((await offline.read(PINS_PATH).catch(() => ({ text: "" }))).text);
-  sidebar.render();
-}
-/** How many notes each saved search finds, said beside it: worked out again a moment after notes change. */
-const savedCounts = new Map<string, string>();
-let counting = 0;
-async function countSaved() {
-  const turn = ++counting;
-  for (const q of savedSearches) {
-    const found = await api.search(q.query, 1).catch(() => null);
-    if (turn !== counting) return;
-    if (found) savedCounts.set(q.query, `${found.total}${found.more ? "+" : ""}`);
-  }
-  sidebar.render();
-}
-let recount = 0;
-function showFeed() {
-  listShows = { feed: true };
-  renderList();
-}
-/** Go to a place: the Feed in the list beside the note, a view in the window, or a command's place. */
-function goTo(place: Place) {
-  chosen = { place: place.id };
-  // The Feed takes the list back to every note, and (with the Feed extension on) shows the Feed in the window.
-  if ("list" in place.open || place.id === "feed") showFeed();
-  if ("view" in place.open) workbench.openView(place.open.view);
-  else if ("command" in place.open) void commands.start(place.open.command, place.by);
-  sidebar.render();
-}
-async function saveSearch(query: string) {
-  const name = (await textDialog("Save this search", `It's kept in Places, with how many notes it finds: ${query}`, "Name", "Save", "text"))?.trim();
-  if (!name) return;
-  if (savedSearches.some((q) => q.name === name) && !(await confirmDialog(`Replace "${name}"?`, `A saved search is called that. Its query becomes ${query}.`, "Replace"))) return;
-  savedSearches = [...savedSearches.filter((q) => q.name !== name), { name, query }];
-  chosen = { saved: name };
-  void showSaved({ name, query });
-  sidebar.render();
-  await writePlaces({ key: "saved", name, query }, "the saved searches");
-}
-const sidebar = new Sidebar({
-  places,
-  pinned: () => pinned.map((path) => ({ path, title: name(path) })),
-  saved: () => savedSearches.map((q) => ({ ...q, ...(savedCounts.has(q.query) ? { count: savedCounts.get(q.query) } : {}) })),
-  current: () => chosen,
-  go: goTo,
-  openPinned: (path) => {
-    chosen = { pinned: path };
-    sidebar.render();
-    void workbench.open(path);
-  },
-  openSaved: (q) => {
-    chosen = { saved: q.name };
-    sidebar.render();
-    void showSaved(q);
-  },
-  removeSaved: (q) => {
-    savedSearches = savedSearches.filter((s) => s.name !== q.name);
-    if ("saved" in chosen && chosen.saved === q.name) {
-      chosen = { place: "feed" };
-      showFeed();
-    }
-    sidebar.render();
-    void writePlaces({ key: "saved", name: q.name, query: null }, "the saved searches").then(() => workbench.notice(`Removed "${q.name}" from Places: undo its change to places.json in History to bring it back.`));
-  },
-  search: () => void commands.run("quickOpen"),
-});
-document.body.insertBefore(sidebar.root, $("#notes"));
-bar.onSave = (query) => void saveSearch(query);
-/** Whether Places is a sidebar here: on wide screens, unless ⌘B put it away (kept in this browser). */
-const PLACES_HIDDEN = "common-ink.places-hidden";
-let placesHidden = (() => {
-  try {
-    return localStorage.getItem(PLACES_HIDDEN) === "1";
-  } catch {
-    return false;
-  }
-})();
-const wide = () => device.atLeast("expanded");
-function placeSidebar() {
-  document.documentElement.toggleAttribute("data-places", wide() && !placesHidden);
-  sidebar.render();
-  renderList();
-}
-device.onChange(placeSidebar);
-placeSidebar();
-savedListeners.push((path) => {
-  if (path === PINS_PATH) void loadPins();
-  else if (isNote(path)) {
-    // A note changed: the saved searches' counts, and the one on show, again in a moment.
-    clearTimeout(recount);
-    recount = window.setTimeout(() => {
-      void countSaved();
-      if ("saved" in listShows) void showSaved(listShows.saved);
-    }, 1000);
-  }
-});
-void loadPins();
-/** What each go key's command is called (`g` then the key, study 9.3). */
-const GO_TITLES: Readonly<Record<string, string>> = { f: "Feed", "/": "Search", d: "Today", t: "Tasks", c: "Calendar", a: "Archive", x: "Trash", s: "Sources", e: "Extensions", ",": "Settings" };
-/** The go keys (study 9.3): `g`, then a key, outside text, at 840px and over. */
-const goPlace = (key: string): boolean => {
-  const id = GO_KEYS[key];
-  if (!id) return false;
-  if (id === "search") return void commands.run("quickOpen"), true;
-  const place = places().find((p) => p.id === id);
-  if (!place) return false;
-  goTo(place);
-  return true;
-};
-const goKeys = new GoKeys(goPlace);
-window.addEventListener(
-  "keydown",
-  (e) => {
-    if (!wide() || modalOpen() || bar.hasFocus || !goKeys.key(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-  },
-  { capture: true },
-);
-commands.register(
-  {
-    id: "places.toggle",
-    title: "Show or hide Places",
-    // Under 840px Places is a sheet, from the bottom bar: the key does what it would have. So it does off a
-    // Mac in a note with Vim, where Ctrl-b is Vim's page up.
-    run: () => {
-      if (!wide()) return false;
-      if (!IS_MAC && document.activeElement?.closest(".cm-editor") && extensions.host.records.find((r) => r.id === "vim")?.state === "active") return false;
-      placesHidden = !placesHidden;
-      try {
-        localStorage.setItem(PLACES_HIDDEN, placesHidden ? "1" : "0");
-      } catch {
-        // Kept for this page only.
-      }
-      placeSidebar();
-      if (!placesHidden) sidebar.focus();
-    },
-  },
-  { id: "places.focus", title: "Go to Places", run: () => (wide() ? (placesHidden && commands.run("places.toggle"), sidebar.focus()) : false) },
-  ...Object.entries(GO_KEYS).map(([key, id]) => ({ id: `go.place.${id}`, title: `Go to ${GO_TITLES[key]}`, run: () => goPlace(key) })),
-);
 
 /** The note in focus's editor, for the keyboard toolbar's core buttons. */
 const onNote = (run: (view: EditorView) => unknown) => () => {
