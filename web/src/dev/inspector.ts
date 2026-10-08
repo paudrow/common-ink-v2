@@ -17,7 +17,6 @@ import * as L from "../layout.ts";
 import type { Offline } from "../offline.ts";
 import { webviews } from "../sandbox.ts";
 import type { Workbench } from "../workbench.ts";
-import type { Device } from "../device.ts";
 import { layoutFill, lineShift, overlaps } from "./checks.ts";
 import { advanceClock, clockNow, setClock } from "./clock.ts";
 import { parseKeys, type KeyPress } from "./key-notation.ts";
@@ -32,7 +31,6 @@ export interface DevApp {
   bar: CommandBar;
   offline: Offline;
   settings(): Settings;
-  device: Device;
 }
 
 interface Kept {
@@ -161,7 +159,6 @@ export function makeInspector(app: DevApp, kept: Kept) {
         pending: workbench.pending(),
         save: { status: document.getElementById("save")?.dataset.status ?? "", text: document.getElementById("save")?.textContent ?? "" },
         network: { online: offline.online && !net.offline, socket: socketState(), inFlight: net.inFlight, unsent: await offline.unsent() },
-        device: app.device.describe(),
         extensions: extensions.host.records.map((r) => ({
           id: r.id,
           name: r.manifest.name,

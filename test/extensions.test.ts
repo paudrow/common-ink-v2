@@ -25,17 +25,6 @@ const builtIn = (id: string, module: ExtensionModule, more: Record<string, unkno
   folder: `web/src/extensions/${id}`,
 });
 
-/** A laptop, as the runtime reads devices: wide, a mouse, a keyboard. */
-const laptop = {
-  facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true },
-  override: () => undefined,
-  has: () => true,
-  atLeast: () => true,
-  why: () => "",
-  onChange: () => () => {},
-  describe: () => ({}),
-} as never;
-
 /** A host whose context records what extensions do, and which starts nothing until told. */
 function host() {
   const started: string[] = [];
@@ -336,8 +325,6 @@ test("in the app, a declared command starts its extension the first time it runs
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
-    device: laptop,
-    promoted() {},
   });
   const greet: ExtensionModule = {
     activate(ctx) {
@@ -413,8 +400,6 @@ test("a built-in allowed to copy writes the clipboard in the click itself, befor
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
-    device: laptop,
-    promoted() {},
   });
   let ctx!: ExtensionContext;
   await runtime.load([builtIn("copier", { activate: (c) => void (ctx = c) }, { activationEvents: ["onStartup"], permissions: { "clipboard:write": { why: "Copy" } } })], [], [], false, []);

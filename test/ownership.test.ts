@@ -1,6 +1,6 @@
 // One rule for every name extensions register things under (web/src/ownership.ts), checked kind by kind:
-// a trusted extension that's off on a phone owns what it declares from load, so a sandboxed one that
-// declares the same name is refused, before the trusted one goes in and after.
+// a trusted extension owns what it declares from load, so a sandboxed one that declares the same name is
+// refused, before the trusted one starts and after.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FilePath, FileSummary } from "../worker/src/files.ts";
@@ -19,10 +19,9 @@ const CASES: Record<NameKind, { name: string; contributes: Record<string, unknow
 async function runtimeWith(contributes: Record<string, unknown>) {
   const { Commands } = await import("../web/src/commands.ts");
   const { ExtensionRuntime } = await import("../web/src/extension-runtime.ts");
-  const facts = { width: "compact", px: 375, pointer: "coarse", touch: true, keyboard: false };
   const views = new Map<string, unknown>();
   const manifests: Record<string, unknown> = {
-    wordCount: { name: "Word count", requires: { keyboard: true }, contributes },
+    wordCount: { name: "Word count", contributes },
     "word-count": { name: "Word count (sandboxed)", activationEvents: ["onStartup"], contributes },
   };
   const runtime = new ExtensionRuntime({
@@ -44,28 +43,21 @@ async function runtimeWith(contributes: Record<string, unknown>) {
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
-    device: { facts, override: () => undefined, has: (c: string) => (c === "keyboard" ? facts.keyboard : facts.touch), atLeast: () => true, why: () => "", onChange: () => () => {}, describe: () => ({ facts, why: {} }) } as never,
-    promoted() {},
   });
   const files = Object.keys(manifests).map((id) => ({ path: `.common-ink/extensions/${id}/extension.json` as FilePath, revision: 1 }) as FileSummary);
   await runtime.load([], files, [], false, ["wordCount"]);
   runtime.declare();
-  return { runtime, findKeyboard: () => void (facts.keyboard = true) };
+  return { runtime };
 }
 
 for (const [kind, { name, contributes }] of Object.entries(CASES) as Array<[NameKind, (typeof CASES)[NameKind]]>) {
-  test(`${kind}: a trusted extension off on a phone owns "${name}" from load; a sandboxed one that declares it is refused, before the trusted one goes in and after`, async () => {
-    const { runtime, findKeyboard } = await runtimeWith(contributes);
+  test(`${kind}: a trusted extension owns "${name}" from load; a sandboxed one that declares it is refused`, async () => {
+    const { runtime } = await runtimeWith(contributes);
     const registry = runtime.ownership.registry<string>(kind);
     const state = (id: string) => runtime.host.records.find((r) => r.id === id)?.state;
-    assert.deepEqual([state("wordCount"), state("word-count")], ["unmet", "inactive"], "setup: the trusted one is off here, the sandboxed one is on");
+    assert.deepEqual([state("wordCount"), state("word-count")], ["inactive", "inactive"], "setup: both are on");
     assert.equal(runtime.ownership.owner(kind, name), "wordCount");
     assert.equal(registry.set("word-count", name, "sandboxed"), false, "the sandboxed one can't register under it");
-    findKeyboard();
-    await runtime.promote();
-    assert.notEqual(state("wordCount"), "unmet", "the trusted one went in");
-    assert.equal(runtime.ownership.owner(kind, name), "wordCount");
-    assert.equal(registry.set("word-count", name, "sandboxed"), false);
     assert.equal(registry.set("wordCount", name, "trusted"), true);
     assert.equal(registry.get(name), "trusted");
   });
@@ -91,6 +83,5 @@ test("in the page, a built-in keeps its own names, one turned off holds none, an
   assert.equal(owner([rec("helper"), rec("lists", { builtIn: {} })]), "lists");
   assert.equal(owner([rec("alpha"), rec("beta")]), "alpha");
   assert.equal(owner([rec("alpha", { state: "off" }), rec("beta")]), "beta");
-  assert.equal(owner([rec("alpha", { state: "unmet" }), rec("beta")]), "alpha", "off on this device, it still holds its names");
   assert.equal(owner([rec("alpha", { state: "off" })]), undefined);
 });

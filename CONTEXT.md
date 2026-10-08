@@ -106,10 +106,3 @@ The app with only built-in extensions running, for when a workspace extension br
 **Query**:
 Text that says which notes a list shows and in what order, such as `launch in:Projects/ -is:archived sort:edited`: words and "phrases" to find, and filters (`is:`, `in:`, `from:`, `type:`, `edited:`, `has:`, `sort:`), any of them negated with `-`. One language serves search, the Feed and saved searches, in the app, over MCP and in the CLI.
 _Avoid_: Filter (that's one part of a query), search string
-
-**Device**:
-One browser or app a person uses Common Ink on, with its own file of settings, overrides and layout. What it has (width, touch, a keyboard) decides which extensions and contributions apply.
-
-**Requirement**:
-What an extension or contribution needs from a device to work, such as a keyboard or a wide screen, declared as `requires`. One that isn't met is off on that device, with the reason shown, unless you turn it on there.
-_Avoid_: Platform, desktop-only, mobile-only

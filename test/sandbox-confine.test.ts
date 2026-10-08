@@ -208,8 +208,6 @@ test("a command the app registers after a sandboxed extension's, under the same 
     prompt: async () => "deny" as const,
     undeclared() {},
     changed() {},
-    device: { facts: { width: "large", px: 1440, pointer: "fine", touch: false, keyboard: true }, override: () => undefined, has: () => true, atLeast: () => true, why: () => "", onChange: () => () => {}, describe: () => ({}) } as never,
-    promoted() {},
   });
   await runtime.load([], [{ path: ".common-ink/extensions/late/extension.json" as FilePath, revision: 1 } as FileSummary], [], false, []);
   runtime.declare();

@@ -3,7 +3,6 @@
 // extension code runs, and starts an extension's code only when one of its activation events happens.
 // Built-ins ship with the same files. A workspace extension is a folder of files in the workspace,
 // .common-ink/extensions/<id>/, edited and kept in history like any note.
-import { WIDTH_CLASSES, type Requires, type WidthClass } from "./devices.ts";
 import type { FilePath } from "./files.ts";
 
 export const EXTENSIONS_DIR = ".common-ink/extensions/";
@@ -86,8 +85,6 @@ const HOST = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 export interface CommandContribution {
   command: string;
   title: string;
-  /** What it needs from the device; off there, it's listed greyed, with why. */
-  requires?: Requires;
 }
 
 /** A default shortcut for a command: a key ("Mod-Enter") or a Vim normal-mode sequence ("gx"). Settings can rebind it. */
@@ -131,7 +128,6 @@ export interface ViewContainerContribution {
 export interface ViewContribution {
   id: string;
   name: string;
-  requires?: Requires;
 }
 
 export interface StatusBarItemContribution {
@@ -175,7 +171,6 @@ export interface EmbedContribution {
   arguments: Record<string, EmbedArgument>;
   /** What the block's body holds, if anything: a container's markdown, or a fence's code. */
   body?: string;
-  requires?: Requires;
 }
 
 const ARGUMENT_TYPES = ["string", "number", "duration", "boolean"];
@@ -230,8 +225,6 @@ export interface ExtensionManifest {
   files: string[];
   activationEvents: ActivationEvent[];
   permissions: Permissions;
-  /** What it needs from the device to start there (devices.ts). Off on a device that hasn't it, unless you turn it on there. */
-  requires?: Requires;
   contributes: Contributions;
 }
 
@@ -266,20 +259,6 @@ const relativeFile = (v: unknown, what: string, typescript = false) => {
   }
   return file;
 };
-
-/** What something needs from a device: `{ "keyboard": true, "width": "medium", "pointer": "fine" }`, any of them. */
-function requires(v: unknown, at: string): { requires?: Requires } {
-  if (v === undefined) return {};
-  const o = object(v, at);
-  const out: Requires = {};
-  for (const [k, value] of Object.entries(o)) {
-    if (k === "keyboard" && value === true) out.keyboard = true;
-    else if (k === "width" && WIDTH_CLASSES.includes(value as WidthClass)) out.width = value as WidthClass;
-    else if (k === "pointer" && value === "fine") out.pointer = "fine";
-    else throw new ManifestError(`${at}.${k} isn't something a device has: "keyboard": true, "width": one of ${WIDTH_CLASSES.join(", ")}, or "pointer": "fine"`);
-  }
-  return Object.keys(out).length ? { requires: out } : {};
-}
 
 const SETTING_TYPES = new Set(["boolean", "integer", "number", "string", "array", "object"]);
 
@@ -316,13 +295,13 @@ function contributions(v: unknown, id: string): Contributions {
   for (const [container, items] of Object.entries(c.views === undefined ? {} : object(c.views, "contributes.views"))) {
     views[container] = list(items, `contributes.views.${container}`, (item, at) => {
       const o = object(item, at);
-      return { id: text(o.id, `${at}.id`), name: text(o.name, `${at}.name`), ...requires(o.requires, `${at}.requires`) };
+      return { id: text(o.id, `${at}.id`), name: text(o.name, `${at}.name`) };
     });
   }
   return {
     commands: list(c.commands, "contributes.commands", (item, at) => {
       const o = object(item, at);
-      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`), ...requires(o.requires, `${at}.requires`) };
+      return { command: text(o.command, `${at}.command`), title: text(o.title, `${at}.title`) };
     }),
     keybindings: list(c.keybindings, "contributes.keybindings", (item, at) => {
       const o = object(item, at);
@@ -374,7 +353,7 @@ function contributions(v: unknown, id: string): Contributions {
           ...(a.hidden === true ? { hidden: true } : {}),
         };
       }
-      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), syntax, arguments: args, ...(body !== undefined ? { body } : {}), ...requires(o.requires, `${at}.requires`) };
+      return { language, title: text(o.title, `${at}.title`), description: text(o.description, `${at}.description`, true), syntax, arguments: args, ...(body !== undefined ? { body } : {}) };
     }),
     urlEmbeds: list(c.urlEmbeds, "contributes.urlEmbeds", (item, at) => {
       const o = object(item, at);
@@ -455,7 +434,6 @@ export function parseManifest(source: string | unknown, folderId: string, opts: 
       files: files.includes(main) ? files : [main, ...files],
       activationEvents: activationEvents.length ? activationEvents : ["onStartup"],
       permissions,
-      ...requires(m.requires, '"requires"'),
       contributes: contributions(m.contributes, folderId),
     };
   } catch (err) {
