@@ -44,7 +44,7 @@ import { embeds } from "./embeds.ts";
 import { bootLevers } from "./dev-boot.ts";
 import type { Prompt } from "./dev/index.ts";
 import { Device } from "./device.ts";
-import { atLeast, deviceOfLayout, here, hereText, needsText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
+import { atLeast, deviceOfLayout, here, hereText, parseDeviceFile, type Override, type Requires } from "../../worker/src/devices.ts";
 
 // Test levers (docs/TESTING.md), where the Worker says there are any: before anything reads the clock or the network.
 const dev = await bootLevers();
@@ -899,49 +899,6 @@ async function setOverride(id: string, value: Override | undefined) {
   await device.setOverride(id, value);
   extensionsChanged();
 }
-
-/** Where Vim stands here once a choice is saved, said as it is: on, going after a reload, off here and why, or off in settings. */
-function vimHere(): string {
-  const r = extensions.host.records.find((x) => x.id === "vim");
-  if (!r || r.state === "off") return "Vim stays off: it's turned off in your settings (extensions.disabled).";
-  if (r.state === "safe" || r.state === "failed") return `Vim isn't running${r.state === "safe" ? " in safe mode" : ": it failed to start"}.`;
-  const h = extensions.here(r.manifest);
-  // On here: running, or about to go in (the device's change puts it in).
-  if (h.on) return h.by === "you" ? "Vim is on here, keyboard or not." : "Vim is on here.";
-  if (r.state !== "unmet") return "Vim goes after a reload.";
-  return h.by === "you" ? "Vim is off here." : `Vim is off here: it ${needsText(h.needs)}.`;
-}
-
-/** Say what a device choice did. Something still running that's now off here goes after a reload, as turning an extension off does: offer it. */
-function deviceNotice(lead: string) {
-  const going = extensions.host.records.filter((r) => (r.state === "active" || r.state === "inactive") && !extensions.here(r.manifest).on).map((r) => r.manifest.name);
-  const vim = vimHere();
-  const reload = going.filter((n) => n !== "Vim");
-  const text = [lead, vim, reload.length ? `${reload.join(", ")} ${reload.length === 1 ? "goes" : "go"} after a reload.` : ""].filter(Boolean).join(" ");
-  workbench.notice(text, going.length ? [{ label: "Reload", run: () => reloadWindow() }] : [{ label: "This device", run: () => openSettingsUi("device") }]);
-}
-
-// What Settings › This device and the Extensions view's On here do, as commands, so they're in the command
-// bar: for a phone or tablet with a keyboard the app didn't find, or a Vim user on one. Only you run them:
-// an extension that ran them would be choosing what runs on your device.
-commands.register(
-  { id: "device.keyboardYes", title: "Keyboard: this device has a keyboard", appOnly: true, run: () => device.setKeyboard("yes").then(() => deviceNotice("This device has a keyboard.")) },
-  { id: "device.keyboardNo", title: "Keyboard: this device has no keyboard", appOnly: true, run: () => device.setKeyboard("no").then(() => deviceNotice("This device has no keyboard.")) },
-  {
-    id: "device.keyboardAuto",
-    title: "Keyboard: let the app tell whether this device has one",
-    appOnly: true,
-    run: () => device.setKeyboard("auto").then(() => deviceNotice(`The app tells whether this device has a keyboard: ${device.has("keyboard") ? "it has one" : "none found yet"}.`)),
-  },
-  { id: "vim.onHere", title: "Vim: turn on for this device", appOnly: true, run: () => setOverride("vim", "on").then(() => deviceNotice("Vim: On for this device.")) },
-  { id: "vim.offHere", title: "Vim: turn off for this device", appOnly: true, run: () => setOverride("vim", "off").then(() => deviceNotice("Vim: Off for this device.")) },
-  {
-    id: "vim.autoHere",
-    title: "Vim: on here whenever this device has a keyboard",
-    appOnly: true,
-    run: () => setOverride("vim", undefined).then(() => deviceNotice("Vim: Auto for this device, on with a keyboard.")),
-  },
-);
 
 /** The extensions a settings file trusts, or null if it can't be read as JSON. */
 async function trustedIn(path: FilePath): Promise<string[] | null> {
