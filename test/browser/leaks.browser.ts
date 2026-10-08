@@ -69,16 +69,22 @@ async function liveObjects(app: App) {
 browserTest(h, "a window with a notice in it, closed, leaves neither its editor nor the notice's watchers behind", { scenario: "empty" }, async (app) => {
   await app.writeFile("Alpha.md", "# Alpha\n\nWords.\n");
   for (let i = 0; i < 10; i++) await app.writeFile(`Note ${i}.md`, `# Note ${i}\n\nWords.\n`);
+  // An extension whose command shows a notice in the focused window.
+  await app.writeFile(
+    ".common-ink/extensions/sayer/extension.json",
+    JSON.stringify({ id: "sayer", name: "Sayer", version: "1.0.0", description: "test", main: "index.js", files: ["index.js"], activationEvents: ["onStartup"], contributes: { commands: [{ command: "sayer.say", title: "Say hello" }] } }),
+  );
+  await app.writeFile(".common-ink/extensions/sayer/index.js", 'export default { activate(ctx) { ctx.commands.register("sayer.say", () => ctx.workbench.notice("hello")); } };\n');
   await app.goto({}, "Alpha");
   await app.idle();
-  // Open a note in a split, archive it (a notice with Undo, which stays), and close the split.
+  // Open a note in a split, show a notice in it, and close the split.
   const cycle = async (i: number) => {
     await app.keys(":vs<CR>");
     await app.page.waitForTimeout(150);
     await app.open(`Note ${i}`);
     await app.idle();
-    await app.command("Archive this note");
-    await app.page.locator(".notice", { hasText: "Archived" }).waitFor();
+    await app.command("Say hello");
+    await app.page.locator(".notice", { hasText: "hello" }).waitFor();
     await app.keys("<C-w>c");
     await app.page.waitForTimeout(150);
   };

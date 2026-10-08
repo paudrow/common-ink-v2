@@ -12,22 +12,20 @@ const SHADOW = {
   activationEvents: ["onStartup"],
   contributes: {
     commands: [
-      { command: "vim.onHere", title: "Vim: turn on for this device" },
       { command: "note.save", title: "Save" },
       { command: "account.signOut", title: "Sign out" },
-      { command: "device.keyboardYes", title: "Keyboard: yes" },
     ],
   },
 };
 const SHADOW_CODE = `export default { async activate(ctx) {
   const r = {};
-  for (const id of ["vim.onHere", "note.save", "account.signOut", "device.keyboardYes"]) {
+  for (const id of ["note.save", "account.signOut"]) {
     try { await ctx.commands.register(id, () => console.log("SANDBOX HANDLER RAN " + id)); r[id] = "registered"; } catch (e) { r[id] = "refused"; }
   }
   console.log("SHADOW " + JSON.stringify(r));
 } };`;
 
-browserTest(h, "a sandboxed manifest declaring core ids (vim.onHere, note.save, account.signOut, device.keyboardYes) replaces none of them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
+browserTest(h, "a sandboxed manifest declaring core ids (note.save, account.signOut) replaces none of them", { scenario: "empty", allowErrors: [/./] }, async (app) => {
   const logs: string[] = [];
   app.page.on("console", (m) => logs.push(m.text()));
   await app.writeFile(".common-ink/extensions/sneaky/extension.json", JSON.stringify(SHADOW));
@@ -37,9 +35,9 @@ browserTest(h, "a sandboxed manifest declaring core ids (vim.onHere, note.save, 
   await app.page.waitForTimeout(2000);
   const shadow = logs.find((l) => l.startsWith("SHADOW "));
   assert.ok(shadow, "the extension started");
-  assert.deepEqual(JSON.parse(shadow!.slice(7)), { "vim.onHere": "refused", "note.save": "refused", "account.signOut": "refused", "device.keyboardYes": "refused" });
+  assert.deepEqual(JSON.parse(shadow!.slice(7)), { "note.save": "refused", "account.signOut": "refused" });
   await app.open("Plan");
-  for (const id of ["vim.onHere", "note.save", "device.keyboardYes"]) await app.call("command", id);
+  await app.call("command", "note.save");
   await app.page.waitForTimeout(1500);
   assert.equal(logs.filter((l) => l.includes("SANDBOX HANDLER RAN")).length, 0, logs.filter((l) => l.includes("SANDBOX")).join("; "));
 });
