@@ -449,15 +449,29 @@ function nestingDb(): Db {
   };
 }
 
-test("a transaction inside another announces its changes with the outer one's, once it commits; one rolled back announces nothing", () => {
+test("a transaction inside another announces its changes with the outer one's, once it commits", () => {
   const heard: string[] = [];
   const db = nestingDb();
   const files = new Files(db, Date.now, (n) => heard.push(`${n.path}${(db as ReturnType<typeof memoryDb>).raw?.isTransaction ? " (before commit)" : ""}`));
   files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
     files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
-    assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
   });
   assert.deepEqual(heard, ["Outer.md", "Inner.md"]);
+});
+
+test("one inside another that fails takes the outer one with it, even if the outer one catches the error: none of it is kept or heard", () => {
+  const heard: string[] = [];
+  // Transactions nest as a Durable Object's do: a plain in-memory database refuses the inner one outright.
+  const files = new Files(nestingDb(), Date.now, (n) => heard.push(n.path));
+  assert.throws(() =>
+    files.writeAll([{ path: "Outer.md" as FilePath, text: "o\n", base: 0, author: ada }], () => {
+      files.write({ path: "Inner.md" as FilePath, text: "i\n", base: 0, author: ada });
+      assert.throws(() => files.seed({ id: "s", notes: [{ path: "Gone.md", text: "g\n", replace: false }, { path: "../Bad.md", text: "", replace: false }] }));
+    }),
+  );
+  assert.deepEqual([heard, files.list()], [[], []]);
+  files.write({ path: "After.md" as FilePath, text: "a\n", base: 0, author: ada });
+  assert.deepEqual(heard, ["After.md"], "the next transaction is its own");
 });
 
 test("a page whose announcement fails doesn't keep the others from hearing", () => {
