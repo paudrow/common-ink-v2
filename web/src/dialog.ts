@@ -118,7 +118,10 @@ export function textDialog(title: string, text: string, placeholder: string, yes
     (settle) => {
       const input = el<HTMLInputElement>("input", { type: "url", placeholder, ariaLabel: title });
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && input.value.trim()) settle(input.value.trim());
+        if (e.key !== "Enter") return;
+        // Taken here: the dialog closes, and the Enter mustn't go on to press whatever has focus next.
+        e.preventDefault();
+        if (input.value.trim()) settle(input.value.trim());
       });
       queueMicrotask(() => input.focus());
       return {
