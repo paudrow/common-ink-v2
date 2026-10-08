@@ -88,7 +88,7 @@ test("navigation's note of each change goes, so it works them out again if it co
     ["Purged.md", "Expired.md"],
   );
   const made = files.write({ path: "After.md" as FilePath, text: "# After\n", base: 0, author: ada }).file!;
-  assert.deepEqual(Object.keys(db.all("SELECT * FROM changes WHERE revision = ?", made.revision)[0]), columns());
+  assert.deepEqual(Object.keys(db.all<Record<string, unknown>>("SELECT * FROM changes WHERE revision = ?", made.revision)[0]), columns());
   openWorkspace(db, { fixtures: false, google: null });
   assert.deepEqual(columns(), ["revision", "path", "author", "base", "diff", "time", "undoes", "deletes", "purges"], "a second start changes nothing");
   const fresh = memoryDb();
