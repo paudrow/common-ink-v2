@@ -109,6 +109,14 @@ export class App {
     await this.page.waitForFunction((name) => document.title.startsWith(name.replace(/\.md$/, "")), note);
   }
 
+  /**
+   * A note in the list beside the note, by its path: a Feed card or a row of every note, whichever the
+   * list shows. Both open the note on a click, in a tab of its own on a ⌘-click, and drag into a window.
+   */
+  listItem(path: string): Locator {
+    return this.page.locator(`#notes [data-open='${JSON.stringify({ file: path })}']:visible`);
+  }
+
   /** Run a command by its title, as the command bar would. */
   command(title: string) {
     return this.call("command", title);

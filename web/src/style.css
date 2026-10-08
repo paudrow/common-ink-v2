@@ -115,7 +115,28 @@ body {
 }
 
 html[data-places]:not([data-shell]) body {
-  grid-template: "places notes editor panel" 1fr "places notes status status" auto / 13rem 14rem 1fr auto;
+  grid-template: "places notes editor panel" 1fr "places notes status status" auto / 13rem var(--list-width, 14rem) 1fr auto;
+}
+
+/* The Feed in the list column: wide enough for its cards. */
+html[data-list-feed]:not([data-shell]) {
+  --list-width: 22rem;
+}
+
+html[data-list-feed]:not([data-shell]):not([data-places]) body {
+  grid-template: "notes editor panel" 1fr "notes status status" auto / var(--list-width) 1fr auto;
+}
+
+html[data-list-feed]:not([data-shell]) #notes {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.list-feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 html[data-places]:not([data-shell]) #places {

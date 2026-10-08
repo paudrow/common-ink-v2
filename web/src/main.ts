@@ -525,7 +525,7 @@ window.addEventListener("online", () => void sendUnsent());
  * What the list beside the note shows (decision 4): the Feed (every note, until the Feed lists them by
  * their changes), or the notes a saved search finds. On a phone it's the Feed's screen.
  */
-let listShows: { feed: true } | { saved: SavedSearch; results: Array<{ path: FilePath; title: string; line?: string }> | null; more?: boolean; note?: string } = { feed: true };
+let listShows: { feed: true } | { all: true } | { saved: SavedSearch; results: Array<{ path: FilePath; title: string; line?: string }> | null; more?: boolean; note?: string } = { feed: true };
 const listHead = document.createElement("header");
 listHead.className = "list-head";
 $("#notes").prepend(listHead);
@@ -539,6 +539,7 @@ function listRow(path: FilePath, label: string, current: FilePath | null, detail
   if (path === current) a.setAttribute("aria-current", "page");
   // What it opens, for the Workbench extension's dragging into windows.
   a.dataset.open = JSON.stringify(L.fileTab(path));
+  a.dataset.title = label;
   // Double-click opens it kept, not as the preview tab.
   a.addEventListener("dblclick", (e) => {
     e.preventDefault();
@@ -553,8 +554,37 @@ function listRow(path: FilePath, label: string, current: FilePath | null, detail
   return li;
 }
 
+/** The Feed, drawn in the list column on a wide screen (decision 4): a card opens its note beside it. */
+const feedBox = document.createElement("div");
+feedBox.className = "list-feed";
+feedBox.hidden = true;
+$("#notes").append(feedBox);
+/**
+ * Whether the Feed is to be drawn in the list column again: at first, and when you go to it. Opened in a
+ * tab (Open the Feed), it's there instead, and the column lists every note until you go to the Feed again.
+ */
+let drawFeed = true;
+/** Whether the list column shows the Feed extension's view: on a wide screen, with the Feed on and chosen, and it here. */
+function feedInList(): boolean {
+  if (!("feed" in listShows) || !device.atLeast("expanded") || !extensions.host.records.some((r) => r.id === "feed" && r.state === "active")) return false;
+  if (drawFeed) {
+    workbench.drawInto("feed", feedBox);
+    drawFeed = !feedBox.childElementCount;
+  }
+  return feedBox.childElementCount > 0;
+}
+
 function renderList() {
   const current = workbench.focusedPath;
+  const feed = feedInList();
+  // The Feed is the place but hasn't drawn yet (the app starting): its column waits, empty, at its
+  // width, so the note beside it doesn't change width (and its embeds height) once it has.
+  const coming = !feed && drawFeed && "feed" in listShows && device.atLeast("expanded") && feedOn();
+  document.documentElement.toggleAttribute("data-list-feed", feed || coming);
+  feedBox.hidden = !feed;
+  listHead.hidden = list.hidden = feed || coming;
+  // Behind the Feed, the rows of every note aren't kept: they're drawn again when they show.
+  if (feed || coming) return void list.replaceChildren();
   if ("saved" in listShows) {
     const { saved, results, more, note } = listShows;
     listHead.replaceChildren(Object.assign(document.createElement("h2"), { textContent: saved.name }), Object.assign(document.createElement("code"), { textContent: saved.query }));
@@ -571,7 +601,9 @@ function renderList() {
 }
 
 /** Whether the Feed extension is on, so the Feed is its view, not the list of every note. */
-const feedOn = () => extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+function feedOn(): boolean {
+  return extensions.host.records.some((r) => r.id === "feed" && (r.state === "active" || r.state === "inactive"));
+}
 
 /** Show a saved search's notes in the list, and keep them current as notes change. */
 async function showSaved(saved: SavedSearch) {
@@ -843,6 +875,8 @@ function updateReloadLine() {
 }
 
 function extensionsChanged() {
+  // The Feed started (or stopped): the list beside the note is drawn again, if it's the Feed's.
+  if ("feed" in listShows && drawFeed) renderList();
   panels.refresh("extensions");
   workbench.refreshView("extensions");
   panels.refresh("extension-activity");
@@ -1355,15 +1389,21 @@ async function countSaved() {
 let recount = 0;
 function showFeed() {
   listShows = { feed: true };
+  drawFeed = true;
   renderList();
 }
 /** Go to a place: the Feed in the list beside the note, a view in the window, or a command's place. */
 function goTo(place: Place) {
   chosen = { place: place.id };
-  // The Feed takes the list back to every note, and (with the Feed extension on) shows the Feed in the window.
+  // The Feed is the list beside the note (decision 4): with the Feed extension on, its cards, else every note.
+  // Another place shows in the window, with every note in the list beside it.
   if ("list" in place.open || place.id === "feed") showFeed();
-  if ("view" in place.open) workbench.openView(place.open.view);
-  else if ("command" in place.open) void commands.start(place.open.command, place.by);
+  else {
+    listShows = { all: true };
+    renderList();
+    if ("view" in place.open) workbench.openView(place.open.view);
+    else void commands.start(place.open.command, place.by);
+  }
   sidebar.render();
 }
 async function saveSearch(query: string) {

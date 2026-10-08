@@ -25,6 +25,10 @@ export interface SnapshotOptions {
 export async function matchSnapshot(page: Page, name: string, { threshold = 32, maxDiff = 0.002 }: SnapshotOptions = {}): Promise<string | null> {
   // The editor's own cursor and the focused line move with every keypress; neither is what's checked.
   await page.addStyleTag({ content: ".cm-cursorLayer, .cm-selectionLayer { visibility: hidden !important; }" });
+  // The Feed beside the note lists notes newest change first, and opening a note can change one: which
+  // card comes where isn't what these pictures check, so the cards are hidden. The column itself stays,
+  // so anything drawn over it (a dialog) is still in the picture.
+  await page.addStyleTag({ content: ".list-feed > * { visibility: hidden !important; }" });
   await bounded("document.fonts.ready", page.evaluate(() => document.fonts.ready));
   const shot = await page.screenshot({ animations: "disabled", caret: "hide" });
   const baseline = path.join(DIR, `${name}.png`);
