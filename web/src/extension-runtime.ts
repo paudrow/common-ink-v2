@@ -302,7 +302,7 @@ export class ExtensionRuntime {
     this.app.changed();
   }
 
-  /** The extension that draws an embed, by Ownership's rule: while it's off on this device, its embed says so. */
+  /** The extension that draws an embed, by Ownership's rule. */
   private embedOwner(language: string): ExtensionManifest | undefined {
     const owner = this.ownership.owner("embed", language);
     return this.host.records.find((r) => r.id === owner)?.manifest;
