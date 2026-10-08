@@ -45,7 +45,7 @@ export interface Asker {
 const detailsLink = (who: Asker, text: string, id: string) => focusable(el("button", { type: "button", className: "link", textContent: text, onclick: () => who.showDetails() }), id);
 
 /**
- * "Boards wants to read the note This week", answering, in order: who's asking, what exactly (the
+ * "Word count wants to read the note This week", answering, in order: who's asking, what exactly (the
  * technical scope behind a Details disclosure), why now (what you did that it's acting on), and why at
  * all (its own reason, as it says it). Then Allow this time, Always allow, or Don't allow.
  */

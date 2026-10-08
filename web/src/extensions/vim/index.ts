@@ -102,21 +102,6 @@ export default {
       showMode("NORMAL");
     });
 
-    // zt, z<CR>, zz, z., zb and z- as Vim's own, set at once (the motion z<CR> runs after would replace
-    // a scroll request), but with the line at the top kept below the editor's top scroll margin: clear
-    // of the phone's not-saved pill, say. With no margin, they land where Vim's do.
-    Vim.defineAction("scrollToCursor", (cm, args) => {
-      const view = cm.cm6;
-      const line = cm.getCursor().line;
-      const at = cm.charCoords({ line, ch: 0 }, "local");
-      const height = cm.getScrollInfo().clientHeight;
-      const margin = Math.max(0, ...view.state.facet(EditorView.scrollMargins).map((f: (v: EditorView) => { top?: number } | null) => f(view)?.top ?? 0));
-      let y = at.top - margin;
-      if (args.position === "center") y = at.bottom - height / 2;
-      if (args.position === "bottom") y = at.top - height + (cm.charCoords({ line, ch: cm.getLine(line).length - 1 }, "local").bottom - at.top);
-      cm.scrollTo(null, y);
-    });
-
     // Ex commands, each the app's command or the workbench's call.
     const exArg = (params: ExParams) => (params.argString ?? "").trim();
     const run = (command: string) => () => void ctx.commands.run(command);

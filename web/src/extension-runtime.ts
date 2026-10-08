@@ -854,7 +854,7 @@ export class ExtensionRuntime {
           app.workbench.setChrome({ window: safe("window"), tabs: safe("tabs"), divider: safe("divider"), empty: safe("empty") });
         },
       },
-      statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip), onShown: (fn) => app.statusItems.onShown(guard(fn)) },
+      statusBar: { set: (id, text, tooltip) => app.statusItems.set(m.id, id, text, tooltip) },
       commandBar: {
         provide: (p) => app.bar.provide({ ...p, items: guard((q: string, update?: (items: Item[]) => void) => p.items(q, update && guard(update)), []) }),
         open: (text) => app.bar.open(text),

@@ -70,25 +70,6 @@ export function addMarkdownSyntax(extension: MarkdownExtension): void {
 /** The markdown language notes are parsed with now, with what extensions have added. */
 export const markdownLanguageSupport = (): LanguageSupport => markdownSupport;
 
-/** Boxes that float over the editors, such as the phone's not-saved pill: the cursor isn't scrolled under them, at the top or the bottom. */
-const floating: HTMLElement[] = [];
-export function floatsOverEditors(el: HTMLElement): void {
-  floating.push(el);
-}
-const clearOfFloating = EditorView.scrollMargins.of((view) => {
-  const scroller = view.scrollDOM.getBoundingClientRect();
-  let top = 0;
-  let bottom = 0;
-  for (const el of floating) {
-    if (!el.getClientRects().length) continue;
-    const box = el.getBoundingClientRect();
-    if (box.right <= scroller.left || scroller.right <= box.left) continue;
-    if (box.top < scroller.top + scroller.height / 2) top = Math.max(top, box.bottom + 8 - scroller.top);
-    else bottom = Math.max(bottom, scroller.bottom - box.top + 8);
-  }
-  return top > 0 || bottom > 0 ? { top, bottom } : null;
-});
-
 /** The parts of the editor that settings change, each in its own compartment so it can change live. */
 const slots = { lineNumbers: new Compartment(), wrapping: new Compartment(), fontSize: new Compartment(), livePreview: new Compartment(), markdown: new Compartment() };
 
@@ -129,7 +110,6 @@ export function createState(
       EditorState.allowMultipleSelections.of(true),
       EditorView.clickAddsSelectionRange.of(() => false),
       remoteFlash,
-      clearOfFloating,
       keymap.of([...(opts.json || opts.code ? [] : markdownKeymap), ...defaultKeymap.filter((b) => !ADDS_CURSORS.includes(b.key ?? "")), ...historyKeymap]),
       // Tab and Shift-Tab indent the line, so the keyboard stays in the note. Last of all keys, so an
       // extension's Tab comes first: Lists' on a list item, Vim's at the cursor in insert mode.

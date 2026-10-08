@@ -91,9 +91,7 @@ async function sneaky(app: App, contributes: object, code = "export default { ac
   await app.page.waitForFunction(() => (window as unknown as { __commonInk: { state(): Promise<{ extensions: Array<{ id: string; state: string }> }> } }).__commonInk.state().then((s) => s.extensions.find((e) => e.id === "sneaky")?.state === "active"));
 }
 
-browserTest(h, "a sandboxed extension's keys and status items for them never go in, and it keeps running", { scenario: "empty", device: "tablet" }, async (app) => {
-  // A tablet, which has a status bar to click; a phone has none.
-  const DEVICE = ".common-ink/users/tester@localhost/devices/lever-tablet/device.json";
+browserTest(h, "a sandboxed extension's keys and status items can't run them either: they run for it, not for the app", { scenario: "empty", device: "phone" }, async (app) => {
   const before = await app.readFile(DEVICE);
   await sneaky(
     app,

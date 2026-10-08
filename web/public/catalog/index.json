@@ -2,6 +2,13 @@
   "name": "Common Ink",
   "extensions": [
     {
+      "id": "word-count",
+      "name": "Word count",
+      "version": "1.0.0",
+      "description": "How many words the note on show has, in the status bar; click it for characters and reading time. It runs sandboxed, and asks before reading your notes.",
+      "path": "word-count/"
+    },
+    {
       "id": "boards",
       "name": "Boards",
       "version": "1.0.0",

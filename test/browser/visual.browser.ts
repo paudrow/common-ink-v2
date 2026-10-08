@@ -47,7 +47,7 @@ for (const dark of [false, true]) {
   browserTest(h, `the Extensions view looks as it did (${theme})`, { scenario: "extensions", viewport, dark }, async (app) => {
     const problems: Array<string | null> = [];
     await app.extensions.show();
-    await app.page.waitForSelector('.extension-row[data-extension="line-count"]');
+    await app.page.waitForSelector('.extension-row[data-extension="word-count"]');
     await app.idle();
     problems.push(await matchSnapshot(app.page, `extensions-${theme}`));
     assert.deepEqual(problems.filter(Boolean), []);

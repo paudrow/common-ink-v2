@@ -9,7 +9,7 @@ import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts
 import { api } from "./api.ts";
 import { CommandBar } from "./commandbar.ts";
 import { combine, CORE_CATALOG, DEFAULT_SETTINGS, DEFAULTS, isReadOnly, parseSettings, SETTINGS_TEMPLATE, userSettingsPath, WORKSPACE_SETTINGS, type Settings, type SettingsCatalog } from "../../worker/src/settings.ts";
-import { editSetting, settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
+import { settingsEditor, SETTINGS_VIEW, writeSetting, type Level, type Shown } from "./settings-ui.ts";
 import { deviceSummary, renderDevice } from "./device-ui.ts";
 import { settingsJson } from "./settings-json.ts";
 import { APP_ONLY, bindingForKey, Commands, keyFor, refusalSummary } from "./commands.ts";
@@ -29,13 +29,13 @@ import { builtInSourceView, extensionsView, originOf, type ExtensionsViewDeps } 
 import { modalOpen } from "./modal.ts";
 import { changeIn, type Trigger } from "./permission-words.ts";
 import { BUILT_IN } from "./extensions/index.ts";
-import { createState, editText, floatsOverEditors } from "./editor.ts";
+import { createState, editText } from "./editor.ts";
 import { keptWhen, showClash } from "./conflict.ts";
 import { askPermission, confirmDialog, textDialog, type Asker } from "./dialog.ts";
 import { activityView } from "./activity.ts";
-import { parseGrants, type Answer } from "../../worker/src/permissions.ts";
+import { parseGrants } from "../../worker/src/permissions.ts";
 import { EditorView } from "@codemirror/view";
-import { idbKV, Offline, syncLine, UNREACHABLE_TEXT } from "./offline.ts";
+import { idbKV, Offline } from "./offline.ts";
 import { Workbench } from "./workbench.ts";
 import { Navigation, type Visit } from "./navigation.ts";
 import { offerLibraries } from "./libraries.ts";
@@ -62,7 +62,6 @@ const list = $<HTMLUListElement>("#notes ul");
 const saveLine = $("#save");
 const problemsLine = $("#problems");
 const unsentLine = $("#unsent");
-const notSavedLine = $("#not-saved");
 const resolveButton = $<HTMLButtonElement>("#resolve");
 const reloadLine = $("#reload");
 const netLine = $("#net-activity");
@@ -73,7 +72,7 @@ const SAVE_TEXT: Record<SaveStatus, string> = {
   unsaved: "Edited",
   saving: "Saving…",
   conflict: "Not saved: this note changed in the same place elsewhere.",
-  offline: UNREACHABLE_TEXT,
+  offline: "Not saved: can't reach the server. Trying again.",
 };
 
 let files: FileSummary[] = [];
@@ -81,10 +80,6 @@ let settings: Settings = DEFAULTS;
 /** Every setting there is: the app's, and each installed extension's, once their manifests are read. */
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
-/** Back online with edits still held: they go at their next retry, so until one fails again, they're being sent. */
-let sending = false;
-/** What the phone's not-saved pill says now. */
-let notSaying = "";
 const savedListeners: Array<(path: FilePath) => void> = [];
 const changeListeners: Array<(notice: ChangeNotice) => void> = [];
 const recordListeners: Array<() => void> = [];
@@ -201,8 +196,6 @@ const workbench = new Workbench(
     status(status, message) {
       saveLine.textContent = message ?? (status ? SAVE_TEXT[status] : "");
       saveLine.dataset.status = status ?? "";
-      // A save that failed with the server reachable: it isn't on its way.
-      if (status === "offline") sending = false;
       resolveButton.hidden = status !== "conflict";
       queueMicrotask(() => void renderUnsent());
     },
@@ -322,7 +315,7 @@ async function refreshList() {
   extensionsChanged();
 }
 
-/** Offline, and how many edits are waiting to be sent, only when there's something to say; on a phone, only that something isn't saved. */
+/** "Offline", and how many edits are waiting to be sent: shown whenever either is true. */
 async function renderUnsent() {
   const unsent = await offline.unsent();
   const ops = await offline.ops();
@@ -331,88 +324,18 @@ async function renderUnsent() {
   const waiting = unsent.filter((u) => !clashing.includes(u.path)).length + ops.length;
   // Kept in memory only (this browser won't keep site data): they're gone if the page closes before they're sent.
   const fragile = waiting > 0 && !(await offline.durable());
-  if (!waiting) sending = false;
-  const line = syncLine({ online: offline.online, waiting, fragile, sending, clashing: clashing.map(docLabel) });
-  unsentLine.textContent = line.wide;
+  const parts = [offline.online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}${fragile ? ", lost if this page closes" : ""}` : "", clashing.length ? `${clashing.length} can't be merged: open ${docLabel(clashing[0])}` : ""];
+  unsentLine.textContent = parts.filter(Boolean).join(" · ");
   unsentLine.title = [...unsent.map((u) => `${u.path}${clashing.includes(u.path) ? " (can't be merged)" : ""}`), ...ops.map((o) => o.what)].join("\n");
-  unsentLine.dataset.state = line.state;
-  const clash = line.state === "conflict";
-  notSavedLine.dataset.state = line.state;
-  notSavedLine.setAttribute("role", clash ? "button" : "status");
-  if (clash) notSavedLine.tabIndex = 0;
-  else notSavedLine.removeAttribute("tabindex");
-  const showing = !notSavedLine.hidden;
-  notSaying = line.phone;
-  notSavedLine.hidden = !line.phone;
-  if (!line.phone) notSavedLine.textContent = "";
-  else if (showing) {
-    notSavedLine.textContent = line.phone;
-    placeNotSaved();
-  }
-  // Shown first and said a frame later, so screen readers hear the live region change.
-  else
-    requestAnimationFrame(() => {
-      placeNotSaved();
-      notSavedLine.textContent = notSaying;
-      // The line being edited, if the pill now covers it, moves out from under it; otherwise the
-      // scroll stays where you left it. A laptop has no pill (the CSS hides it), so nothing moves there.
-      const view = workbench.focusedView;
-      if (!view || !notSavedLine.getClientRects().length) return;
-      const pill = notSavedLine.getBoundingClientRect();
-      const cursor = view.coordsAtPos(view.state.selection.main.head);
-      if (cursor && cursor.top < pill.bottom && pill.top < cursor.bottom) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
-    });
+  unsentLine.dataset.state = clashing.length ? "conflict" : waiting || !offline.online ? "waiting" : "";
 }
-let wasOnline = offline.online;
-offline.onChange(() => {
-  sending = offline.online && (sending || !wasOnline);
-  wasOnline = offline.online;
-  void renderUnsent();
-});
-/** Open the first note whose edit can't be merged, and show the two. */
-async function openClash() {
+offline.onChange(() => void renderUnsent());
+unsentLine.addEventListener("click", async () => {
   const clashing = (await offline.unsent()).find((u) => u.conflict)?.path ?? workbench.pending().find((p) => p.status === "conflict")?.path;
   if (!clashing) return;
   if (clashing !== workbench.focusedPath) await workbench.open(clashing, { newTab: true });
   await resolveConflict();
-}
-unsentLine.addEventListener("click", () => void openClash());
-/**
- * Where the pill floats. Over a note, just inside the top of the top right window's editors, whatever
- * is above them, where a note has an empty margin. Over anything else (a view, a panel, Trash, the
- * calendar), whose top is its controls, at the bottom, above the on-screen keyboard.
- */
-function placeNotSaved() {
-  if (notSavedLine.hidden) return;
-  const tops = [...$("#workbench").querySelectorAll<HTMLElement>(".editors")].flatMap((e) => (e.getClientRects().length ? [e.getBoundingClientRect()] : []));
-  const box = tops.sort((a, b) => b.right - a.right || a.top - b.top)[0];
-  const top = box?.top ?? 0;
-  notSavedLine.style.setProperty("--not-saved-at", `${Math.round(top)}px`);
-  // What's there in the windows, under where the pill would sit at the top: a note's editor, or
-  // something else. Overlays above them (Search, a menu, a dialog) aren't what it floats over once they close.
-  const workbenchEl = $("#workbench");
-  const under = box ? document.elementsFromPoint(box.right - 24, top + 16).find((e) => workbenchEl.contains(e)) : null;
-  notSavedLine.dataset.at = under?.closest(".editors .cm-editor") ? "top" : "bottom";
-  const viewport = window.visualViewport;
-  notSavedLine.style.setProperty("--keyboard", `${viewport ? Math.max(0, Math.round(innerHeight - viewport.offsetTop - viewport.height)) : 0}px`);
-}
-// Placed again when the windows move (the page resizing, a bar above them coming or going), the
-// keyboard comes or goes, focus moves, or a panel opens or closes.
-new ResizeObserver(placeNotSaved).observe($("#workbench"));
-window.visualViewport?.addEventListener("resize", placeNotSaved);
-focusListeners.push(() => requestAnimationFrame(placeNotSaved));
-new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#panel"), { attributes: true, attributeFilter: ["hidden", "class"] });
-// And as a menu or a dialog closes, in case what's under it changed while it was open.
-new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe(document.body, { childList: true });
-floatsOverEditors(notSavedLine);
-notSavedLine.addEventListener("click", () => void openClash());
-notSavedLine.addEventListener("keydown", (e) => {
-  if (notSavedLine.dataset.state !== "conflict" || (e.key !== "Enter" && e.key !== " ")) return;
-  e.preventDefault();
-  void openClash();
 });
-// A tap on the pill leaves the note focused, so a phone's keyboard stays up.
-notSavedLine.addEventListener("mousedown", (e) => e.preventDefault());
 resolveButton.addEventListener("click", () => void resolveConflict());
 
 /**
@@ -628,8 +551,6 @@ const search = new Search({
   values: (key) => (key === "in" ? folders() : []),
 });
 const bar = new CommandBar({ all: () => search.filters(), extraKeys: () => search.extraKeys() });
-// The pill's place again as Search closes.
-new MutationObserver(() => requestAnimationFrame(placeNotSaved)).observe($("#command-bar"), { attributes: true, attributeFilter: ["hidden"] });
 const panels = new Panels($("#panel"));
 
 const promptFor: Prompt<[Trigger | null]> = (m, asks, joined, trigger) => askPermission(askerOf(m.id), m, asks, joined, trigger);
@@ -651,7 +572,8 @@ const extensions = new ExtensionRuntime({
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
-    await answerGrant(id, key, answer);
+    const grants = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [id]: { ...grants[id], [key]: answer } });
     await loadSettings();
   },
   prompt: dev ? dev.prompt(promptFor) : promptFor,
@@ -793,58 +715,6 @@ async function customize(b: BuiltIn) {
 }
 
 /** Delete a workspace extension's files, as changes that undo can take back. */
-/**
- * Your answer to one of an extension's permissions, in your settings, beside the others there (or
- * none, to ask again). Each settings file's answers are edited as that file has them: the settings
- * combined from all of them take the whole key from one file, and writing those back would copy
- * another file's answers over, or lose its own.
- */
-function answerGrant(id: string, key: string, answer: Answer | undefined) {
-  return editSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", (value) => {
-    const grants = parseGrants(value);
-    const mine = { ...grants[id] };
-    if (answer) mine[key] = answer;
-    else delete mine[key];
-    return { ...grants, [id]: mine };
-  });
-}
-
-/** Forget every answer to an extension's permissions, in each settings file that has any. */
-async function forgetGrants(id: string) {
-  for (const path of new Set([USER_SETTINGS, WORKSPACE_SETTINGS].filter((p) => p !== null)))
-    await editSetting(api, path, "extensions.permissions", (value) => {
-      const grants = parseGrants(value);
-      if (!(id in grants)) return value;
-      const { [id]: _forgotten, ...others } = grants;
-      return others;
-    });
-}
-
-/**
- * Clear away a retired Catalog extension's copy (Word count): its files and your answers to its
- * permissions, each a change in History that undo can take back. Done once: then there's nothing left.
- */
-async function clearRetired(found: readonly { id: string; files: FilePath[] }[]) {
-  const kept: FilePath[] = [];
-  for (const w of found) {
-    // The Catalog's files only: anything you added in its folder stays, and you're told.
-    const catalogs = new Set(["extension.json", "index.js", "installed.json"].map((f) => `.common-ink/extensions/${w.id}/${f}`));
-    const theirs = w.files.filter((p) => catalogs.has(p));
-    // Every file in its folder, notes too, which aren't the extension's own files.
-    kept.push(...files.map((f) => f.path).filter((p) => p.startsWith(`.common-ink/extensions/${w.id}/`) && !catalogs.has(p)));
-    workbench.forget(theirs);
-    for (const path of theirs) {
-      const file = await api.read(path).catch(() => null);
-      if (file?.revision) await api.delete(path, file.revision);
-    }
-    await forgetGrants(w.id);
-  }
-  if (!found.length) return;
-  await loadSettings();
-  await refreshList();
-  if (kept.length) workbench.notice(`Word count left the Catalog, and its files are gone. ${kept.length === 1 ? "A file" : `${kept.length} files`} you added in its folder stayed: ${kept.map(docLabel).join(", ")}.`);
-}
-
 async function removeExtension(r: ExtensionRecord) {
   if (!r.workspace) return;
   const paths = [...r.workspace.files];
@@ -876,11 +746,16 @@ const extensionDeps: ExtensionsViewDeps = {
   reload: reloadWindow,
   answer: (r, key) => parseGrants(settings["extensions.permissions"])[r.id]?.[key],
   async setAnswer(r, key, answer) {
-    await answerGrant(r.id, key, answer);
+    const grants = parseGrants(settings["extensions.permissions"]);
+    const mine = { ...grants[r.id] };
+    if (answer) mine[key] = answer;
+    else delete mine[key];
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", { ...grants, [r.id]: mine });
     await loadSettings();
   },
   async resetAnswers(r) {
-    await forgetGrants(r.id);
+    const { [r.id]: _forgotten, ...others } = parseGrants(settings["extensions.permissions"]);
+    await writeSetting(api, USER_SETTINGS ?? WORKSPACE_SETTINGS, "extensions.permissions", others);
     await loadSettings();
   },
   isTrusted: (r) => settings["extensions.trusted"].includes(r.id),
@@ -1250,8 +1125,6 @@ try {
     workbench.notice(`No file at ${missing}`, isNote(missing) ? [{ label: `Create ${missing.replace(/\.md$/, "")}`, run: () => workbench.open(missing, { newTab: true }) }] : []);
   } else if (!workbench.focusedPath) await workbench.open(fallback);
   renderList();
-  // Once the windows are up, so what it says shows in one.
-  void clearRetired(extensions.host.retired);
 } catch (err) {
   saveLine.textContent = `Couldn't load notes: ${(err as Error).message}`;
 }

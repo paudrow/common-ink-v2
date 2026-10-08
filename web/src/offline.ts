@@ -59,25 +59,6 @@ export interface Network {
 /** Whether an error means the server couldn't be reached, rather than that it answered with a problem. */
 export const unreachable = (err: unknown) => err instanceof TypeError || (err as Error)?.name === "TypeError";
 
-/** What the save line says while an edit can't reach the server; a phone's not-saved line says it too. */
-export const UNREACHABLE_TEXT = "Not saved: can't reach the server. Trying again.";
-
-/**
- * What the status line says about reaching the server: nothing while it's reached and nothing waits.
- * `wide` is the status bar's; `phone` is the not-saved line, there whenever an edit hasn't reached the
- * server, offline or not. `fragile`: this browser keeps waiting edits in memory only. `sending`: back
- * online, and they haven't failed since. `clashing` are the labels of notes whose edits can't be merged.
- */
-export function syncLine({ online, waiting, fragile = false, sending = false, clashing }: { online: boolean; waiting: number; fragile?: boolean; sending?: boolean; clashing: string[] }): { wide: string; phone: string; state: "" | "waiting" | "conflict" } {
-  const lost = fragile && waiting ? ", lost if this page closes" : "";
-  const parts = [online ? "" : "Offline", waiting ? `${waiting} unsent ${waiting === 1 ? "change" : "changes"}${lost}` : "", clashing.length ? `${clashing.length} can't be merged: open ${clashing[0]}` : ""];
-  return {
-    wide: parts.filter(Boolean).join(" · "),
-    phone: clashing.length ? "Not saved: changed elsewhere" : !waiting ? "" : `${!online ? "Not saved: offline." : sending ? "Sending…" : UNREACHABLE_TEXT}${lost ? " Lost if this page closes." : ""}`,
-    state: clashing.length ? "conflict" : waiting || !online ? "waiting" : "",
-  };
-}
-
 /** Whether the server answered that an edit can't be made, so sending it again won't help: a 4xx, but not a sign-in or a busy server. */
 const refusal = (err: unknown) => err instanceof ServerAnswer && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 

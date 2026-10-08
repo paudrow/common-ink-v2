@@ -447,59 +447,6 @@ html[data-device-frame] body {
   box-shadow: 1px 1px 0 var(--line-strong);
 }
 
-/* A phone has no status bar. While an edit hasn't reached the server, a pill says so, at the right just
-   inside the top of the top window's editors (below its tab row, if it shows one; main.ts sets
-   --not-saved-at): over a note, that's the editor's empty top margin, so it covers no text and no
-   control, and the note doesn't move as it comes and goes. It takes its own taps, so a tap on it never
-   lands on something it hides. */
-#not-saved {
-  display: none;
-}
-
-#not-saved:not([hidden]) {
-  position: fixed;
-  /* Under the command bar (Search, Quick open), menus and dialogs, which cover it while they're open. */
-  z-index: 9;
-  top: max(calc(var(--not-saved-at, 0px) + 0.25rem), calc(env(safe-area-inset-top) + 0.25rem));
-  right: calc(env(safe-area-inset-right) + 0.5rem);
-  max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right));
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0.1875rem 0.625rem;
-  border: 1px solid var(--line);
-  border-radius: 0.875rem;
-  background: var(--bg-elev);
-  box-shadow: var(--shadow-sm);
-  font-size: 0.75rem;
-  line-height: 1.25;
-  color: var(--warn-ink);
-}
-/* Over anything but a note (a view, a panel, Trash, the calendar), whose top is its controls: at the
-   bottom, above a notice's bar, anything along the bottom (--not-saved-bottom) and the keyboard. */
-#not-saved[data-at="bottom"] {
-  top: auto;
-  bottom: calc(var(--not-saved-bottom, 0px) + var(--keyboard, 0px) + env(safe-area-inset-bottom) + 4rem);
-}
-#not-saved[data-state="conflict"] {
-  color: var(--bad);
-  cursor: pointer;
-}
-/* Compact width (device.ts), and the media query for the moment before the app runs. */
-html[data-width="compact"] #status {
-  display: none;
-}
-html[data-width="compact"] #not-saved:not([hidden]) {
-  display: block;
-}
-@media (max-width: 599.98px) {
-  html:not([data-width]) #status {
-    display: none;
-  }
-  html:not([data-width]) #not-saved:not([hidden]) {
-    display: block;
-  }
-}
-
 #command-bar {
   position: fixed;
   top: 12vh;

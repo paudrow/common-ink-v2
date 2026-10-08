@@ -119,7 +119,7 @@ test("why now: what you did that the extension is acting on, or that it asked on
   assert.deepEqual(
     [
       triggerWords({ kind: "command", title: "Show word count" }),
-      triggerWords({ kind: "view", name: "Reading time" }),
+      triggerWords({ kind: "view", name: "Word count" }),
       triggerWords({ kind: "opened", path: ".common-ink/settings.json" }),
       triggerWords({ kind: "embed", title: "Weather", note: "Daily plan.md" }),
       triggerWords({ kind: "installed" }),
@@ -129,7 +129,7 @@ test("why now: what you did that the extension is acting on, or that it asked on
     ].map(plain),
     [
       "because you ran Show word count",
-      "to show its Reading time view",
+      "to show its Word count view",
       "because you switched to Workspace settings",
       "to draw the Weather embed in the note Daily plan",
       "because you just installed it",
@@ -143,16 +143,16 @@ test("why now: what you did that the extension is acting on, or that it asked on
 test("a refusal says what was refused and why, in friendly names", async () => {
   const { refusedWords, scopeWords } = await import("../web/src/permission-words.ts");
   const settings = { kind: "files:read" as const, target: ".common-ink/users/ada@example.com/settings.json" };
-  assert.equal(plain(refusedWords("Reading time", settings, { reason: "undeclared", scopes: ["**/*.md"] })), "Reading time can't read User settings: it only asked to read all your notes.");
-  assert.equal(plain(refusedWords("Reading time", settings, { reason: "undeclared", scopes: ["Journal/**", "Plans/**/*.md", "Ideas.md"] })), "Reading time can't read User settings: it only asked to read everything in Journal, your notes in Plans or the note Ideas.");
+  assert.equal(plain(refusedWords("Word count", settings, { reason: "undeclared", scopes: ["**/*.md"] })), "Word count can't read User settings: it only asked to read all your notes.");
+  assert.equal(plain(refusedWords("Word count", settings, { reason: "undeclared", scopes: ["Journal/**", "Plans/**/*.md", "Ideas.md"] })), "Word count can't read User settings: it only asked to read everything in Journal, your notes in Plans or the note Ideas.");
   assert.equal(plain(refusedWords("Weather", { kind: "network", target: "evil.example" }, { reason: "undeclared", scopes: [] })), "Weather can't connect to evil.example: it never asked for that.");
-  assert.equal(plain(refusedWords("Reading time", { kind: "files:read", target: "This week.md" }, { reason: "answer", scope: scopeWords("files:read", "**/*.md") })), "Reading time can't read the note This week: you don't allow it to read all your notes.");
-  assert.equal(plain(refusedWords("Reading time", { kind: "files:read", target: "This week.md" }, { reason: "now" })), "Reading time can't read the note This week: you didn't allow it this time.");
+  assert.equal(plain(refusedWords("Word count", { kind: "files:read", target: "This week.md" }, { reason: "answer", scope: scopeWords("files:read", "**/*.md") })), "Word count can't read the note This week: you don't allow it to read all your notes.");
+  assert.equal(plain(refusedWords("Word count", { kind: "files:read", target: "This week.md" }, { reason: "now" })), "Word count can't read the note This week: you didn't allow it this time.");
 });
 
 test("the activity log says the same thing done again in a row once, with how many times", async () => {
   const { runs } = await import("../web/src/activity.ts");
-  const read = (target: string, time: number) => ({ time, extension: "reading-time", ask: { kind: "files:read" as const, target }, outcome: "allowed" as const });
+  const read = (target: string, time: number) => ({ time, extension: "word-count", ask: { kind: "files:read" as const, target }, outcome: "allowed" as const });
   assert.deepEqual(
     runs([read("A.md", 5), read("A.md", 4), read("B.md", 3), read("A.md", 2), read("A.md", 1)]).map((r) => [r.entry.ask.target, r.entry.time, r.times]),
     [

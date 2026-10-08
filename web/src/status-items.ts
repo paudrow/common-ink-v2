@@ -6,7 +6,6 @@ import type { Sandboxed } from "../../worker/src/settings.ts";
 
 export class StatusItems {
   private items = new Map<string, { el: HTMLElement; owner: string }>();
-  private shown: ((shown: boolean) => void)[] = [];
 
   constructor(
     private left: HTMLElement,
@@ -39,21 +38,5 @@ export class StatusItems {
     item.el.hidden = !text;
     if (tooltip) item.el.title = tooltip;
     else item.el.removeAttribute("title");
-  }
-
-  /** Be told whether the status bar shows, now and each time that changes: a phone has none. */
-  onShown(fn: (shown: boolean) => void): void {
-    const bar = this.left.parentElement!;
-    const showing = () => bar.getClientRects().length > 0;
-    if (!this.shown.length && typeof ResizeObserver !== "undefined") {
-      let was = showing();
-      new ResizeObserver(() => {
-        if (was === showing()) return;
-        was = !was;
-        for (const f of this.shown) f(was);
-      }).observe(bar);
-    }
-    this.shown.push(fn);
-    fn(showing());
   }
 }

@@ -24,14 +24,14 @@ browserTest(h, "a scenario's clock dates its tasks, ?now= moves the page's clock
 });
 
 browserTest(h, "permissions=allow answers a sandboxed extension's prompt with Allow once and keeps nothing; deny refuses it for the session", { scenario: "extensions", levers: { permissions: "allow" } }, async (app) => {
-  await app.command("Show line count");
+  await app.command("Show word count");
   const view = app.page.frameLocator("iframe.webview");
-  await view.locator("body", { hasText: /\d+ lines?/ }).waitFor();
+  await view.locator("body", { hasText: /\d+ words?/ }).waitFor();
   const shown = await app.prompt.shown();
-  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "line-count", asks: ["files:read:**/*.md"], auto: true, answer: "once" }]);
+  assert.deepEqual(shown.map(({ extension, asks, auto, answer }) => ({ extension, asks, auto, answer })), [{ extension: "word-count", asks: ["files:read:**/*.md"], auto: true, answer: "once" }]);
   assert.deepEqual((await app.state()).permissions.grants, {}, "nothing kept in settings");
   await app.goto({ permissions: "deny" });
-  await app.command("Show line count");
+  await app.command("Show word count");
   await view.locator("body", { hasText: "you didn't allow it this time" }).waitFor();
   assert.equal(await app.prompt.dialog().count(), 0, "no dialog either way");
 });

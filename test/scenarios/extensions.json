@@ -1,6 +1,7 @@
 {
-  "about": "Extensions: Line count, the tests' own workspace extension, running sandboxed and asking before it reads a note.",
+  "about": "Extensions: Word count installed from the Catalog, running sandboxed and asking before it reads a note.",
   "sections": ["extensions"],
+  "install": ["word-count"],
   "now": "2026-10-05T09:00",
   "open": "Extension ideas.md"
 }

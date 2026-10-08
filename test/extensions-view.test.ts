@@ -20,7 +20,7 @@ function record(id: string, more: { [key: string]: unknown } = {}, workspace = f
 function setUp() {
   const records = [
     record("vim", { description: "Vim keys.", contributes: { commands: [{ command: "vim.toggle", title: "Toggle Vim" }] }, permissions: { editor: { why: "Vim keys in every editor" } } }),
-    record("reading-time", { description: "Counts words.", permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" }, network: { hosts: ["api.example.com"], why: "Look words up" } } }, true),
+    record("word-count", { description: "Counts words.", permissions: { "files:read": { paths: ["**/*.md"], why: "Count the words in the note on show" }, network: { hosts: ["api.example.com"], why: "Look words up" } } }, true),
   ];
   const disabled = new Set<string>();
   let answers: { [id: string]: { [key: string]: "allow" | "deny" } } = {};
@@ -75,22 +75,22 @@ test("the list is a row each, in sections; a row opens its details in a modal", 
   assert.deepEqual(
     [...root.querySelectorAll(".extension-section")].map((s) => [s.querySelector("h2")!.textContent, [...s.querySelectorAll(".extension-name")].map((n) => n.textContent)]),
     [
-      ["Installed", ["Reading-time"]],
+      ["Installed", ["Word-count"]],
       ["Built-in", ["Vim"]],
       ["Catalog", ["Pomodoro"]],
     ],
   );
-  const open = root.querySelector<HTMLButtonElement>('[data-focus="open:reading-time"]')!;
+  const open = root.querySelector<HTMLButtonElement>('[data-focus="open:word-count"]')!;
   open.focus();
   open.click();
   assert.equal(dialog()?.getAttribute("aria-modal"), "true");
-  assert.equal(dialog()?.getAttribute("aria-label"), "Reading-time");
+  assert.equal(dialog()?.getAttribute("aria-label"), "Word-count");
   assert.equal(document.activeElement, dialog(), "focus moves into the modal");
   assert.deepEqual(
     [...dialog()!.querySelectorAll(".extension-perms li")].map((li) => [li.querySelector(".perm-can")!.textContent, li.querySelector(".perm-why")!.textContent]),
     [
-      ["Connect to api.example.com", "Reading-time says: “Look words up”"],
-      ["Read all your notes", "Reading-time says: “Count the words in the note on show”"],
+      ["Connect to api.example.com", "Word-count says: “Look words up”"],
+      ["Read all your notes", "Word-count says: “Count the words in the note on show”"],
     ],
   );
   assert.equal(dialog()!.querySelector(".badge")!.textContent, "Workspace");
@@ -145,7 +145,7 @@ test("the search filters rows and hides sections with none", () => {
   search.dispatchEvent(new window.Event("input"));
   assert.deepEqual(
     [...root.querySelectorAll<HTMLElement>(".extension-row")].filter((r) => !r.hidden).map((r) => r.dataset.extension),
-    ["reading-time"],
+    ["word-count"],
   );
   assert.deepEqual(
     [...root.querySelectorAll<HTMLElement>(".extension-section")].map((s) => s.hidden),
@@ -155,23 +155,23 @@ test("the search filters rows and hides sections with none", () => {
 
 test("each permission shows your answer in the prompt's words; Reset forgets them all, so it asks again", async () => {
   const { root } = setUp();
-  root.querySelector<HTMLButtonElement>('[data-focus="open:reading-time"]')!.click();
+  root.querySelector<HTMLButtonElement>('[data-focus="open:word-count"]')!.click();
   const picks = () => [...dialog()!.querySelectorAll<HTMLSelectElement>("select.answer")];
   assert.deepEqual(
     picks().map((p) => [p.getAttribute("aria-label"), [...p.options].map((o) => o.textContent), p.selectedOptions[0].textContent]),
     [
-      ["Reading-time: Connect to api.example.com", ["Ask", "Always allow", "Don't allow"], "Ask"],
-      ["Reading-time: Read all your notes", ["Ask", "Always allow", "Don't allow"], "Ask"],
+      ["Word-count: Connect to api.example.com", ["Ask", "Always allow", "Don't allow"], "Ask"],
+      ["Word-count: Read all your notes", ["Ask", "Always allow", "Don't allow"], "Ask"],
     ],
   );
-  assert.equal(dialog()!.querySelector('[data-focus="reset:reading-time"]'), null, "nothing kept, nothing to reset");
+  assert.equal(dialog()!.querySelector('[data-focus="reset:word-count"]'), null, "nothing kept, nothing to reset");
   picks()[0].value = "deny";
   picks()[0].dispatchEvent(new window.Event("change"));
   picks()[1].value = "allow";
   picks()[1].dispatchEvent(new window.Event("change"));
   await Promise.resolve();
   assert.deepEqual(picks().map((p) => p.selectedOptions[0].textContent), ["Don't allow", "Always allow"]);
-  dialog()!.querySelector<HTMLButtonElement>('[data-focus="reset:reading-time"]')!.click();
+  dialog()!.querySelector<HTMLButtonElement>('[data-focus="reset:word-count"]')!.click();
   await Promise.resolve();
   assert.deepEqual(picks().map((p) => p.selectedOptions[0].textContent), ["Ask", "Ask"]);
   key(document.activeElement!, "Escape");

@@ -152,8 +152,8 @@ test("built-ins start on their activation events, not before; one that throws fa
 
 test("a workspace extension is read from its folder; one with a built-in's id replaces it, except in safe mode", async () => {
   const files = summaries([
-    ".common-ink/extensions/reading-time/extension.json",
-    ".common-ink/extensions/reading-time/index.js",
+    ".common-ink/extensions/word-count/extension.json",
+    ".common-ink/extensions/word-count/index.js",
     ".common-ink/extensions/a/extension.json",
     ".common-ink/extensions/a/index.js",
     ".common-ink/extensions/a/lib/util.js",
@@ -163,10 +163,10 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   ]);
   assert.deepEqual(
     findWorkspaceExtensions(files).map((w) => [w.id, w.files.length]),
-    [["reading-time", 2], ["a", 3], ["bad", 1]],
+    [["word-count", 2], ["a", 3], ["bad", 1]],
   );
   const texts = {
-    ".common-ink/extensions/reading-time/extension.json": '{"name": "Reading time", "version": "1.2.0"}',
+    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "version": "1.2.0"}',
     ".common-ink/extensions/a/extension.json": '{"name": "A, customized"}',
     ".common-ink/extensions/bad/extension.json": "{oops",
   };
@@ -175,16 +175,16 @@ test("a workspace extension is read from its folder; one with a built-in's id re
   await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false, ["a"]);
   assert.deepEqual(
     h.records.map((r) => [r.id, r.manifest.name, r.state, !!r.builtIn, !!r.workspace]),
-    [["reading-time", "Reading time", "inactive", false, true], ["a", "A, customized", "inactive", true, true], ["bad", "bad", "failed", false, true]],
+    [["word-count", "Word count", "inactive", false, true], ["a", "A, customized", "inactive", true, true], ["bad", "bad", "failed", false, true]],
   );
   assert.match(h.records[2].error!, /^extension\.json isn't valid JSON/);
-  assert.deepEqual(h.installed().map((m) => m.id), ["reading-time", "a"], "a broken manifest adds nothing");
+  assert.deepEqual(h.installed().map((m) => m.id), ["word-count", "a"], "a broken manifest adds nothing");
 
   const safe = host();
   await safe.h.load([builtIn("a", { activate() {} })], files, read(texts), [], true);
   assert.deepEqual(
     safe.h.records.map((r) => [r.id, r.manifest.name, r.state]),
-    [["a", "a", "inactive"], ["reading-time", "Reading time", "safe"], ["bad", "bad", "failed"]],
+    [["a", "a", "inactive"], ["word-count", "Word count", "safe"], ["bad", "bad", "failed"]],
   );
 });
 
@@ -233,15 +233,15 @@ test("an extension installed from a URL or a catalog says so, and who made it", 
     ".common-ink/extensions/weather/extension.json",
     ".common-ink/extensions/weather/installed.json",
     ".common-ink/extensions/mine/extension.json",
-    ".common-ink/extensions/reading-time/extension.json",
-    ".common-ink/extensions/reading-time/installed.json",
+    ".common-ink/extensions/word-count/extension.json",
+    ".common-ink/extensions/word-count/installed.json",
   ]);
   const texts = {
     ".common-ink/extensions/weather/extension.json": '{"name": "Weather", "publisher": "Weather Co."}',
     ".common-ink/extensions/weather/installed.json": '{"from": "https://ext.example/weather/extension.json"}',
     ".common-ink/extensions/mine/extension.json": "{}",
-    ".common-ink/extensions/reading-time/extension.json": '{"name": "Reading time", "publisher": "Common Ink"}',
-    ".common-ink/extensions/reading-time/installed.json": '{"from": "https://app.example/catalog/reading-time/extension.json", "catalog": "Common Ink"}',
+    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "publisher": "Common Ink"}',
+    ".common-ink/extensions/word-count/installed.json": '{"from": "https://app.example/catalog/word-count/extension.json", "catalog": "Common Ink"}',
   };
   const { h } = host();
   await h.load([builtIn("a", { activate() {} })], files, read(texts), [], false);
@@ -251,27 +251,9 @@ test("an extension installed from a URL or a catalog says so, and who made it", 
       ["a", "Built-in", null, null],
       ["weather", "From URL", "https://ext.example/weather/extension.json", "Weather Co."],
       ["mine", "Workspace", null, null],
-      ["reading-time", "Catalog", "https://app.example/catalog/reading-time/extension.json", "Common Ink"],
+      ["word-count", "Catalog", "https://app.example/catalog/word-count/extension.json", "Common Ink"],
     ],
   );
-});
-
-test("Word count, taken out of the Catalog, no longer runs or shows where it was installed from it; one you wrote of that id does", async () => {
-  const fromCatalog = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js", ".common-ink/extensions/word-count/installed.json"]);
-  const texts = {
-    ".common-ink/extensions/word-count/extension.json": '{"name": "Word count", "publisher": "Common Ink"}',
-    ".common-ink/extensions/word-count/installed.json": '{"from": "https://app.example/catalog/word-count/extension.json", "catalog": "Common Ink"}',
-  };
-  const { h } = host();
-  await h.load([builtIn("words", { activate() {} })], fromCatalog, read(texts), [], false);
-  assert.deepEqual(h.installed().map((m) => m.id), ["words"]);
-  const added = await h.add(findWorkspaceExtensions(fromCatalog)[0], read(texts));
-  assert.equal(added, null, "nor when it's put in while the app runs");
-
-  const yours = summaries([".common-ink/extensions/word-count/extension.json", ".common-ink/extensions/word-count/index.js"]);
-  const { h: h2 } = host();
-  await h2.load([builtIn("words", { activate() {} })], yours, read(texts), [], false);
-  assert.deepEqual(h2.installed().map((m) => m.id), ["words", "word-count"]);
 });
 
 test("a workspace extension runs sandboxed unless you trust it; built-ins run in the page", async () => {
@@ -409,7 +391,7 @@ test("the app's catalog lists folders on the app only", async () => {
   const entries = parseCatalog(index, "https://app.example/catalog/index.json", true);
   assert.deepEqual(
     entries.map((e) => [e.id, e.folder, e.catalog, e.firstParty]),
-    ["boards", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
+    ["word-count", "boards", "pomodoro", "html-app"].map((id) => [id, `https://app.example/catalog/${id}/`, "Common Ink", true]),
   );
   for (const e of entries) {
     const m = parseManifest(JSON.parse(readFileSync(`web/public/catalog/${e.id}/extension.json`, "utf8")), e.id);
