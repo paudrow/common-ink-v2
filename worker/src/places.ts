@@ -40,3 +40,42 @@ export function barOf(text: string): string[] {
 
 /** What the bar shows, of the ids it keeps: the first three that are places now. */
 export const shownOnBar = (bar: readonly string[], places: ReadonlySet<string>) => bar.filter((id) => places.has(id)).slice(0, BAR_SIZE);
+
+const objectOf = (text: string): Record<string, unknown> | null => {
+  try {
+    const data = JSON.parse(text);
+    return data && typeof data === "object" && !Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  }
+};
+
+/** A saved search: a query with a name, kept in places.json's "saved" (CONTEXT.md). */
+export interface SavedSearch {
+  name: string;
+  query: string;
+}
+
+/** The saved searches in places.json's text, in the order written; entries that aren't a name and a query are left out. */
+export function savedOf(text: string): SavedSearch[] {
+  const saved = objectOf(text)?.saved;
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return [];
+  return Object.entries(saved).flatMap(([name, query]) => (name.trim() && typeof query === "string" && query.trim() ? [{ name: name.trim(), query: query.trim() }] : []));
+}
+
+/**
+ * The go keys (study 9.3): `g`, then one of these, outside text, goes to the place it names. Places that
+ * aren't there (an extension off) are skipped. Inside a note `g` stays Vim's.
+ */
+export const GO_KEYS: Readonly<Record<string, string>> = {
+  f: "feed",
+  "/": "search",
+  d: "daily.today",
+  t: "tasks.tasks",
+  c: "calendar.calendar",
+  a: "view:archive",
+  x: "view:trash",
+  s: "data-sources.sources",
+  e: "extensions",
+  ",": "settings",
+};

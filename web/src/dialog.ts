@@ -112,14 +112,17 @@ export function confirmDialog(title: string, text: string, yes: string, danger =
   }));
 }
 
-/** One line of text, or null if you back out. */
-export function textDialog(title: string, text: string, placeholder: string, yes: string): Promise<string | null> {
+/** One line of text (a URL, unless `type` says otherwise), or null if you back out. */
+export function textDialog(title: string, text: string, placeholder: string, yes: string, type: "url" | "text" = "url"): Promise<string | null> {
   return dialog<string | null>(
     title,
     (settle) => {
-      const input = el<HTMLInputElement>("input", { type: "url", placeholder, ariaLabel: title });
+      const input = el<HTMLInputElement>("input", { type, placeholder, ariaLabel: title });
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && input.value.trim()) settle(input.value.trim());
+        if (e.key !== "Enter") return;
+        // Taken here: the dialog closes, and the Enter mustn't go on to press whatever has focus next.
+        e.preventDefault();
+        if (input.value.trim()) settle(input.value.trim());
       });
       queueMicrotask(() => input.focus());
       return {
