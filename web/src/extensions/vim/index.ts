@@ -124,7 +124,6 @@ export default {
     Vim.defineEx("quit", "q", run("tab.close"));
     Vim.defineEx("archive", "archive", run("archive.archive"));
     Vim.defineEx("unarchive", "unarchive", run("archive.unarchive"));
-    Vim.defineEx("trash", "trash", run("trash.note"));
     Vim.defineEx("close", "clo", run("window.close"));
     Vim.defineEx("only", "on", run("window.only"));
     exOpen("split", "sp", (p) => ctx.workbench.split("down", p), run("window.splitDown"));

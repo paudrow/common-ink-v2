@@ -31,7 +31,6 @@ async function runtimeWith(contributes: Record<string, unknown>) {
     commands: new Commands(),
     bar: { provide() {}, open() {} } as never,
     search: { provide() {}, find: async () => [], extraKeys: () => [], ownerOf: () => undefined } as never,
-    onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView: (v: { id: string }) => views.set(v.id, v), view: (id: string) => views.get(id), viewIds: () => [...views.keys()], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async (path: string) => ({ path, text: JSON.stringify(manifests[path.split("/")[2]]), revision: 1 }) } as never,

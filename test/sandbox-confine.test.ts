@@ -195,7 +195,6 @@ test("a command the app registers after a sandboxed extension's, under the same 
     commands,
     bar: { provide() {}, open() {} } as never,
     search: { provide() {}, find: async () => [], extraKeys: () => [] } as never,
-    onChange: [],
     panels: { register() {}, toggle() {}, show() {}, shown: () => null, refresh() {} } as never,
     workbench: { registerView: (v: { id: string }) => views.set(v.id, v), view: (id: string) => views.get(id), viewIds: () => [...views.keys()], openView() {}, provideViews() {}, refreshView() {}, extend() {}, notice() {} } as never,
     offline: { read: async (path: string) => ({ path, text: JSON.stringify(manifest), revision: 1 }) } as never,

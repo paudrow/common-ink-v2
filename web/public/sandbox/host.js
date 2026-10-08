@@ -184,14 +184,7 @@
         moveTab: (by) => call("workbench.moveTab", by),
         notice: (message) => call("workbench.notice", message),
       },
-      events: {
-        onSaved: (fn) => void listeners.saved.push(fn),
-        onFocus: (fn) => void listeners.focus.push(fn),
-        // Every change's path, whatever the extension may read: only trusted extensions hear them.
-        onChange: () => {
-          throw new Error("ctx.events.onChange isn't available to sandboxed extensions: trust this extension in the Extensions view to use it");
-        },
-      },
+      events: { onSaved: (fn) => void listeners.saved.push(fn), onFocus: (fn) => void listeners.focus.push(fn) },
       device: {
         has: (capability) => (capability === "keyboard" ? device.facts.keyboard : capability === "touch" ? device.facts.touch : false),
         get width() {

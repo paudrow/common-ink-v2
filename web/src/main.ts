@@ -3,7 +3,7 @@
 import { mediaHooks, whenHiddenOf } from "./media.ts";
 import { embedHooks, resetFloats } from "./lives.ts";
 import { isRecordPath } from "../../worker/src/records.ts";
-import { isNote, merge, type ChangeNotice, type FilePath, type FileSummary } from "../../worker/src/files.ts";
+import { isNote, merge, type FilePath, type FileSummary } from "../../worker/src/files.ts";
 import { FIRST_PARTY_CATALOG, parseCatalog, type CatalogEntry } from "../../worker/src/catalog.ts";
 import { extensionFilePath, parseManifest } from "../../worker/src/extensions.ts";
 import { api } from "./api.ts";
@@ -81,7 +81,6 @@ let settings: Settings = DEFAULTS;
 let catalog: SettingsCatalog = CORE_CATALOG;
 let lastFile: FilePath | null = null;
 const savedListeners: Array<(path: FilePath) => void> = [];
-const changeListeners: Array<(notice: ChangeNotice) => void> = [];
 const recordListeners: Array<() => void> = [];
 const focusListeners: Array<(path: FilePath | null) => void> = [];
 
@@ -541,9 +540,9 @@ const search = new Search({
           title: r.title,
           path: r.path,
           detail: r.line?.text ?? r.path,
-          aside: `${r.archived ? "archived · " : r.trashed ? "in Trash · " : ""}${ago(r.edited)}`,
-          dim: r.archived === true || r.trashed === true,
-          run: () => (r.trashed ? commands.run("trash.show") : openFromBar(r.path as FilePath)),
+          aside: `${r.archived ? "archived · " : ""}${ago(r.edited)}`,
+          dim: r.archived === true,
+          run: () => openFromBar(r.path as FilePath),
         })),
       };
     },
@@ -568,7 +567,6 @@ const extensions = new ExtensionRuntime({
   openFromBar,
   lastFile: () => lastFile,
   onSaved: savedListeners,
-  onChange: changeListeners,
   onFocus: focusListeners,
   onRecords: recordListeners,
   saveGrant: async (id, key, answer) => {
@@ -991,20 +989,6 @@ const heardChange = afterBurst(400, (path) => savedListeners.forEach((fn) => fn(
 let recordsTimer = 0;
 connectLive({
   async change(notice) {
-    for (const fn of changeListeners) fn(notice);
-    // A deleted note isn't left open to type into: its windows' tabs close, unless it has changes not yet
-    // saved, which stay, with a word on where it went.
-    if (notice.deleted && isNote(notice.path)) {
-      void refreshList();
-      const who = notice.author.kind === "user" && notice.author.email === me ? "" : ` by ${describeAuthor(notice.author, me)}`;
-      if (workbench.pending().some((p) => p.path === notice.path)) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}: your changes are still here, and Restore in Trash brings the note back.`);
-      else if (L.groups(workbench.layout).some((g) => g.tabs.some((t) => "file" in t && t.file === notice.path))) {
-        workbench.forget([notice.path]);
-        if (who) workbench.notice(`"${name(notice.path)}" was moved to Trash${who}`);
-      }
-      heardChange(notice.path);
-      return;
-    }
     const open = await workbench.remoteChange(notice.path, notice.revision);
     const mine = notice.author.kind === "user" && notice.author.email === me;
     // Taken in, it says who changed it; one that clashes with your edit keeps saying that instead.

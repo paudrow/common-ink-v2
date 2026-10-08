@@ -102,7 +102,6 @@ export const SETTINGS = {
   "editor.livePreview": bool("Show markdown as it reads: headings, emphasis and links drawn, tasks as checkboxes, images shown. The line you're on always shows its raw text.", true),
   "editor.saveDelay": int("Milliseconds after you stop typing before a note saves.", 1000, 200, 10000),
   keybindings,
-  "trash.retentionDays": int("Days a deleted note stays in Trash, where you can restore it, before it's purged: its text is taken out of history. A workspace setting.", 30, 1, 3650),
   "extensions.disabled": { ...strings('Extensions to turn off, by id, such as "history" or "quick-open".'), reload: true as const },
   "extensions.trusted": {
     ...strings("Workspace extensions you trust to run in the app's page, by id. A trusted extension can change note editors and draw straight into the page, and it can get around the permissions it asks for. Everything else runs sandboxed."),
