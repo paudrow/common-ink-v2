@@ -213,7 +213,7 @@ function fetchOptions(value: unknown): { method?: string; headers?: Record<strin
 export class ExtensionRuntime {
   readonly host: ExtensionHost;
   readonly broker: PermissionBroker;
-  /** Who owns each command id, view id, embed language, status item, kind of search result and command bar prefix. */
+  /** Who owns each command id, view id, embed language, status item and command bar prefix. */
   readonly ownership = new Ownership(() => this.host.records);
   /** Each command's code, by id: a command runs only its own extension's. */
   private handlers = this.ownership.registry<() => unknown>("command");

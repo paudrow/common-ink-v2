@@ -108,8 +108,8 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 export interface Claimed {
   /**
    * Names the app and the built-ins use, in every spelling `spellings` gives: the first word of each of
-   * their commands and views ("settings" for settings.user), the built-ins' ids, and their search types
-   * and embeds. A sandboxed extension can't be named with one, or add anything named in one.
+   * their commands and views ("settings" for settings.user), the built-ins' ids, and their embeds and
+   * status items. A sandboxed extension can't be named with one, or add anything named in one.
    */
   names: ReadonlySet<string>;
   /** Key presses taken, as `chord`s on a Mac ("mac:meta-s") and elsewhere ("other:ctrl-s"). */
@@ -212,7 +212,7 @@ export function confined(m: ExtensionManifest, claimed: Claimed): ExtensionManif
 
 /**
  * Whether a sandboxed extension may take queries starting with `prefix` in the command bar: one that
- * starts with its own name, as a word ("word-count " or "wordCount:"). Search's "", commands' ">" and
+ * starts with its own name, as a word ("word-count " or "wordCount:"). Quick open's "", commands' ">" and
  * every other provider's stay theirs.
  */
 export function ownPrefix(id: string, prefix: string): boolean {
