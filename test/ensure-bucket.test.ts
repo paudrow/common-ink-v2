@@ -104,3 +104,16 @@ test("it never asks about one bucket with `bucket info`", () => {
   assert.equal(r.status, 1);
   assert.ok(r.calls.every((c) => !c.includes("info")));
 });
+
+test("a list and a create that are both still rate limited warn and go on, without a long wait on the create", () => {
+  const r = run(BUCKET, { list: [limited], create: [limited] });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /::warning::Cloudflare is rate limiting/);
+  assert.equal(r.calls.filter((c) => c.includes("create")).length, 1);
+});
+
+test("a create that is rate limited after a list that worked and found nothing fails: the bucket really is missing", () => {
+  const r = run(BUCKET, { list: [listing("other")], create: [limited] });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /::error::/);
+});

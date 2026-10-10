@@ -6,10 +6,12 @@
 # Cloudflare's rate limit (error 10429) hits the per-bucket call first. A call that hits the limit is
 # tried again after a pause, and a failed create counts as fine if the bucket is in the list afterwards
 # (it was made by someone else a moment ago, or the create worked but its answer didn't get back).
-#   ENSURE_BUCKET_PAUSE: seconds to wait before the first retry; each retry waits one more (default 5).
+# If Cloudflare is still rate limiting after the retries, that says nothing about the bucket, so the
+# script warns and goes on: the deploy that follows names the bucket and fails on its own if it's missing.
+#   ENSURE_BUCKET_PAUSE: seconds to wait before the first retry; each retry waits one more (default 10).
 set -uo pipefail
 bucket=$1
-pause=${ENSURE_BUCKET_PAUSE:-5}
+pause=${ENSURE_BUCKET_PAUSE:-10}
 tries=4
 output=""
 
@@ -41,12 +43,23 @@ if in_list; then
   echo "R2 bucket $bucket is there."
   exit 0
 fi
+# A list that was only rate limited tells nothing, so the create gets one try and no waiting.
+list_limited=false
+if [[ $output == *10429* ]]; then
+  list_limited=true
+  tries=1
+fi
 if wrangler_retrying r2 bucket create "$bucket"; then
   printf '%s\n' "$output"
   echo "Made R2 bucket $bucket."
   exit 0
 fi
 create_output=$output
+if $list_limited && [[ $create_output == *10429* ]]; then
+  echo "::warning::Cloudflare is rate limiting (10429), so I couldn't check for the R2 bucket $bucket. Going on; the deploy will fail if it isn't there."
+  exit 0
+fi
+tries=4
 if in_list; then
   echo "R2 bucket $bucket is there (the create said: $(printf '%s' "$create_output" | tail -n 1))."
   exit 0
