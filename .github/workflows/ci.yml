@@ -81,7 +81,7 @@ jobs:
           tar xzf gitleaks.tar.gz gitleaks
           ./gitleaks git --config .gitleaks.toml --redact --no-banner .
 
-  # Every commit to main goes live at https://commonink.app. People sign in with Google
+  # Every commit to main goes live at https://v2.commonink.app. People sign in with Google
   # (GOOGLE_CLIENT_ID and ALLOWED_EMAILS variables, GOOGLE_CLIENT_SECRET and SESSION_SECRET secrets);
   # agents may come through Cloudflare Access (ACCESS_TEAM_DOMAIN and ACCESS_AUD). With neither, the
   # Worker answers every request with 401.
