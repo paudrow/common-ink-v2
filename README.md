@@ -26,15 +26,15 @@ The Worker is in `worker/`, the web app in `web/`. Each pull request adds `examp
 
 ## Deploy
 
-Pushes to `main` deploy to **commonink.app**, where people sign in with Google (below); `www.commonink.app` redirects there. Common Ink v1 runs on at `v1.commonink.app`, and links kept from it (shared links, invites, meeting notes, its docs) redirect there (`worker/src/hosts.ts`). Each pull request gets a Preview at `pr-<n>-common-ink-v2.<subdomain>.workers.dev` that opens signed in as a dev user, with its own sample notes. Production has no `workers.dev` address.
+Pushes to `main` deploy to **v2.commonink.app**, where people sign in with Google (below); its MCP endpoint is `v2.commonink.app/mcp`. `commonink.app` belongs to Common Ink v3, and v1 runs on at `v1.commonink.app`. While this Worker also answers on `commonink.app`, it redirects `www.commonink.app` there and sends links kept from v1 (shared links, invites, meeting notes, its docs) on to v1 (`worker/src/hosts.ts`). Each pull request gets a Preview at `pr-<n>-common-ink-v2.<subdomain>.workers.dev` that opens signed in as a dev user, with its own sample notes. Production has no `workers.dev` address.
 
-Both need, in the repository's settings, the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. The token needs **Workers Scripts: Edit** for the account and **Workers Routes: Edit** for the commonink.app zone, which deploying the custom domains takes.
+Both need, in the repository's settings, the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`. The token needs **Workers Scripts: Edit** for the account and **Workers Routes: Edit** for the commonink.app zone, which deploying the custom domain takes.
 
-A custom domain belongs to one Worker at a time. Moving commonink.app from v1 to this Worker is done once, in order, and `scripts/cutover-wizard.sh` walks through it: v1 lets go of the domain first, then this Worker takes it.
+A custom domain belongs to one Worker at a time, and a deploy that names a domain takes it from whichever Worker has it. `npm run deploy` names only `v2.commonink.app`; never add `commonink.app` back, or this Worker takes the domain from v3. (`scripts/cutover-wizard.sh` is the historic walk-through of the old v1 to v2 move, kept for reference only.)
 
 Uploads are kept in R2: production in the bucket `common-ink-v2-uploads`, every Preview in `common-ink-v2-uploads-preview`. CI makes each bucket if it's missing (`scripts/ensure-bucket.sh`), which needs the token to have **Workers R2 Storage: Edit** too. Otherwise make them once with `npx wrangler r2 bucket create common-ink-v2-uploads` and `npx wrangler r2 bucket create common-ink-v2-uploads-preview`. `npm run dev` keeps uploads on disk.
 
-**Cloudflare Access is optional now.** People sign in with Google. The Worker still accepts an Access token when `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set, which is how an agent reaches production: put an Access application on `commonink.app/mcp` only, with a Service Auth policy, and give the agent a service token. Leave the rest of the site out of it, or people would sign in twice. Until the variables are set, only Google sign-in works.
+**Cloudflare Access is optional now.** People sign in with Google. The Worker still accepts an Access token when `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are set, which is how an agent reaches production: put an Access application on `v2.commonink.app/mcp` only, with a Service Auth policy, and give the agent a service token. Leave the rest of the site out of it, or people would sign in twice. Until the variables are set, only Google sign-in works.
 
 ## Agents: CLI and MCP
 
@@ -47,9 +47,9 @@ Calendar events are records of a data source, not notes (ADR 0007): each is a JS
 
 ## Google sign-in, calendar and contacts
 
-People sign in with Google, and only addresses in `ALLOWED_EMAILS` get in. Common Ink v2 shares v1's OAuth client, so one Google Cloud project serves both. `scripts/cutover-wizard.sh` sets it all up; by hand:
+People sign in with Google, and only addresses in `ALLOWED_EMAILS` get in. Common Ink v2 shares v1's OAuth client, so one Google Cloud project serves both. `scripts/cutover-wizard.sh` once set this up (historic); by hand:
 
-1. In Google Cloud, use the OAuth client (Web application) with `https://commonink.app/auth/google/callback` as an authorized redirect URI, and enable the Google Calendar API and the People API. The consent screen asks for `calendar.events` (read and change events on calendars you can see), `calendar.calendarlist.readonly` (list those calendars and their colours) and `contacts.readonly`. While it's in testing, add each person as a test user. Google ends a test app's access after 7 days; connect again then.
+1. In Google Cloud, use the OAuth client (Web application) with `https://v2.commonink.app/auth/google/callback` as an authorized redirect URI, and enable the Google Calendar API and the People API. The consent screen asks for `calendar.events` (read and change events on calendars you can see), `calendar.calendarlist.readonly` (list those calendars and their colours) and `contacts.readonly`. While it's in testing, add each person as a test user. Google ends a test app's access after 7 days; connect again then.
 2. In the repository's settings, set the variables `GOOGLE_CLIENT_ID` and `ALLOWED_EMAILS` (addresses separated by commas), and the secrets `GOOGLE_CLIENT_SECRET` and `SESSION_SECRET` (any long random string, such as the output of `openssl rand -base64 32`). The next deploy sends them to the Worker. `SESSION_SECRET` signs sessions and seals Google's refresh tokens, so changing it signs everyone out and asks for Google to be connected again; edits waiting for Google are kept until it is.
 3. In the app, run "Connect Google calendar and contacts" (⌘⇧P).
 

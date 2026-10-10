@@ -3,7 +3,7 @@
 // address and kept in a cookie, so they last across reloads and the Worker sees them too. They're on
 // only where everyone is a dev user anyway (`npm run dev`, the browser tests and Previews): production
 // sets neither LEVERS nor DEV_USER, so there the cookie is ignored and the page never loads them, and
-// even if it did, commonink.app isn't an address the dev user signs in at.
+// even if it did, v2.commonink.app isn't an address the dev user signs in at.
 import { devHost } from "./hosts.ts";
 
 export interface Levers {
