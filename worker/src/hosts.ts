@@ -1,5 +1,6 @@
-// Where a request belongs before anything else runs. www.commonink.app redirects to commonink.app,
-// since Google sign-in returns only to addresses registered with it. Links people kept from Common
+// Where a request belongs before anything else runs. www.<host> redirects to <host> (v2 lives at
+// v2.commonink.app; commonink.app itself is v3's), since Google sign-in returns only to addresses
+// registered with it. Links people kept from Common
 // Ink v1 (shared links, invites, meeting notes written into Google events, its docs) go on to
 // v1.commonink.app, where v1 still runs.
 

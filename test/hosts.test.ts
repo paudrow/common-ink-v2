@@ -16,6 +16,12 @@ test("links kept from v1 go on to v1.commonink.app", () => {
   assert.deepEqual(redirectFor(new URL("https://commonink.app/terms")), { location: "https://v1.commonink.app/terms", status: 302 });
 });
 
+test("v2.commonink.app is v2's own address: no redirect", () => {
+  for (const url of ["https://v2.commonink.app/", "https://v2.commonink.app/?file=notes/Plan.md", "https://v2.commonink.app/mcp", "https://v2.commonink.app/auth/google/callback", "https://v2.commonink.app/sandbox/x"]) {
+    assert.equal(redirectFor(new URL(url)), null, url);
+  }
+});
+
 test("v2's own addresses stay here", () => {
   for (const url of ["https://commonink.app/", "https://commonink.app/?file=notes/Plan.md", "https://commonink.app/api/file?path=s/x.md", "https://commonink.app/mcp", "https://commonink.app/auth/google/callback", "https://commonink.app/sandbox/x", "https://commonink.app/notesy", "https://pr-12-common-ink-v2.draftox.workers.dev/"]) {
     assert.equal(redirectFor(new URL(url)), null, url);

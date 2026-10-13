@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
     "test": "node --disable-warning=ExperimentalWarning --import tsx --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test && npm run build",
-    "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc --domain commonink.app --domain www.commonink.app",
+    "deploy": "npm run build && wrangler deploy -c worker/wrangler.jsonc --domain v2.commonink.app",
     "preview": "npm run build && npm run seed && wrangler preview -c worker/wrangler.jsonc",
     "cli": "tsx scripts/cli.ts",
     "test:browser": "npm run build && npm run seed && node --import tsx scripts/browser-tests.ts",

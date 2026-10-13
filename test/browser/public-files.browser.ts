@@ -67,7 +67,7 @@ test("with a dev user, as in Previews, the page links the icons and manifest, an
   const html = await (await get(dev.base, "/")).text();
   assert.match(html, /<link rel="icon" href="\/favicon.svg" type="image\/svg\+xml" \/>/);
   assert.match(html, /<link rel="manifest" href="\/site.webmanifest" \/>/);
-  assert.match(html, /<meta property="og:image" content="https:\/\/commonink.app\/social.png" \/>/);
+  assert.match(html, /<meta property="og:image" content="https:\/\/v2.commonink.app\/social.png" \/>/);
   const me = (await (await get(dev.base, "/api/me")).json()) as { email?: string };
   assert.equal(me.email, "tester@localhost");
   const icon = await get(dev.base, "/favicon.svg");

@@ -6,7 +6,7 @@ import { authorizeUrl, exchange, type GoogleConfig, type Granted } from "./googl
 import { b64url, cookie, setCookie, sign, verify } from "./session.ts";
 
 // __Host- cookies are Secure, for this host only and the whole site, so no other subdomain of
-// commonink.app (v1's included) can set or replace them.
+// commonink.app (v1's and v3's included) can set or replace them.
 export const SESSION_COOKIE = "__Host-ci_session";
 const STATE_COOKIE = "__Host-ci_google";
 const SESSION_SECONDS = 30 * 86_400;

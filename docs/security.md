@@ -20,11 +20,11 @@ Report a vulnerability privately through GitHub: the repository's **Security** t
 
 ## Who might attack, and how
 
-- **Someone on the internet**, with no account. They can reach commonink.app's public paths (`/auth/`, `/sandbox/`, `/assets/`, the settings schema and the site's icons), any Preview (everyone there is the dev user), and any page a member visits.
-- **A malicious website a member visits.** It can make the browser send requests to commonink.app or to `localhost:8787` (with cookies, or as the dev user), frame pages that allow it, and open windows.
+- **Someone on the internet**, with no account. They can reach v2.commonink.app's public paths (`/auth/`, `/sandbox/`, `/assets/`, the settings schema and the site's icons), any Preview (everyone there is the dev user), and any page a member visits.
+- **A malicious website a member visits.** It can make the browser send requests to v2.commonink.app or to `localhost:8787` (with cookies, or as the dev user), frame pages that allow it, and open windows.
 - **A malicious or compromised extension**, installed from a URL or another catalog. Sandboxed by default. It may also hold whatever permissions the person granted.
 - **A malicious note or link.** Text written by an agent, a teammate, a synced calendar event or a pasted page, rendered by the live preview, link cards and embeds.
-- **A same-site neighbour.** `v1.commonink.app` is the same site as `commonink.app`, so `SameSite=Lax` cookies don't separate them.
+- **A same-site neighbour.** `v1.commonink.app`, `v3.commonink.app` and `commonink.app` (v3) are the same site as `v2.commonink.app`, so `SameSite=Lax` cookies don't separate them.
 - **Someone who can read the Durable Object's data** (the dashboard's data browser, a backup) but doesn't have the Worker's secrets.
 - **The supply chain**: an npm package, a GitHub Action, or a pull request's code in CI.
 
@@ -54,7 +54,7 @@ Out of scope: a member of the workspace. Every address in `ALLOWED_EMAILS`, ever
 - **CSP** (`appCsp` in `sandbox.ts`): `script-src 'self'` with no inline script, `connect-src` only to itself, images and media only from itself, `data:` and `blob:`, `frame-src` only for the sandbox route and the hosts of the link embeds that are on (built-ins and trusted extensions only, with hostnames checked), `base-uri 'none'`, and `form-action 'self'`.
 - **No HTML from strings.** The web app builds every element with `createElement` and `textContent`. The only `innerHTML` sets fixed icon SVG. KaTeX runs with `trust: false`. Links open only `http(s):` and `/uploads/`.
 - **What counts as same-origin script** is kept small. Uploads are served as the type their name gives, with `nosniff`, a sandboxing CSP, and `attachment` for anything that isn't a picture, audio, video, PDF or plain text. `/extensions/<id>/*.js` answers only for trusted extensions. JSON from `/api/` is `application/json` with `nosniff`.
-- **HSTS** (`max-age=31536000`) on every answer, redirects and the sandbox route included, without `includeSubDomains` or `preload` while `v1.commonink.app` exists. `/assets/*` gets it, with `nosniff` and a policy that runs nothing, from `web/public/_headers`, since the Worker doesn't see those requests.
+- **HSTS** (`max-age=31536000`) on every answer, redirects and the sandbox route included, without `includeSubDomains` or `preload` while sibling subdomains such as `v1.commonink.app` exist. `/assets/*` gets it, with `nosniff` and a policy that runs nothing, from `web/public/_headers`, since the Worker doesn't see those requests.
 
 ### 4. Sandboxed extensions and the app (ADR 0006)
 

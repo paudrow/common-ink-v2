@@ -5,12 +5,11 @@
   "compatibility_date": "2026-09-20",
   // Tasks' code, which the Worker shares (complete-task.ts), imports repeat rules by their library name.
   "alias": { "common-ink/recurrence": "./src/recurrence.ts" },
-  // Production is commonink.app, with Google sign-in; www redirects to it (worker/src/hosts.ts), since
-  // Google returns only to addresses registered with it. It has no workers.dev address. The two custom
-  // domains are named by `npm run deploy` (--domain), not as routes here: with routes, wrangler dev and
-  // the browser tests would see every request as commonink.app's, and the dev user only signs in on
-  // localhost. A custom domain belongs to one Worker at a time, so v1 has to let go of commonink.app
-  // (moving to v1.commonink.app) before this deploys: scripts/cutover-wizard.sh walks through it.
+  // Production is v2.commonink.app, with Google sign-in (commonink.app itself belongs to Common Ink v3).
+  // It has no workers.dev address. The custom domain is named by `npm run deploy` (--domain), not as a
+  // route here: with routes, wrangler dev and the browser tests would see every request as the
+  // production host's, and the dev user only signs in on localhost. A custom domain belongs to one
+  // Worker at a time, so a deploy that names commonink.app would take it back from v3: never do that.
   "workers_dev": false,
   // Each pull request's Preview is at pr-<n>-common-ink-v2.<subdomain>.workers.dev and opens signed in
   // as a dev user. Like every Worker-level setting, this takes effect when production deploys.
